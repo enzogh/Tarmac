@@ -2,7 +2,7 @@ import { Controller, Get, Post, Param, Body, UseGuards, HttpException, HttpStatu
 import { VlanService } from './vlan.service';
 import { AuthGuard } from '@nestjs/passport';
 
-@Controller('api/v1/vlan')
+@Controller('vlan')
 @UseGuards(AuthGuard('jwt'))
 export class VlanController {
   private readonly logger = new Logger(VlanController.name);
