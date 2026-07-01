@@ -13,5 +13,6 @@ RUN npm --workspace @tarmac/api run build
 FROM node:20-bookworm
 WORKDIR /app
 COPY --from=builder /app /app
+RUN chmod +x apps/api/docker-start.sh
 EXPOSE 3001
-CMD ["npm", "--workspace", "@tarmac/api", "run", "start"]
+CMD ["sh", "apps/api/docker-start.sh"]
