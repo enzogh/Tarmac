@@ -56,11 +56,16 @@ export default function OverviewPage() {
 
   return (
     <DashboardLayout>
-      <div>
-        <h1 className="text-3xl font-bold mb-8 text-slate-100">Vue d'ensemble du système</h1>
+      <div className="space-y-8">
+        <div className="space-y-2">
+          <h1 className="page-heading">Vue d'ensemble du système</h1>
+          <p className="page-subtitle">
+            Suivi en temps réel de l'état du stockage, des nœuds, des alertes et des migrations.
+          </p>
+        </div>
 
         {/* KPI Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           <StatCard
             label="Utilisation du stockage"
             value={forecast ? `${Math.round(forecast.usageRatio * 100)}%` : '-'}
@@ -90,21 +95,21 @@ export default function OverviewPage() {
 
         {/* Storage forecast */}
         {forecast && (
-          <Card title="📊 Prévision d'utilisation du stockage" className="mb-8">
-            <div className="space-y-4">
+          <Card title="Prévision d'utilisation du stockage">
+            <div className="space-y-5">
               <div>
-                <div className="flex items-center justify-between mb-2">
+                <div className="mb-2 flex items-center justify-between gap-3">
                   <span className="text-slate-300">{forecast.totalUsedGb} GB utilisés</span>
                   <span className="text-slate-400">{forecast.totalCapacityGb} GB total</span>
                 </div>
-                <div className="w-full bg-slate-800 rounded-full h-3 overflow-hidden">
+                <div className="h-3 w-full overflow-hidden rounded-full bg-white/5">
                   <div
-                    className="bg-gradient-to-r from-blue-600 to-blue-400 h-full transition-all"
+                    className="h-full bg-gradient-to-r from-brand-600 via-brand-500 to-indigo-400 transition-all duration-500"
                     style={{ width: `${forecast.usageRatio * 100}%` }}
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4 text-sm">
+              <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
                 <div>
                   <p className="text-slate-400">Croissance moyenne</p>
                   <p className="text-lg font-semibold text-slate-100">{forecast.avgGrowthPerDayGb} GB/jour</p>
@@ -120,12 +125,15 @@ export default function OverviewPage() {
           </Card>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
           {/* Nodes Status */}
           <Card title="🖥️ État des nœuds">
-            <div className="space-y-2">
+            <div className="space-y-3">
               {nodes.slice(0, 5).map((node) => (
-                <div key={node.id} className="flex items-center justify-between p-3 bg-slate-800 rounded">
+                <div
+                  key={node.id}
+                  className="flex items-center justify-between rounded-2xl border border-white/8 bg-white/[0.03] p-4 transition-colors hover:bg-white/[0.05]"
+                >
                   <div>
                     <p className="font-medium text-slate-100">{node.name}</p>
                     <p className="text-xs text-slate-400">{node.role}</p>
@@ -137,7 +145,7 @@ export default function OverviewPage() {
                 </div>
               ))}
               {nodes.length > 5 && (
-                <p className="text-sm text-slate-400 text-center pt-2">
+                <p className="pt-2 text-center text-sm text-slate-400">
                   +{nodes.length - 5} nœuds supplémentaires
                 </p>
               )}
@@ -146,9 +154,12 @@ export default function OverviewPage() {
 
           {/* Recent alerts */}
           <Card title="⚠️ Alertes récentes">
-            <div className="space-y-2">
+            <div className="space-y-3">
               {alerts.slice(0, 5).map((alert) => (
-                <div key={alert.id} className="flex items-start gap-3 p-3 bg-slate-800 rounded">
+                <div
+                  key={alert.id}
+                  className="flex items-start gap-3 rounded-2xl border border-white/8 bg-white/[0.03] p-4"
+                >
                   <div className="flex-1">
                     <p className="font-medium text-slate-100 text-sm">{alert.message}</p>
                     <p className="text-xs text-slate-400 mt-1">{alert.status}</p>
@@ -166,18 +177,21 @@ export default function OverviewPage() {
                 </div>
               ))}
               {alerts.length === 0 && (
-                <p className="text-center text-slate-400 py-4">✅ Aucune alerte</p>
+                <p className="py-4 text-center text-slate-400">✅ Aucune alerte</p>
               )}
             </div>
           </Card>
         </div>
 
         {/* Sync jobs and migrations */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
           <Card title="🔄 Travaux de synchronisation">
-            <div className="space-y-2">
+            <div className="space-y-3">
               {syncJobs.slice(0, 5).map((job) => (
-                <div key={job.id} className="flex items-center justify-between p-3 bg-slate-800 rounded">
+                <div
+                  key={job.id}
+                  className="flex items-center justify-between rounded-2xl border border-white/8 bg-white/[0.03] p-4"
+                >
                   <div>
                     <p className="font-medium text-slate-100">{job.name}</p>
                     <p className="text-xs text-slate-400">{job.sourcePath}</p>
@@ -186,7 +200,7 @@ export default function OverviewPage() {
                 </div>
               ))}
               {syncJobs.length === 0 && (
-                <p className="text-center text-slate-400 py-4">Aucun travail</p>
+                <p className="py-4 text-center text-slate-400">Aucun travail</p>
               )}
             </div>
           </Card>
@@ -194,21 +208,21 @@ export default function OverviewPage() {
           <Card title="➡️ Migrations en cours">
             <div className="space-y-3">
               {migrations.slice(0, 5).map((migration) => (
-                <div key={migration.id} className="p-3 bg-slate-800 rounded">
-                  <div className="flex items-center justify-between mb-2">
+                <div key={migration.id} className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+                  <div className="mb-2 flex items-center justify-between">
                     <p className="font-medium text-slate-100">{migration.name}</p>
                     <span className="text-sm text-slate-400">{migration.progress}%</span>
                   </div>
-                  <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-white/5">
                     <div
-                      className="bg-gradient-to-r from-green-600 to-green-400 h-full transition-all"
+                      className="h-full bg-gradient-to-r from-emerald-500 to-emerald-300 transition-all duration-500"
                       style={{ width: `${migration.progress}%` }}
                     />
                   </div>
                 </div>
               ))}
               {migrations.length === 0 && (
-                <p className="text-center text-slate-400 py-4">Aucune migration</p>
+                <p className="py-4 text-center text-slate-400">Aucune migration</p>
               )}
             </div>
           </Card>

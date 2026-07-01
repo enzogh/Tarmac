@@ -88,16 +88,18 @@ export default function StoragePage() {
 
   return (
     <DashboardLayout>
-      <div>
-        <div className="flex items-center justify-between mb-8">
-          <h1 className="text-3xl font-bold text-slate-100">📁 Stockage</h1>
-          <p className="text-slate-400">Gestion des partages et des montages</p>
+      <div className="space-y-8">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h1 className="page-heading">Stockage</h1>
+            <p className="page-subtitle">Gestion des partages et des montages.</p>
+          </div>
         </div>
 
         {/* Shares Section */}
         <Card title="Partages NFS/SMB">
-          <div className="mb-4 flex items-center justify-between">
-            <p className="text-sm text-slate-400">
+          <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <p className="max-w-3xl text-sm text-slate-400">
               <strong>Qu'est-ce qu'un partage ?</strong> Un dossier accessible en réseau (NFS pour Linux, SMB pour Windows) 
               que d'autres ordinateurs peuvent utiliser.
             </p>
@@ -152,10 +154,10 @@ export default function StoragePage() {
             </Modal>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {shares.map((share) => (
-              <div key={share.id} className="p-4 bg-slate-800 rounded-lg border border-slate-700">
-                <div className="flex items-start justify-between mb-3">
+              <div key={share.id} className="rounded-2xl border border-white/8 bg-white/[0.03] p-4 transition-colors hover:bg-white/[0.05]">
+                <div className="mb-3 flex items-start justify-between">
                   <h4 className="font-semibold text-slate-100">{share.name}</h4>
                   <Badge label={share.status} type="info" />
                 </div>
@@ -176,8 +178,8 @@ export default function StoragePage() {
 
         {/* Mounts Section */}
         <Card title="Montages">
-          <div className="mb-4 flex items-center justify-between">
-            <p className="text-sm text-slate-400">
+          <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <p className="max-w-3xl text-sm text-slate-400">
               <strong>Qu'est-ce qu'un montage ?</strong> Associer un partage (share) à un chemin local sur un nœud,
               un peu comme connecter une clé USB à votre ordinateur.
             </p>
@@ -245,8 +247,8 @@ export default function StoragePage() {
 
           <div className="space-y-3">
             {mounts.map((mount) => (
-              <div key={mount.id} className="p-4 bg-slate-800 rounded-lg border border-slate-700">
-                <div className="flex items-start justify-between mb-2">
+              <div key={mount.id} className="rounded-2xl border border-white/8 bg-white/[0.03] p-4 transition-colors hover:bg-white/[0.05]">
+                <div className="mb-2 flex items-start justify-between">
                   <h4 className="font-semibold text-slate-100">{mount.name}</h4>
                   <Badge label={mount.status} type="info" />
                 </div>
