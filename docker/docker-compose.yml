@@ -34,8 +34,11 @@ services:
     build:
       context: ..
       dockerfile: apps/web/Dockerfile
+      args:
+        # Remplace par l'IP publique de ton serveur
+        NEXT_PUBLIC_API_URL: http://CHANGE_MOI_IP_SERVEUR:3001
     environment:
-      NEXT_PUBLIC_API_URL: http://api:3001
+      NEXT_PUBLIC_API_URL: http://CHANGE_MOI_IP_SERVEUR:3001
     ports:
       - "3000:3000"
     depends_on:
