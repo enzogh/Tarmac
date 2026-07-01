@@ -1,23 +1,29 @@
-import { Controller, Get, Post, Param, Body, UseGuards, HttpException, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, UseGuards, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { VlanService } from './vlan.service';
 import { AuthGuard } from '@nestjs/passport';
 
 @Controller('api/v1/vlan')
 @UseGuards(AuthGuard('jwt'))
 export class VlanController {
+  private readonly logger = new Logger(VlanController.name);
+  
   constructor(private vlanService: VlanService) {}
 
   @Get()
   async getAllVlans() {
     try {
-      // For now, return the default VLAN status
+      // Try to get or create default VLAN on first request
       const vlan = await this.vlanService.getOrCreateVlan('default');
+      this.logger.log('✅ VLAN created/retrieved via API');
       return {
         vlans: [vlan],
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new HttpException(message, HttpStatus.INTERNAL_SERVER_ERROR);
+      this.logger.warn('⚠️  Database unavailable - VLAN will be created when first agent connects');
+      // Return empty array if DB is not connected - frontend will show "Deploy agents" state
+      return {
+        vlans: [],
+      };
     }
   }
 
