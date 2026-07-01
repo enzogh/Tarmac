@@ -28,6 +28,9 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tarmac
       JWT_SECRET: change-me
       AGENT_SHARED_TOKEN: agent-secret
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@tarmac.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      ENABLE_DEFAULT_ADMIN: ${ENABLE_DEFAULT_ADMIN:-true}
       PORT: 3001
     ports:
       - "3001:3001"
