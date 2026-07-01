@@ -45,6 +45,11 @@ export class NodesController {
     return this.nodesService.delete(id, req.user?.userId);
   }
 
+  @Get('activity')
+  activity(@Query('range') range = '1h') {
+    return this.nodesService.activity(range);
+  }
+
   @Get(':id/metrics')
   metrics(@Param('id') id: string, @Query('range') range = '1h') {
     return this.nodesService.metrics(id, range);
