@@ -1,4 +1,5 @@
 import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -23,14 +24,25 @@ export class VlanService implements OnModuleInit {
       });
 
       if (!vlan) {
-        vlan = await this.prisma.vlan.create({
-          data: {
-            name,
-            subnetCidr: this.VLAN_SUBNET,
-            description: `Automated VLAN for cluster ${name}`,
-          },
-          include: { members: true, connections: true },
-        });
+        try {
+          vlan = await this.prisma.vlan.create({
+            data: {
+              name,
+              subnetCidr: this.VLAN_SUBNET,
+              description: `Automated VLAN for cluster ${name}`,
+            },
+            include: { members: true, connections: true },
+          });
+        } catch (error) {
+          if (this.isUniqueConstraintError(error)) {
+            vlan = await this.prisma.vlan.findUnique({
+              where: { name },
+              include: { members: true, connections: true },
+            });
+            if (vlan) return vlan;
+          }
+          throw error;
+        }
       }
 
       return vlan;
@@ -58,14 +70,27 @@ export class VlanService implements OnModuleInit {
     const vlanIp = this.generateVlanIp(nextIpIndex + 2);
     const vlanMac = this.generateVlanMac(nodeId);
 
-    const member = await this.prisma.vlanMember.create({
-      data: {
-        vlanId: vlan.id,
-        nodeId,
-        vlanIp,
-        vlanMac,
-      },
-    });
+    let member;
+    try {
+      member = await this.prisma.vlanMember.create({
+        data: {
+          vlanId: vlan.id,
+          nodeId,
+          vlanIp,
+          vlanMac,
+        },
+      });
+    } catch (error) {
+      if (this.isUniqueConstraintError(error)) {
+        const existing = await this.prisma.vlanMember.findFirst({
+          where: { nodeId, vlanId: vlan.id },
+        });
+        if (existing) {
+          return existing;
+        }
+      }
+      throw error;
+    }
 
     await this.prisma.node.update({
       where: { id: nodeId },
@@ -271,5 +296,9 @@ export class VlanService implements OnModuleInit {
       where: { id: membership.id },
       data: { lastHeartbeat: new Date() },
     });
+  }
+
+  private isUniqueConstraintError(error: unknown) {
+    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
   }
 }
