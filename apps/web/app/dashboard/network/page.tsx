@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, Vlan, VlanConnection, VlanConnectionTest, VlanStatus } from '@/lib/api';
 import { DashboardLayout } from '@/components/DashboardLayout';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { AlertCircle, Zap, Shield, Activity, Play } from 'lucide-react';
 
 export default function NetworkPage() {
   const token = useMemo(() => (typeof window !== 'undefined' ? localStorage.getItem('tarmac_token') : null), []);
@@ -61,239 +64,287 @@ export default function NetworkPage() {
   };
 
   const content = loading ? (
-    <div className="p-8">Loading network status...</div>
-  ) : !vlanStatus ? (
-    <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-8 text-center">
-      <div className="text-5xl mb-4">🌐</div>
-      <h2 className="text-2xl font-bold text-gray-900 mb-2">No VLAN Network Found</h2>
-      <p className="text-gray-600 mb-4">Deploy agents to create the network</p>
-      <div className="bg-white rounded-lg p-4 text-left max-w-md mx-auto space-y-3 text-sm">
-        <div>
-          <p className="font-semibold text-gray-700 mb-1">📋 Next Steps:</p>
-          <ol className="list-decimal list-inside space-y-1 text-gray-600">
-            <li>Deploy your first agent/worker node</li>
-            <li>Agent will automatically create the default VLAN network</li>
-            <li>Additional agents auto-join with fixed IPs (10.255.0.x)</li>
-            <li>Network monitoring will appear here</li>
-          </ol>
-        </div>
-        <div className="bg-yellow-50 border border-yellow-200 rounded p-2">
-          <p className="text-yellow-900">💡 <strong>Tip:</strong> The VLAN is initialized on first agent heartbeat</p>
-        </div>
-      </div>
+    <div className="flex items-center justify-center h-96">
+      <p className="text-muted-foreground">Chargement du réseau...</p>
     </div>
+  ) : !vlanStatus ? (
+    <Card className="border-dashed">
+      <CardContent className="flex flex-col items-center justify-center py-16 px-4 text-center">
+        <div className="mb-4 p-3 rounded-full bg-primary/10">
+          <AlertCircle className="w-8 h-8 text-primary" />
+        </div>
+        <h3 className="text-xl font-semibold text-foreground mb-2">Aucun réseau VLAN trouvé</h3>
+        <p className="text-muted-foreground mb-6 max-w-md">Déployez vos premiers agents pour initialiser le cluster réseau</p>
+        
+        <div className="w-full max-w-md space-y-4">
+          {/* Steps */}
+          <div className="space-y-3">
+            {[
+              { icon: Zap, label: 'Déployer votre premier agent/nœud' },
+              { icon: Shield, label: 'Agent crée automatiquement le VLAN par défaut' },
+              { icon: Activity, label: 'Les nouveaux agents rejoignent automatiquement avec IPs fixes' },
+            ].map((step, idx) => {
+              const Icon = step.icon;
+              return (
+                <div key={idx} className="flex gap-3 text-left">
+                  <div className="flex-shrink-0">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20">
+                      <Icon className="h-4 w-4 text-primary" />
+                    </div>
+                  </div>
+                  <div className="pt-1">
+                    <p className="text-sm text-foreground">{step.label}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Info */}
+          <div className="rounded-lg bg-secondary/50 border border-white/10 p-3">
+            <p className="text-xs text-muted-foreground">
+              <span className="font-semibold text-foreground">💡 Astuce:</span> Le VLAN est initialisé au premier heartbeat de l'agent
+            </p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   ) : (
     <div className="space-y-6">
-      <div className="grid grid-cols-4 gap-4">
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-gray-600 text-sm font-medium">Cluster Members</div>
-          <div className="text-3xl font-bold text-blue-600">{vlanStatus.memberCount}</div>
-          <div className="text-xs text-gray-500 mt-2">Nodes active</div>
-        </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-gray-600 text-sm font-medium">Network Health</div>
-          <div className="text-3xl font-bold text-green-600">
-            {vlanStatus.connectionStats.total > 0
-              ? Math.round((vlanStatus.connectionStats.healthy / vlanStatus.connectionStats.total) * 100)
-              : 100}
-            %
-          </div>
-          <div className="text-xs text-gray-500 mt-2">{vlanStatus.connectionStats.healthy} of {vlanStatus.connectionStats.total} healthy</div>
-        </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-gray-600 text-sm font-medium">Degraded Links</div>
-          <div className="text-3xl font-bold text-yellow-600">{vlanStatus.connectionStats.degraded}</div>
-          <div className="text-xs text-gray-500 mt-2">Links below threshold</div>
-        </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-gray-600 text-sm font-medium">Offline Links</div>
-          <div className="text-3xl font-bold text-red-600">{vlanStatus.connectionStats.offline}</div>
-          <div className="text-xs text-gray-500 mt-2">Disconnected nodes</div>
-        </div>
-      </div>
+      {/* Stats Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Cluster Members</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-primary">{vlanStatus.memberCount}</div>
+            <p className="text-xs text-muted-foreground mt-1">Nœuds actifs</p>
+          </CardContent>
+        </Card>
 
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-xl font-bold mb-4">VLAN Configuration</h2>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <div className="text-sm text-gray-600">Name</div>
-            <div className="font-mono text-lg">{vlanStatus.vlan.name}</div>
-          </div>
-          <div>
-            <div className="text-sm text-gray-600">Subnet</div>
-            <div className="font-mono text-lg">{vlanStatus.vlan.subnetCidr}</div>
-          </div>
-          <div>
-            <div className="text-sm text-gray-600">Status</div>
-            <div className="font-mono text-lg capitalize">
-              <span className={`px-2 py-1 rounded text-white text-sm ${vlanStatus.vlan.status === 'active' ? 'bg-green-500' : 'bg-gray-500'}`}>
-                {vlanStatus.vlan.status}
-              </span>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Network Health</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-primary">
+              {vlanStatus.connectionStats.total > 0
+                ? Math.round((vlanStatus.connectionStats.healthy / vlanStatus.connectionStats.total) * 100)
+                : 100}
+              %
             </div>
-          </div>
-          <div>
-            <div className="text-sm text-gray-600">Created</div>
-            <div className="font-mono text-lg">{new Date(vlanStatus.vlan.createdAt).toLocaleDateString()}</div>
-          </div>
-        </div>
+            <p className="text-xs text-muted-foreground mt-1">{vlanStatus.connectionStats.healthy} de {vlanStatus.connectionStats.total} sains</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Degraded Links</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-yellow-500">{vlanStatus.connectionStats.degraded}</div>
+            <p className="text-xs text-muted-foreground mt-1">Liens dégradés</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Offline Links</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-destructive">{vlanStatus.connectionStats.offline}</div>
+            <p className="text-xs text-muted-foreground mt-1">Nœuds déconnectés</p>
+          </CardContent>
+        </Card>
       </div>
 
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-xl font-bold mb-4">Cluster Nodes</h2>
-        <div className="grid grid-cols-auto gap-4">
-          {(vlanStatus.vlan.members || []).map((member) => (
-            <div key={member.id} className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <div className="font-semibold text-gray-800">{member.node?.name || 'Unknown'}</div>
-              <div className="text-xs text-gray-600 mt-1">
-                <div>IP: <span className="font-mono">{member.vlanIp}</span></div>
-                <div>MAC: <span className="font-mono text-xs">{member.vlanMac}</span></div>
-                <div>Joined: {new Date(member.joinedAt).toLocaleString()}</div>
+      {/* VLAN Configuration */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Configuration VLAN</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Nom</p>
+              <p className="font-mono text-sm text-foreground">{vlanStatus.vlan.name}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Subnet</p>
+              <p className="font-mono text-sm text-foreground">{vlanStatus.vlan.subnetCidr}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Status</p>
+              <div className="inline-block">
+                <span className={`px-2 py-1 rounded text-xs font-medium ${
+                  vlanStatus.vlan.status === 'active' 
+                    ? 'bg-primary/20 text-primary' 
+                    : 'bg-muted text-muted-foreground'
+                }`}>
+                  {vlanStatus.vlan.status === 'active' ? '🟢 Actif' : 'Inactif'}
+                </span>
               </div>
             </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-xl font-bold mb-4">Connection Matrix</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-100">
-              <tr>
-                <th className="text-left p-2 font-semibold">Source</th>
-                <th className="text-left p-2 font-semibold">Target</th>
-                <th className="text-left p-2 font-semibold">Status</th>
-                <th className="text-right p-2 font-semibold">Latency (ms)</th>
-                <th className="text-right p-2 font-semibold">Loss %</th>
-                <th className="text-left p-2 font-semibold">Last Check</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {connections.map((conn) => (
-                <tr key={conn.id} className="hover:bg-gray-50">
-                  <td className="p-2 font-mono text-blue-600">{conn.sourceNode?.name}</td>
-                  <td className="p-2 font-mono text-blue-600">{conn.targetNode?.name}</td>
-                  <td className="p-2">
-                    <span className={`px-2 py-1 rounded text-white text-xs font-semibold
-                      ${conn.status === 'healthy' ? 'bg-green-500' :
-                        conn.status === 'degraded' ? 'bg-yellow-500' :
-                        conn.status === 'offline' ? 'bg-red-500' :
-                        'bg-gray-500'}`}>
-                      {conn.status}
-                    </span>
-                  </td>
-                  <td className="p-2 text-right">{conn.latencyMs ? `${conn.latencyMs.toFixed(1)}` : '—'}</td>
-                  <td className="p-2 text-right">{conn.packetLoss ? `${conn.packetLoss.toFixed(1)}` : '—'}</td>
-                  <td className="p-2 text-gray-600 text-xs">
-                    {conn.lastCheckedAt ? new Date(conn.lastCheckedAt).toLocaleString() : '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-xl font-bold mb-4">Connectivity Tests</h2>
-        <div className="mb-6 bg-blue-50 p-4 rounded-lg">
-          <div className="text-sm font-semibold mb-4 text-gray-700">Run Network Test</div>
-          <div className="grid grid-cols-4 gap-4">
-            <select
-              value={selectedTest.from || ''}
-              onChange={(e) => setSelectedTest({ ...selectedTest, from: e.target.value })}
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-            >
-              <option value="">From Node...</option>
-              {(vlanStatus.vlan.members || []).map((m) => (
-                <option key={m.nodeId} value={m.nodeId}>
-                  {m.node?.name}
-                </option>
-              ))}
-            </select>
-            <select
-              value={selectedTest.to || ''}
-              onChange={(e) => setSelectedTest({ ...selectedTest, to: e.target.value })}
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-            >
-              <option value="">To Node...</option>
-              {(vlanStatus.vlan.members || []).map((m) => (
-                <option key={m.nodeId} value={m.nodeId}>
-                  {m.node?.name}
-                </option>
-              ))}
-            </select>
-            <select
-              value={selectedTest.type || ''}
-              onChange={(e) => setSelectedTest({ ...selectedTest, type: e.target.value as any })}
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-            >
-              <option value="">Test Type...</option>
-              <option value="ping">Ping</option>
-              <option value="connectivity">Connectivity</option>
-              <option value="latency">Latency</option>
-            </select>
-            <button
-              onClick={handleRunTest}
-              disabled={testRunning}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:bg-gray-400"
-            >
-              {testRunning ? 'Testing...' : 'Run Test'}
-            </button>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Créé</p>
+              <p className="text-sm text-foreground">{new Date(vlanStatus.vlan.createdAt).toLocaleDateString('fr-FR')}</p>
+            </div>
           </div>
-        </div>
+        </CardContent>
+      </Card>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-100">
-              <tr>
-                <th className="text-left p-2 font-semibold">From</th>
-                <th className="text-left p-2 font-semibold">To</th>
-                <th className="text-left p-2 font-semibold">Test Type</th>
-                <th className="text-left p-2 font-semibold">Result</th>
-                <th className="text-right p-2 font-semibold">Latency (ms)</th>
-                <th className="text-right p-2 font-semibold">Loss %</th>
-                <th className="text-left p-2 font-semibold">Time</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {tests.slice(0, 20).map((test) => (
-                <tr key={test.id} className="hover:bg-gray-50">
-                  <td className="p-2 font-mono text-blue-600">{test.initiatorNode?.name}</td>
-                  <td className="p-2 font-mono text-blue-600">{test.resultMessage?.split(' ')[0]}</td>
-                  <td className="p-2 text-sm">{test.testType}</td>
-                  <td className="p-2">
-                    <span className={`px-2 py-1 rounded text-white text-xs font-semibold
-                      ${test.status === 'success' ? 'bg-green-500' :
-                        test.status === 'failed' ? 'bg-red-500' :
-                        'bg-yellow-500'}`}>
-                      {test.status}
-                    </span>
-                  </td>
-                  <td className="p-2 text-right">{test.latencyMs ? `${test.latencyMs.toFixed(1)}` : '—'}</td>
-                  <td className="p-2 text-right">{test.packetLoss ? `${test.packetLoss.toFixed(1)}` : '—'}</td>
-                  <td className="p-2 text-gray-600 text-xs">{new Date(test.startedAt).toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {vlanStatus.recentFailures.length > 0 && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-          <h2 className="text-xl font-bold mb-4 text-red-700">Recent Connection Failures</h2>
-          <div className="space-y-2">
-            {vlanStatus.recentFailures.map((failure) => (
-              <div key={failure.id} className="text-sm text-red-700 bg-white p-3 rounded border border-red-100">
-                <span className="font-mono">Failed to connect {failure.resultMessage}</span>
+      {/* Cluster Nodes */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Nœuds du Cluster</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {(vlanStatus.vlan.members || []).map((member) => (
+              <div key={member.id} className="border border-white/10 rounded-lg p-3 hover:bg-white/5 transition">
+                <div className="font-semibold text-sm text-foreground">{member.node?.name || 'Unknown'}</div>
+                <div className="space-y-1 mt-2 text-xs text-muted-foreground">
+                  <div>IP: <span className="font-mono text-foreground">{member.vlanIp}</span></div>
+                  <div>MAC: <span className="font-mono text-foreground">{member.vlanMac.slice(0, 17)}…</span></div>
+                  <div>Rejoint: {new Date(member.joinedAt).toLocaleString('fr-FR')}</div>
+                </div>
               </div>
             ))}
           </div>
-        </div>
-      )}
+        </CardContent>
+      </Card>
+
+      {/* Connection Matrix */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Matrice de Connexion</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="border-b border-white/10">
+                <tr>
+                  <th className="text-left p-2 font-semibold text-muted-foreground">Source</th>
+                  <th className="text-left p-2 font-semibold text-muted-foreground">Cible</th>
+                  <th className="text-left p-2 font-semibold text-muted-foreground">Status</th>
+                  <th className="text-right p-2 font-semibold text-muted-foreground">Latency (ms)</th>
+                  <th className="text-right p-2 font-semibold text-muted-foreground">Loss %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {connections.slice(0, 10).map((conn, i) => (
+                  <tr key={i} className="border-b border-white/5 hover:bg-white/5">
+                    <td className="p-2 font-mono text-foreground">{conn.sourceNodeId.slice(0, 8)}…</td>
+                    <td className="p-2 font-mono text-foreground">{conn.targetNodeId.slice(0, 8)}…</td>
+                    <td className="p-2">
+                      <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${
+                        conn.status === 'healthy' ? 'bg-primary/20 text-primary' : 
+                        conn.status === 'degraded' ? 'bg-yellow-500/20 text-yellow-500' : 
+                        'bg-destructive/20 text-destructive'
+                      }`}>
+                        {conn.status === 'healthy' ? '✓' : conn.status === 'degraded' ? '⚠' : '✕'}
+                      </span>
+                    </td>
+                    <td className="p-2 text-right font-mono text-foreground">{conn.latencyMs?.toFixed(1) || '-'}</td>
+                    <td className="p-2 text-right font-mono text-foreground">{conn.packetLoss?.toFixed(1) || '-'}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Connectivity Tests */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Tests de Connectivité</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-3 gap-3 pb-4">
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Depuis</label>
+              <select
+                value={selectedTest.from || ''}
+                onChange={(e) => setSelectedTest({ ...selectedTest, from: e.target.value })}
+                className="w-full px-2 py-1 rounded bg-white/5 border border-white/10 text-xs text-foreground"
+              >
+                <option value="">Sélectionner</option>
+                {(vlanStatus.vlan.members || []).map((m) => (
+                  <option key={m.id} value={m.nodeId}>{m.node?.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Vers</label>
+              <select
+                value={selectedTest.to || ''}
+                onChange={(e) => setSelectedTest({ ...selectedTest, to: e.target.value })}
+                className="w-full px-2 py-1 rounded bg-white/5 border border-white/10 text-xs text-foreground"
+              >
+                <option value="">Sélectionner</option>
+                {(vlanStatus.vlan.members || [])
+                  .filter((m) => m.nodeId !== selectedTest.from)
+                  .map((m) => (
+                    <option key={m.id} value={m.nodeId}>{m.node?.name}</option>
+                  ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Type</label>
+              <select
+                value={selectedTest.type || ''}
+                onChange={(e) => setSelectedTest({ ...selectedTest, type: e.target.value as any })}
+                className="w-full px-2 py-1 rounded bg-white/5 border border-white/10 text-xs text-foreground"
+              >
+                <option value="">Sélectionner</option>
+                <option value="ping">Ping</option>
+                <option value="connectivity">Connectivité</option>
+                <option value="latency">Latence</option>
+              </select>
+            </div>
+          </div>
+          <Button onClick={handleRunTest} disabled={testRunning} size="sm" className="w-full">
+            <Play className="w-4 h-4" />
+            {testRunning ? 'Test en cours...' : 'Exécuter le test'}
+          </Button>
+
+          {/* Test Results */}
+          {tests.length > 0 && (
+            <div className="space-y-2">
+              {tests.slice(0, 5).map((test, i) => (
+                <div key={i} className="border border-white/10 rounded p-2 text-xs">
+                  <div className="flex justify-between items-start mb-1">
+                    <span className="font-mono text-foreground">{test.initiatorNodeId.slice(0, 8)}→{test.targetNodeId.slice(0, 8)}</span>
+                    <span className={`px-2 py-0.5 rounded ${
+                      test.status === 'success' ? 'bg-primary/20 text-primary' : 'bg-destructive/20 text-destructive'
+                    }`}>
+                      {test.status}
+                    </span>
+                  </div>
+                  <div className="text-muted-foreground">
+                    Latence: {(test.latencyMs || 0).toFixed(1)}ms | Perte: {(test.packetLoss || 0).toFixed(1)}%
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 
-  return <DashboardLayout>{content}</DashboardLayout>;
+  return (
+    <DashboardLayout>
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Réseau VLAN</h1>
+          <p className="text-muted-foreground mt-1">Surveillance et diagnostic du cluster réseau</p>
+        </div>
+
+        {content}
+      </div>
+    </DashboardLayout>
+  );
 }
