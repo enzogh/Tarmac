@@ -7,7 +7,7 @@ export class VlanService implements OnModuleInit {
   private readonly logger = new Logger(VlanService.name);
   private readonly VLAN_SUBNET = '10.255.0.0/16';
   private readonly VLAN_GATEWAY = '10.255.0.1';
-  private readonly BASE_IP = 0xacff0002; // 10.255.0.2 in hex
+  private readonly BASE_IP = 0x0aff0002; // 10.255.0.2 in hex
 
   constructor(private prisma: PrismaService) {}
 
