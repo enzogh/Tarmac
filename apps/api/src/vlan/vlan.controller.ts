@@ -12,17 +12,17 @@ export class VlanController {
   @Get()
   async getAllVlans() {
     try {
-      // Try to get or create default VLAN
+      // Try to get or create default VLAN on first request
       const vlan = await this.vlanService.getOrCreateVlan('default');
+      this.logger.log('✅ VLAN created/retrieved via API');
       return {
         vlans: [vlan],
       };
     } catch (error) {
-      this.logger.error('Failed to fetch VLAN:', error);
-      // Return empty array if DB is not connected - frontend will show "No VLAN found" state
+      this.logger.warn('⚠️  Database unavailable - VLAN will be created when first agent connects');
+      // Return empty array if DB is not connected - frontend will show "Deploy agents" state
       return {
         vlans: [],
-        error: error instanceof Error ? error.message : 'Database connection failed'
       };
     }
   }

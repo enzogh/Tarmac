@@ -106,26 +106,32 @@ export class AgentsService implements OnModuleInit {
           },
         });
         
-        // Auto-join VLAN when agent starts
-        try {
-          await this.vlanService.joinVlan(nodeId);
-          this.logger.log(`Node ${nodeId} auto-joined VLAN`);
-        } catch (error) {
-          this.logger.warn(`Failed to auto-join VLAN for node ${nodeId}:`, error);
-        }
+    // Auto-join VLAN when agent starts (with guaranteed VLAN creation)
+    try {
+      // Ensure default VLAN exists first
+      await this.vlanService.getOrCreateVlan('default');
+      // Then join the agent to it
+      await this.vlanService.joinVlan(nodeId);
+      this.logger.log(`✅ Node ${nodeId} created and joined VLAN`);
+    } catch (error) {
+      this.logger.warn(`⚠️  Failed to create VLAN or join node ${nodeId}:`, error);
+    }
         
         return created;
       });
 
-    // Auto-join VLAN if not already joined
+    // Ensure VLAN membership on every heartbeat (idempotent)
     try {
       const vlanMembers = await this.prisma.vlanMember.findMany({ where: { nodeId } });
       if (vlanMembers.length === 0) {
+        // Ensure default VLAN exists
+        await this.vlanService.getOrCreateVlan('default');
+        // Then join the node if not already joined
         await this.vlanService.joinVlan(nodeId);
-        this.logger.log(`Node ${nodeId} auto-joined VLAN on heartbeat`);
+        this.logger.log(`✅ Node ${nodeId} joined VLAN on heartbeat`);
       }
     } catch (error) {
-      this.logger.warn(`Failed to check/join VLAN for node ${nodeId}:`, error);
+      this.logger.warn(`⚠️  Failed to ensure VLAN membership for node ${nodeId}:`, error);
     }
 
     await this.prisma.metricSample.create({
