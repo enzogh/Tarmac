@@ -63,12 +63,10 @@ export class VlanService implements OnModuleInit {
       return existingMember;
     }
 
-    const nextIpIndex = await this.prisma.vlanMember.count({
-      where: { vlanId: vlan.id },
-    });
-
-    const vlanIp = this.generateVlanIp(nextIpIndex + 2);
-    const vlanMac = this.generateVlanMac(nodeId);
+    // Check if Node already has a stored VLAN IP from previous join
+    const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
+    const vlanIp = node?.vlanIp || this.generateDeterministicVlanIp(nodeId);
+    const vlanMac = node?.vlanMac || this.generateVlanMac(nodeId);
 
     let member;
     try {
@@ -261,6 +259,18 @@ export class VlanService implements OnModuleInit {
       (ipNum >>> 8) & 0xff,
       ipNum & 0xff,
     ].join('.');
+  }
+
+  private generateDeterministicVlanIp(nodeId: string): string {
+    // Hash nodeId to get deterministic offset (ensures same IP on restart)
+    let hash = 0;
+    for (let i = 0; i < nodeId.length; i++) {
+      hash = ((hash << 5) - hash) + nodeId.charCodeAt(i);
+      hash |= 0;
+    }
+    // Map hash to index 1-253 (skip 0=gateway, 254=broadcast)
+    const index = (Math.abs(hash) % 253) + 1;
+    return this.generateVlanIp(index);
   }
 
   private generateVlanMac(nodeId: string): string {

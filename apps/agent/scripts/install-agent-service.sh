@@ -83,6 +83,8 @@ apt-get install -y --no-install-recommends \
   golang-go \
   nfs-common \
   cifs-utils \
+  wireguard-tools \
+  iproute2 \
   util-linux
 
 rm -rf "$INSTALL_DIR"
