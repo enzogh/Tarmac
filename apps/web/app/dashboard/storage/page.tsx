@@ -2,10 +2,23 @@
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { Database, HardDrive, Plus, Info } from 'lucide-react';
 import { api, ShareItem, MountItem, NodeItem } from '../../../lib/api';
 import { DashboardLayout } from '../../../components/DashboardLayout';
-import { Card, Badge } from '../../../components/ui';
-import { Modal } from '../../../components/Modal';
+import { Badge } from '../../../components/ui';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Button } from '../../../components/ui/button';
+import { Input } from '../../../components/ui/input';
+import { Label } from '../../../components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '../../../components/ui/dialog';
 
 export default function StoragePage() {
   const router = useRouter();
@@ -15,7 +28,9 @@ export default function StoragePage() {
   const [mounts, setMounts] = useState<MountItem[]>([]);
   const [nodes, setNodes] = useState<NodeItem[]>([]);
 
-  // Form states
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [mountDialogOpen, setMountDialogOpen] = useState(false);
+
   const [shareName, setShareName] = useState('');
   const [sharePath, setSharePath] = useState('');
   const [shareNodeId, setShareNodeId] = useState('');
@@ -54,7 +69,7 @@ export default function StoragePage() {
     return () => clearInterval(id);
   }, [token]);
 
-  const createShare = async (e: FormEvent, close: () => void) => {
+  const createShare = async (e: FormEvent) => {
     e.preventDefault();
     if (!token) return;
     await api.shares.create(token, {
@@ -66,10 +81,10 @@ export default function StoragePage() {
     setSharePath('');
     setShareNodeId('');
     await load();
-    close();
+    setShareDialogOpen(false);
   };
 
-  const createMount = async (e: FormEvent, close: () => void) => {
+  const createMount = async (e: FormEvent) => {
     e.preventDefault();
     if (!token) return;
     await api.mounts.create(token, {
@@ -83,186 +98,226 @@ export default function StoragePage() {
     setMountTarget('');
     setMountNodeId('');
     await load();
-    close();
+    setMountDialogOpen(false);
   };
 
   return (
     <DashboardLayout>
       <div className="space-y-8">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h1 className="page-heading">Stockage</h1>
-            <p className="page-subtitle">Gestion des partages et des montages.</p>
-          </div>
+        <div className="space-y-1">
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Stockage</h1>
+          <p className="text-sm text-muted-foreground">Gestion des partages réseau et des montages.</p>
+        </div>
+
+        {/* Shares info callout */}
+        <div className="flex items-start gap-3 rounded-xl border border-blue-500/20 bg-blue-500/[0.07] px-4 py-3">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-400" />
+          <p className="text-sm text-blue-300/80">
+            Un <strong className="text-blue-200">partage</strong> est un dossier accessible via le réseau (NFS pour Linux, SMB pour Windows).
+            Un <strong className="text-blue-200">montage</strong> associe un partage à un chemin local sur un nœud — comme brancher une clé USB.
+          </p>
         </div>
 
         {/* Shares Section */}
-        <Card title="Partages NFS/SMB">
-          <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <p className="max-w-3xl text-sm text-slate-400">
-              <strong>Qu'est-ce qu'un partage ?</strong> Un dossier accessible en réseau (NFS pour Linux, SMB pour Windows) 
-              que d'autres ordinateurs peuvent utiliser.
-            </p>
-            <Modal
-              title="Créer un partage"
-              trigger="➕ Nouveau partage"
-            >
-              {(close) => (
-                <form onSubmit={(e) => createShare(e, close)} className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Nom du partage</label>
-                    <input
-                      type="text"
-                      className="input"
-                      placeholder="ex: backup"
-                      value={shareName}
-                      onChange={(e) => setShareName(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Chemin du dossier</label>
-                    <input
-                      type="text"
-                      className="input"
-                      placeholder="ex: /data/backup"
-                      value={sharePath}
-                      onChange={(e) => setSharePath(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Nœud (optionnel)</label>
-                    <select
-                      className="select"
-                      value={shareNodeId}
-                      onChange={(e) => setShareNodeId(e.target.value)}
-                    >
-                      <option value="">Automatique</option>
-                      {nodes.map((n) => (
-                        <option key={n.id} value={n.id}>
-                          {n.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <button type="submit" className="btn-primary w-full">
-                    Créer partage
-                  </button>
-                </form>
-              )}
-            </Modal>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            {shares.map((share) => (
-              <div key={share.id} className="rounded-2xl border border-white/8 bg-white/[0.03] p-4 transition-colors hover:bg-white/[0.05]">
-                <div className="mb-3 flex items-start justify-between">
-                  <h4 className="font-semibold text-slate-100">{share.name}</h4>
-                  <Badge label={share.status} type="info" />
-                </div>
-                <div className="space-y-2 text-sm">
-                  <div>
-                    <span className="text-slate-400">Chemin:</span>
-                    <p className="text-slate-300 font-mono text-xs mt-1 break-all">{share.path}</p>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Nœud</span>
-                    <span className="text-slate-200">{share.nodeId ?? 'Auto'}</span>
-                  </div>
-                </div>
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Database className="h-5 w-5 text-violet-400" />
+                <CardTitle>Partages NFS / SMB</CardTitle>
               </div>
-            ))}
-          </div>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="sm" onClick={() => setShareDialogOpen(true)}>
+                    <Plus className="h-4 w-4" />
+                    Nouveau partage
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Créer un nouveau partage réseau (NFS/SMB)</TooltipContent>
+              </Tooltip>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {shares.map((share) => (
+                <div key={share.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 transition-colors hover:bg-white/[0.04]">
+                  <div className="mb-3 flex items-start justify-between">
+                    <h4 className="font-semibold text-foreground">{share.name}</h4>
+                    <Badge label={share.status} type="info" />
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    <div>
+                      <span className="text-muted-foreground">Chemin :</span>
+                      <p className="mt-0.5 font-mono text-xs text-foreground/80 break-all">{share.path}</p>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Nœud</span>
+                      <span className="text-foreground/90">{share.nodeId ?? 'Auto'}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {shares.length === 0 && (
+                <p className="col-span-full py-6 text-center text-sm text-muted-foreground">
+                  Aucun partage. Cliquez sur «&nbsp;Nouveau partage&nbsp;» pour en créer un.
+                </p>
+              )}
+            </div>
+          </CardContent>
         </Card>
 
         {/* Mounts Section */}
-        <Card title="Montages">
-          <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <p className="max-w-3xl text-sm text-slate-400">
-              <strong>Qu'est-ce qu'un montage ?</strong> Associer un partage (share) à un chemin local sur un nœud,
-              un peu comme connecter une clé USB à votre ordinateur.
-            </p>
-            <Modal
-              title="Créer un montage"
-              trigger="➕ Nouveau montage"
-            >
-              {(close) => (
-                <form onSubmit={(e) => createMount(e, close)} className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Nom du montage</label>
-                    <input
-                      type="text"
-                      className="input"
-                      placeholder="ex: data-mount"
-                      value={mountName}
-                      onChange={(e) => setMountName(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Source (partage)</label>
-                    <input
-                      type="text"
-                      className="input"
-                      placeholder="ex: //server/share"
-                      value={mountSource}
-                      onChange={(e) => setMountSource(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Destination (chemin local)</label>
-                    <input
-                      type="text"
-                      className="input"
-                      placeholder="ex: /mnt/data"
-                      value={mountTarget}
-                      onChange={(e) => setMountTarget(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Nœud (optionnel)</label>
-                    <select
-                      className="select"
-                      value={mountNodeId}
-                      onChange={(e) => setMountNodeId(e.target.value)}
-                    >
-                      <option value="">Automatique</option>
-                      {nodes.map((n) => (
-                        <option key={n.id} value={n.id}>
-                          {n.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <button type="submit" className="btn-primary w-full">
-                    Créer montage
-                  </button>
-                </form>
-              )}
-            </Modal>
-          </div>
-
-          <div className="space-y-3">
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <HardDrive className="h-5 w-5 text-violet-400" />
+                <CardTitle>Montages</CardTitle>
+              </div>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="sm" onClick={() => setMountDialogOpen(true)}>
+                    <Plus className="h-4 w-4" />
+                    Nouveau montage
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Monter un partage sur un chemin local d'un nœud</TooltipContent>
+              </Tooltip>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
             {mounts.map((mount) => (
-              <div key={mount.id} className="rounded-2xl border border-white/8 bg-white/[0.03] p-4 transition-colors hover:bg-white/[0.05]">
+              <div key={mount.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 transition-colors hover:bg-white/[0.04]">
                 <div className="mb-2 flex items-start justify-between">
-                  <h4 className="font-semibold text-slate-100">{mount.name}</h4>
+                  <h4 className="font-semibold text-foreground">{mount.name}</h4>
                   <Badge label={mount.status} type="info" />
                 </div>
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center gap-2 text-slate-400">
-                    <span className="font-mono text-xs">{mount.sourcePath}</span>
-                    <span>→</span>
-                    <span className="font-mono text-xs">{mount.targetPath}</span>
-                  </div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
+                  <span>{mount.sourcePath}</span>
+                  <span className="text-zinc-600">→</span>
+                  <span>{mount.targetPath}</span>
                 </div>
               </div>
             ))}
-          </div>
+            {mounts.length === 0 && (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                Aucun montage. Cliquez sur «&nbsp;Nouveau montage&nbsp;» pour en créer un.
+              </p>
+            )}
+          </CardContent>
         </Card>
+
+        {/* Share Dialog */}
+        <Dialog open={shareDialogOpen} onOpenChange={setShareDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Créer un partage réseau</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={createShare} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="share-name">Nom du partage</Label>
+                <Input
+                  id="share-name"
+                  placeholder="ex: backup"
+                  value={shareName}
+                  onChange={(e) => setShareName(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="share-path">Chemin du dossier</Label>
+                <Input
+                  id="share-path"
+                  placeholder="ex: /data/backup"
+                  value={sharePath}
+                  onChange={(e) => setSharePath(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="share-node">Nœud (optionnel)</Label>
+                <Select value={shareNodeId} onValueChange={setShareNodeId}>
+                  <SelectTrigger id="share-node">
+                    <SelectValue placeholder="Automatique" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Automatique</SelectItem>
+                    {nodes.map((n) => (
+                      <SelectItem key={n.id} value={n.id}>{n.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <DialogFooter>
+                <Button type="button" variant="secondary" onClick={() => setShareDialogOpen(false)}>
+                  Annuler
+                </Button>
+                <Button type="submit">Créer partage</Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Mount Dialog */}
+        <Dialog open={mountDialogOpen} onOpenChange={setMountDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Créer un montage</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={createMount} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="mount-name">Nom du montage</Label>
+                <Input
+                  id="mount-name"
+                  placeholder="ex: data-mount"
+                  value={mountName}
+                  onChange={(e) => setMountName(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="mount-source">Source (partage réseau)</Label>
+                <Input
+                  id="mount-source"
+                  placeholder="ex: //server/share"
+                  value={mountSource}
+                  onChange={(e) => setMountSource(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="mount-target">Destination (chemin local)</Label>
+                <Input
+                  id="mount-target"
+                  placeholder="ex: /mnt/data"
+                  value={mountTarget}
+                  onChange={(e) => setMountTarget(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="mount-node">Nœud (optionnel)</Label>
+                <Select value={mountNodeId} onValueChange={setMountNodeId}>
+                  <SelectTrigger id="mount-node">
+                    <SelectValue placeholder="Automatique" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Automatique</SelectItem>
+                    {nodes.map((n) => (
+                      <SelectItem key={n.id} value={n.id}>{n.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <DialogFooter>
+                <Button type="button" variant="secondary" onClick={() => setMountDialogOpen(false)}>
+                  Annuler
+                </Button>
+                <Button type="submit">Créer montage</Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
     </DashboardLayout>
   );
