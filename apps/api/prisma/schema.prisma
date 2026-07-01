@@ -384,9 +384,9 @@ model Vlan {
 model VlanMember {
   id          String    @id @default(cuid())
   vlanId      String
-  nodeId      String    @unique
+  nodeId      String
   vlanIp      String
-  vlanMac     String    @unique
+  vlanMac     String
   joinedAt    DateTime  @default(now())
   lastHeartbeat DateTime @default(now())
   createdAt   DateTime  @default(now())
@@ -395,6 +395,8 @@ model VlanMember {
   node        Node      @relation(fields: [nodeId], references: [id], onDelete: Cascade)
 
   @@unique([vlanId, nodeId])
+  @@unique([vlanId, vlanIp])
+  @@unique([vlanId, vlanMac])
   @@index([vlanId])
   @@index([nodeId])
 }

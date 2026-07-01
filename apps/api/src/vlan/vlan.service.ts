@@ -54,12 +54,14 @@ export class VlanService implements OnModuleInit {
 
   async joinVlan(nodeId: string, vlanName: string = 'default'): Promise<any> {
     const vlan = await this.getOrCreateVlan(vlanName);
+    this.logger.debug(`joinVlan: vlan=${vlan.id} name=${vlan.name} nodeId=${nodeId}`);
     
     const existingMember = await this.prisma.vlanMember.findFirst({
       where: { nodeId, vlanId: vlan.id },
     });
 
     if (existingMember) {
+      this.logger.debug(`joinVlan: member already exists ${existingMember.id}`);
       return existingMember;
     }
 
@@ -67,6 +69,7 @@ export class VlanService implements OnModuleInit {
     const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
     const vlanIp = node?.vlanIp || this.generateDeterministicVlanIp(nodeId);
     const vlanMac = node?.vlanMac || this.generateVlanMac(nodeId);
+    this.logger.debug(`joinVlan: creating member vlanId=${vlan.id} vlanIp=${vlanIp} vlanMac=${vlanMac}`);
 
     let member;
     try {
@@ -78,12 +81,15 @@ export class VlanService implements OnModuleInit {
           vlanMac,
         },
       });
+      this.logger.debug(`joinVlan: member created ${member.id}`);
     } catch (error) {
+      this.logger.debug(`joinVlan: create error ${error instanceof Error ? error.message : error}`);
       if (this.isUniqueConstraintError(error)) {
         const existing = await this.prisma.vlanMember.findFirst({
           where: { nodeId, vlanId: vlan.id },
         });
         if (existing) {
+          this.logger.debug(`joinVlan: recovered existing member ${existing.id}`);
           return existing;
         }
       }
