@@ -23,16 +23,25 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className="flex h-screen bg-slate-950">
+    <div className="relative flex min-h-screen overflow-hidden bg-slate-950">
+      <div className="pointer-events-none absolute inset-0 shell-gradient opacity-80" />
+
       {/* Sidebar */}
-      <div className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col">
-        <div className="p-6 border-b border-slate-800">
-          <h1 className="text-2xl font-bold text-blue-400">🏗️ Tarmac</h1>
-          <p className="text-xs text-slate-400 mt-1">Storage Dashboard</p>
+      <div className="relative z-10 flex w-72 flex-col border-r border-white/8 bg-slate-950/70 backdrop-blur-2xl">
+        <div className="border-b border-white/8 p-6">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-indigo-500 shadow-glow">
+              🏗️
+            </div>
+            <div>
+              <h1 className="text-xl font-semibold tracking-tight text-slate-50">Tarmac</h1>
+              <p className="text-xs text-slate-400">Premium storage dashboard</p>
+            </div>
+          </div>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-4 py-6 space-y-2">
+        <nav className="flex-1 space-y-2 px-4 py-6">
           {NAV_ITEMS.map((item) => {
             const isActive =
               pathname === item.href || pathname.startsWith(item.href + '/');
@@ -40,13 +49,13 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                className={`flex items-center gap-3 rounded-2xl border px-4 py-3 transition-all duration-200 ${
                   isActive
-                    ? 'bg-blue-600/20 text-blue-300 border border-blue-600/30'
-                    : 'text-slate-300 hover:bg-slate-800'
+                    ? 'border-brand-500/20 bg-brand-500/10 text-brand-200 shadow-glow'
+                    : 'border-transparent text-slate-300 hover:border-white/10 hover:bg-white/5 hover:text-white'
                 }`}
               >
-                <span className="text-xl">{item.icon}</span>
+                <span className="text-lg">{item.icon}</span>
                 <span className="font-medium">{item.label}</span>
               </Link>
             );
@@ -54,10 +63,10 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
         </nav>
 
         {/* Footer */}
-        <div className="p-4 border-t border-slate-800">
+        <div className="border-t border-white/8 p-4">
           <button
             onClick={handleLogout}
-            className="btn-secondary w-full flex items-center justify-center gap-2"
+            className="btn-secondary w-full justify-center"
           >
             🚪 Déconnexion
           </button>
@@ -65,13 +74,13 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="relative z-10 flex flex-1 flex-col overflow-hidden">
         {/* Top Bar */}
-        <div className="bg-slate-900 border-b border-slate-800 px-6 py-4 flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-slate-100">
+        <div className="flex items-center justify-between border-b border-white/8 bg-slate-950/55 px-6 py-4 backdrop-blur-xl lg:px-8">
+          <h2 className="text-lg font-semibold tracking-tight text-slate-50">
             Tableau de bord Tarmac
           </h2>
-          <div className="text-sm text-slate-400">
+          <div className="rounded-full border border-white/8 bg-white/5 px-3 py-1.5 text-sm text-slate-300 shadow-insetSoft">
             {new Date().toLocaleDateString('fr-FR', {
               weekday: 'short',
               year: 'numeric',

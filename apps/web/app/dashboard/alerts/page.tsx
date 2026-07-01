@@ -6,8 +6,8 @@ import { api, AlertItem } from '../../../lib/api';
 import { DashboardLayout } from '../../../components/DashboardLayout';
 import { Card, Badge } from '../../../components/ui';
 
-type SeverityFilter = 'all' | 'critical' | 'warning' | 'info';
-type StatusFilter = 'all' | 'new' | 'acknowledged' | 'resolved';
+type SeverityFilter = 'all' | 'critical' | 'high' | 'medium' | 'low';
+type StatusFilter = 'all' | 'open' | 'acknowledged' | 'resolved';
 
 export default function AlertsPage() {
   const router = useRouter();
@@ -56,9 +56,10 @@ export default function AlertsPage() {
     switch (severity) {
       case 'critical':
         return 'error';
-      case 'warning':
+      case 'high':
         return 'warning';
-      case 'info':
+      case 'medium':
+      case 'low':
         return 'info';
       default:
         return 'info';
@@ -69,10 +70,12 @@ export default function AlertsPage() {
     switch (severity) {
       case 'critical':
         return '🔴';
-      case 'warning':
+      case 'high':
         return '🟡';
-      case 'info':
+      case 'medium':
         return '🔵';
+      case 'low':
+        return '⚪';
       default:
         return '⚪';
     }
@@ -94,23 +97,25 @@ export default function AlertsPage() {
 
   return (
     <DashboardLayout>
-      <div>
-        <div className="flex items-center justify-between mb-8">
-          <h1 className="text-3xl font-bold text-slate-100">⚠️ Alertes</h1>
-          <p className="text-slate-400">Notifications du système</p>
+      <div className="space-y-8">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h1 className="page-heading">Alertes</h1>
+            <p className="page-subtitle">Notifications du système.</p>
+          </div>
         </div>
 
         {/* Summary cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          <div className="p-4 bg-red-900/20 border border-red-800 rounded-lg">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-4 shadow-panel">
             <p className="text-sm text-red-300">Critiques</p>
             <p className="text-3xl font-bold text-red-400 mt-2">{critical}</p>
           </div>
-          <div className="p-4 bg-amber-900/20 border border-amber-800 rounded-lg">
+          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4 shadow-panel">
             <p className="text-sm text-amber-300">Avertissements</p>
             <p className="text-3xl font-bold text-amber-400 mt-2">{warnings}</p>
           </div>
-          <div className="p-4 bg-blue-900/20 border border-blue-800 rounded-lg">
+          <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 p-4 shadow-panel">
             <p className="text-sm text-blue-300">Total</p>
             <p className="text-3xl font-bold text-blue-400 mt-2">{alerts.length}</p>
           </div>
@@ -118,7 +123,7 @@ export default function AlertsPage() {
 
         <Card title="Liste des alertes">
           {/* Filters */}
-          <div className="mb-6 flex gap-4 flex-wrap">
+          <div className="mb-6 flex flex-wrap gap-4">
             <div>
               <label className="block text-sm font-medium mb-2">Sévérité</label>
               <select
@@ -153,7 +158,7 @@ export default function AlertsPage() {
             {filtered.map((alert) => (
               <div
                 key={alert.id}
-                className="p-4 bg-slate-800 rounded-lg border border-slate-700 hover:border-slate-600 transition-colors"
+                className="rounded-2xl border border-white/8 bg-white/[0.03] p-4 transition-colors hover:bg-white/[0.05]"
               >
                 <div className="flex items-start gap-4">
                   <div className="text-2xl flex-shrink-0">
@@ -165,7 +170,7 @@ export default function AlertsPage() {
                       <div>
                         <p className="font-semibold text-slate-100">{alert.message}</p>
                         <p className="text-xs text-slate-400 mt-1">
-                          {new Date((alert as any).createdAt).toLocaleString('fr-FR')}
+                          {new Date(alert.triggeredAt).toLocaleString('fr-FR')}
                         </p>
                       </div>
                       <Badge
@@ -181,22 +186,18 @@ export default function AlertsPage() {
                       />
                     </div>
 
+                    <div className="flex flex-wrap gap-2">
                       {alert.status === 'open' && (
-                        <button
-                          onClick={() => handleAck(alert.id)}
-                          className="btn-secondary text-sm"
-                        >
+                        <button onClick={() => handleAck(alert.id)} className="btn-secondary text-sm">
                           👁️ Reconnaître
                         </button>
                       )}
                       {alert.status !== 'resolved' && (
-                        <button
-                          onClick={() => handleResolve(alert.id)}
-                          className="btn-secondary text-sm"
-                        >
+                        <button onClick={() => handleResolve(alert.id)} className="btn-secondary text-sm">
                           ✅ Résoudre
                         </button>
                       )}
+                    </div>
                   </div>
                 </div>
               </div>

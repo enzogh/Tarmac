@@ -11,7 +11,7 @@ interface CardProps {
 export function Card({ title, children, className = '' }: CardProps) {
   return (
     <div className={`card ${className}`}>
-      {title && <h3 className="text-lg font-semibold mb-4 text-slate-100">{title}</h3>}
+      {title && <h3 className="card-title">{title}</h3>}
       {children}
     </div>
   );
@@ -27,18 +27,18 @@ interface StatCardProps {
 
 export function StatCard({ label, value, icon, change, changeType }: StatCardProps) {
   return (
-    <div className="card bg-gradient-to-br from-slate-800 to-slate-900">
-      <div className="flex items-start justify-between">
+    <div className="card bg-panel-glow">
+      <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-sm text-slate-400 mb-1">{label}</p>
-          <p className="text-3xl font-bold text-slate-100">{value}</p>
+          <p className="text-sm text-slate-400">{label}</p>
+          <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-50">{value}</p>
           {change && (
             <p
-              className={`text-xs mt-2 ${
+              className={`mt-2 text-xs font-medium ${
                 changeType === 'up'
-                  ? 'text-green-400'
+                  ? 'text-emerald-300'
                   : changeType === 'down'
-                    ? 'text-red-400'
+                    ? 'text-rose-300'
                     : 'text-slate-400'
               }`}
             >
@@ -46,7 +46,7 @@ export function StatCard({ label, value, icon, change, changeType }: StatCardPro
             </p>
           )}
         </div>
-        {icon && <span className="text-4xl opacity-50">{icon}</span>}
+        {icon && <span className="text-4xl opacity-70">{icon}</span>}
       </div>
     </div>
   );
@@ -68,7 +68,7 @@ export function Badge({ label, type = 'info', icon }: BadgeProps) {
 
   return (
     <span className={`badge ${typeClasses[type]}`}>
-      {icon && <span className="mr-1">{icon}</span>}
+      {icon && <span>{icon}</span>}
       {label}
     </span>
   );
@@ -92,7 +92,7 @@ export function Table({ headers, rows }: TableProps) {
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={i}>
+            <tr key={i} className="transition-colors hover:bg-white/[0.03]">
               {row.map((cell, j) => (
                 <td key={j}>{cell}</td>
               ))}
