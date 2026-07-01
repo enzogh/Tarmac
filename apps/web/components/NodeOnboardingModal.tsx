@@ -1,8 +1,20 @@
 'use client';
 
 import { FormEvent, useEffect, useState } from 'react';
+import { Plus, CheckCircle, Copy, Check, AlertTriangle } from 'lucide-react';
 import { api, NodeItem } from '../lib/api';
-import { Modal } from './Modal';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from './ui/dialog';
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 
 type NodeRole = 'controller' | 'worker';
 
@@ -41,6 +53,7 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
   const wsUrl = apiUrl.replace(/^http/, 'ws') + '/agents-ws';
 
+  const [open, setOpen] = useState(false);
   const [name, setName] = useState('storage-1');
   const [role, setRole] = useState<NodeRole>('worker');
   const [step, setStep] = useState<Step>('form');
@@ -77,6 +90,11 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
     setCopyDockerState('idle');
   };
 
+  const handleOpenChange = (val: boolean) => {
+    setOpen(val);
+    if (!val) resetForm();
+  };
+
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault();
     if (!token) { setError('Token manquant, reconnectez-vous.'); return; }
@@ -104,108 +122,161 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
   };
 
   return (
-    <Modal title="Onboarder un nœud" trigger="➕ Onboarder un nœud">
-      {(close) => (
-        <div className="space-y-6 min-w-[520px]">
+    <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button onClick={() => setOpen(true)}>
+            <Plus className="h-4 w-4" />
+            Onboarder un nœud
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Enregistrer un nouveau serveur et obtenir la commande de démarrage de l'agent</TooltipContent>
+      </Tooltip>
+
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Onboarder un nœud</DialogTitle>
+          </DialogHeader>
+
           {step === 'form' && (
             <form onSubmit={handleCreate} className="space-y-5">
               <div className="grid gap-4 md:grid-cols-2">
-                <label className="space-y-2">
-                  <span className="text-sm font-medium text-slate-300">Nom du nœud</span>
-                  <input
-                    className="input"
+                <div className="space-y-2">
+                  <Label htmlFor="node-name">Nom du nœud</Label>
+                  <Input
+                    id="node-name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="storage-1"
                     required
                   />
-                </label>
-                <label className="space-y-2">
-                  <span className="text-sm font-medium text-slate-300">Rôle</span>
-                  <select className="select" value={role} onChange={(e) => setRole(e.target.value as NodeRole)}>
-                    <option value="worker">🖥️ Worker</option>
-                    <option value="controller">⚙️ Controller</option>
-                  </select>
-                </label>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="node-role">Rôle</Label>
+                  <Select value={role} onValueChange={(v) => setRole(v as NodeRole)}>
+                    <SelectTrigger id="node-role">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="worker">Worker</SelectItem>
+                      <SelectItem value="controller">Controller</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
-              {error && <p className="text-sm text-red-400">{error}</p>}
+              {error && (
+                <p className="text-sm text-rose-400">{error}</p>
+              )}
 
-              <div className="flex justify-end gap-3">
-                <button type="button" onClick={close} className="btn-secondary">Annuler</button>
-                <button type="submit" className="btn-primary" disabled={loading}>
-                  {loading ? 'Création…' : 'Créer le nœud →'}
-                </button>
-              </div>
+              <DialogFooter>
+                <Button type="button" variant="secondary" onClick={() => handleOpenChange(false)}>
+                  Annuler
+                </Button>
+                <Button type="submit" disabled={loading}>
+                  {loading ? 'Création…' : 'Créer le nœud'}
+                </Button>
+              </DialogFooter>
             </form>
           )}
 
           {step === 'command' && createdNode && (
             <div className="space-y-5">
               <div className="flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
-                <span className="text-emerald-400 text-lg">✓</span>
+                <CheckCircle className="h-5 w-5 shrink-0 text-emerald-400" />
                 <div>
-                  <p className="text-sm font-semibold text-emerald-300">Nœud « {createdNode.name} » créé</p>
-                  <p className="text-xs text-slate-400">ID : <code className="text-slate-300">{createdNode.id}</code></p>
+                  <p className="text-sm font-semibold text-emerald-300">Nœud «&nbsp;{createdNode.name}&nbsp;» créé</p>
+                  <p className="text-xs text-muted-foreground">
+                    ID : <code className="text-foreground">{createdNode.id}</code>
+                  </p>
                 </div>
               </div>
 
-              <p className="text-sm text-slate-400">
-                Colle l'une de ces commandes sur le serveur worker pour démarrer l'agent daemon qui se connectera au panel en temps réel.
+              <p className="text-sm text-muted-foreground">
+                Colle l'une de ces commandes sur le serveur worker pour démarrer l'agent daemon.
               </p>
 
               {/* Binary */}
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold text-slate-50">Binaire (recommandé)</p>
-                    <p className="text-xs text-slate-400">Requiert le binaire <code>tarmac-agent</code> sur le serveur.</p>
+                    <p className="text-sm font-semibold text-foreground">Binaire (recommandé)</p>
+                    <p className="text-xs text-muted-foreground">Requiert le binaire <code>tarmac-agent</code>.</p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => copy(buildDaemonCommand({ wsUrl, nodeId: createdNode.id }), setCopyState)}
-                    className="btn-secondary text-xs"
-                  >
-                    {copyState === 'copied' ? '✓ Copié' : copyState === 'error' ? 'Erreur' : 'Copier'}
-                  </button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => copy(buildDaemonCommand({ wsUrl, nodeId: createdNode.id }), setCopyState)}
+                      >
+                        {copyState === 'copied' ? (
+                          <><Check className="h-3.5 w-3.5" /> Copié</>
+                        ) : (
+                          <><Copy className="h-3.5 w-3.5" /> Copier</>
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Copier la commande dans le presse-papiers</TooltipContent>
+                  </Tooltip>
                 </div>
-                <pre className="code-block whitespace-pre-wrap break-words text-xs">
+                <pre className="code-block whitespace-pre-wrap break-words">
                   {buildDaemonCommand({ wsUrl, nodeId: createdNode.id })}
                 </pre>
               </div>
 
               {/* Docker */}
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold text-slate-50">Docker</p>
-                    <p className="text-xs text-slate-400">Démarre l'agent en container avec restart automatique.</p>
+                    <p className="text-sm font-semibold text-foreground">Docker</p>
+                    <p className="text-xs text-muted-foreground">Démarre l'agent en container avec restart automatique.</p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => copy(buildDockerCommand({ wsUrl, nodeId: createdNode.id }), setCopyDockerState)}
-                    className="btn-secondary text-xs"
-                  >
-                    {copyDockerState === 'copied' ? '✓ Copié' : copyDockerState === 'error' ? 'Erreur' : 'Copier'}
-                  </button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => copy(buildDockerCommand({ wsUrl, nodeId: createdNode.id }), setCopyDockerState)}
+                      >
+                        {copyDockerState === 'copied' ? (
+                          <><Check className="h-3.5 w-3.5" /> Copié</>
+                        ) : (
+                          <><Copy className="h-3.5 w-3.5" /> Copier</>
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Copier la commande Docker dans le presse-papiers</TooltipContent>
+                  </Tooltip>
                 </div>
-                <pre className="code-block whitespace-pre-wrap break-words text-xs">
+                <pre className="code-block whitespace-pre-wrap break-words">
                   {buildDockerCommand({ wsUrl, nodeId: createdNode.id })}
                 </pre>
               </div>
 
-              <p className="text-xs text-amber-300">
-                ⚠️ Remplace <code>&lt;AGENT_SHARED_TOKEN&gt;</code> par la valeur de <code>AGENT_SHARED_TOKEN</code> configurée sur ton serveur API.
-              </p>
-
-              <div className="flex justify-end gap-3">
-                <button type="button" onClick={resetForm} className="btn-secondary">Ajouter un autre</button>
-                <button type="button" onClick={() => { resetForm(); close(); }} className="btn-primary">Terminer</button>
+              <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2.5">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                <p className="text-xs text-amber-300">
+                  Remplace <code>&lt;AGENT_SHARED_TOKEN&gt;</code> par la valeur de{' '}
+                  <code>AGENT_SHARED_TOKEN</code> configurée sur ton serveur API.
+                </p>
               </div>
+
+              <DialogFooter>
+                <Button type="button" variant="secondary" onClick={resetForm}>
+                  Ajouter un autre
+                </Button>
+                <Button type="button" onClick={() => handleOpenChange(false)}>
+                  Terminer
+                </Button>
+              </DialogFooter>
             </div>
           )}
-        </div>
-      )}
-    </Modal>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
