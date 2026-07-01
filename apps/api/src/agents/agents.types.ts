@@ -9,6 +9,11 @@ export interface HeartbeatPayload {
     ioRead?: number;
     ioWrite?: number;
   };
+  overlay?: {
+    publicKey?: string;
+    endpoint?: string;
+    listenPort?: number;
+  };
 }
 
 export interface StateReportPayload {
@@ -32,13 +37,13 @@ export interface StateReportPayload {
 }
 
 export interface CommandPayload {
-  type: 'command.apply_export' | 'command.apply_mount' | 'command.apply_pool' | 'command.run_rsync';
+  type: 'command.apply_export' | 'command.apply_mount' | 'command.apply_pool' | 'command.run_rsync' | 'command.apply_overlay';
   payload: Record<string, unknown>;
 }
 
 export interface CommandResultPayload {
-  command: 'apply_export' | 'apply_mount' | 'apply_pool' | 'run_rsync';
-  resourceType: 'share' | 'mount' | 'pool_member' | 'sync_job_run';
+  command: 'apply_export' | 'apply_mount' | 'apply_pool' | 'run_rsync' | 'apply_overlay';
+  resourceType: 'share' | 'mount' | 'pool_member' | 'sync_job_run' | 'overlay';
   resourceId: string;
   success: boolean;
   message?: string;
