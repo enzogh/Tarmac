@@ -146,7 +146,7 @@ model Node {
   sourceMigrations   MigrationTask[]  @relation("MigrationSourceNode")
   targetMigrations   MigrationTask[]  @relation("MigrationTargetNode")
   syncJobs           SyncJob[]
-  vlanMembership     VlanMember?
+  vlanMemberships    VlanMember[]
   outgoingConnections VlanConnection[] @relation("SourceNode")
   incomingConnections VlanConnection[] @relation("TargetNode")
   connectionTests    VlanConnectionTest[] @relation("InitiatorNode")
