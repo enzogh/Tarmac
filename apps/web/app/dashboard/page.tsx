@@ -1,84 +1,35 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  api,
-  AlertItem,
-  Forecast,
-  MigrationItem,
-  MountItem,
-  NodeItem,
-  PoolItem,
-  ShareItem,
-  SyncJobItem,
-} from '../../lib/api';
+import { api, Forecast, NodeItem, AlertItem, SyncJobItem, MigrationItem } from '../../lib/api';
+import { DashboardLayout } from '../../components/DashboardLayout';
+import { Card, StatCard, Badge } from '../../components/ui';
 
-function Badge({ value }: { value: string }) {
-  return <span className={`badge ${value}`}>{value}</span>;
-}
-
-export default function DashboardPage() {
+export default function OverviewPage() {
   const router = useRouter();
   const token = useMemo(() => (typeof window !== 'undefined' ? localStorage.getItem('tarmac_token') : null), []);
 
+  const [forecast, setForecast] = useState<Forecast | null>(null);
   const [nodes, setNodes] = useState<NodeItem[]>([]);
-  const [shares, setShares] = useState<ShareItem[]>([]);
-  const [mounts, setMounts] = useState<MountItem[]>([]);
-  const [pools, setPools] = useState<PoolItem[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [syncJobs, setSyncJobs] = useState<SyncJobItem[]>([]);
   const [migrations, setMigrations] = useState<MigrationItem[]>([]);
-  const [topology, setTopology] = useState<Record<string, unknown> | null>(null);
-  const [forecast, setForecast] = useState<Forecast | null>(null);
-
-  const [nodeName, setNodeName] = useState('');
-  const [nodeRole, setNodeRole] = useState('worker');
-
-  const [shareName, setShareName] = useState('');
-  const [sharePath, setSharePath] = useState('');
-  const [shareNodeId, setShareNodeId] = useState('');
-
-  const [mountName, setMountName] = useState('');
-  const [mountSource, setMountSource] = useState('');
-  const [mountTarget, setMountTarget] = useState('');
-  const [mountNodeId, setMountNodeId] = useState('');
-
-  const [poolName, setPoolName] = useState('');
-  const [poolStrategy, setPoolStrategy] = useState('mirror');
-
-  const [syncJobName, setSyncJobName] = useState('');
-  const [syncJobSource, setSyncJobSource] = useState('');
-  const [syncJobTarget, setSyncJobTarget] = useState('');
-  const [syncJobSchedule, setSyncJobSchedule] = useState('manual');
-  const [syncJobNodeId, setSyncJobNodeId] = useState('');
-
-  const [migrationName, setMigrationName] = useState('');
-  const [migrationSourceNodeId, setMigrationSourceNodeId] = useState('');
-  const [migrationTargetNodeId, setMigrationTargetNodeId] = useState('');
 
   const load = async () => {
     if (!token) return;
     try {
-      const [n, s, m, p, a, sj, mg, tp, fc] = await Promise.all([
+      const [n, a, sj, mg, fc] = await Promise.all([
         api.nodes.list(token),
-        api.shares.list(token),
-        api.mounts.list(token),
-        api.pools.list(token),
         api.alerts.list(token),
         api.syncJobs.list(token),
         api.migrations.list(token),
-        api.topology.get(token),
         api.storage.forecast(token),
       ]);
       setNodes(n);
-      setShares(s);
-      setMounts(m);
-      setPools(p);
       setAlerts(a);
       setSyncJobs(sj);
       setMigrations(mg);
-      setTopology(tp);
       setForecast(fc);
     } catch {
       localStorage.removeItem('tarmac_token');
@@ -98,443 +49,171 @@ export default function DashboardPage() {
     return () => clearInterval(id);
   }, [token]);
 
-  const createNode = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!token) return;
-    await api.nodes.create(token, { name: nodeName, role: nodeRole });
-    setNodeName('');
-    await load();
-  };
-
-  const createShare = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!token) return;
-    await api.shares.create(token, {
-      name: shareName,
-      path: sharePath,
-      nodeId: shareNodeId || undefined,
-    });
-    setShareName('');
-    setSharePath('');
-    await load();
-  };
-
-  const createMount = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!token) return;
-    await api.mounts.create(token, {
-      name: mountName,
-      sourcePath: mountSource,
-      targetPath: mountTarget,
-      nodeId: mountNodeId || undefined,
-    });
-    setMountName('');
-    setMountSource('');
-    setMountTarget('');
-    await load();
-  };
-
-  const createPool = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!token) return;
-    await api.pools.create(token, { name: poolName, strategy: poolStrategy });
-    setPoolName('');
-    await load();
-  };
-
-  const createSyncJob = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!token) return;
-    await api.syncJobs.create(token, {
-      name: syncJobName,
-      sourcePath: syncJobSource,
-      targetPath: syncJobTarget,
-      schedule: syncJobSchedule,
-      nodeId: syncJobNodeId || undefined,
-    });
-    setSyncJobName('');
-    setSyncJobSource('');
-    setSyncJobTarget('');
-    await load();
-  };
-
-  const createMigration = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!token) return;
-    await api.migrations.create(token, {
-      name: migrationName,
-      sourceNodeId: migrationSourceNodeId || undefined,
-      targetNodeId: migrationTargetNodeId || undefined,
-    });
-    setMigrationName('');
-    await load();
-  };
+  const alertsCritical = alerts.filter((a) => a.severity === 'critical').length;
+  const alertsWarning = alerts.filter((a) => a.severity === 'high').length;
+  const nodesOnline = nodes.filter((n) => n.status === 'online').length;
+  const migrationsActive = migrations.filter((m) => m.status === 'running').length;
 
   return (
-    <div className="container">
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1>Tarmac Dashboard</h1>
-        <button
-          className="secondary"
-          onClick={() => {
-            localStorage.removeItem('tarmac_token');
-            router.push('/login');
-          }}
-        >
-          Déconnexion
-        </button>
-      </div>
+    <DashboardLayout>
+      <div>
+        <h1 className="text-3xl font-bold mb-8 text-slate-100">Vue d'ensemble du système</h1>
 
-      <div className="card">
-        <h2>Forecast</h2>
-        {forecast ? (
-          <div>
-            <p>
-              {forecast.totalUsedGb} / {forecast.totalCapacityGb} GB ({Math.round(forecast.usageRatio * 100)}%)
-            </p>
-            <p>
-              Croissance estimée: {forecast.avgGrowthPerDayGb} GB/jour · Jours restants:{' '}
-              {forecast.forecast.daysToFull ?? 'N/A'}
-            </p>
-          </div>
-        ) : (
-          <p>Chargement...</p>
+        {/* KPI Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <StatCard
+            label="Utilisation du stockage"
+            value={forecast ? `${Math.round(forecast.usageRatio * 100)}%` : '-'}
+            icon="💾"
+            change={forecast ? `${forecast.avgGrowthPerDayGb} GB/jour` : undefined}
+          />
+          <StatCard
+            label="Nœuds en ligne"
+            value={`${nodesOnline}/${nodes.length}`}
+            icon="🖥️"
+            changeType="up"
+          />
+          <StatCard
+            label="Alertes actives"
+            value={alerts.length}
+            icon="⚠️"
+            change={alertsCritical > 0 ? `${alertsCritical} critiques` : `${alertsWarning} avertissements`}
+            changeType={alertsCritical > 0 ? 'down' : alertsWarning > 0 ? 'neutral' : 'up'}
+          />
+          <StatCard
+            label="Migrations en cours"
+            value={migrationsActive}
+            icon="➡️"
+            changeType="neutral"
+          />
+        </div>
+
+        {/* Storage forecast */}
+        {forecast && (
+          <Card title="📊 Prévision d'utilisation du stockage" className="mb-8">
+            <div className="space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-slate-300">{forecast.totalUsedGb} GB utilisés</span>
+                  <span className="text-slate-400">{forecast.totalCapacityGb} GB total</span>
+                </div>
+                <div className="w-full bg-slate-800 rounded-full h-3 overflow-hidden">
+                  <div
+                    className="bg-gradient-to-r from-blue-600 to-blue-400 h-full transition-all"
+                    style={{ width: `${forecast.usageRatio * 100}%` }}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-slate-400">Croissance moyenne</p>
+                  <p className="text-lg font-semibold text-slate-100">{forecast.avgGrowthPerDayGb} GB/jour</p>
+                </div>
+                <div>
+                  <p className="text-slate-400">Jours restants</p>
+                  <p className="text-lg font-semibold text-slate-100">
+                    {forecast.forecast.daysToFull ?? 'N/A'} jours
+                  </p>
+                </div>
+              </div>
+            </div>
+          </Card>
         )}
-      </div>
 
-      <div className="card">
-        <h2>Nodes</h2>
-        <form className="row" onSubmit={createNode}>
-          <input placeholder="Nom" value={nodeName} onChange={(e) => setNodeName(e.target.value)} required />
-          <select value={nodeRole} onChange={(e) => setNodeRole(e.target.value)}>
-            <option value="worker">worker</option>
-            <option value="controller">controller</option>
-          </select>
-          <button>Créer node</button>
-        </form>
-        <table>
-          <thead>
-            <tr>
-              <th>Nom</th>
-              <th>Rôle</th>
-              <th>Status</th>
-              <th>lastSeen</th>
-            </tr>
-          </thead>
-          <tbody>
-            {nodes.map((n) => (
-              <tr key={n.id}>
-                <td>{n.name}</td>
-                <td>{n.role}</td>
-                <td>
-                  <Badge value={n.status} />
-                </td>
-                <td>{n.lastSeenAt ? new Date(n.lastSeenAt).toLocaleString() : '-'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Nodes Status */}
+          <Card title="🖥️ État des nœuds">
+            <div className="space-y-2">
+              {nodes.slice(0, 5).map((node) => (
+                <div key={node.id} className="flex items-center justify-between p-3 bg-slate-800 rounded">
+                  <div>
+                    <p className="font-medium text-slate-100">{node.name}</p>
+                    <p className="text-xs text-slate-400">{node.role}</p>
+                  </div>
+                  <Badge
+                    label={node.status}
+                    type={node.status === 'online' ? 'success' : 'error'}
+                  />
+                </div>
+              ))}
+              {nodes.length > 5 && (
+                <p className="text-sm text-slate-400 text-center pt-2">
+                  +{nodes.length - 5} nœuds supplémentaires
+                </p>
+              )}
+            </div>
+          </Card>
 
-      <div className="card">
-        <h2>Pools</h2>
-        <form className="row" onSubmit={createPool}>
-          <input placeholder="Nom" value={poolName} onChange={(e) => setPoolName(e.target.value)} required />
-          <input
-            placeholder="Stratégie"
-            value={poolStrategy}
-            onChange={(e) => setPoolStrategy(e.target.value)}
-            required
-          />
-          <button>Créer pool</button>
-        </form>
-        <table>
-          <thead>
-            <tr>
-              <th>Nom</th>
-              <th>Strategy</th>
-              <th>Status</th>
-              <th>Membres</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pools.map((p) => (
-              <tr key={p.id}>
-                <td>{p.name}</td>
-                <td>{p.strategy}</td>
-                <td>
-                  <Badge value={p.status} />
-                </td>
-                <td>{p.members.length}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          {/* Recent alerts */}
+          <Card title="⚠️ Alertes récentes">
+            <div className="space-y-2">
+              {alerts.slice(0, 5).map((alert) => (
+                <div key={alert.id} className="flex items-start gap-3 p-3 bg-slate-800 rounded">
+                  <div className="flex-1">
+                    <p className="font-medium text-slate-100 text-sm">{alert.message}</p>
+                    <p className="text-xs text-slate-400 mt-1">{alert.status}</p>
+                  </div>
+                  <Badge
+                    label={alert.severity}
+                    type={
+                      alert.severity === 'critical'
+                        ? 'error'
+                        : alert.severity === 'high'
+                          ? 'warning'
+                          : 'info'
+                    }
+                  />
+                </div>
+              ))}
+              {alerts.length === 0 && (
+                <p className="text-center text-slate-400 py-4">✅ Aucune alerte</p>
+              )}
+            </div>
+          </Card>
+        </div>
 
-      <div className="card">
-        <h2>Alerts</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Message</th>
-              <th>Severity</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {alerts.map((a) => (
-              <tr key={a.id}>
-                <td>{a.message}</td>
-                <td>
-                  <Badge value={a.severity} />
-                </td>
-                <td>
-                  <Badge value={a.status} />
-                </td>
-                <td className="row">
-                  <button
-                    className="secondary"
-                    onClick={async () => {
-                      if (!token) return;
-                      await api.alerts.ack(token, a.id);
-                      await load();
-                    }}
-                  >
-                    Ack
-                  </button>
-                  <button
-                    className="secondary"
-                    onClick={async () => {
-                      if (!token) return;
-                      await api.alerts.resolve(token, a.id);
-                      await load();
-                    }}
-                  >
-                    Resolve
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+        {/* Sync jobs and migrations */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
+          <Card title="🔄 Travaux de synchronisation">
+            <div className="space-y-2">
+              {syncJobs.slice(0, 5).map((job) => (
+                <div key={job.id} className="flex items-center justify-between p-3 bg-slate-800 rounded">
+                  <div>
+                    <p className="font-medium text-slate-100">{job.name}</p>
+                    <p className="text-xs text-slate-400">{job.sourcePath}</p>
+                  </div>
+                  <Badge label={job.status} type="info" />
+                </div>
+              ))}
+              {syncJobs.length === 0 && (
+                <p className="text-center text-slate-400 py-4">Aucun travail</p>
+              )}
+            </div>
+          </Card>
 
-      <div className="card">
-        <h2>Sync jobs</h2>
-        <form className="row" onSubmit={createSyncJob}>
-          <input placeholder="Nom" value={syncJobName} onChange={(e) => setSyncJobName(e.target.value)} required />
-          <input
-            placeholder="Source"
-            value={syncJobSource}
-            onChange={(e) => setSyncJobSource(e.target.value)}
-            required
-          />
-          <input
-            placeholder="Target"
-            value={syncJobTarget}
-            onChange={(e) => setSyncJobTarget(e.target.value)}
-            required
-          />
-          <input
-            placeholder="Schedule"
-            value={syncJobSchedule}
-            onChange={(e) => setSyncJobSchedule(e.target.value)}
-            required
-          />
-          <select value={syncJobNodeId} onChange={(e) => setSyncJobNodeId(e.target.value)}>
-            <option value="">Node (optionnel)</option>
-            {nodes.map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.name}
-              </option>
-            ))}
-          </select>
-          <button>Créer sync-job</button>
-        </form>
-        <table>
-          <thead>
-            <tr>
-              <th>Nom</th>
-              <th>Source</th>
-              <th>Target</th>
-              <th>Status</th>
-              <th>Run</th>
-            </tr>
-          </thead>
-          <tbody>
-            {syncJobs.map((job) => (
-              <tr key={job.id}>
-                <td>{job.name}</td>
-                <td>{job.sourcePath}</td>
-                <td>{job.targetPath}</td>
-                <td>
-                  <Badge value={job.status} />
-                </td>
-                <td>
-                  <button
-                    className="secondary"
-                    onClick={async () => {
-                      if (!token) return;
-                      await api.syncJobs.run(token, job.id);
-                      await load();
-                    }}
-                  >
-                    Run now
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+          <Card title="➡️ Migrations en cours">
+            <div className="space-y-3">
+              {migrations.slice(0, 5).map((migration) => (
+                <div key={migration.id} className="p-3 bg-slate-800 rounded">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="font-medium text-slate-100">{migration.name}</p>
+                    <span className="text-sm text-slate-400">{migration.progress}%</span>
+                  </div>
+                  <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-gradient-to-r from-green-600 to-green-400 h-full transition-all"
+                      style={{ width: `${migration.progress}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+              {migrations.length === 0 && (
+                <p className="text-center text-slate-400 py-4">Aucune migration</p>
+              )}
+            </div>
+          </Card>
+        </div>
       </div>
-
-      <div className="card">
-        <h2>Migrations</h2>
-        <form className="row" onSubmit={createMigration}>
-          <input
-            placeholder="Nom migration"
-            value={migrationName}
-            onChange={(e) => setMigrationName(e.target.value)}
-            required
-          />
-          <select value={migrationSourceNodeId} onChange={(e) => setMigrationSourceNodeId(e.target.value)}>
-            <option value="">Source node</option>
-            {nodes.map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.name}
-              </option>
-            ))}
-          </select>
-          <select value={migrationTargetNodeId} onChange={(e) => setMigrationTargetNodeId(e.target.value)}>
-            <option value="">Target node</option>
-            {nodes.map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.name}
-              </option>
-            ))}
-          </select>
-          <button>Créer migration</button>
-        </form>
-        <table>
-          <thead>
-            <tr>
-              <th>Nom</th>
-              <th>Status</th>
-              <th>Progress</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {migrations.map((item) => (
-              <tr key={item.id}>
-                <td>{item.name}</td>
-                <td>
-                  <Badge value={item.status} />
-                </td>
-                <td>{item.progress}%</td>
-                <td>
-                  <button
-                    className="secondary"
-                    onClick={async () => {
-                      if (!token) return;
-                      await api.migrations.start(token, item.id);
-                      await load();
-                    }}
-                  >
-                    Start
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="card">
-        <h2>Topology (JSON)</h2>
-        <pre style={{ maxHeight: 280, overflow: 'auto' }}>{JSON.stringify(topology, null, 2)}</pre>
-      </div>
-
-      <div className="card">
-        <h2>Shares</h2>
-        <form className="row" onSubmit={createShare}>
-          <input placeholder="Nom" value={shareName} onChange={(e) => setShareName(e.target.value)} required />
-          <input placeholder="Path" value={sharePath} onChange={(e) => setSharePath(e.target.value)} required />
-          <select value={shareNodeId} onChange={(e) => setShareNodeId(e.target.value)}>
-            <option value="">Node (optionnel)</option>
-            {nodes.map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.name}
-              </option>
-            ))}
-          </select>
-          <button>Créer share</button>
-        </form>
-        <table>
-          <thead>
-            <tr>
-              <th>Nom</th>
-              <th>Path</th>
-              <th>Status</th>
-              <th>Node</th>
-            </tr>
-          </thead>
-          <tbody>
-            {shares.map((s) => (
-              <tr key={s.id}>
-                <td>{s.name}</td>
-                <td>{s.path}</td>
-                <td>
-                  <Badge value={s.status} />
-                </td>
-                <td>{s.nodeId ?? '-'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="card">
-        <h2>Mounts</h2>
-        <form className="row" onSubmit={createMount}>
-          <input placeholder="Nom" value={mountName} onChange={(e) => setMountName(e.target.value)} required />
-          <input placeholder="Source" value={mountSource} onChange={(e) => setMountSource(e.target.value)} required />
-          <input placeholder="Target" value={mountTarget} onChange={(e) => setMountTarget(e.target.value)} required />
-          <select value={mountNodeId} onChange={(e) => setMountNodeId(e.target.value)}>
-            <option value="">Node (optionnel)</option>
-            {nodes.map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.name}
-              </option>
-            ))}
-          </select>
-          <button>Créer mount</button>
-        </form>
-        <table>
-          <thead>
-            <tr>
-              <th>Nom</th>
-              <th>Source</th>
-              <th>Target</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {mounts.map((m) => (
-              <tr key={m.id}>
-                <td>{m.name}</td>
-                <td>{m.sourcePath}</td>
-                <td>{m.targetPath}</td>
-                <td>
-                  <Badge value={m.status} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    </DashboardLayout>
   );
 }
