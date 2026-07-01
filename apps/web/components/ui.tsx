@@ -1,54 +1,50 @@
 'use client';
 
 import { ReactNode } from 'react';
+import { Card as ShadCard, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Badge as ShadBadge } from './ui/badge';
+import { cn } from '../lib/utils';
 
-interface CardProps {
-  title?: string;
-  children: ReactNode;
-  className?: string;
-}
-
-export function Card({ title, children, className = '' }: CardProps) {
-  return (
-    <div className={`card ${className}`}>
-      {title && <h3 className="card-title">{title}</h3>}
-      {children}
-    </div>
-  );
-}
+// Re-exports for convenience
+export { ShadCard as Card };
 
 interface StatCardProps {
   label: string;
   value: string | number;
-  icon?: string;
+  icon?: ReactNode;
   change?: string;
   changeType?: 'up' | 'down' | 'neutral';
 }
 
 export function StatCard({ label, value, icon, change, changeType }: StatCardProps) {
   return (
-    <div className="card bg-panel-glow">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm text-slate-400">{label}</p>
-          <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-50">{value}</p>
-          {change && (
-            <p
-              className={`mt-2 text-xs font-medium ${
-                changeType === 'up'
-                  ? 'text-emerald-300'
-                  : changeType === 'down'
-                    ? 'text-rose-300'
-                    : 'text-slate-400'
-              }`}
-            >
-              {change}
-            </p>
+    <ShadCard className="bg-panel-glow">
+      <CardContent className="pt-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm text-muted-foreground">{label}</p>
+            <p className="mt-2 text-3xl font-semibold tracking-tight text-foreground">{value}</p>
+            {change && (
+              <p
+                className={cn(
+                  'mt-2 text-xs font-medium',
+                  changeType === 'up'
+                    ? 'text-emerald-400'
+                    : changeType === 'down'
+                      ? 'text-rose-400'
+                      : 'text-muted-foreground'
+                )}
+              >
+                {change}
+              </p>
+            )}
+          </div>
+          {icon && (
+            <div className="text-muted-foreground opacity-70">{icon}</div>
           )}
         </div>
-        {icon && <span className="text-4xl opacity-70">{icon}</span>}
-      </div>
-    </div>
+      </CardContent>
+    </ShadCard>
   );
 }
 
@@ -59,18 +55,18 @@ interface BadgeProps {
 }
 
 export function Badge({ label, type = 'info', icon }: BadgeProps) {
-  const typeClasses = {
-    success: 'badge-success',
-    warning: 'badge-warning',
-    error: 'badge-error',
-    info: 'badge-info',
-  };
+  const variantMap = {
+    success: 'success',
+    warning: 'warning',
+    error: 'destructive',
+    info: 'info',
+  } as const;
 
   return (
-    <span className={`badge ${typeClasses[type]}`}>
+    <ShadBadge variant={variantMap[type]}>
       {icon && <span>{icon}</span>}
       {label}
-    </span>
+    </ShadBadge>
   );
 }
 
@@ -82,19 +78,21 @@ interface TableProps {
 export function Table({ headers, rows }: TableProps) {
   return (
     <div className="overflow-x-auto">
-      <table className="table">
+      <table className="w-full text-sm">
         <thead>
-          <tr>
+          <tr className="border-b border-white/[0.08]">
             {headers.map((header, i) => (
-              <th key={i}>{header}</th>
+              <th key={i} className="px-4 py-3 text-left font-semibold text-muted-foreground text-xs">
+                {header}
+              </th>
             ))}
           </tr>
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={i} className="transition-colors hover:bg-white/[0.03]">
+            <tr key={i} className="border-b border-white/[0.06] transition-colors hover:bg-white/[0.02]">
               {row.map((cell, j) => (
-                <td key={j}>{cell}</td>
+                <td key={j} className="px-4 py-3 text-foreground/90">{cell}</td>
               ))}
             </tr>
           ))}

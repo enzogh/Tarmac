@@ -3,14 +3,27 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { ReactNode } from 'react';
+import {
+  LayoutDashboard,
+  Server,
+  Database,
+  RefreshCw,
+  ArrowRightLeft,
+  Bell,
+  LogOut,
+  Layers,
+} from 'lucide-react';
+import { Button } from './ui/button';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
+import { cn } from '../lib/utils';
 
 const NAV_ITEMS = [
-  { href: '/dashboard', label: 'Vue d\'ensemble', icon: '📊' },
-  { href: '/dashboard/infrastructure', label: 'Infrastructure', icon: '🖥️' },
-  { href: '/dashboard/storage', label: 'Stockage', icon: '📁' },
-  { href: '/dashboard/replication', label: 'Réplication', icon: '🔄' },
-  { href: '/dashboard/migrations', label: 'Migrations', icon: '➡️' },
-  { href: '/dashboard/alerts', label: 'Alertes', icon: '⚠️' },
+  { href: '/dashboard', label: "Vue d'ensemble", icon: LayoutDashboard, exact: true },
+  { href: '/dashboard/infrastructure', label: 'Infrastructure', icon: Server },
+  { href: '/dashboard/storage', label: 'Stockage', icon: Database },
+  { href: '/dashboard/replication', label: 'Réplication', icon: RefreshCw },
+  { href: '/dashboard/migrations', label: 'Migrations', icon: ArrowRightLeft },
+  { href: '/dashboard/alerts', label: 'Alertes', icon: Bell },
 ];
 
 export function DashboardLayout({ children }: { children: ReactNode }) {
@@ -23,78 +36,101 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className="relative flex min-h-screen overflow-hidden bg-slate-950">
-      <div className="pointer-events-none absolute inset-0 shell-gradient opacity-80" />
-
-      {/* Sidebar */}
-      <div className="relative z-10 flex w-72 flex-col border-r border-white/8 bg-slate-950/70 backdrop-blur-2xl">
-        <div className="border-b border-white/8 p-6">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-indigo-500 shadow-glow">
-              🏗️
-            </div>
-            <div>
-              <h1 className="text-xl font-semibold tracking-tight text-slate-50">Tarmac</h1>
-              <p className="text-xs text-slate-400">Premium storage dashboard</p>
+    <TooltipProvider delayDuration={300}>
+      <div className="relative flex min-h-screen overflow-hidden">
+        {/* Sidebar */}
+        <aside className="relative z-10 flex w-64 flex-col border-r border-white/[0.06] bg-zinc-950/80 backdrop-blur-2xl">
+          {/* Logo */}
+          <div className="border-b border-white/[0.06] px-5 py-5">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 shadow-glow">
+                <Layers className="h-4 w-4 text-white" />
+              </div>
+              <div>
+                <h1 className="text-base font-semibold tracking-tight text-foreground">Tarmac</h1>
+                <p className="text-[11px] text-muted-foreground">Storage dashboard</p>
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Navigation */}
-        <nav className="flex-1 space-y-2 px-4 py-6">
-          {NAV_ITEMS.map((item) => {
-            const isActive =
-              pathname === item.href || pathname.startsWith(item.href + '/');
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`flex items-center gap-3 rounded-2xl border px-4 py-3 transition-all duration-200 ${
-                  isActive
-                    ? 'border-brand-500/20 bg-brand-500/10 text-brand-200 shadow-glow'
-                    : 'border-transparent text-slate-300 hover:border-white/10 hover:bg-white/5 hover:text-white'
-                }`}
-              >
-                <span className="text-lg">{item.icon}</span>
-                <span className="font-medium">{item.label}</span>
-              </Link>
-            );
-          })}
-        </nav>
-
-        {/* Footer */}
-        <div className="border-t border-white/8 p-4">
-          <button
-            onClick={handleLogout}
-            className="btn-secondary w-full justify-center"
-          >
-            🚪 Déconnexion
-          </button>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="relative z-10 flex flex-1 flex-col overflow-hidden">
-        {/* Top Bar */}
-        <div className="flex items-center justify-between border-b border-white/8 bg-slate-950/55 px-6 py-4 backdrop-blur-xl lg:px-8">
-          <h2 className="text-lg font-semibold tracking-tight text-slate-50">
-            Tableau de bord Tarmac
-          </h2>
-          <div className="rounded-full border border-white/8 bg-white/5 px-3 py-1.5 text-sm text-slate-300 shadow-insetSoft">
-            {new Date().toLocaleDateString('fr-FR', {
-              weekday: 'short',
-              year: 'numeric',
-              month: 'short',
-              day: 'numeric',
+          {/* Navigation */}
+          <nav className="flex-1 space-y-0.5 px-3 py-4">
+            {NAV_ITEMS.map((item) => {
+              const Icon = item.icon;
+              const isActive = item.exact
+                ? pathname === item.href
+                : pathname === item.href || pathname.startsWith(item.href + '/');
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150',
+                    isActive
+                      ? 'bg-violet-600/15 text-violet-300 shadow-[inset_0_0_0_1px_rgba(139,92,246,0.2)]'
+                      : 'text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-100'
+                  )}
+                >
+                  <Icon
+                    className={cn('h-4 w-4 shrink-0', isActive ? 'text-violet-400' : 'text-zinc-500')}
+                  />
+                  {item.label}
+                </Link>
+              );
             })}
-          </div>
-        </div>
+          </nav>
 
-        {/* Content */}
-        <div className="flex-1 overflow-auto">
-          <div className="container">{children}</div>
+          {/* Footer */}
+          <div className="border-t border-white/[0.06] p-3">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  onClick={handleLogout}
+                  className="w-full justify-start gap-3 text-zinc-400 hover:text-zinc-100"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Déconnexion
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">Se déconnecter du tableau de bord</TooltipContent>
+            </Tooltip>
+          </div>
+        </aside>
+
+        {/* Main Content */}
+        <div className="relative z-10 flex flex-1 flex-col overflow-hidden">
+          {/* Top Bar */}
+          <header className="flex items-center justify-between border-b border-white/[0.06] bg-zinc-950/60 px-6 py-3.5 backdrop-blur-xl">
+            <div className="flex items-center gap-2">
+              <div className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
+              <span className="text-sm font-medium text-foreground">Tarmac</span>
+              <span className="text-zinc-600 text-sm">/</span>
+              <span className="text-sm text-muted-foreground">
+                {NAV_ITEMS.find(
+                  (n) =>
+                    n.exact
+                      ? pathname === n.href
+                      : pathname === n.href || pathname.startsWith(n.href + '/')
+                )?.label ?? 'Dashboard'}
+              </span>
+            </div>
+            <div className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-xs text-muted-foreground">
+              {new Date().toLocaleDateString('fr-FR', {
+                weekday: 'short',
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+              })}
+            </div>
+          </header>
+
+          {/* Content */}
+          <main className="flex-1 overflow-auto">
+            <div className="mx-auto max-w-7xl px-6 py-8 lg:px-8">{children}</div>
+          </main>
         </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }
