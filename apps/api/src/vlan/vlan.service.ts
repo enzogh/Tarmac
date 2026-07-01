@@ -214,7 +214,7 @@ export class VlanService implements OnModuleInit {
   }
 
   async recordConnectionTest(
-    vlanId: string,
+    vlanIdOrName: string,
     initiatorNodeId: string,
     targetNodeId: string,
     testType: 'ping' | 'connectivity' | 'latency',
@@ -225,9 +225,23 @@ export class VlanService implements OnModuleInit {
       message?: string;
     },
   ): Promise<any> {
+    // Resolve VLAN name alias to ID
+    const vlanLookup = await this.prisma.vlan.findFirst({
+      where: {
+        OR: [
+          { id: vlanIdOrName },
+          { name: vlanIdOrName }
+        ]
+      }
+    });
+
+    if (!vlanLookup) {
+      throw new Error(`VLAN not found: ${vlanIdOrName}`);
+    }
+
     return this.prisma.vlanConnectionTest.create({
       data: {
-        vlanId,
+        vlanId: vlanLookup.id,
         initiatorNodeId,
         targetNodeId,
         testType,
@@ -241,9 +255,23 @@ export class VlanService implements OnModuleInit {
     });
   }
 
-  async getRecentConnectionTests(vlanId: string, limit: number = 50): Promise<any> {
+  async getRecentConnectionTests(vlanIdOrName: string, limit: number = 50): Promise<any> {
+    // Resolve VLAN name alias to ID
+    const vlanLookup = await this.prisma.vlan.findFirst({
+      where: {
+        OR: [
+          { id: vlanIdOrName },
+          { name: vlanIdOrName }
+        ]
+      }
+    });
+
+    if (!vlanLookup) {
+      throw new Error(`VLAN not found: ${vlanIdOrName}`);
+    }
+
     return this.prisma.vlanConnectionTest.findMany({
-      where: { vlanId },
+      where: { vlanId: vlanLookup.id },
       include: {
         initiatorNode: { select: { id: true, name: true, vlanIp: true } },
       },
@@ -252,9 +280,28 @@ export class VlanService implements OnModuleInit {
     });
   }
 
-  async getVlanStatus(vlanId: string): Promise<any> {
+  async getVlanStatus(vlanIdOrName: string): Promise<any> {
+    // Resolve VLAN name alias to ID
+    const vlanLookup = await this.prisma.vlan.findFirst({
+      where: {
+        OR: [
+          { id: vlanIdOrName },
+          { name: vlanIdOrName }
+        ]
+      }
+    });
+
+    if (!vlanLookup) {
+      throw new Error(`VLAN not found: ${vlanIdOrName}`);
+    }
+
+    const vlanId = vlanLookup.id;
+
     const [vlan, members, connections, failedTests] = await Promise.all([
-      this.prisma.vlan.findUnique({ where: { id: vlanId } }),
+      this.prisma.vlan.findUnique({
+        where: { id: vlanId },
+        include: { members: { include: { node: true } } }
+      }),
       this.prisma.vlanMember.count({ where: { vlanId } }),
       this.prisma.vlanConnection.findMany({
         where: { vlanId },
