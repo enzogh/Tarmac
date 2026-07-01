@@ -31,7 +31,10 @@ import {
 } from '../../../components/ui/table';
 import { Progress } from '../../../components/ui/progress';
 
-const formatBytesPerSecond = (value: number) => `${Math.round(value)} B/s`;
+const formatBytesPerSecond = (value: number) => {
+  const mbps = (value * 8) / 1_000_000; // Convert B/s to Mbps
+  return `${mbps.toFixed(2)} Mbps`;
+};
 
 export default function InfrastructurePage() {
   const router = useRouter();
@@ -158,6 +161,7 @@ export default function InfrastructurePage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>Node ID</TableHead>
                   <TableHead>Nom</TableHead>
                   <TableHead>Rôle</TableHead>
                   <TableHead>Statut</TableHead>
@@ -172,6 +176,7 @@ export default function InfrastructurePage() {
               <TableBody>
                 {nodes.map((node) => (
                   <TableRow key={node.id}>
+                    <TableCell className="font-mono text-xs text-muted-foreground break-all max-w-xs">{node.id}</TableCell>
                     <TableCell className="font-medium">{node.name}</TableCell>
                     <TableCell className="text-muted-foreground capitalize">{node.role}</TableCell>
                     <TableCell>

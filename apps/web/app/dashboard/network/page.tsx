@@ -200,14 +200,37 @@ export default function NetworkPage() {
           <CardTitle className="text-base">Nœuds du Cluster</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="space-y-3">
             {(vlanStatus.vlan.members || []).map((member) => (
-              <div key={member.id} className="border border-white/10 rounded-lg p-3 hover:bg-white/5 transition">
-                <div className="font-semibold text-sm text-foreground">{member.node?.name || 'Unknown'}</div>
-                <div className="space-y-1 mt-2 text-xs text-muted-foreground">
-                  <div>IP: <span className="font-mono text-foreground">{member.vlanIp}</span></div>
-                  <div>MAC: <span className="font-mono text-foreground">{member.vlanMac.slice(0, 17)}…</span></div>
-                  <div>Rejoint: {new Date(member.joinedAt).toLocaleString('fr-FR')}</div>
+              <div key={member.id} className="border border-white/10 rounded-lg p-4 hover:bg-white/5 transition">
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <div className="font-semibold text-foreground">{member.node?.name || 'Unknown'}</div>
+                    <div className="font-mono text-xs text-muted-foreground mt-1 break-all">{member.nodeId}</div>
+                  </div>
+                  <span className={`px-2 py-1 rounded text-xs font-medium ${
+                    member.node?.status === 'online' ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground'
+                  }`}>
+                    {member.node?.status === 'online' ? '🟢 Online' : '🔴 Offline'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <p className="text-muted-foreground">IP VLAN</p>
+                    <p className="font-mono text-foreground">{member.vlanIp}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">MAC</p>
+                    <p className="font-mono text-foreground text-xs">{member.vlanMac}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Rejoint</p>
+                    <p className="text-foreground">{new Date(member.joinedAt).toLocaleString('fr-FR')}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Dernier heartbeat</p>
+                    <p className="text-foreground">{new Date(member.lastHeartbeat).toLocaleTimeString('fr-FR')}</p>
+                  </div>
                 </div>
               </div>
             ))}
@@ -225,35 +248,37 @@ export default function NetworkPage() {
             <table className="w-full text-xs">
               <thead className="border-b border-white/10">
                 <tr>
-                  <th className="text-left p-2 font-semibold text-muted-foreground">Source</th>
-                  <th className="text-left p-2 font-semibold text-muted-foreground">Cible</th>
-                  <th className="text-left p-2 font-semibold text-muted-foreground">Status</th>
+                 <th className="text-left p-2 font-semibold text-muted-foreground">Nœud Source</th>
+                 <th className="text-left p-2 font-semibold text-muted-foreground">Nœud Cible</th>
+                 <th className="text-center p-2 font-semibold text-muted-foreground">Status</th>
                   <th className="text-right p-2 font-semibold text-muted-foreground">Latency (ms)</th>
                   <th className="text-right p-2 font-semibold text-muted-foreground">Loss %</th>
-                </tr>
-              </thead>
-              <tbody>
-                {connections.slice(0, 10).map((conn, i) => (
-                  <tr key={i} className="border-b border-white/5 hover:bg-white/5">
-                    <td className="p-2 font-mono text-foreground">{conn.sourceNodeId.slice(0, 8)}…</td>
-                    <td className="p-2 font-mono text-foreground">{conn.targetNodeId.slice(0, 8)}…</td>
-                    <td className="p-2">
-                      <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${
-                        conn.status === 'healthy' ? 'bg-primary/20 text-primary' : 
-                        conn.status === 'degraded' ? 'bg-yellow-500/20 text-yellow-500' : 
-                        'bg-destructive/20 text-destructive'
-                      }`}>
-                        {conn.status === 'healthy' ? '✓' : conn.status === 'degraded' ? '⚠' : '✕'}
-                      </span>
-                    </td>
-                    <td className="p-2 text-right font-mono text-foreground">{conn.latencyMs?.toFixed(1) || '-'}</td>
-                    <td className="p-2 text-right font-mono text-foreground">{conn.packetLoss?.toFixed(1) || '-'}%</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
+                 <th className="text-right p-2 font-semibold text-muted-foreground">Débit (Mbps)</th>
+               </tr>
+             </thead>
+             <tbody>
+               {connections.map((conn, i) => (
+                 <tr key={i} className="border-b border-white/5 hover:bg-white/5">
+                   <td className="p-2 font-mono text-foreground text-xs break-all max-w-xs">{conn.sourceNodeId}</td>
+                   <td className="p-2 font-mono text-foreground text-xs break-all max-w-xs">{conn.targetNodeId}</td>
+                   <td className="p-2 text-center">
+                     <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${
+                       conn.status === 'healthy' ? 'bg-primary/20 text-primary' : 
+                       conn.status === 'degraded' ? 'bg-yellow-500/20 text-yellow-500' : 
+                       'bg-destructive/20 text-destructive'
+                     }`}>
+                       {conn.status === 'healthy' ? '✓ Healthy' : conn.status === 'degraded' ? '⚠ Degraded' : '✕ Offline'}
+                     </span>
+                   </td>
+                   <td className="p-2 text-right font-mono text-foreground">{conn.latencyMs?.toFixed(1) || '-'}</td>
+                   <td className="p-2 text-right font-mono text-foreground">{conn.packetLoss?.toFixed(1) || '-'}%</td>
+                   <td className="p-2 text-right font-mono text-foreground">{(conn.bandwidth ? (conn.bandwidth / 1000).toFixed(0) : '-')} Mbps</td>
+                 </tr>
+               ))}
+             </tbody>
+           </table>
+         </div>
+       </CardContent>
       </Card>
 
       {/* Connectivity Tests */}
