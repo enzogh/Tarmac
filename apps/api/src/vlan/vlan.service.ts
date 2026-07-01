@@ -1,13 +1,24 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
-export class VlanService {
+export class VlanService implements OnModuleInit {
+  private readonly logger = new Logger(VlanService.name);
   private readonly VLAN_SUBNET = '10.255.0.0/16';
   private readonly VLAN_GATEWAY = '10.255.0.1';
   private readonly BASE_IP = 0xacff0002; // 10.255.0.2 in hex
 
   constructor(private prisma: PrismaService) {}
+
+  async onModuleInit() {
+    // Ensure default VLAN exists on startup
+    try {
+      await this.getOrCreateVlan('default');
+      this.logger.log('Default VLAN initialized');
+    } catch (error) {
+      this.logger.warn('Failed to initialize default VLAN:', error);
+    }
+  }
 
   async getOrCreateVlan(name: string = 'default'): Promise<any> {
     let vlan = await this.prisma.vlan.findUnique({

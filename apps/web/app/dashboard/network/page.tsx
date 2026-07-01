@@ -63,7 +63,25 @@ export default function NetworkPage() {
   const content = loading ? (
     <div className="p-8">Loading network status...</div>
   ) : !vlanStatus ? (
-    <div className="p-8 text-yellow-600">No VLAN found. Deploy agents to create the network.</div>
+    <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-8 text-center">
+      <div className="text-5xl mb-4">🌐</div>
+      <h2 className="text-2xl font-bold text-gray-900 mb-2">No VLAN Network Found</h2>
+      <p className="text-gray-600 mb-4">Deploy agents to create the network</p>
+      <div className="bg-white rounded-lg p-4 text-left max-w-md mx-auto space-y-3 text-sm">
+        <div>
+          <p className="font-semibold text-gray-700 mb-1">📋 Next Steps:</p>
+          <ol className="list-decimal list-inside space-y-1 text-gray-600">
+            <li>Deploy your first agent/worker node</li>
+            <li>Agent will automatically create the default VLAN network</li>
+            <li>Additional agents auto-join with fixed IPs (10.255.0.x)</li>
+            <li>Network monitoring will appear here</li>
+          </ol>
+        </div>
+        <div className="bg-yellow-50 border border-yellow-200 rounded p-2">
+          <p className="text-yellow-900">💡 <strong>Tip:</strong> The VLAN is initialized on first agent heartbeat</p>
+        </div>
+      </div>
+    </div>
   ) : (
     <div className="space-y-6">
       <div className="grid grid-cols-4 gap-4">
