@@ -10,14 +10,11 @@ export class VlanService implements OnModuleInit {
 
   constructor(private prisma: PrismaService) {}
 
-  async onModuleInit() {
-    // Ensure default VLAN exists on startup
-    try {
-      await this.getOrCreateVlan('default');
-      this.logger.log('Default VLAN initialized');
-    } catch (error) {
-      this.logger.warn('Failed to initialize default VLAN:', error);
-    }
+  onModuleInit() {
+    // Ensure default VLAN exists on startup (non-blocking)
+    this.getOrCreateVlan('default')
+      .then(() => this.logger.log('✅ Default VLAN initialized'))
+      .catch((error) => this.logger.warn('❌ Failed to initialize default VLAN:', error.message));
   }
 
   async getOrCreateVlan(name: string = 'default'): Promise<any> {

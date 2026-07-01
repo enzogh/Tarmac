@@ -36,11 +36,11 @@ export function WizardDialog({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-lg max-w-2xl w-full mx-4">
+      <div className="bg-slate-900 rounded-lg shadow-lg max-w-2xl w-full mx-4 border border-slate-700">
         {/* Header */}
-        <div className="border-b border-gray-200 px-6 py-4">
-          <h2 className="text-xl font-bold text-gray-900">{title}</h2>
-          {description && <p className="text-sm text-gray-600 mt-1">{description}</p>}
+        <div className="border-b border-slate-700 px-6 py-4">
+          <h2 className="text-xl font-bold text-foreground">{title}</h2>
+          {description && <p className="text-sm text-muted-foreground mt-1">{description}</p>}
           
           {/* Progress Steps */}
           <div className="mt-4 flex gap-2">
@@ -48,12 +48,12 @@ export function WizardDialog({
               <div
                 key={s.id}
                 className={`flex-1 h-1 rounded-full transition-all ${
-                  idx <= currentStep ? 'bg-blue-600' : 'bg-gray-200'
+                  idx <= currentStep ? 'bg-blue-500' : 'bg-slate-700'
                 }`}
               />
             ))}
           </div>
-          <div className="mt-2 text-xs text-gray-600">
+          <div className="mt-2 text-xs text-muted-foreground">
             Étape {currentStep + 1} de {steps.length}: {step.title}
           </div>
         </div>
@@ -61,17 +61,17 @@ export function WizardDialog({
         {/* Content */}
         <div className="px-6 py-6 min-h-64">
           <div className="mb-4">
-            <h3 className="font-semibold text-lg text-gray-900">{step.title}</h3>
-            <p className="text-sm text-gray-600 mt-1">{step.description}</p>
+            <h3 className="font-semibold text-lg text-foreground">{step.title}</h3>
+            <p className="text-sm text-muted-foreground mt-1">{step.description}</p>
           </div>
           <div className="mt-6">{step.content}</div>
         </div>
 
         {/* Footer */}
-        <div className="border-t border-gray-200 px-6 py-4 flex justify-between gap-3">
+        <div className="border-t border-slate-700 px-6 py-4 flex justify-between gap-3">
           <button
             onClick={onCancel}
-            className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 font-medium"
+            className="px-4 py-2 text-foreground bg-slate-800 rounded-lg hover:bg-slate-700 font-medium transition-colors border border-slate-600"
           >
             Annuler
           </button>
@@ -80,7 +80,7 @@ export function WizardDialog({
             <button
               onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
               disabled={isFirstStep}
-              className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 text-foreground bg-slate-800 rounded-lg hover:bg-slate-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-slate-600"
             >
               Précédent
             </button>
@@ -88,7 +88,7 @@ export function WizardDialog({
             {!isLastStep && (
               <button
                 onClick={() => setCurrentStep(Math.min(steps.length - 1, currentStep + 1))}
-                className="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 font-medium"
+                className="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 font-medium transition-colors"
               >
                 Suivant
               </button>
@@ -97,7 +97,7 @@ export function WizardDialog({
             {isLastStep && (
               <button
                 onClick={onComplete}
-                className="px-4 py-2 text-white bg-green-600 rounded-lg hover:bg-green-700 font-medium"
+                className="px-4 py-2 text-white bg-green-600 rounded-lg hover:bg-green-700 font-medium transition-colors"
               >
                 {completeButtonLabel}
               </button>
@@ -130,21 +130,21 @@ export function PresetSelector({
 }) {
   return (
     <div>
-      {title && <h3 className="font-semibold text-lg mb-2">{title}</h3>}
-      {description && <p className="text-sm text-gray-600 mb-4">{description}</p>}
+      {title && <h3 className="font-semibold text-lg text-foreground mb-2">{title}</h3>}
+      {description && <p className="text-sm text-muted-foreground mb-4">{description}</p>}
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {presets.map((preset) => (
           <button
             key={preset.id}
             onClick={() => onSelect(preset)}
-            className="p-4 border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-all text-left"
+            className="p-4 border-2 border-slate-700 rounded-lg hover:border-blue-500 hover:bg-slate-800 transition-all text-left"
           >
             <div className="flex items-start gap-3">
               {preset.icon && <div className="text-2xl mt-1">{preset.icon}</div>}
               <div>
-                <h4 className="font-semibold text-gray-900">{preset.name}</h4>
-                <p className="text-xs text-gray-600 mt-1">{preset.description}</p>
+                <h4 className="font-semibold text-foreground">{preset.name}</h4>
+                <p className="text-xs text-muted-foreground mt-1">{preset.description}</p>
               </div>
             </div>
           </button>
@@ -164,10 +164,10 @@ export function AdvancedOptions({
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <div className="border-t border-gray-200 mt-6 pt-6">
+    <div className="border-t border-slate-700 mt-6 pt-6">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 text-sm font-semibold text-gray-700 hover:text-gray-900"
+        className="flex items-center gap-2 text-sm font-semibold text-foreground hover:text-muted-foreground transition-colors"
       >
         <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         {label}
@@ -187,8 +187,8 @@ export interface OperationStep {
 
 export function OperationPreview({ steps }: { steps: OperationStep[] }) {
   return (
-    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-      <h4 className="font-semibold text-blue-900 mb-3">Aperçu de l'opération</h4>
+    <div className="bg-slate-800 border border-blue-500 rounded-lg p-4">
+      <h4 className="font-semibold text-blue-400 mb-3">Aperçu de l'opération</h4>
       <div className="space-y-3">
         {steps.map((step, idx) => (
           <div key={step.id} className="flex gap-3">
@@ -198,8 +198,8 @@ export function OperationPreview({ steps }: { steps: OperationStep[] }) {
               </div>
             </div>
             <div className="flex-1">
-              <p className="font-medium text-gray-900">{step.title}</p>
-              {step.description && <p className="text-sm text-gray-600 mt-1">{step.description}</p>}
+              <p className="font-medium text-foreground">{step.title}</p>
+              {step.description && <p className="text-sm text-muted-foreground mt-1">{step.description}</p>}
             </div>
           </div>
         ))}
@@ -231,10 +231,10 @@ export function InfoBox({
   children: ReactNode;
 }) {
   const styles = {
-    info: 'bg-blue-50 border-blue-200 text-blue-900',
-    warning: 'bg-yellow-50 border-yellow-200 text-yellow-900',
-    error: 'bg-red-50 border-red-200 text-red-900',
-    success: 'bg-green-50 border-green-200 text-green-900',
+    info: 'bg-blue-950 border-blue-700 text-blue-200',
+    warning: 'bg-yellow-950 border-yellow-700 text-yellow-200',
+    error: 'bg-red-950 border-red-700 text-red-200',
+    success: 'bg-green-950 border-green-700 text-green-200',
   };
 
   const icons = {
