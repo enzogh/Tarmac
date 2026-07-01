@@ -7,17 +7,43 @@ export class VlanService implements OnModuleInit {
   private readonly VLAN_SUBNET = '10.255.0.0/16';
   private readonly VLAN_GATEWAY = '10.255.0.1';
   private readonly BASE_IP = 0xacff0002; // 10.255.0.2 in hex
+  private isDbAvailable = true;
 
   constructor(private prisma: PrismaService) {}
 
   onModuleInit() {
-    // Ensure default VLAN exists on startup (non-blocking)
+    // Check if database is available on startup (non-blocking)
     this.getOrCreateVlan('default')
-      .then(() => this.logger.log('✅ Default VLAN initialized'))
-      .catch((error) => this.logger.warn('❌ Failed to initialize default VLAN:', error.message));
+      .then(() => {
+        this.isDbAvailable = true;
+        this.logger.log('✅ Default VLAN initialized');
+      })
+      .catch((error) => {
+        this.isDbAvailable = false;
+        this.logger.warn('⚠️  Database unavailable. VLAN will be created on first agent heartbeat. Details:', error.message);
+      });
   }
 
   async getOrCreateVlan(name: string = 'default'): Promise<any> {
+    // If DB is not available, return a mock VLAN for development
+    if (!this.isDbAvailable) {
+      try {
+        // Try the DB query anyway, in case it recovered
+        const vlan = await this.prisma.vlan.findUnique({
+          where: { name },
+          include: { members: true, connections: true },
+        });
+        if (vlan) {
+          this.isDbAvailable = true; // DB is back
+          return vlan;
+        }
+      } catch (error) {
+        // DB still down, return mock for development
+        this.logger.debug('DB still unavailable, using mock VLAN');
+        return this.getMockVlan(name);
+      }
+    }
+
     let vlan = await this.prisma.vlan.findUnique({
       where: { name },
       include: { members: true, connections: true },
@@ -35,6 +61,19 @@ export class VlanService implements OnModuleInit {
     }
 
     return vlan;
+  }
+
+  private getMockVlan(name: string) {
+    return {
+      id: 'mock-vlan-dev',
+      name,
+      subnetCidr: this.VLAN_SUBNET,
+      gatewayIp: this.VLAN_GATEWAY,
+      description: 'Development Mock VLAN (Database unavailable)',
+      members: [],
+      connections: [],
+      createdAt: new Date(),
+    };
   }
 
   async joinVlan(nodeId: string, vlanName: string = 'default'): Promise<any> {
