@@ -94,6 +94,19 @@ enum SyncJobStatus {
   failed
 }
 
+enum VlanConnectionStatus {
+  healthy
+  degraded
+  offline
+  unknown
+}
+
+enum VlanTestType {
+  ping
+  connectivity
+  latency
+}
+
 enum MigrationStatus {
   pending
   running
@@ -115,6 +128,8 @@ model Node {
   role               String
   status             NodeStatus       @default(offline)
   lastSeenAt         DateTime?
+  vlanIp             String?          @unique
+  vlanMac            String?          @unique
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
   metrics            MetricSample[]
@@ -128,6 +143,10 @@ model Node {
   sourceMigrations   MigrationTask[]  @relation("MigrationSourceNode")
   targetMigrations   MigrationTask[]  @relation("MigrationTargetNode")
   syncJobs           SyncJob[]
+  vlanMembership     VlanMember?
+  outgoingConnections VlanConnection[] @relation("SourceNode")
+  incomingConnections VlanConnection[] @relation("TargetNode")
+  connectionTests    VlanConnectionTest[] @relation("InitiatorNode")
 }
 
 model Share {
@@ -344,4 +363,79 @@ model AuditLog {
   createdAt    DateTime @default(now())
 
   @@index([createdAt])
+}
+
+model Vlan {
+  id              String         @id @default(cuid())
+  name            String         @unique
+  subnetCidr      String
+  description     String?
+  status          String         @default("active")
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  members         VlanMember[]
+  connections     VlanConnection[]
+  connectionTests VlanConnectionTest[]
+}
+
+model VlanMember {
+  id          String    @id @default(cuid())
+  vlanId      String
+  nodeId      String    @unique
+  vlanIp      String
+  vlanMac     String    @unique
+  joinedAt    DateTime  @default(now())
+  lastHeartbeat DateTime @default(now())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  vlan        Vlan      @relation(fields: [vlanId], references: [id], onDelete: Cascade)
+  node        Node      @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@unique([vlanId, nodeId])
+  @@index([vlanId])
+  @@index([nodeId])
+}
+
+model VlanConnection {
+  id        String                @id @default(cuid())
+  vlanId    String
+  sourceNodeId String
+  targetNodeId String
+  status    VlanConnectionStatus  @default(unknown)
+  latencyMs Int?
+  packetLoss Float?
+  bandwidth  Int?
+  lastCheckedAt DateTime?
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+  vlan      Vlan                  @relation(fields: [vlanId], references: [id], onDelete: Cascade)
+  sourceNode Node                 @relation("SourceNode", fields: [sourceNodeId], references: [id], onDelete: Cascade)
+  targetNode Node                 @relation("TargetNode", fields: [targetNodeId], references: [id], onDelete: Cascade)
+
+  @@unique([vlanId, sourceNodeId, targetNodeId])
+  @@index([vlanId])
+  @@index([sourceNodeId])
+  @@index([targetNodeId])
+}
+
+model VlanConnectionTest {
+  id          String         @id @default(cuid())
+  vlanId      String
+  initiatorNodeId String
+  targetNodeId String
+  testType    VlanTestType   @default(ping)
+  status      String         @default("pending")
+  resultCode  Int?
+  resultMessage String?
+  latencyMs   Int?
+  packetLoss  Float?
+  startedAt   DateTime       @default(now())
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  vlan        Vlan           @relation(fields: [vlanId], references: [id], onDelete: Cascade)
+  initiatorNode Node         @relation("InitiatorNode", fields: [initiatorNodeId], references: [id], onDelete: Cascade)
+
+  @@index([vlanId])
+  @@index([initiatorNodeId])
+  @@index([startedAt])
 }

@@ -19,6 +19,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '../../../components/ui/dialog';
+import { Progress } from '../../../components/ui/progress';
 
 export default function StoragePage() {
   const router = useRouter();
@@ -309,9 +310,17 @@ export default function StoragePage() {
                   </div>
                   <Badge label={disk.health} type={disk.health === 'healthy' ? 'success' : 'warning'} />
                 </div>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {disk.usedGb} GB / {disk.capacityGb} GB ({Math.round(disk.usageRatio * 100)}%)
-                </p>
+                <div className="mt-3 space-y-1.5">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>Capacité max</span>
+                    <span>{disk.capacityGb} GB</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>Utilisé</span>
+                    <span>{disk.usedGb} GB ({Math.round(disk.usageRatio * 100)}%)</span>
+                  </div>
+                  <Progress value={disk.usageRatio * 100} className="h-1.5" />
+                </div>
               </div>
             ))}
             {(overview?.disks ?? []).length === 0 && (
