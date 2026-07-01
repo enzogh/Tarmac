@@ -1,0 +1,94 @@
+import { Injectable } from '@nestjs/common';
+import { MountStatus, Prisma } from '@prisma/client';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { CreateMountDto } from './dto/create-mount.dto';
+import { UpdateMountDto } from './dto/update-mount.dto';
+
+@Injectable()
+export class MountsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLogsService: AuditLogsService,
+  ) {}
+
+  list() {
+    return this.prisma.mount.findMany({ orderBy: { createdAt: 'desc' }, include: { node: true } });
+  }
+
+  async create(dto: CreateMountDto, actorUserId?: string) {
+    const data: Prisma.MountCreateInput = {
+      name: dto.name,
+      sourcePath: dto.sourcePath,
+      targetPath: dto.targetPath,
+      ...(dto.nodeId ? { node: { connect: { id: dto.nodeId } } } : {}),
+    };
+
+    const created = await this.prisma.mount.create({ data });
+    await this.auditLogsService.log({
+      actorUserId,
+      action: 'mount.create',
+      resourceType: 'mount',
+      resourceId: created.id,
+      details: { sourcePath: created.sourcePath, targetPath: created.targetPath },
+    });
+    return created;
+  }
+
+  async update(id: string, dto: UpdateMountDto, actorUserId?: string) {
+    const data: Prisma.MountUpdateInput = {
+      ...(dto.name !== undefined ? { name: dto.name } : {}),
+      ...(dto.sourcePath !== undefined ? { sourcePath: dto.sourcePath } : {}),
+      ...(dto.targetPath !== undefined ? { targetPath: dto.targetPath } : {}),
+      ...(dto.status !== undefined ? { status: dto.status as MountStatus } : {}),
+      ...(dto.nodeId !== undefined ? { node: { connect: { id: dto.nodeId } } } : {}),
+    };
+
+    const updated = await this.prisma.mount.update({ where: { id }, data });
+    await this.auditLogsService.log({
+      actorUserId,
+      action: 'mount.update',
+      resourceType: 'mount',
+      resourceId: updated.id,
+      details: dto as unknown as Prisma.InputJsonValue,
+    });
+    return updated;
+  }
+
+  async delete(id: string, actorUserId?: string) {
+    const deleted = await this.prisma.mount.delete({ where: { id } });
+    await this.auditLogsService.log({
+      actorUserId,
+      action: 'mount.delete',
+      resourceType: 'mount',
+      resourceId: deleted.id,
+    });
+    return deleted;
+  }
+
+  async remount(id: string, actorUserId?: string) {
+    const updated = await this.prisma.mount.update({
+      where: { id },
+      data: { status: 'pending' },
+      include: { node: true },
+    });
+
+    await this.auditLogsService.log({
+      actorUserId,
+      action: 'mount.remount',
+      resourceType: 'mount',
+      resourceId: updated.id,
+      details: { nodeId: updated.nodeId },
+    });
+
+    return updated;
+  }
+
+  findPending() {
+    return this.prisma.mount.findMany({ where: { status: 'pending' } });
+  }
+
+  setStatus(id: string, status: 'pending' | 'active' | 'error') {
+    return this.prisma.mount.update({ where: { id }, data: { status } });
+  }
+}

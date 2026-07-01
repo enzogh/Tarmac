@@ -1,0 +1,20 @@
+{
+  "name": "tarmac",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "install:all": "npm install --workspaces",
+    "dev": "concurrently -n api,web \"npm --workspace @tarmac/api run start:dev\" \"npm --workspace @tarmac/web run dev\"",
+    "build": "npm run -ws build --if-present",
+    "lint": "npm run -ws lint --if-present",
+    "seed": "npm --workspace @tarmac/api run prisma:seed",
+    "format": "npm run -ws format --if-present"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.5.4"
+  }
+}
