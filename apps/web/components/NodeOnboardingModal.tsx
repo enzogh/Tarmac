@@ -43,6 +43,17 @@ function buildDockerCommand(params: {
   ghcr.io/enzogh/tarmac/agent:latest`;
 }
 
+function buildSystemdInstallCommand(params: {
+  wsUrl: string;
+  nodeId: string;
+}) {
+  const { wsUrl, nodeId } = params;
+  return `curl -fsSL https://raw.githubusercontent.com/enzogh/Tarmac/main/apps/agent/scripts/install-agent-service.sh | sudo bash -s -- \\
+  --node-id "${nodeId}" \\
+  --control-plane-ws "${wsUrl}" \\
+  --agent-token "<AGENT_SHARED_TOKEN>"`;
+}
+
 type Step = 'form' | 'command';
 
 interface NodeOnboardingModalProps {
@@ -62,6 +73,7 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
   const [error, setError] = useState('');
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
   const [copyDockerState, setCopyDockerState] = useState<'idle' | 'copied' | 'error'>('idle');
+  const [copySystemdState, setCopySystemdState] = useState<'idle' | 'copied' | 'error'>('idle');
   const [token, setToken] = useState('');
 
   useEffect(() => {
@@ -80,6 +92,12 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
     return () => window.clearTimeout(id);
   }, [copyDockerState]);
 
+  useEffect(() => {
+    if (copySystemdState !== 'copied') return undefined;
+    const id = window.setTimeout(() => setCopySystemdState('idle'), 1800);
+    return () => window.clearTimeout(id);
+  }, [copySystemdState]);
+
   const resetForm = () => {
     setStep('form');
     setCreatedNode(null);
@@ -88,6 +106,7 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
     setRole('worker');
     setCopyState('idle');
     setCopyDockerState('idle');
+    setCopySystemdState('idle');
   };
 
   const handleOpenChange = (val: boolean) => {
@@ -196,6 +215,36 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
               <p className="text-sm text-muted-foreground">
                 Colle l'une de ces commandes sur le serveur worker pour démarrer l'agent daemon.
               </p>
+
+              {/* Binary */}
+              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.08] p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">Ubuntu 22.04 + systemd (auto install)</p>
+                    <p className="text-xs text-muted-foreground">Installe les dépendances, compile l'agent, crée un service avec restart auto.</p>
+                  </div>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => copy(buildSystemdInstallCommand({ wsUrl, nodeId: createdNode.id }), setCopySystemdState)}
+                      >
+                        {copySystemdState === 'copied' ? (
+                          <><Check className="h-3.5 w-3.5" /> Copié</>
+                        ) : (
+                          <><Copy className="h-3.5 w-3.5" /> Copier</>
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Copier la commande systemd</TooltipContent>
+                  </Tooltip>
+                </div>
+                <pre className="code-block whitespace-pre-wrap break-words">
+                  {buildSystemdInstallCommand({ wsUrl, nodeId: createdNode.id })}
+                </pre>
+              </div>
 
               {/* Binary */}
               <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">

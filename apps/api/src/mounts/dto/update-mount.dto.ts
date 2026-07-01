@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsArray, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class UpdateMountDto {
   @IsOptional()
@@ -12,9 +12,23 @@ export class UpdateMountDto {
   sourcePath?: string;
 
   @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  additionalSources?: string[];
+
+  @IsOptional()
   @IsString()
   @MinLength(1)
   targetPath?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  fsType?: string;
+
+  @IsOptional()
+  @IsString()
+  mountOptions?: string;
 
   @IsOptional()
   @IsString()

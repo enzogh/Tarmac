@@ -1,0 +1,16 @@
+[Unit]
+Description=Tarmac Node Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/tarmac-agent.env
+ExecStart=/usr/local/bin/tarmac-agent
+Restart=always
+RestartSec=3
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target
