@@ -82,15 +82,17 @@ export default function MigrationsPage() {
 
   return (
     <DashboardLayout>
-      <div>
-        <div className="flex items-center justify-between mb-8">
-          <h1 className="text-3xl font-bold text-slate-100">➡️ Migrations</h1>
-          <p className="text-slate-400">Déplacement de données entre nœuds</p>
+      <div className="space-y-8">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h1 className="page-heading">Migrations</h1>
+            <p className="page-subtitle">Déplacement de données entre nœuds.</p>
+          </div>
         </div>
 
         <Card title="Migrations de données">
-          <div className="mb-4 flex items-center justify-between">
-            <p className="text-sm text-slate-400">
+          <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <p className="max-w-3xl text-sm text-slate-400">
               <strong>Qu'est-ce qu'une migration ?</strong> Une opération qui déplace vos données 
               d'un serveur source à un serveur destination. Utile pour les maintenances ou rééquilibrages.
             </p>
@@ -151,8 +153,8 @@ export default function MigrationsPage() {
 
           <div className="space-y-4">
             {migrations.map((migration) => (
-              <div key={migration.id} className="p-4 bg-slate-800 rounded-lg border border-slate-700">
-                <div className="flex items-start justify-between mb-4">
+              <div key={migration.id} className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+                <div className="mb-4 flex items-start justify-between">
                   <div className="flex-1">
                     <h4 className="font-semibold text-slate-100">{migration.name}</h4>
                     <p className="text-xs text-slate-400 mt-1">
@@ -168,9 +170,9 @@ export default function MigrationsPage() {
                     <span className="text-sm font-medium text-slate-300">Progression</span>
                     <span className="text-sm text-slate-400">{migration.progress}%</span>
                   </div>
-                  <div className="w-full bg-slate-700 rounded-full h-3 overflow-hidden">
+                  <div className="h-3 w-full overflow-hidden rounded-full bg-white/5">
                     <div
-                      className="bg-gradient-to-r from-blue-600 to-blue-400 h-full transition-all duration-300"
+                      className="h-full bg-gradient-to-r from-brand-600 to-brand-400 transition-all duration-300"
                       style={{ width: `${migration.progress}%` }}
                     />
                   </div>
