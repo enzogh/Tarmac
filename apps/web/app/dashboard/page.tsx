@@ -2,19 +2,34 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { HardDrive, Server, Bell, ArrowRightLeft, CheckCircle2, TrendingUp, Info } from 'lucide-react';
-import { api, Forecast, NodeItem, AlertItem, SyncJobItem, MigrationItem } from '../../lib/api';
+import {
+  ArrowDownToLine,
+  ArrowRightLeft,
+  ArrowUpToLine,
+  Bell,
+  CheckCircle2,
+  Cpu,
+  HardDrive,
+  Info,
+  Server,
+  TrendingUp,
+} from 'lucide-react';
+import { api, AlertItem, Forecast, MigrationItem, NodeActivityItem, NodeMetricSample, SyncJobItem } from '../../lib/api';
 import { DashboardLayout } from '../../components/DashboardLayout';
+import { ServerTrendCard } from '../../components/ServerTrendCard';
 import { StatCard, Badge } from '../../components/ui';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Progress } from '../../components/ui/progress';
+
+const formatBytesPerSecond = (value: number) => `${Math.round(value)} B/s`;
 
 export default function OverviewPage() {
   const router = useRouter();
   const token = useMemo(() => (typeof window !== 'undefined' ? localStorage.getItem('tarmac_token') : null), []);
 
   const [forecast, setForecast] = useState<Forecast | null>(null);
-  const [nodes, setNodes] = useState<NodeItem[]>([]);
+  const [activities, setActivities] = useState<NodeActivityItem[]>([]);
+  const [samplesByNode, setSamplesByNode] = useState<Record<string, NodeMetricSample[]>>({});
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [syncJobs, setSyncJobs] = useState<SyncJobItem[]>([]);
   const [migrations, setMigrations] = useState<MigrationItem[]>([]);
@@ -22,14 +37,19 @@ export default function OverviewPage() {
   const load = async () => {
     if (!token) return;
     try {
-      const [n, a, sj, mg, fc] = await Promise.all([
-        api.nodes.list(token),
+      const [activity, a, sj, mg, fc] = await Promise.all([
+        api.nodes.activity(token),
         api.alerts.list(token),
         api.syncJobs.list(token),
         api.migrations.list(token),
         api.storage.forecast(token),
       ]);
-      setNodes(n);
+      const topNodes = [...activity].sort((left, right) => right.metrics.cpu - left.metrics.cpu).slice(0, 4);
+      const histories = await Promise.all(
+        topNodes.map(async (node) => [node.id, await api.nodes.metrics(token, node.id, '6h')] as const),
+      );
+      setActivities(activity);
+      setSamplesByNode(Object.fromEntries(histories));
       setAlerts(a);
       setSyncJobs(sj);
       setMigrations(mg);
@@ -52,10 +72,17 @@ export default function OverviewPage() {
     return () => clearInterval(id);
   }, [token]);
 
+  const nodesOnline = activities.filter((node) => node.status === 'online').length;
   const alertsCritical = alerts.filter((a) => a.severity === 'critical').length;
   const alertsWarning = alerts.filter((a) => a.severity === 'high').length;
-  const nodesOnline = nodes.filter((n) => n.status === 'online').length;
   const migrationsActive = migrations.filter((m) => m.status === 'running').length;
+  const averageCpu =
+    activities.length > 0 ? activities.reduce((acc, node) => acc + node.metrics.cpu, 0) / activities.length : 0;
+  const averageRam =
+    activities.length > 0 ? activities.reduce((acc, node) => acc + node.metrics.ram, 0) / activities.length : 0;
+  const totalNetworkRx = activities.reduce((acc, node) => acc + node.metrics.networkRx, 0);
+  const totalNetworkTx = activities.reduce((acc, node) => acc + node.metrics.networkTx, 0);
+  const spotlightNodes = [...activities].sort((left, right) => right.metrics.cpu - left.metrics.cpu).slice(0, 4);
 
   return (
     <DashboardLayout>
@@ -67,16 +94,14 @@ export default function OverviewPage() {
           </p>
         </div>
 
-        {/* Info callout */}
         <div className="flex items-start gap-3 rounded-xl border border-violet-500/20 bg-violet-500/[0.07] px-4 py-3">
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-violet-400" />
           <p className="text-sm text-violet-300/80">
-            Ce tableau de bord se rafraîchit automatiquement toutes les 5 secondes.
-            Les données reflètent l'état actuel du cluster en temps réel.
+            Ce tableau de bord se rafraîchit automatiquement toutes les 5 secondes. Les cartes serveur rassemblent CPU,
+            RAM, réseau et disques à partir des derniers signaux envoyés par chaque agent.
           </p>
         </div>
 
-        {/* KPI Cards */}
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           <StatCard
             label="Utilisation du stockage"
@@ -86,7 +111,7 @@ export default function OverviewPage() {
           />
           <StatCard
             label="Nœuds en ligne"
-            value={`${nodesOnline}/${nodes.length}`}
+            value={activities.length > 0 ? `${nodesOnline}/${activities.length}` : '-'}
             icon={<Server className="h-8 w-8" />}
             changeType="up"
           />
@@ -105,7 +130,34 @@ export default function OverviewPage() {
           />
         </div>
 
-        {/* Storage forecast */}
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard
+            label="CPU moyen"
+            value={`${Math.round(averageCpu)}%`}
+            icon={<Cpu className="h-8 w-8" />}
+            change={`${activities.length} serveur${activities.length > 1 ? 's' : ''}`}
+            changeType="neutral"
+          />
+          <StatCard
+            label="RAM moyenne"
+            value={`${Math.round(averageRam)}%`}
+            icon={<Server className="h-8 w-8" />}
+            changeType="neutral"
+          />
+          <StatCard
+            label="Réseau RX"
+            value={formatBytesPerSecond(totalNetworkRx)}
+            icon={<ArrowDownToLine className="h-8 w-8" />}
+            changeType="neutral"
+          />
+          <StatCard
+            label="Réseau TX"
+            value={formatBytesPerSecond(totalNetworkTx)}
+            icon={<ArrowUpToLine className="h-8 w-8" />}
+            changeType="neutral"
+          />
+        </div>
+
         {forecast && (
           <Card>
             <CardHeader>
@@ -138,49 +190,31 @@ export default function OverviewPage() {
           </Card>
         )}
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {/* Nodes Status */}
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <Server className="h-5 w-5 text-violet-400" />
-                <CardTitle>État des nœuds</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {nodes.slice(0, 5).map((node) => (
-                <div
-                  key={node.id}
-                  className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 transition-colors hover:bg-white/[0.04]"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-foreground">{node.name}</p>
-                    <p className="text-xs text-muted-foreground capitalize">{node.role}</p>
-                  </div>
-                  <Badge
-                    label={node.status}
-                    type={node.status === 'online' ? 'success' : 'error'}
-                  />
-                </div>
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Cpu className="h-5 w-5 text-violet-400" />
+              <CardTitle>Serveurs les plus actifs</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              {spotlightNodes.map((node) => (
+                <ServerTrendCard key={node.id} node={node} samples={samplesByNode[node.id] ?? []} />
               ))}
-              {nodes.length > 5 && (
-                <p className="pt-1 text-center text-xs text-muted-foreground">
-                  +{nodes.length - 5} nœuds supplémentaires
+              {spotlightNodes.length === 0 && (
+                <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
+                  Aucun serveur n’a encore remonté d’activité.
                 </p>
               )}
-              {nodes.length === 0 && (
-                <p className="py-4 text-center text-sm text-muted-foreground">Aucun nœud</p>
-              )}
-            </CardContent>
-          </Card>
+            </div>
+          </CardContent>
+        </Card>
 
-          {/* Recent alerts */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <Card>
             <CardHeader>
-              <div className="flex items-center gap-2">
-                <Bell className="h-5 w-5 text-violet-400" />
-                <CardTitle>Alertes récentes</CardTitle>
-              </div>
+              <CardTitle>Alertes récentes</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
               {alerts.slice(0, 5).map((alert) => (
@@ -195,27 +229,20 @@ export default function OverviewPage() {
                   <Badge
                     label={alert.severity}
                     type={
-                      alert.severity === 'critical'
-                        ? 'error'
-                        : alert.severity === 'high'
-                          ? 'warning'
-                          : 'info'
+                      alert.severity === 'critical' ? 'error' : alert.severity === 'high' ? 'warning' : 'info'
                     }
                   />
                 </div>
               ))}
               {alerts.length === 0 && (
-                <div className="flex items-center gap-2 py-4 justify-center text-sm text-emerald-400">
+                <div className="flex items-center justify-center gap-2 py-4 text-sm text-emerald-400">
                   <CheckCircle2 className="h-4 w-4" />
                   Aucune alerte active
                 </div>
               )}
             </CardContent>
           </Card>
-        </div>
 
-        {/* Sync jobs and migrations */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <Card>
             <CardHeader>
               <CardTitle>Travaux de synchronisation</CardTitle>
@@ -238,30 +265,30 @@ export default function OverviewPage() {
               )}
             </CardContent>
           </Card>
-
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <ArrowRightLeft className="h-5 w-5 text-violet-400" />
-                <CardTitle>Migrations en cours</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {migrations.slice(0, 5).map((migration) => (
-                <div key={migration.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
-                  <div className="mb-2 flex items-center justify-between">
-                    <p className="text-sm font-medium text-foreground">{migration.name}</p>
-                    <span className="text-xs text-muted-foreground">{migration.progress}%</span>
-                  </div>
-                  <Progress value={migration.progress} className="h-1.5 bg-emerald-500/20 [&>div]:from-emerald-500 [&>div]:to-emerald-300" />
-                </div>
-              ))}
-              {migrations.length === 0 && (
-                <p className="py-4 text-center text-sm text-muted-foreground">Aucune migration</p>
-              )}
-            </CardContent>
-          </Card>
         </div>
+
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <ArrowRightLeft className="h-5 w-5 text-violet-400" />
+              <CardTitle>Migrations en cours</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {migrations.slice(0, 5).map((migration) => (
+              <div key={migration.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-sm font-medium text-foreground">{migration.name}</p>
+                  <span className="text-xs text-muted-foreground">{migration.progress}%</span>
+                </div>
+                <Progress value={migration.progress} className="h-1.5 bg-emerald-500/20 [&>div]:from-emerald-500 [&>div]:to-emerald-300" />
+              </div>
+            ))}
+            {migrations.length === 0 && (
+              <p className="py-4 text-center text-sm text-muted-foreground">Aucune migration</p>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </DashboardLayout>
   );

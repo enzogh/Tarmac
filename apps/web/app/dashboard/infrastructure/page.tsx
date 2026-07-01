@@ -2,9 +2,10 @@
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Server, Plus, Pencil, Trash2, Info, Layers3 } from 'lucide-react';
-import { api, NodeItem, PoolItem } from '../../../lib/api';
+import { Server, Plus, Pencil, Trash2, Info, Layers3, Cpu, ArrowDownToLine, ArrowUpToLine, HardDrive } from 'lucide-react';
+import { api, NodeActivityItem, NodeMetricSample, PoolItem } from '../../../lib/api';
 import { DashboardLayout } from '../../../components/DashboardLayout';
+import { ServerTrendCard } from '../../../components/ServerTrendCard';
 import { Badge } from '../../../components/ui';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
@@ -28,19 +29,23 @@ import {
   TableHeader,
   TableRow,
 } from '../../../components/ui/table';
+import { Progress } from '../../../components/ui/progress';
+
+const formatBytesPerSecond = (value: number) => `${Math.round(value)} B/s`;
 
 export default function InfrastructurePage() {
   const router = useRouter();
   const token = useMemo(() => (typeof window !== 'undefined' ? localStorage.getItem('tarmac_token') : null), []);
 
-  const [nodes, setNodes] = useState<NodeItem[]>([]);
+  const [nodes, setNodes] = useState<NodeActivityItem[]>([]);
+  const [samplesByNode, setSamplesByNode] = useState<Record<string, NodeMetricSample[]>>({});
   const [pools, setPools] = useState<PoolItem[]>([]);
 
   const [poolDialogOpen, setPoolDialogOpen] = useState(false);
   const [poolName, setPoolName] = useState('');
   const [poolStrategy, setPoolStrategy] = useState('mirror');
 
-  const [editNode, setEditNode] = useState<NodeItem | null>(null);
+  const [editNode, setEditNode] = useState<NodeActivityItem | null>(null);
   const [editName, setEditName] = useState('');
   const [editRole, setEditRole] = useState('');
   const [editLoading, setEditLoading] = useState(false);
@@ -48,11 +53,13 @@ export default function InfrastructurePage() {
   const load = async () => {
     if (!token) return;
     try {
-      const [n, p] = await Promise.all([
-        api.nodes.list(token),
-        api.pools.list(token),
-      ]);
+      const [n, p] = await Promise.all([api.nodes.activity(token), api.pools.list(token)]);
+      const topNodes = [...n].sort((left, right) => right.metrics.cpu - left.metrics.cpu).slice(0, 6);
+      const histories = await Promise.all(
+        topNodes.map(async (node) => [node.id, await api.nodes.metrics(token, node.id, '6h')] as const),
+      );
       setNodes(n);
+      setSamplesByNode(Object.fromEntries(histories));
       setPools(p);
     } catch {
       localStorage.removeItem('tarmac_token');
@@ -82,14 +89,14 @@ export default function InfrastructurePage() {
     setPoolDialogOpen(false);
   };
 
-  const deleteNode = async (node: NodeItem) => {
+  const deleteNode = async (node: NodeActivityItem) => {
     if (!token) return;
     if (!confirm(`Supprimer le nœud « ${node.name} » ? Cette action est irréversible.`)) return;
     await api.nodes.delete(token, node.id);
     await load();
   };
 
-  const openEditModal = (node: NodeItem) => {
+  const openEditModal = (node: NodeActivityItem) => {
     setEditNode(node);
     setEditName(node.name);
     setEditRole(node.role);
@@ -114,22 +121,32 @@ export default function InfrastructurePage() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-1">
             <h1 className="text-3xl font-semibold tracking-tight text-foreground">Infrastructure</h1>
-            <p className="text-sm text-muted-foreground">Gestion des nœuds et des pools de stockage.</p>
+            <p className="text-sm text-muted-foreground">Gestion des nœuds, des pools et de leur activité.</p>
           </div>
           <NodeOnboardingModal onCreated={load} />
         </div>
 
-        {/* Nodes info callout */}
         <div className="flex items-start gap-3 rounded-xl border border-blue-500/20 bg-blue-500/[0.07] px-4 py-3">
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-400" />
           <p className="text-sm text-blue-300/80">
-            <strong className="text-blue-200">Nœuds :</strong> Serveurs exécutant Tarmac.
-            Un <strong className="text-blue-200">worker</strong> stocke les données, un <strong className="text-blue-200">controller</strong> gère le cluster.
-            Utilisez «&nbsp;Onboarder un nœud&nbsp;» pour enregistrer un nouveau serveur et récupérer la commande de démarrage de l'agent.
+            <strong className="text-blue-200">Activité serveur :</strong> CPU, RAM, réseau et occupation disque sont
+            agrégés à partir du dernier heartbeat et du dernier état de stockage reçu.
           </p>
         </div>
 
-        {/* Nodes Section */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Cartes de performance</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              {[...nodes].sort((left, right) => right.metrics.cpu - left.metrics.cpu).slice(0, 6).map((node) => (
+                <ServerTrendCard key={node.id} node={node} samples={samplesByNode[node.id] ?? []} />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2">
@@ -144,6 +161,10 @@ export default function InfrastructurePage() {
                   <TableHead>Nom</TableHead>
                   <TableHead>Rôle</TableHead>
                   <TableHead>Statut</TableHead>
+                  <TableHead>CPU</TableHead>
+                  <TableHead>RAM</TableHead>
+                  <TableHead>Réseau</TableHead>
+                  <TableHead>Disques</TableHead>
                   <TableHead>Vu pour la dernière fois</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -154,15 +175,49 @@ export default function InfrastructurePage() {
                     <TableCell className="font-medium">{node.name}</TableCell>
                     <TableCell className="text-muted-foreground capitalize">{node.role}</TableCell>
                     <TableCell>
-                      <Badge
-                        label={node.status}
-                        type={node.status === 'online' ? 'success' : 'error'}
-                      />
+                      <Badge label={node.status} type={node.status === 'online' ? 'success' : 'error'} />
+                    </TableCell>
+                    <TableCell className="min-w-36">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Cpu className="h-3.5 w-3.5" />
+                          {Math.round(node.metrics.cpu)}%
+                        </div>
+                        <Progress value={node.metrics.cpu} className="h-1.5" />
+                      </div>
+                    </TableCell>
+                    <TableCell className="min-w-36">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <HardDrive className="h-3.5 w-3.5" />
+                          {Math.round(node.metrics.ram)}%
+                        </div>
+                        <Progress value={node.metrics.ram} className="h-1.5" />
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      <div className="flex items-center gap-2">
+                        <ArrowDownToLine className="h-3.5 w-3.5" />
+                        {formatBytesPerSecond(node.metrics.networkRx)}
+                      </div>
+                      <div className="mt-1 flex items-center gap-2">
+                        <ArrowUpToLine className="h-3.5 w-3.5" />
+                        {formatBytesPerSecond(node.metrics.networkTx)}
+                      </div>
+                    </TableCell>
+                    <TableCell className="min-w-44">
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                          <span>
+                            {node.storage.totalUsedGb} GB / {node.storage.totalCapacityGb} GB
+                          </span>
+                          <span>{Math.round(node.storage.usageRatio * 100)}%</span>
+                        </div>
+                        <Progress value={node.storage.usageRatio * 100} className="h-1.5" />
+                      </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground text-xs">
-                      {node.lastSeenAt
-                        ? new Date(node.lastSeenAt).toLocaleString('fr-FR')
-                        : '-'}
+                      {node.lastSeenAt ? new Date(node.lastSeenAt).toLocaleString('fr-FR') : '-'}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
@@ -198,7 +253,7 @@ export default function InfrastructurePage() {
                 ))}
                 {nodes.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                    <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
                       Aucun nœud enregistré. Cliquez sur «&nbsp;Onboarder un nœud&nbsp;» pour commencer.
                     </TableCell>
                   </TableRow>
@@ -208,7 +263,6 @@ export default function InfrastructurePage() {
           </CardContent>
         </Card>
 
-        {/* Edit Node Dialog */}
         <Dialog open={!!editNode} onOpenChange={(open) => { if (!open) setEditNode(null); }}>
           <DialogContent>
             <DialogHeader>
@@ -248,7 +302,6 @@ export default function InfrastructurePage() {
           </DialogContent>
         </Dialog>
 
-        {/* Pools info callout */}
         <div className="flex items-start gap-3 rounded-xl border border-blue-500/20 bg-blue-500/[0.07] px-4 py-3">
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-400" />
           <p className="text-sm text-blue-300/80">
@@ -259,13 +312,12 @@ export default function InfrastructurePage() {
           </p>
         </div>
 
-        {/* Pools Section */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Layers3 className="h-5 w-5 text-violet-400" />
-                <CardTitle>Pools de stockage</CardTitle>
+                <CardTitle>Pools</CardTitle>
               </div>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -274,55 +326,45 @@ export default function InfrastructurePage() {
                     Nouveau pool
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Créer un nouveau pool de disques</TooltipContent>
+                <TooltipContent>Créer un pool de stockage</TooltipContent>
               </Tooltip>
             </div>
           </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {pools.map((pool) => (
-                <div key={pool.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 transition-colors hover:bg-white/[0.04]">
-                  <div className="mb-3 flex items-start justify-between">
-                    <h4 className="font-semibold text-foreground">{pool.name}</h4>
-                    <Badge label={pool.status} type="info" />
+          <CardContent className="space-y-3">
+            {pools.map((pool) => (
+              <div key={pool.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-foreground">{pool.name}</p>
+                    <p className="text-xs text-muted-foreground capitalize">{pool.strategy}</p>
                   </div>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Stratégie</span>
-                      <span className="font-medium text-foreground/90 capitalize">{pool.strategy}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Membres</span>
-                      <span className="font-medium text-foreground/90">{pool.members.length}</span>
-                    </div>
-                  </div>
+                  <Badge label={pool.status} type={pool.status === 'active' ? 'success' : 'warning'} />
                 </div>
-              ))}
-              {pools.length === 0 && (
-                <p className="col-span-full py-6 text-center text-sm text-muted-foreground">
-                  Aucun pool. Cliquez sur «&nbsp;Nouveau pool&nbsp;» pour en créer un.
-                </p>
-              )}
-            </div>
+                <div className="space-y-1 text-xs text-muted-foreground">
+                  {pool.members.map((member) => (
+                    <div key={member.nodeId} className="flex items-center justify-between">
+                      <span>{member.nodeId}</span>
+                      <span className="capitalize">
+                        {member.role} · {member.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {pools.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">Aucun pool</p>}
           </CardContent>
         </Card>
 
-        {/* Create Pool Dialog */}
         <Dialog open={poolDialogOpen} onOpenChange={setPoolDialogOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Créer un pool de stockage</DialogTitle>
+              <DialogTitle>Créer un pool</DialogTitle>
             </DialogHeader>
             <form onSubmit={createPool} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="pool-name">Nom du pool</Label>
-                <Input
-                  id="pool-name"
-                  placeholder="ex: pool-data"
-                  value={poolName}
-                  onChange={(e) => setPoolName(e.target.value)}
-                  required
-                />
+                <Input id="pool-name" value={poolName} onChange={(e) => setPoolName(e.target.value)} required />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="pool-strategy">Stratégie</Label>
@@ -331,9 +373,9 @@ export default function InfrastructurePage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="mirror">Mirror (Copie redondante)</SelectItem>
-                    <SelectItem value="raid">RAID (Distribution)</SelectItem>
-                    <SelectItem value="single">Single (Stockage simple)</SelectItem>
+                    <SelectItem value="mirror">Mirror</SelectItem>
+                    <SelectItem value="raid">RAID</SelectItem>
+                    <SelectItem value="single">Single</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -341,7 +383,7 @@ export default function InfrastructurePage() {
                 <Button type="button" variant="secondary" onClick={() => setPoolDialogOpen(false)}>
                   Annuler
                 </Button>
-                <Button type="submit">Créer pool</Button>
+                <Button type="submit">Créer</Button>
               </DialogFooter>
             </form>
           </DialogContent>
