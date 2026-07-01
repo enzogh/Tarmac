@@ -16,6 +16,7 @@ import { SharesModule } from './shares/shares.module';
 import { StorageModule } from './storage/storage.module';
 import { SyncJobsModule } from './sync-jobs/sync-jobs.module';
 import { TopologyModule } from './topology/topology.module';
+import { VlanModule } from './vlan/vlan.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { TopologyModule } from './topology/topology.module';
     StorageModule,
     AgentsModule,
     ReconciliationModule,
+    VlanModule,
   ],
 })
 export class AppModule {}
