@@ -13,5 +13,6 @@ RUN npm --workspace @tarmac/api run build
 FROM node:20-bookworm
 WORKDIR /app
 COPY --from=builder /app /app
+RUN chmod +x apps/api/docker-start.sh
 EXPOSE 3001
-CMD ["sh", "-c", "npx prisma db push --schema apps/api/prisma/schema.prisma --accept-data-loss && node apps/api/dist/main.js"]
+CMD ["sh", "apps/api/docker-start.sh"]
