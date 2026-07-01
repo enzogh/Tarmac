@@ -16,6 +16,7 @@ const NODE_HEARTBEAT_TIMEOUT_MS = 60 * 1000; // 60 seconds
 export class AgentsService implements OnModuleInit {
   private readonly logger = new Logger(AgentsService.name);
   private readonly senders = new Map<string, SendFn>();
+  private readonly overlaySyncAt = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -87,12 +88,19 @@ export class AgentsService implements OnModuleInit {
   }
 
   async onHeartbeat(payload: HeartbeatPayload) {
-    const { nodeId, metrics } = payload;
+    const { nodeId, metrics, overlay } = payload;
+    const now = new Date();
 
     const node = await this.prisma.node
       .update({
         where: { id: nodeId },
-        data: { status: 'online', lastSeenAt: new Date() },
+        data: {
+          status: 'online',
+          lastSeenAt: now,
+          overlayPublicKey: overlay?.publicKey,
+          overlayEndpoint: overlay?.endpoint,
+          overlayListenPort: overlay?.listenPort,
+        },
       })
       .catch(async () => {
         // Node doesn't exist, create it and join VLAN
@@ -102,7 +110,10 @@ export class AgentsService implements OnModuleInit {
             name: `node-${nodeId.slice(0, 6)}`,
             role: 'worker',
             status: 'online',
-            lastSeenAt: new Date(),
+            lastSeenAt: now,
+            overlayPublicKey: overlay?.publicKey,
+            overlayEndpoint: overlay?.endpoint,
+            overlayListenPort: overlay?.listenPort,
           },
         });
         
@@ -146,6 +157,12 @@ export class AgentsService implements OnModuleInit {
         ioWrite: metrics.ioWrite ?? 0,
       },
     });
+
+    const lastSync = this.overlaySyncAt.get(nodeId) ?? 0;
+    if (Date.now() - lastSync >= 15_000) {
+      await this.reconcileOverlayForNode(nodeId);
+      this.overlaySyncAt.set(nodeId, Date.now());
+    }
   }
 
   async onStateReport(payload: StateReportPayload) {
@@ -234,5 +251,54 @@ export class AgentsService implements OnModuleInit {
 
     sender('command', command);
     return true;
+  }
+
+  private async reconcileOverlayForNode(nodeId: string) {
+    try {
+      const membership = await this.prisma.vlanMember.findFirst({
+        where: { nodeId },
+      });
+      if (!membership) return;
+
+      const members = await this.prisma.vlanMember.findMany({
+        where: { vlanId: membership.vlanId },
+        include: { node: true },
+      });
+
+      for (const member of members) {
+        if (!member.node.vlanIp || !member.node.overlayPublicKey) {
+          continue;
+        }
+
+        const peers = members
+          .filter((candidate) =>
+            candidate.nodeId !== member.nodeId &&
+            Boolean(candidate.node.vlanIp) &&
+            Boolean(candidate.node.overlayPublicKey) &&
+            Boolean(candidate.node.overlayEndpoint),
+          )
+          .map((candidate) => ({
+            nodeId: candidate.nodeId,
+            publicKey: candidate.node.overlayPublicKey as string,
+            endpoint: candidate.node.overlayEndpoint as string,
+            allowedIps: [`${candidate.node.vlanIp}/32`],
+            persistentKeepalive: 25,
+          }));
+
+        const command: CommandPayload = {
+          type: 'command.apply_overlay',
+          payload: {
+            interfaceName: 'tarmacwg0',
+            addressCidr: `${member.node.vlanIp}/24`,
+            listenPort: member.node.overlayListenPort ?? 51820,
+            peers,
+          },
+        };
+
+        this.sendCommand(member.nodeId, command);
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to reconcile overlay for node ${nodeId}:`, error);
+    }
   }
 }

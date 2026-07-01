@@ -130,6 +130,9 @@ model Node {
   lastSeenAt         DateTime?
   vlanIp             String?          @unique
   vlanMac            String?          @unique
+  overlayPublicKey   String?
+  overlayEndpoint    String?
+  overlayListenPort  Int?
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
   metrics            MetricSample[]

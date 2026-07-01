@@ -25,8 +25,15 @@ import (
 )
 
 type heartbeat struct {
-	NodeID  string      `json:"nodeId"`
-	Metrics metricState `json:"metrics"`
+	NodeID  string        `json:"nodeId"`
+	Metrics metricState   `json:"metrics"`
+	Overlay *overlayState `json:"overlay,omitempty"`
+}
+
+type overlayState struct {
+	PublicKey  string `json:"publicKey"`
+	Endpoint   string `json:"endpoint"`
+	ListenPort int    `json:"listenPort"`
 }
 
 type metricState struct {
@@ -473,9 +480,219 @@ func readStringSlice(payload map[string]interface{}, key string) []string {
 	return result
 }
 
+func readInt(payload map[string]interface{}, key string, fallback int) int {
+	raw, ok := payload[key]
+	if !ok {
+		return fallback
+	}
+	switch value := raw.(type) {
+	case float64:
+		return int(value)
+	case float32:
+		return int(value)
+	case int:
+		return value
+	case int64:
+		return int(value)
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		if err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+type overlayPeer struct {
+	publicKey           string
+	endpoint            string
+	allowedIPs          []string
+	persistentKeepalive int
+}
+
+type overlayIdentity struct {
+	publicKey      string
+	endpoint       string
+	listenPort     int
+	privateKeyPath string
+}
+
 func commandExists(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
+}
+
+func ensureOverlayIdentity() (*overlayIdentity, error) {
+	if !commandExists("wg") || !commandExists("ip") {
+		return nil, errors.New("wireguard tools not found (install wireguard-tools and iproute2)")
+	}
+
+	listenPort := 51820
+	if rawPort := strings.TrimSpace(os.Getenv("AGENT_OVERLAY_PORT")); rawPort != "" {
+		parsed, err := strconv.Atoi(rawPort)
+		if err == nil && parsed > 0 {
+			listenPort = parsed
+		}
+	}
+
+	privateKeyPath := envOrDefault("AGENT_OVERLAY_PRIVATE_KEY_PATH", "/var/lib/tarmac-agent/wireguard/privatekey")
+	privateKeyDir := filepath.Dir(privateKeyPath)
+	if err := os.MkdirAll(privateKeyDir, 0o700); err != nil {
+		return nil, fmt.Errorf("cannot create wireguard key directory: %w", err)
+	}
+
+	privateKeyRaw, err := os.ReadFile(privateKeyPath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("cannot read private key: %w", err)
+		}
+		gen := exec.Command("wg", "genkey")
+		generated, genErr := gen.Output()
+		if genErr != nil {
+			return nil, fmt.Errorf("cannot generate private key: %w", genErr)
+		}
+		privateKeyRaw = bytes.TrimSpace(generated)
+		if err := os.WriteFile(privateKeyPath, append(privateKeyRaw, '\n'), 0o600); err != nil {
+			return nil, fmt.Errorf("cannot write private key: %w", err)
+		}
+	}
+	privateKey := strings.TrimSpace(string(privateKeyRaw))
+	if privateKey == "" {
+		return nil, errors.New("generated private key is empty")
+	}
+
+	pubCmd := exec.Command("wg", "pubkey")
+	pubCmd.Stdin = strings.NewReader(privateKey)
+	pubOut, pubErr := pubCmd.Output()
+	if pubErr != nil {
+		return nil, fmt.Errorf("cannot derive public key: %w", pubErr)
+	}
+	publicKey := strings.TrimSpace(string(pubOut))
+	if publicKey == "" {
+		return nil, errors.New("derived public key is empty")
+	}
+
+	endpoint := strings.TrimSpace(os.Getenv("AGENT_OVERLAY_ENDPOINT"))
+	if endpoint == "" {
+		ipCmd := exec.Command("sh", "-lc", "ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++){if($i==\"src\"){print $(i+1); exit}}}'")
+		ipOut, ipErr := ipCmd.Output()
+		if ipErr == nil {
+			ipValue := strings.TrimSpace(string(ipOut))
+			if ipValue != "" {
+				endpoint = fmt.Sprintf("%s:%d", ipValue, listenPort)
+			}
+		}
+	}
+
+	return &overlayIdentity{
+		publicKey:      publicKey,
+		endpoint:       endpoint,
+		listenPort:     listenPort,
+		privateKeyPath: privateKeyPath,
+	}, nil
+}
+
+func parseOverlayPeers(payload map[string]interface{}) []overlayPeer {
+	rawPeers, ok := payload["peers"]
+	if !ok {
+		return nil
+	}
+	entries, ok := rawPeers.([]interface{})
+	if !ok {
+		return nil
+	}
+
+	peers := make([]overlayPeer, 0, len(entries))
+	for _, entry := range entries {
+		record, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		publicKey := strings.TrimSpace(readString(record, "publicKey"))
+		if publicKey == "" {
+			continue
+		}
+		allowedIPs := readStringSlice(record, "allowedIps")
+		if len(allowedIPs) == 0 {
+			continue
+		}
+		peer := overlayPeer{
+			publicKey:           publicKey,
+			endpoint:            strings.TrimSpace(readString(record, "endpoint")),
+			allowedIPs:          allowedIPs,
+			persistentKeepalive: readInt(record, "persistentKeepalive", 25),
+		}
+		peers = append(peers, peer)
+	}
+	return peers
+}
+
+func applyOverlay(payload map[string]interface{}) (string, error) {
+	if !commandExists("wg") || !commandExists("ip") {
+		return "", errors.New("wireguard tools missing (install wireguard-tools and iproute2)")
+	}
+
+	identity, err := ensureOverlayIdentity()
+	if err != nil {
+		return "", err
+	}
+
+	iface := readString(payload, "interfaceName")
+	if iface == "" {
+		iface = "tarmacwg0"
+	}
+	addressCidr := readString(payload, "addressCidr")
+	listenPort := readInt(payload, "listenPort", identity.listenPort)
+	peers := parseOverlayPeers(payload)
+
+	if exec.Command("ip", "link", "show", iface).Run() != nil {
+		if out, err := exec.Command("ip", "link", "add", "dev", iface, "type", "wireguard").CombinedOutput(); err != nil {
+			return "", fmt.Errorf("cannot create wireguard interface: %s", strings.TrimSpace(string(out)))
+		}
+	}
+
+	setArgs := []string{"set", iface, "private-key", identity.privateKeyPath, "listen-port", strconv.Itoa(listenPort)}
+	if out, err := exec.Command("wg", setArgs...).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("cannot configure wireguard interface: %s", strings.TrimSpace(string(out)))
+	}
+
+	if strings.TrimSpace(addressCidr) != "" {
+		if out, err := exec.Command("ip", "address", "replace", addressCidr, "dev", iface).CombinedOutput(); err != nil {
+			return "", fmt.Errorf("cannot assign interface address: %s", strings.TrimSpace(string(out)))
+		}
+	}
+
+	if out, err := exec.Command("ip", "link", "set", "up", "dev", iface).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("cannot bring interface up: %s", strings.TrimSpace(string(out)))
+	}
+
+	currentRaw, _ := exec.Command("wg", "show", iface, "peers").Output()
+	currentPeers := strings.Fields(string(currentRaw))
+	desired := make(map[string]struct{}, len(peers))
+	for _, peer := range peers {
+		desired[peer.publicKey] = struct{}{}
+	}
+	for _, existing := range currentPeers {
+		if _, keep := desired[existing]; keep {
+			continue
+		}
+		_, _ = exec.Command("wg", "set", iface, "peer", existing, "remove").CombinedOutput()
+	}
+
+	for _, peer := range peers {
+		args := []string{"set", iface, "peer", peer.publicKey, "allowed-ips", strings.Join(peer.allowedIPs, ",")}
+		if peer.endpoint != "" {
+			args = append(args, "endpoint", peer.endpoint)
+		}
+		if peer.persistentKeepalive > 0 {
+			args = append(args, "persistent-keepalive", strconv.Itoa(peer.persistentKeepalive))
+		}
+		if out, err := exec.Command("wg", args...).CombinedOutput(); err != nil {
+			return "", fmt.Errorf("cannot configure peer %s: %s", peer.publicKey, strings.TrimSpace(string(out)))
+		}
+	}
+
+	return fmt.Sprintf("overlay applied on %s with %d peers", iface, len(peers)), nil
 }
 
 func isTargetMounted(target string) (string, bool) {
@@ -593,6 +810,20 @@ func handleCommand(cmd commandPayload) commandResult {
 		result.ResourceType = "sync_job_run"
 		result.ResourceID = readString(cmd.Payload, "runId")
 		result.Message = "rsync simulated"
+	case "command.apply_overlay":
+		result.Command = "apply_overlay"
+		result.ResourceType = "overlay"
+		result.ResourceID = readString(cmd.Payload, "interfaceName")
+		if result.ResourceID == "" {
+			result.ResourceID = "tarmacwg0"
+		}
+		message, err := applyOverlay(cmd.Payload)
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Message = message
+		}
 	default:
 		result.Success = false
 		result.Message = fmt.Sprintf("unknown command %s", cmd.Type)
@@ -610,6 +841,16 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 
 	client := &wsClient{conn: conn}
 	c := &collector{}
+	var overlay *overlayState
+	if identity, err := ensureOverlayIdentity(); err == nil {
+		overlay = &overlayState{
+			PublicKey:  identity.publicKey,
+			Endpoint:   identity.endpoint,
+			ListenPort: identity.listenPort,
+		}
+	} else {
+		log.Printf("overlay identity unavailable: %v", err)
+	}
 
 	readDone := make(chan error, 1)
 	go func() {
@@ -643,6 +884,7 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 			Payload: heartbeat{
 				NodeID:  nodeID,
 				Metrics: metrics,
+				Overlay: overlay,
 			},
 		}); err != nil {
 			return err
@@ -679,6 +921,7 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 				Payload: heartbeat{
 					NodeID:  nodeID,
 					Metrics: metrics,
+					Overlay: overlay,
 				},
 			}); err != nil {
 				return err
