@@ -10,34 +10,34 @@ export class VlanService implements OnModuleInit {
 
   constructor(private prisma: PrismaService) {}
 
-  async onModuleInit() {
-    // Ensure default VLAN exists on startup
-    try {
-      await this.getOrCreateVlan('default');
-      this.logger.log('Default VLAN initialized');
-    } catch (error) {
-      this.logger.warn('Failed to initialize default VLAN:', error);
-    }
+  onModuleInit() {
+    // No initialization needed - VLAN is created on first agent heartbeat
+    this.logger.log('VlanService ready. VLAN will be created when first agent connects.');
   }
 
   async getOrCreateVlan(name: string = 'default'): Promise<any> {
-    let vlan = await this.prisma.vlan.findUnique({
-      where: { name },
-      include: { members: true, connections: true },
-    });
-
-    if (!vlan) {
-      vlan = await this.prisma.vlan.create({
-        data: {
-          name,
-          subnetCidr: this.VLAN_SUBNET,
-          description: `Automated VLAN for cluster ${name}`,
-        },
+    try {
+      let vlan = await this.prisma.vlan.findUnique({
+        where: { name },
         include: { members: true, connections: true },
       });
-    }
 
-    return vlan;
+      if (!vlan) {
+        vlan = await this.prisma.vlan.create({
+          data: {
+            name,
+            subnetCidr: this.VLAN_SUBNET,
+            description: `Automated VLAN for cluster ${name}`,
+          },
+          include: { members: true, connections: true },
+        });
+      }
+
+      return vlan;
+    } catch (error) {
+      this.logger.error('Database error in getOrCreateVlan:', error instanceof Error ? error.message : error);
+      throw error; // Let controller handle the error gracefully
+    }
   }
 
   async joinVlan(nodeId: string, vlanName: string = 'default'): Promise<any> {
