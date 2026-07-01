@@ -16,17 +16,22 @@ export class ReconciliationService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
-    setInterval(() => {
+    // Delay first tick to let DB connection settle
+    setTimeout(() => {
       void this.tick();
-    }, 15000);
+      setInterval(() => {
+        void this.tick();
+      }, 15000);
+    }, 5000);
   }
 
   private async tick() {
-    const [pendingShares, pendingMounts, pendingPoolMembers] = await Promise.all([
-      this.sharesService.findPending(),
-      this.mountsService.findPending(),
-      this.poolsService.findPendingMembers(),
-    ]);
+    try {
+      const [pendingShares, pendingMounts, pendingPoolMembers] = await Promise.all([
+        this.sharesService.findPending(),
+        this.mountsService.findPending(),
+        this.poolsService.findPendingMembers(),
+      ]);
 
     for (const share of pendingShares) {
       if (!this.agentsService.isConnected(share.nodeId)) continue;
@@ -66,6 +71,9 @@ export class ReconciliationService implements OnModuleInit {
         },
       });
       this.logger.debug(`Sent pool command for pool ${member.poolId} member ${member.nodeId}`);
+    }
+    } catch (error) {
+      this.logger.warn(`Reconciliation tick skipped: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
   }
 }
