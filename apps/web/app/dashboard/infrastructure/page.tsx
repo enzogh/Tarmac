@@ -18,6 +18,12 @@ export default function InfrastructurePage() {
   const [poolName, setPoolName] = useState('');
   const [poolStrategy, setPoolStrategy] = useState('mirror');
 
+  // Edit node state
+  const [editNode, setEditNode] = useState<NodeItem | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editRole, setEditRole] = useState('');
+  const [editLoading, setEditLoading] = useState(false);
+
   const load = async () => {
     if (!token) return;
     try {
@@ -55,6 +61,32 @@ export default function InfrastructurePage() {
     close();
   };
 
+  const deleteNode = async (node: NodeItem) => {
+    if (!token) return;
+    if (!confirm(`Supprimer le nœud « ${node.name} » ? Cette action est irréversible.`)) return;
+    await api.nodes.delete(token, node.id);
+    await load();
+  };
+
+  const openEditModal = (node: NodeItem) => {
+    setEditNode(node);
+    setEditName(node.name);
+    setEditRole(node.role);
+  };
+
+  const saveEditNode = async (e: FormEvent, close: () => void) => {
+    e.preventDefault();
+    if (!token || !editNode) return;
+    setEditLoading(true);
+    try {
+      await api.nodes.update(token, editNode.id, { name: editName, role: editRole });
+      await load();
+      close();
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
   return (
     <DashboardLayout>
       <div className="space-y-8">
@@ -63,7 +95,7 @@ export default function InfrastructurePage() {
             <h1 className="page-heading">Infrastructure</h1>
             <p className="page-subtitle">Gestion des nœuds et des pools de stockage.</p>
           </div>
-          <NodeOnboardingModal />
+          <NodeOnboardingModal onCreated={load} />
         </div>
 
         {/* Nodes Section */}
@@ -83,6 +115,7 @@ export default function InfrastructurePage() {
                   <th>Rôle</th>
                   <th>Statut</th>
                   <th>Vu pour la dernière fois</th>
+                  <th className="text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -103,12 +136,93 @@ export default function InfrastructurePage() {
                         ? new Date(node.lastSeenAt).toLocaleString('fr-FR')
                         : '-'}
                     </td>
+                    <td className="text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(node)}
+                          className="btn-ghost text-xs px-2 py-1"
+                          title="Modifier"
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteNode(node)}
+                          className="btn-ghost text-xs px-2 py-1 text-red-400 hover:text-red-300"
+                          title="Supprimer"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
+                {nodes.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="text-center text-slate-500 py-6">
+                      Aucun nœud enregistré. Cliquez sur « Onboarder un nœud » pour commencer.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
         </Card>
+
+        {/* Edit Node Modal (controlled outside Modal component) */}
+        {editNode && (
+          <div className="modal-backdrop flex items-center justify-center p-4">
+            <div className="modal-panel">
+              <div className="mb-5 flex items-center justify-between gap-4">
+                <h3 className="text-lg font-semibold tracking-tight text-slate-50">
+                  Modifier « {editNode.name} »
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setEditNode(null)}
+                  className="btn-ghost h-9 w-9 rounded-full p-0"
+                  aria-label="Fermer"
+                >
+                  ×
+                </button>
+              </div>
+              <form
+                onSubmit={(e) => saveEditNode(e, () => setEditNode(null))}
+                className="space-y-4"
+              >
+                <div>
+                  <label className="block text-sm font-medium mb-2">Nom du nœud</label>
+                  <input
+                    className="input"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-2">Rôle</label>
+                  <select
+                    className="select"
+                    value={editRole}
+                    onChange={(e) => setEditRole(e.target.value)}
+                  >
+                    <option value="worker">🖥️ Worker</option>
+                    <option value="controller">⚙️ Controller</option>
+                  </select>
+                </div>
+                <div className="flex justify-end gap-3">
+                  <button type="button" onClick={() => setEditNode(null)} className="btn-secondary">
+                    Annuler
+                  </button>
+                  <button type="submit" className="btn-primary" disabled={editLoading}>
+                    {editLoading ? 'Sauvegarde…' : 'Sauvegarder'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
         {/* Pools Section */}
         <Card title="Pools de stockage">

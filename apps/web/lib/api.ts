@@ -106,6 +106,10 @@ export const api = {
     list: (token: string) => request<NodeItem[]>('/api/v1/nodes', token),
     create: (token: string, payload: { name: string; role: string }) =>
       request<NodeItem>('/api/v1/nodes', token, { method: 'POST', body: JSON.stringify(payload) }),
+    update: (token: string, id: string, payload: { name?: string; role?: string }) =>
+      request<NodeItem>(`/api/v1/nodes/${id}`, token, { method: 'PATCH', body: JSON.stringify(payload) }),
+    delete: (token: string, id: string) =>
+      request<NodeItem>(`/api/v1/nodes/${id}`, token, { method: 'DELETE' }),
   },
 
   shares: {
