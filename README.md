@@ -54,9 +54,21 @@ go mod tidy
 go run .
 ```
 L'agent envoie:
-- `agent.heartbeat` enrichi (cpu/ram/disk/network/io)
-- `agent.state_report` (disks + SMART simulés)
-- support commandes simulées `command.apply_export`, `command.apply_mount`, `command.apply_pool`, `command.run_rsync`
+- `agent.heartbeat` en temps réel (cpu/ram/disk/network/io)
+- `agent.state_report` avec volumes réels (capacité totale + occupation actuelle)
+- support `command.apply_mount` avec:
+  - source principale + sources fallback (multi NFS)
+  - `targetPath` unique (ex: `/data/movies`)
+  - `fsType` et `mountOptions` personnalisables
+
+### Installer l'agent comme service systemd (Ubuntu 22.04)
+```bash
+curl -fsSL https://raw.githubusercontent.com/enzogh/Tarmac/main/apps/agent/scripts/install-agent-service.sh | sudo bash -s -- \
+  --node-id "<NODE_ID>" \
+  --control-plane-ws "ws://<API_HOST>:3001/agents-ws" \
+  --agent-token "<AGENT_SHARED_TOKEN>"
+```
+Le script installe automatiquement les dépendances nécessaires (`golang-go`, `nfs-common`, `cifs-utils`, `util-linux`), compile l'agent, puis active `tarmac-agent.service` avec auto-restart.
 
 ## API V1 (préfixe `/api/v1`)
 Auth:
@@ -86,6 +98,7 @@ V1 storage/orchestration:
 - `POST /notification-channels/:id/test`
 - `GET /topology`
 - `GET /storage/forecast`
+- `GET /storage/overview` (`?nodeId=<id>` optionnel pour filtrer un nœud)
 - `GET/POST/PATCH /migrations`
 - `POST /migrations/:id/start`
 - `POST /migrations/:id/complete`

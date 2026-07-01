@@ -20,7 +20,10 @@ export type MountItem = {
   id: string;
   name: string;
   sourcePath: string;
+  additionalSources: string[];
   targetPath: string;
+  fsType: string;
+  mountOptions?: string | null;
   status: 'pending' | 'active' | 'error';
   nodeId?: string | null;
 };
@@ -63,6 +66,7 @@ export type MigrationItem = {
 };
 
 export type Forecast = {
+  nodeId?: string | null;
   totalCapacityGb: number;
   totalUsedGb: number;
   usageRatio: number;
@@ -72,6 +76,44 @@ export type Forecast = {
     daysToFull: number | null;
     projectedFullDate: string | null;
   };
+};
+
+export type NodeMetricSample = {
+  id: string;
+  nodeId: string;
+  cpu: number;
+  ram: number;
+  disk: number;
+  networkRx: number;
+  networkTx: number;
+  ioRead: number;
+  ioWrite: number;
+  createdAt: string;
+};
+
+export type StorageOverview = Forecast & {
+  generatedAt: string;
+  metrics: {
+    cpu: number;
+    ram: number;
+    networkRx: number;
+    networkTx: number;
+    ioRead: number;
+    ioWrite: number;
+  };
+  disks: Array<{
+    id: string;
+    nodeId: string;
+    nodeName: string;
+    name: string;
+    mountPath: string;
+    type: 'hdd' | 'ssd' | 'nvme';
+    health: 'healthy' | 'warning' | 'critical' | 'unknown';
+    capacityGb: number;
+    usedGb: number;
+    usageRatio: number;
+    updatedAt: string;
+  }>;
 };
 
 async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {
@@ -104,6 +146,8 @@ export const api = {
 
   nodes: {
     list: (token: string) => request<NodeItem[]>('/api/v1/nodes', token),
+    metrics: (token: string, id: string, range: '1h' | '6h' | '24h' = '1h') =>
+      request<NodeMetricSample[]>(`/api/v1/nodes/${id}/metrics?range=${range}`, token),
     create: (token: string, payload: { name: string; role: string }) =>
       request<NodeItem>('/api/v1/nodes', token, { method: 'POST', body: JSON.stringify(payload) }),
     update: (token: string, id: string, payload: { name?: string; role?: string }) =>
@@ -122,7 +166,15 @@ export const api = {
     list: (token: string) => request<MountItem[]>('/api/v1/mounts', token),
     create: (
       token: string,
-      payload: { name: string; sourcePath: string; targetPath: string; nodeId?: string },
+      payload: {
+        name: string;
+        sourcePath: string;
+        additionalSources?: string[];
+        targetPath: string;
+        fsType?: string;
+        mountOptions?: string;
+        nodeId?: string;
+      },
     ) => request<MountItem>('/api/v1/mounts', token, { method: 'POST', body: JSON.stringify(payload) }),
   },
 
@@ -161,6 +213,9 @@ export const api = {
   },
 
   storage: {
-    forecast: (token: string) => request<Forecast>('/api/v1/storage/forecast', token),
+    forecast: (token: string, nodeId?: string) =>
+      request<Forecast>(`/api/v1/storage/forecast${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`, token),
+    overview: (token: string, nodeId?: string) =>
+      request<StorageOverview>(`/api/v1/storage/overview${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`, token),
   },
 };

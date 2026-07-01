@@ -158,7 +158,10 @@ model Mount {
   id         String      @id @default(cuid())
   name       String
   sourcePath String
+  additionalSources String[] @default([])
   targetPath String
+  fsType     String      @default("nfs")
+  mountOptions String?
   status     MountStatus @default(pending)
   nodeId     String?
   node       Node?       @relation(fields: [nodeId], references: [id])
