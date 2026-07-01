@@ -657,7 +657,10 @@ func applyOverlay(payload map[string]interface{}) (string, error) {
 	}
 
 	if strings.TrimSpace(addressCidr) != "" {
-		if out, err := exec.Command("ip", "address", "replace", addressCidr, "dev", iface).CombinedOutput(); err != nil {
+		// Clean old addresses first
+		exec.Command("ip", "address", "flush", "dev", iface).CombinedOutput()
+		
+		if out, err := exec.Command("ip", "address", "add", addressCidr, "dev", iface).CombinedOutput(); err != nil {
 			return "", fmt.Errorf("cannot assign interface address: %s", strings.TrimSpace(string(out)))
 		}
 	}
