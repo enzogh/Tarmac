@@ -10,10 +10,21 @@
     "format": "echo \"format non configuré\""
   },
   "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.18",
+    "@radix-ui/react-label": "^2.1.11",
+    "@radix-ui/react-progress": "^1.1.11",
+    "@radix-ui/react-select": "^2.3.2",
+    "@radix-ui/react-separator": "^1.1.11",
+    "@radix-ui/react-slot": "^1.3.0",
+    "@radix-ui/react-tooltip": "^1.2.11",
     "@tarmac/shared": "file:../../packages/shared",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.23.0",
     "next": "14.2.5",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
     "@types/node": "^22.5.4",

@@ -1,7 +1,7 @@
 import type { Config } from 'tailwindcss';
 
 const config: Config = {
-  darkMode: 'class',
+  darkMode: ['class'],
   content: [
     './app/**/*.{js,ts,jsx,tsx,mdx}',
     './components/**/*.{js,ts,jsx,tsx,mdx}',
@@ -9,6 +9,39 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        border: 'hsl(var(--border))',
+        input: 'hsl(var(--input))',
+        ring: 'hsl(var(--ring))',
+        background: 'hsl(var(--background))',
+        foreground: 'hsl(var(--foreground))',
+        primary: {
+          DEFAULT: 'hsl(var(--primary))',
+          foreground: 'hsl(var(--primary-foreground))',
+        },
+        secondary: {
+          DEFAULT: 'hsl(var(--secondary))',
+          foreground: 'hsl(var(--secondary-foreground))',
+        },
+        destructive: {
+          DEFAULT: 'hsl(var(--destructive))',
+          foreground: 'hsl(var(--destructive-foreground))',
+        },
+        muted: {
+          DEFAULT: 'hsl(var(--muted))',
+          foreground: 'hsl(var(--muted-foreground))',
+        },
+        accent: {
+          DEFAULT: 'hsl(var(--accent))',
+          foreground: 'hsl(var(--accent-foreground))',
+        },
+        popover: {
+          DEFAULT: 'hsl(var(--popover))',
+          foreground: 'hsl(var(--popover-foreground))',
+        },
+        card: {
+          DEFAULT: 'hsl(var(--card))',
+          foreground: 'hsl(var(--card-foreground))',
+        },
         brand: {
           50: '#eef5ff',
           100: '#d9e8ff',
@@ -22,26 +55,16 @@ const config: Config = {
           900: '#1e3a8a',
           950: '#0b1538',
         },
-        surface: {
-          50: '#f8fbff',
-          100: '#eef3ff',
-          200: '#d9e2ff',
-          300: '#b8c7f5',
-          400: '#7d8fc9',
-          500: '#46567f',
-          600: '#2b3554',
-          700: '#1f2740',
-          800: '#161c30',
-          900: '#0f1424',
-          950: '#090d18',
-        },
-        slate: {
-          925: '#111827',
-          875: '#1a202c',
-        },
+      },
+      borderRadius: {
+        lg: 'var(--radius)',
+        md: 'calc(var(--radius) - 2px)',
+        sm: 'calc(var(--radius) - 4px)',
+        '2xl': '1rem',
+        '3xl': '1.5rem',
       },
       boxShadow: {
-        glow: '0 0 0 1px rgba(59, 130, 246, 0.15), 0 18px 50px rgba(15, 23, 42, 0.45)',
+        glow: '0 0 0 1px rgba(109, 40, 217, 0.2), 0 18px 50px rgba(2, 6, 23, 0.45)',
         panel: '0 10px 35px rgba(2, 6, 23, 0.35)',
         insetSoft: 'inset 0 1px 0 rgba(255, 255, 255, 0.04)',
       },
@@ -49,16 +72,20 @@ const config: Config = {
         'radial-premium':
           'radial-gradient(circle at top, rgba(37, 99, 235, 0.22), transparent 35%), radial-gradient(circle at right, rgba(168, 85, 247, 0.16), transparent 28%), linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(2, 6, 23, 1))',
         'panel-glow':
-          'linear-gradient(135deg, rgba(37, 99, 235, 0.18), rgba(168, 85, 247, 0.12), rgba(14, 165, 233, 0.08))',
+          'linear-gradient(135deg, rgba(109, 40, 217, 0.12), rgba(79, 70, 229, 0.08), transparent)',
       },
       keyframes: {
-        'fade-in': {
-          from: { opacity: '0', transform: 'translateY(10px)' },
-          to: { opacity: '1', transform: 'translateY(0)' },
+        'accordion-down': {
+          from: { height: '0' },
+          to: { height: 'var(--radix-accordion-content-height)' },
         },
-        'float-soft': {
-          '0%, 100%': { transform: 'translateY(0px)' },
-          '50%': { transform: 'translateY(-6px)' },
+        'accordion-up': {
+          from: { height: 'var(--radix-accordion-content-height)' },
+          to: { height: '0' },
+        },
+        'fade-in': {
+          from: { opacity: '0', transform: 'translateY(8px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
         },
         shimmer: {
           '0%': { backgroundPosition: '-200% 0' },
@@ -66,13 +93,10 @@ const config: Config = {
         },
       },
       animation: {
+        'accordion-down': 'accordion-down 0.2s ease-out',
+        'accordion-up': 'accordion-up 0.2s ease-out',
         'fade-in': 'fade-in 220ms ease-out',
-        'float-soft': 'float-soft 6s ease-in-out infinite',
         shimmer: 'shimmer 1.8s linear infinite',
-      },
-      borderRadius: {
-        '2xl': '1rem',
-        '3xl': '1.5rem',
       },
     },
   },
