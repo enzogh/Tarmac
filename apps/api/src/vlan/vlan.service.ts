@@ -146,16 +146,42 @@ export class VlanService implements OnModuleInit {
     return member;
   }
 
-  async getVlanMembers(vlanId: string): Promise<any> {
+  async getVlanMembers(vlanIdOrName: string): Promise<any> {
+    const vlan = await this.prisma.vlan.findFirst({
+      where: {
+        OR: [
+          { id: vlanIdOrName },
+          { name: vlanIdOrName }
+        ]
+      }
+    });
+
+    if (!vlan) {
+      throw new Error(`VLAN not found: ${vlanIdOrName}`);
+    }
+
     return this.prisma.vlanMember.findMany({
-      where: { vlanId },
+      where: { vlanId: vlan.id },
       include: { node: true },
     });
   }
 
-  async getVlanConnections(vlanId: string): Promise<any> {
+  async getVlanConnections(vlanIdOrName: string): Promise<any> {
+    const vlan = await this.prisma.vlan.findFirst({
+      where: {
+        OR: [
+          { id: vlanIdOrName },
+          { name: vlanIdOrName }
+        ]
+      }
+    });
+
+    if (!vlan) {
+      throw new Error(`VLAN not found: ${vlanIdOrName}`);
+    }
+
     return this.prisma.vlanConnection.findMany({
-      where: { vlanId },
+      where: { vlanId: vlan.id },
       include: {
         sourceNode: { select: { id: true, name: true, vlanIp: true } },
         targetNode: { select: { id: true, name: true, vlanIp: true } },
