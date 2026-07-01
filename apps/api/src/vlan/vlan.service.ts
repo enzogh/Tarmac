@@ -54,14 +54,14 @@ export class VlanService implements OnModuleInit {
 
   async joinVlan(nodeId: string, vlanName: string = 'default'): Promise<any> {
     const vlan = await this.getOrCreateVlan(vlanName);
-    this.logger.debug(`joinVlan: vlan=${vlan.id} name=${vlan.name} nodeId=${nodeId}`);
+    this.logger.error(`joinVlan START: vlan=${vlan.id} name=${vlan.name} nodeId=${nodeId}`);
     
     const existingMember = await this.prisma.vlanMember.findFirst({
       where: { nodeId, vlanId: vlan.id },
     });
 
     if (existingMember) {
-      this.logger.debug(`joinVlan: member already exists ${existingMember.id}`);
+      this.logger.error(`joinVlan: member already exists ${existingMember.id}`);
       return existingMember;
     }
 
@@ -69,7 +69,7 @@ export class VlanService implements OnModuleInit {
     const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
     const vlanIp = node?.vlanIp || this.generateDeterministicVlanIp(nodeId);
     const vlanMac = node?.vlanMac || this.generateVlanMac(nodeId);
-    this.logger.debug(`joinVlan: creating member vlanId=${vlan.id} vlanIp=${vlanIp} vlanMac=${vlanMac}`);
+    this.logger.error(`joinVlan: creating member vlanId=${vlan.id} vlanIp=${vlanIp} vlanMac=${vlanMac}`);
 
     let member;
     try {
@@ -81,15 +81,15 @@ export class VlanService implements OnModuleInit {
           vlanMac,
         },
       });
-      this.logger.debug(`joinVlan: member created ${member.id}`);
+      this.logger.error(`joinVlan: member CREATED ${member.id}`);
     } catch (error) {
-      this.logger.debug(`joinVlan: create error ${error instanceof Error ? error.message : error}`);
+      this.logger.error(`joinVlan: create ERROR ${error instanceof Error ? error.message : error}`);
       if (this.isUniqueConstraintError(error)) {
         const existing = await this.prisma.vlanMember.findFirst({
           where: { nodeId, vlanId: vlan.id },
         });
         if (existing) {
-          this.logger.debug(`joinVlan: recovered existing member ${existing.id}`);
+          this.logger.error(`joinVlan: recovered existing member ${existing.id}`);
           return existing;
         }
       }
