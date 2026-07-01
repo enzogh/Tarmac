@@ -1,0 +1,344 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum NodeStatus {
+  offline
+  online
+  degraded
+}
+
+enum ShareStatus {
+  pending
+  active
+  error
+}
+
+enum MountStatus {
+  pending
+  active
+  error
+}
+
+enum ShareClientAccess {
+  ro
+  rw
+  deny
+}
+
+enum DiskHealth {
+  healthy
+  warning
+  critical
+  unknown
+}
+
+enum DiskType {
+  hdd
+  ssd
+  nvme
+}
+
+enum PoolStatus {
+  pending
+  active
+  error
+}
+
+enum PoolMemberStatus {
+  pending
+  active
+  error
+}
+
+enum PoolMemberRole {
+  primary
+  replica
+}
+
+enum AlertSeverity {
+  low
+  medium
+  high
+  critical
+}
+
+enum AlertStatus {
+  open
+  acknowledged
+  resolved
+}
+
+enum Comparator {
+  gt
+  gte
+  lt
+  lte
+}
+
+enum NotificationChannelType {
+  email
+  webhook
+  slack
+}
+
+enum SyncJobStatus {
+  pending
+  running
+  success
+  failed
+}
+
+enum MigrationStatus {
+  pending
+  running
+  completed
+  failed
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Node {
+  id                 String           @id @default(cuid())
+  name               String
+  role               String
+  status             NodeStatus       @default(offline)
+  lastSeenAt         DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  metrics            MetricSample[]
+  shares             Share[]
+  mounts             Mount[]
+  disks              Disk[]
+  smartReports       SmartReport[]
+  poolMembers        PoolMember[]
+  alertRules         AlertRule[]      @relation("NodeAlertRules")
+  alerts             Alert[]          @relation("NodeAlerts")
+  sourceMigrations   MigrationTask[]  @relation("MigrationSourceNode")
+  targetMigrations   MigrationTask[]  @relation("MigrationTargetNode")
+  syncJobs           SyncJob[]
+}
+
+model Share {
+  id         String        @id @default(cuid())
+  name       String
+  path       String
+  status     ShareStatus   @default(pending)
+  nodeId     String?
+  node       Node?         @relation(fields: [nodeId], references: [id])
+  clients    ShareClient[]
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+}
+
+model ShareClient {
+  id        String            @id @default(cuid())
+  shareId   String
+  clientId  String
+  access    ShareClientAccess @default(ro)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  share     Share             @relation(fields: [shareId], references: [id], onDelete: Cascade)
+
+  @@unique([shareId, clientId])
+}
+
+model Mount {
+  id         String      @id @default(cuid())
+  name       String
+  sourcePath String
+  targetPath String
+  status     MountStatus @default(pending)
+  nodeId     String?
+  node       Node?       @relation(fields: [nodeId], references: [id])
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+}
+
+model MetricSample {
+  id        String   @id @default(cuid())
+  nodeId    String
+  cpu       Float
+  ram       Float
+  disk      Float
+  networkRx Float    @default(0)
+  networkTx Float    @default(0)
+  ioRead    Float    @default(0)
+  ioWrite   Float    @default(0)
+  createdAt DateTime @default(now())
+  node      Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([nodeId, createdAt])
+}
+
+model Disk {
+  id         String     @id @default(cuid())
+  nodeId     String
+  name       String
+  mountPath  String
+  type       DiskType   @default(hdd)
+  health     DiskHealth @default(unknown)
+  capacityGb Int
+  usedGb     Int
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  node       Node       @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([nodeId])
+  @@unique([nodeId, name])
+}
+
+model SmartReport {
+  id                 String   @id @default(cuid())
+  nodeId             String
+  diskName           String
+  temperatureC       Int
+  reallocatedSectors Int
+  pendingSectors     Int
+  powerOnHours       Int
+  overall            DiskHealth @default(unknown)
+  collectedAt        DateTime @default(now())
+  node               Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([nodeId, collectedAt])
+}
+
+model Pool {
+  id        String       @id @default(cuid())
+  name      String       @unique
+  strategy  String
+  status    PoolStatus   @default(pending)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  members   PoolMember[]
+}
+
+model PoolMember {
+  id        String           @id @default(cuid())
+  poolId    String
+  nodeId    String
+  role      PoolMemberRole   @default(replica)
+  status    PoolMemberStatus @default(pending)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  pool      Pool             @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  node      Node             @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@unique([poolId, nodeId])
+  @@index([nodeId])
+}
+
+model NotificationChannel {
+  id        String                  @id @default(cuid())
+  name      String
+  type      NotificationChannelType
+  target    String
+  enabled   Boolean                 @default(true)
+  createdAt DateTime                @default(now())
+  updatedAt DateTime                @updatedAt
+  rules     AlertRule[]
+}
+
+model AlertRule {
+  id                    String                @id @default(cuid())
+  name                  String
+  metric                String
+  comparator            Comparator            @default(gte)
+  threshold             Float
+  severity              AlertSeverity         @default(medium)
+  enabled               Boolean               @default(true)
+  nodeId                String?
+  notificationChannelId String?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  node                  Node?                 @relation("NodeAlertRules", fields: [nodeId], references: [id])
+  notificationChannel   NotificationChannel?  @relation(fields: [notificationChannelId], references: [id])
+  alerts                Alert[]
+}
+
+model Alert {
+  id             String       @id @default(cuid())
+  ruleId         String?
+  nodeId         String?
+  message        String
+  severity       AlertSeverity @default(medium)
+  status         AlertStatus  @default(open)
+  triggeredAt    DateTime     @default(now())
+  acknowledgedAt DateTime?
+  resolvedAt     DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  rule           AlertRule?   @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  node           Node?        @relation("NodeAlerts", fields: [nodeId], references: [id], onDelete: SetNull)
+}
+
+model SyncJob {
+  id         String         @id @default(cuid())
+  name       String
+  sourcePath String
+  targetPath String
+  schedule   String
+  status     SyncJobStatus  @default(pending)
+  nodeId     String?
+  lastRunAt  DateTime?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  node       Node?          @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+  runs       SyncJobRun[]
+}
+
+model SyncJobRun {
+  id               String        @id @default(cuid())
+  syncJobId        String
+  status           SyncJobStatus @default(running)
+  trigger          String        @default("manual")
+  bytesTransferred Int           @default(0)
+  log              String?
+  startedAt        DateTime      @default(now())
+  finishedAt       DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  syncJob          SyncJob       @relation(fields: [syncJobId], references: [id], onDelete: Cascade)
+
+  @@index([syncJobId, startedAt])
+}
+
+model MigrationTask {
+  id           String          @id @default(cuid())
+  name         String
+  shareId      String?
+  sourceNodeId String?
+  targetNodeId String?
+  status       MigrationStatus @default(pending)
+  progress     Int             @default(0)
+  notes        String?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  sourceNode   Node?           @relation("MigrationSourceNode", fields: [sourceNodeId], references: [id], onDelete: SetNull)
+  targetNode   Node?           @relation("MigrationTargetNode", fields: [targetNodeId], references: [id], onDelete: SetNull)
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  actorUserId  String?
+  action       String
+  resourceType String
+  resourceId   String?
+  details      Json?
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+}
