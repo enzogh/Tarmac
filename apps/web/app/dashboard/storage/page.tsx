@@ -1,62 +1,101 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Database, HardDrive, Plus, Info, Activity, ArrowDownToLine, ArrowUpToLine } from 'lucide-react';
-import { api, ShareItem, MountItem, NodeItem, StorageOverview } from '../../../lib/api';
+import { Plus, HardDrive, Zap, Shield, Grid3x3 } from 'lucide-react';
+import { api, NodeItem } from '../../../lib/api';
 import { DashboardLayout } from '../../../components/DashboardLayout';
-import { Badge } from '../../../components/ui';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
-import { Button } from '../../../components/ui/button';
-import { Input } from '../../../components/ui/input';
-import { Label } from '../../../components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
-import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '../../../components/ui/dialog';
-import { Progress } from '../../../components/ui/progress';
+  WizardDialog,
+  PresetSelector,
+  AdvancedOptions,
+  OperationPreview,
+  HelpText,
+  InfoBox,
+  PresetOption,
+  StepConfig,
+} from '../../../components/ui/wizard';
+
+const POOL_PRESETS: PresetOption[] = [
+  {
+    id: 'raid1',
+    name: 'RAID 1 (Mirroir)',
+    description: 'Deux disques en mirroir - redondance maximale',
+    icon: '🪞',
+    config: {
+      raidLevel: 'raid1',
+      minDisks: 2,
+      redundancy: 'high',
+      speed: 'medium',
+    },
+  },
+  {
+    id: 'raid5',
+    name: 'RAID 5 (Stripping + Parité)',
+    description: 'Equilibre redondance/performance avec parité (3-4 disques)',
+    icon: '⚖️',
+    config: {
+      raidLevel: 'raid5',
+      minDisks: 3,
+      redundancy: 'high',
+      speed: 'fast',
+    },
+  },
+  {
+    id: 'raid6',
+    name: 'RAID 6 (Double Parité)',
+    description: 'RAID 5 amélioré - tolère 2 défaillances (4-5 disques)',
+    icon: '🛡️',
+    config: {
+      raidLevel: 'raid6',
+      minDisks: 4,
+      redundancy: 'very-high',
+      speed: 'medium-fast',
+    },
+  },
+  {
+    id: 'simple',
+    name: 'Simple (Aucune Redondance)',
+    description: 'Pool simple sans protection - performance maximale',
+    icon: '⚡',
+    config: {
+      raidLevel: 'simple',
+      minDisks: 1,
+      redundancy: 'none',
+      speed: 'ultra-fast',
+    },
+  },
+];
 
 export default function StoragePage() {
   const router = useRouter();
   const token = useMemo(() => (typeof window !== 'undefined' ? localStorage.getItem('tarmac_token') : null), []);
 
-  const [shares, setShares] = useState<ShareItem[]>([]);
-  const [mounts, setMounts] = useState<MountItem[]>([]);
   const [nodes, setNodes] = useState<NodeItem[]>([]);
-  const [overview, setOverview] = useState<StorageOverview | null>(null);
-  const [selectedNodeId, setSelectedNodeId] = useState('all');
+  const [pools, setPools] = useState<any[]>([]);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [selectedPreset, setSelectedPreset] = useState<PresetOption | null>(null);
 
-  const [shareDialogOpen, setShareDialogOpen] = useState(false);
-  const [mountDialogOpen, setMountDialogOpen] = useState(false);
-
-  const [shareName, setShareName] = useState('');
-  const [sharePath, setSharePath] = useState('');
-  const [shareNodeId, setShareNodeId] = useState('auto');
-
-  const [mountName, setMountName] = useState('');
-  const [mountSource, setMountSource] = useState('');
-  const [mountAdditionalSources, setMountAdditionalSources] = useState('');
-  const [mountTarget, setMountTarget] = useState('');
-  const [mountFsType, setMountFsType] = useState('nfs');
-  const [mountOptions, setMountOptions] = useState('hard,intr,nfsvers=4.2,timeo=600,retrans=2');
-  const [mountNodeId, setMountNodeId] = useState('auto');
+  const [formData, setFormData] = useState({
+    name: '',
+    nodeId: '',
+    diskPaths: [] as string[],
+    raidLevel: 'raid1',
+    redundancy: 'high',
+    cacheEnabled: true,
+    compression: true,
+  });
 
   const load = async () => {
     if (!token) return;
     try {
-      const [s, m, n] = await Promise.all([
-        api.shares.list(token),
-        api.mounts.list(token),
+      const [n, p] = await Promise.all([
         api.nodes.list(token),
+        api.pools.list(token),
       ]);
-      setShares(s);
-      setMounts(m);
       setNodes(n);
+      setPools(p);
     } catch {
       localStorage.removeItem('tarmac_token');
       router.push('/login');
@@ -69,408 +108,325 @@ export default function StoragePage() {
       return;
     }
     void load();
-    const id = setInterval(() => {
-      void load();
-    }, 5000);
+    const id = setInterval(() => void load(), 5000);
     return () => clearInterval(id);
   }, [token]);
 
-  useEffect(() => {
-    if (!token) return;
-    void api.storage
-      .overview(token, selectedNodeId === 'all' ? undefined : selectedNodeId)
-      .then(setOverview)
-      .catch(() => undefined);
-  }, [token, selectedNodeId, shares, mounts, nodes]);
+  const wizardSteps: StepConfig[] = [
+    {
+      id: 'choose-preset',
+      title: 'Stratégie de Pool',
+      description: 'Sélectionnez la configuration RAID adaptée',
+      content: (
+        <div>
+          <PresetSelector
+            presets={POOL_PRESETS}
+            onSelect={(preset) => {
+              setSelectedPreset(preset);
+              if (preset.config) {
+                setFormData((prev) => ({ ...prev, ...preset.config }));
+              }
+            }}
+          />
+          {selectedPreset && (
+            <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded text-sm text-green-900">
+              ✓ Sélectionné: <strong>{selectedPreset.name}</strong>
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      id: 'select-disks',
+      title: 'Sélection des Disques',
+      description: 'Choisissez le nœud et les disques pour le pool',
+      content: (
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Nom du Pool
+              <HelpText text="Identifiant unique pour ce pool de stockage" />
+            </label>
+            <input
+              type="text"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="ex: pool-principal"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
 
-  const filteredShares = useMemo(
-    () => (selectedNodeId === 'all' ? shares : shares.filter((share) => share.nodeId === selectedNodeId)),
-    [shares, selectedNodeId],
-  );
-  const filteredMounts = useMemo(
-    () => (selectedNodeId === 'all' ? mounts : mounts.filter((mount) => mount.nodeId === selectedNodeId)),
-    [mounts, selectedNodeId],
-  );
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Nœud Hôte
+              <HelpText text="Le serveur qui hébergera ce pool" />
+            </label>
+            <select
+              value={formData.nodeId}
+              onChange={(e) => setFormData({ ...formData, nodeId: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">-- Choisir un nœud --</option>
+              {nodes.map((node) => (
+                <option key={node.id} value={node.id}>
+                  {node.name} ({node.status})
+                </option>
+              ))}
+            </select>
+          </div>
 
-  const createShare = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!token) return;
-    await api.shares.create(token, {
-      name: shareName,
-      path: sharePath,
-      nodeId: shareNodeId !== 'auto' ? shareNodeId : undefined,
-    });
-    setShareName('');
-    setSharePath('');
-    setShareNodeId('auto');
-    await load();
-    setShareDialogOpen(false);
-  };
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Chemins des Disques
+              <HelpText text={`Entrez les chemins (ex: /dev/sda), minimum ${selectedPreset?.config?.minDisks || 1} disque(s)`} />
+            </label>
+            <textarea
+              value={formData.diskPaths.join('\n')}
+              onChange={(e) => setFormData({ ...formData, diskPaths: e.target.value.split('\n').filter(Boolean) })}
+              placeholder="/dev/sda&#10;/dev/sdb&#10;/dev/sdc"
+              rows={5}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-xs"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              {formData.diskPaths.length} disque(s) - {selectedPreset?.config?.minDisks ? `Min: ${selectedPreset.config?.minDisks}` : ''}
+            </p>
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 'advanced',
+      title: 'Options de Performance',
+      description: 'Configurez le cache et la compression',
+      content: (
+        <div className="space-y-4">
+          <AdvancedOptions>
+            <div className="space-y-4">
+              <label className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={formData.cacheEnabled}
+                  onChange={(e) => setFormData({ ...formData, cacheEnabled: e.target.checked })}
+                  className="w-4 h-4 rounded"
+                />
+                <div>
+                  <span className="font-medium text-gray-700">Activer le Cache</span>
+                  <p className="text-xs text-gray-500">Les données fréquemment accédées sont cachées en mémoire</p>
+                </div>
+              </label>
 
-  const createMount = async (e: FormEvent) => {
-    e.preventDefault();
+              <label className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={formData.compression}
+                  onChange={(e) => setFormData({ ...formData, compression: e.target.checked })}
+                  className="w-4 h-4 rounded"
+                />
+                <div>
+                  <span className="font-medium text-gray-700">Compression</span>
+                  <p className="text-xs text-gray-500">Réduire la taille des données stockées</p>
+                </div>
+              </label>
+            </div>
+          </AdvancedOptions>
+        </div>
+      ),
+    },
+    {
+      id: 'review',
+      title: 'Vérification Finale',
+      description: 'Confirmer la création du pool',
+      content: (
+        <div className="space-y-4">
+          <OperationPreview
+            steps={[
+              {
+                id: 'validate',
+                title: 'Validation des disques',
+                description: 'Vérification de l\'accès et de la santé des disques',
+              },
+              {
+                id: 'format',
+                title: 'Formatage',
+                description: 'Préparation des disques pour le RAID',
+              },
+              {
+                id: 'create',
+                title: 'Création du pool',
+                description: `Initialisation du ${selectedPreset?.name}`,
+              },
+              {
+                id: 'mount',
+                title: 'Montage',
+                description: 'Intégration au système de fichiers',
+              },
+            ]}
+          />
+
+          <div className="bg-gray-50 rounded-lg p-4 space-y-3 text-sm">
+            <div className="flex justify-between border-b pb-2">
+              <span className="text-gray-600">Pool:</span>
+              <span className="font-mono font-semibold">{formData.name}</span>
+            </div>
+            <div className="flex justify-between border-b pb-2">
+              <span className="text-gray-600">Stratégie:</span>
+              <span className="font-mono">{selectedPreset?.name}</span>
+            </div>
+            <div className="flex justify-between border-b pb-2">
+              <span className="text-gray-600">Disques:</span>
+              <span className="font-mono">{formData.diskPaths.length}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-600">Options:</span>
+              <span className="font-mono">
+                {[formData.cacheEnabled && 'Cache', formData.compression && 'Compression'].filter(Boolean).join(', ')}
+              </span>
+            </div>
+          </div>
+
+          <InfoBox type="warning" title="⚠️ Attention">
+            Cette opération formatera les disques spécifiés. Les données existantes seront perdues. Assurez-vous d'avoir
+            sauvegardé vos données.
+          </InfoBox>
+        </div>
+      ),
+    },
+  ];
+
+  const createPool = async () => {
     if (!token) return;
-    await api.mounts.create(token, {
-      name: mountName,
-      sourcePath: mountSource,
-      additionalSources: mountAdditionalSources
-        .split(',')
-        .map((entry) => entry.trim())
-        .filter(Boolean),
-      targetPath: mountTarget,
-      fsType: mountFsType,
-      mountOptions: mountOptions.trim() || undefined,
-      nodeId: mountNodeId !== 'auto' ? mountNodeId : undefined,
-    });
-    setMountName('');
-    setMountSource('');
-    setMountAdditionalSources('');
-    setMountTarget('');
-    setMountFsType('nfs');
-    setMountOptions('hard,intr,nfsvers=4.2,timeo=600,retrans=2');
-    setMountNodeId('auto');
-    await load();
-    setMountDialogOpen(false);
+    try {
+      // TODO: Call API endpoint when available
+      // await api.pools.create(token, formData);
+      alert('Pool créé (endpoint à implémenter)');
+      setWizardOpen(false);
+      setFormData({
+        name: '',
+        nodeId: '',
+        diskPaths: [],
+        raidLevel: 'raid1',
+        redundancy: 'high',
+        cacheEnabled: true,
+        compression: true,
+      });
+      setSelectedPreset(null);
+    } catch (error) {
+      alert('Erreur lors de la création du pool');
+    }
   };
 
   return (
     <DashboardLayout>
-      <div className="space-y-8">
-        <div className="space-y-1">
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Stockage</h1>
-          <p className="text-sm text-muted-foreground">Suivi temps réel du stockage et réseau par nœud.</p>
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Pools de Stockage</h1>
+            <p className="text-gray-600 mt-1">Gérez vos pools de stockage et configurations RAID</p>
+          </div>
+          <button
+            onClick={() => setWizardOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold"
+          >
+            <Plus className="w-5 h-5" />
+            Nouveau Pool
+          </button>
         </div>
 
-        <Card>
-          <CardContent className="pt-6 space-y-4">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
-                <p className="text-xs text-muted-foreground">Capacité totale</p>
-                <p className="mt-1 text-2xl font-semibold">{overview?.totalCapacityGb ?? 0} GB</p>
-              </div>
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
-                <p className="text-xs text-muted-foreground">Occupation actuelle</p>
-                <p className="mt-1 text-2xl font-semibold">{overview?.totalUsedGb ?? 0} GB</p>
-              </div>
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground"><ArrowDownToLine className="h-3.5 w-3.5" />Réseau RX</div>
-                <p className="mt-1 text-2xl font-semibold">{Math.round(overview?.metrics.networkRx ?? 0)} B/s</p>
-              </div>
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground"><ArrowUpToLine className="h-3.5 w-3.5" />Réseau TX</div>
-                <p className="mt-1 text-2xl font-semibold">{Math.round(overview?.metrics.networkTx ?? 0)} B/s</p>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <div className="md:col-span-1 space-y-2">
-                <Label htmlFor="node-filter">Filtrer par nœud</Label>
-                <Select value={selectedNodeId} onValueChange={setSelectedNodeId}>
-                  <SelectTrigger id="node-filter">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Tous les nœuds</SelectItem>
-                    {nodes.map((n) => (
-                      <SelectItem key={n.id} value={n.id}>{n.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 md:col-span-2">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Activity className="h-3.5 w-3.5" />
-                  Charge moyenne
-                </div>
-                <p className="mt-1 text-sm text-foreground">
-                  CPU {Math.round(overview?.metrics.cpu ?? 0)}% · RAM {Math.round(overview?.metrics.ram ?? 0)}% · I/O lecture {Math.round(overview?.metrics.ioRead ?? 0)} B/s · I/O écriture {Math.round(overview?.metrics.ioWrite ?? 0)} B/s
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Info Box */}
+        <InfoBox type="info" title="À propos des pools">
+          Un pool de stockage est un ensemble de disques configurés en RAID. Choisissez une stratégie adaptée à vos besoins
+          de performance et de redondance.
+        </InfoBox>
 
-        {/* Shares info callout */}
-        <div className="flex items-start gap-3 rounded-xl border border-blue-500/20 bg-blue-500/[0.07] px-4 py-3">
-          <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-400" />
-          <p className="text-sm text-blue-300/80">
-            Un <strong className="text-blue-200">partage</strong> est un dossier accessible via le réseau (NFS pour Linux, SMB pour Windows).
-            Un <strong className="text-blue-200">montage</strong> associe un partage à un chemin local sur un nœud — comme brancher une clé USB.
-          </p>
-        </div>
-
-        {/* Shares Section */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Database className="h-5 w-5 text-violet-400" />
-                <CardTitle>Partages NFS / SMB</CardTitle>
-              </div>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button size="sm" onClick={() => setShareDialogOpen(true)}>
-                    <Plus className="h-4 w-4" />
-                    Nouveau partage
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Créer un nouveau partage réseau (NFS/SMB)</TooltipContent>
-              </Tooltip>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {filteredShares.map((share) => (
-                <div key={share.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 transition-colors hover:bg-white/[0.04]">
-                  <div className="mb-3 flex items-start justify-between">
-                    <h4 className="font-semibold text-foreground">{share.name}</h4>
-                    <Badge label={share.status} type="info" />
-                  </div>
-                  <div className="space-y-2 text-sm">
-                    <div>
-                      <span className="text-muted-foreground">Chemin :</span>
-                      <p className="mt-0.5 font-mono text-xs text-foreground/80 break-all">{share.path}</p>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Nœud</span>
-                      <span className="text-foreground/90">{share.nodeId ?? 'Auto'}</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-              {filteredShares.length === 0 && (
-                <p className="col-span-full py-6 text-center text-sm text-muted-foreground">
-                  Aucun partage. Cliquez sur «&nbsp;Nouveau partage&nbsp;» pour en créer un.
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Mounts Section */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <HardDrive className="h-5 w-5 text-violet-400" />
-                <CardTitle>Montages</CardTitle>
-              </div>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button size="sm" onClick={() => setMountDialogOpen(true)}>
-                    <Plus className="h-4 w-4" />
-                    Nouveau montage
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Monter un partage sur un chemin local d'un nœud</TooltipContent>
-              </Tooltip>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {filteredMounts.map((mount) => (
-              <div key={mount.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 transition-colors hover:bg-white/[0.04]">
-                <div className="mb-2 flex items-start justify-between">
-                  <h4 className="font-semibold text-foreground">{mount.name}</h4>
-                  <Badge label={mount.status} type="info" />
-                </div>
-                <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
-                  <span>{mount.sourcePath}</span>
-                  <span className="text-zinc-600">→</span>
-                  <span>{mount.targetPath}</span>
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Type: <span className="font-mono text-foreground/80">{mount.fsType}</span>
-                  {mount.mountOptions ? <> · Options: <span className="font-mono text-foreground/80 break-all">{mount.mountOptions}</span></> : null}
-                </p>
-                {mount.additionalSources.length > 0 && (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Sources fallback: <span className="font-mono text-foreground/80 break-all">{mount.additionalSources.join(', ')}</span>
-                  </p>
-                )}
-              </div>
-            ))}
-            {filteredMounts.length === 0 && (
-              <p className="py-6 text-center text-sm text-muted-foreground">
-                Aucun montage. Cliquez sur «&nbsp;Nouveau montage&nbsp;» pour en créer un.
+        {/* RAID Strategies Overview */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Shield className="w-5 h-5 text-red-500" />
+                Redondance
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-600">
+                RAID 1, 5, 6: Protection contre la perte de disques. Plus la redondance est élevée, plus on tolère de
+                défaillances.
               </p>
-            )}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Volumes détectés</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {(overview?.disks ?? []).map((disk) => (
-              <div key={disk.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="font-semibold">{disk.nodeName} · {disk.mountPath}</p>
-                    <p className="text-xs text-muted-foreground">{disk.name} ({disk.type})</p>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Zap className="w-5 h-5 text-yellow-500" />
+                Performance
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-600">
+                RAID 0 (simple): Performance maximale, 0 redondance. RAID 5/6: Bon compromis entre sécurité et vitesse.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Existing Pools */}
+        {pools.length === 0 ? (
+          <Card>
+            <CardContent className="pt-12 pb-12 text-center">
+              <div className="text-6xl mb-4">💾</div>
+              <p className="text-gray-600 font-medium">Aucun pool créé</p>
+              <p className="text-sm text-gray-500 mt-2">Cliquez sur "Nouveau Pool" pour en créer un</p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-4">
+            {pools.map((pool: any) => (
+              <Card key={pool.id}>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Grid3x3 className="w-5 h-5" />
+                    {pool.name}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <p className="text-gray-600">Type</p>
+                      <p className="font-mono font-semibold">{pool.raidLevel?.toUpperCase()}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-600">Disques</p>
+                      <p className="font-mono font-semibold">{pool.diskCount}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-600">Capacité</p>
+                      <p className="font-mono font-semibold">{pool.capacityGb} GB</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-600">État</p>
+                      <p className="font-mono font-semibold">{pool.status}</p>
+                    </div>
                   </div>
-                  <Badge label={disk.health} type={disk.health === 'healthy' ? 'success' : 'warning'} />
-                </div>
-                <div className="mt-3 space-y-1.5">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>Capacité max</span>
-                    <span>{disk.capacityGb} GB</span>
-                  </div>
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>Utilisé</span>
-                    <span>{disk.usedGb} GB ({Math.round(disk.usageRatio * 100)}%)</span>
-                  </div>
-                  <Progress value={disk.usageRatio * 100} className="h-1.5" />
-                </div>
-              </div>
+                </CardContent>
+              </Card>
             ))}
-            {(overview?.disks ?? []).length === 0 && (
-              <p className="py-4 text-center text-sm text-muted-foreground">Aucun volume remonté par les agents.</p>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Share Dialog */}
-        <Dialog open={shareDialogOpen} onOpenChange={setShareDialogOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Créer un partage réseau</DialogTitle>
-            </DialogHeader>
-            <form onSubmit={createShare} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="share-name">Nom du partage</Label>
-                <Input
-                  id="share-name"
-                  placeholder="ex: backup"
-                  value={shareName}
-                  onChange={(e) => setShareName(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="share-path">Chemin du dossier</Label>
-                <Input
-                  id="share-path"
-                  placeholder="ex: /data/backup"
-                  value={sharePath}
-                  onChange={(e) => setSharePath(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="share-node">Nœud (optionnel)</Label>
-                <Select value={shareNodeId} onValueChange={setShareNodeId}>
-                  <SelectTrigger id="share-node">
-                    <SelectValue placeholder="Automatique" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="auto">Automatique</SelectItem>
-                    {nodes.map((n) => (
-                      <SelectItem key={n.id} value={n.id}>{n.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <DialogFooter>
-                <Button type="button" variant="secondary" onClick={() => setShareDialogOpen(false)}>
-                  Annuler
-                </Button>
-                <Button type="submit">Créer partage</Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
-
-        {/* Mount Dialog */}
-        <Dialog open={mountDialogOpen} onOpenChange={setMountDialogOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Créer un montage</DialogTitle>
-            </DialogHeader>
-            <form onSubmit={createMount} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="mount-name">Nom du montage</Label>
-                <Input
-                  id="mount-name"
-                  placeholder="ex: data-mount"
-                  value={mountName}
-                  onChange={(e) => setMountName(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="mount-source">Source (partage réseau)</Label>
-                <Input
-                  id="mount-source"
-                  placeholder="ex: nas-1:/export/movies"
-                  value={mountSource}
-                  onChange={(e) => setMountSource(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="mount-additional-sources">Sources NFS additionnelles (optionnel)</Label>
-                <Input
-                  id="mount-additional-sources"
-                  placeholder="ex: nas-2:/export/movies,nas-3:/export/movies"
-                  value={mountAdditionalSources}
-                  onChange={(e) => setMountAdditionalSources(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="mount-target">Destination (chemin local)</Label>
-                <Input
-                  id="mount-target"
-                  placeholder="ex: /data/movies"
-                  value={mountTarget}
-                  onChange={(e) => setMountTarget(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="mount-fstype">Type de filesystem</Label>
-                  <Input
-                    id="mount-fstype"
-                    placeholder="nfs"
-                    value={mountFsType}
-                    onChange={(e) => setMountFsType(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="mount-options">Options montage</Label>
-                  <Input
-                    id="mount-options"
-                    placeholder="hard,intr,nfsvers=4.2,timeo=600,retrans=2"
-                    value={mountOptions}
-                    onChange={(e) => setMountOptions(e.target.value)}
-                  />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="mount-node">Nœud (optionnel)</Label>
-                <Select value={mountNodeId} onValueChange={setMountNodeId}>
-                  <SelectTrigger id="mount-node">
-                    <SelectValue placeholder="Automatique" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="auto">Automatique</SelectItem>
-                    {nodes.map((n) => (
-                      <SelectItem key={n.id} value={n.id}>{n.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <DialogFooter>
-                <Button type="button" variant="secondary" onClick={() => setMountDialogOpen(false)}>
-                  Annuler
-                </Button>
-                <Button type="submit">Créer montage</Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+          </div>
+        )}
       </div>
+
+      {/* Wizard */}
+      {wizardOpen && (
+        <WizardDialog
+          title="Créer un nouveau pool de stockage"
+          description="Guide pas à pas pour configurer votre stockage"
+          steps={wizardSteps}
+          onComplete={createPool}
+          onCancel={() => setWizardOpen(false)}
+          completeButtonLabel="Créer le pool"
+        />
+      )}
     </DashboardLayout>
   );
 }

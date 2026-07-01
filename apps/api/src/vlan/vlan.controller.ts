@@ -16,7 +16,8 @@ export class VlanController {
         vlans: [vlan],
       };
     } catch (error) {
-      throw new HttpException(error.message, HttpStatus.INTERNAL_SERVER_ERROR);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new HttpException(message, HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -29,7 +30,8 @@ export class VlanController {
         membership,
       };
     } catch (error) {
-      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new HttpException(message, HttpStatus.BAD_REQUEST);
     }
   }
 
@@ -39,7 +41,8 @@ export class VlanController {
       const members = await this.vlanService.getVlanMembers(vlanId);
       return { members };
     } catch (error) {
-      throw new HttpException(error.message, HttpStatus.NOT_FOUND);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new HttpException(message, HttpStatus.NOT_FOUND);
     }
   }
 
@@ -49,7 +52,8 @@ export class VlanController {
       const connections = await this.vlanService.getVlanConnections(vlanId);
       return { connections };
     } catch (error) {
-      throw new HttpException(error.message, HttpStatus.NOT_FOUND);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new HttpException(message, HttpStatus.NOT_FOUND);
     }
   }
 
@@ -59,7 +63,8 @@ export class VlanController {
       const status = await this.vlanService.getVlanStatus(vlanId);
       return status;
     } catch (error) {
-      throw new HttpException(error.message, HttpStatus.NOT_FOUND);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new HttpException(message, HttpStatus.NOT_FOUND);
     }
   }
 
@@ -69,7 +74,8 @@ export class VlanController {
       const tests = await this.vlanService.getRecentConnectionTests(vlanId);
       return { tests };
     } catch (error) {
-      throw new HttpException(error.message, HttpStatus.NOT_FOUND);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new HttpException(message, HttpStatus.NOT_FOUND);
     }
   }
 
@@ -104,7 +110,8 @@ export class VlanController {
         test,
       };
     } catch (error) {
-      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new HttpException(message, HttpStatus.BAD_REQUEST);
     }
   }
 
@@ -117,7 +124,8 @@ export class VlanController {
         membership: result,
       };
     } catch (error) {
-      throw new HttpException(error.message, HttpStatus.INTERNAL_SERVER_ERROR);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new HttpException(message, HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 }

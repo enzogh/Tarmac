@@ -1,14 +1,19 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { MountsService } from '../mounts/mounts.service';
 import { PoolsService } from '../pools/pools.service';
 import { SharesService } from '../shares/shares.service';
+import { VlanService } from '../vlan/vlan.service';
 import { CommandPayload, CommandResultPayload, HeartbeatPayload, StateReportPayload } from './agents.types';
 
 type SendFn = (event: string, payload: unknown) => void;
 
+// Node is considered offline if no heartbeat received within this time
+const NODE_HEARTBEAT_TIMEOUT_MS = 60 * 1000; // 60 seconds
+
 @Injectable()
-export class AgentsService {
+export class AgentsService implements OnModuleInit {
   private readonly logger = new Logger(AgentsService.name);
   private readonly senders = new Map<string, SendFn>();
 
@@ -17,7 +22,13 @@ export class AgentsService {
     private readonly sharesService: SharesService,
     private readonly mountsService: MountsService,
     private readonly poolsService: PoolsService,
+    private readonly vlanService: VlanService,
   ) {}
+
+  onModuleInit() {
+    // Initialize: mark all nodes as offline on startup, they'll come back online as they heartbeat
+    this.markAllNodesOffline();
+  }
 
   register(nodeId: string, send: SendFn) {
     this.senders.set(nodeId, send);
@@ -32,16 +43,60 @@ export class AgentsService {
     return this.senders.has(nodeId);
   }
 
+  private async markAllNodesOffline() {
+    try {
+      await this.prisma.node.updateMany({
+        where: { status: 'online' },
+        data: { status: 'offline' },
+      });
+    } catch (error) {
+      this.logger.warn('Failed to mark nodes offline on startup:', error);
+    }
+  }
+
+  /**
+   * Runs every 30 seconds to check for nodes without recent heartbeats
+   * Marks nodes as offline if no heartbeat received within NODE_HEARTBEAT_TIMEOUT_MS
+   */
+  @Cron(CronExpression.EVERY_30_SECONDS)
+  async checkNodeHeartbeats() {
+    try {
+      const cutoffTime = new Date(Date.now() - NODE_HEARTBEAT_TIMEOUT_MS);
+      
+      // Find nodes that are marked online but haven't sent heartbeat recently
+      const timedOutNodes = await this.prisma.node.findMany({
+        where: {
+          status: 'online',
+          OR: [
+            { lastSeenAt: { lt: cutoffTime } },
+            { lastSeenAt: null },
+          ],
+        },
+      });
+
+      for (const node of timedOutNodes) {
+        this.logger.warn(`Node ${node.name} (${node.id}) marked offline - no heartbeat since ${node.lastSeenAt || 'startup'}`);
+        await this.prisma.node.update({
+          where: { id: node.id },
+          data: { status: 'offline' },
+        });
+      }
+    } catch (error) {
+      this.logger.error('Error checking node heartbeats:', error);
+    }
+  }
+
   async onHeartbeat(payload: HeartbeatPayload) {
     const { nodeId, metrics } = payload;
 
-    await this.prisma.node
+    const node = await this.prisma.node
       .update({
         where: { id: nodeId },
         data: { status: 'online', lastSeenAt: new Date() },
       })
       .catch(async () => {
-        await this.prisma.node.create({
+        // Node doesn't exist, create it and join VLAN
+        const created = await this.prisma.node.create({
           data: {
             id: nodeId,
             name: `node-${nodeId.slice(0, 6)}`,
@@ -50,7 +105,28 @@ export class AgentsService {
             lastSeenAt: new Date(),
           },
         });
+        
+        // Auto-join VLAN when agent starts
+        try {
+          await this.vlanService.joinVlan(nodeId);
+          this.logger.log(`Node ${nodeId} auto-joined VLAN`);
+        } catch (error) {
+          this.logger.warn(`Failed to auto-join VLAN for node ${nodeId}:`, error);
+        }
+        
+        return created;
       });
+
+    // Auto-join VLAN if not already joined
+    try {
+      const vlanMembers = await this.prisma.vlanMember.findMany({ where: { nodeId } });
+      if (vlanMembers.length === 0) {
+        await this.vlanService.joinVlan(nodeId);
+        this.logger.log(`Node ${nodeId} auto-joined VLAN on heartbeat`);
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to check/join VLAN for node ${nodeId}:`, error);
+    }
 
     await this.prisma.metricSample.create({
       data: {
