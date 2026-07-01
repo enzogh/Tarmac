@@ -14,4 +14,4 @@ FROM node:20-bookworm
 WORKDIR /app
 COPY --from=builder /app /app
 EXPOSE 3001
-CMD ["npm", "--workspace", "@tarmac/api", "run", "start"]
+CMD ["sh", "-c", "npx prisma db push --schema apps/api/prisma/schema.prisma --accept-data-loss && node apps/api/dist/main.js"]
