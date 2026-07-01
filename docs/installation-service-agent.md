@@ -21,9 +21,25 @@ curl -fsSL https://raw.githubusercontent.com/enzogh/Tarmac/main/apps/agent/scrip
 Le script :
 
 - installe automatiquement les dépendances (`golang-go`, `nfs-common`, `cifs-utils`, `util-linux`, etc.)
+- installe les dépendances réseau overlay (`wireguard-tools`, `iproute2`)
 - compile le binaire `tarmac-agent`
 - crée le service `tarmac-agent.service`
 - active le démarrage automatique et le redémarrage automatique (`Restart=always`)
+
+## 2.1) Overlay réseau automatique (multi-serveurs)
+
+Au premier heartbeat, l'agent publie sa clé WireGuard et l'API pousse automatiquement la configuration
+du mesh overlay (`tarmacwg0`) entre les agents du VLAN.
+
+Comportement:
+- création idempotente de l'interface (pas de doublons après reboot)
+- clé privée persistée localement (`/var/lib/tarmac-agent/wireguard/privatekey`)
+- peers mis à jour automatiquement à chaque changement de cluster
+
+Variables optionnelles:
+- `AGENT_OVERLAY_PORT` (défaut: `51820`)
+- `AGENT_OVERLAY_ENDPOINT` (défaut: auto-détection `IP:PORT`)
+- `AGENT_OVERLAY_PRIVATE_KEY_PATH` (défaut: `/var/lib/tarmac-agent/wireguard/privatekey`)
 
 ## 3) Vérification
 
