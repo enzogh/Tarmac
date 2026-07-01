@@ -16,8 +16,6 @@ export class AuthService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    const email = this.configService.get<string>('ADMIN_EMAIL', 'admin@tarmac.local');
-    const plainPassword = this.configService.get<string>('ADMIN_PASSWORD', 'admin123');
     const shouldBootstrap = this.configService.get<string>('ENABLE_DEFAULT_ADMIN', 'true') !== 'false';
 
     if (!shouldBootstrap) {
@@ -25,12 +23,8 @@ export class AuthService implements OnModuleInit {
     }
 
     try {
-      const passwordHash = await bcrypt.hash(plainPassword, 10);
-      await this.prisma.user.upsert({
-        where: { email },
-        update: { passwordHash },
-        create: { email, passwordHash },
-      });
+      const email = this.getDefaultAdminEmail();
+      await this.ensureDefaultAdmin();
       this.logger.log(`Default admin ensured: ${email}`);
     } catch (error) {
       this.logger.warn(`Failed to ensure default admin: ${error instanceof Error ? error.message : error}`);
@@ -38,7 +32,12 @@ export class AuthService implements OnModuleInit {
   }
 
   async login(dto: LoginDto) {
-    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    let user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    if (!user && this.shouldBootstrapDefaultAdmin() && dto.email === this.getDefaultAdminEmail()) {
+      await this.ensureDefaultAdmin();
+      user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    }
+
     if (!user) {
       throw new UnauthorizedException('Identifiants invalides');
     }
@@ -54,5 +53,28 @@ export class AuthService implements OnModuleInit {
     });
 
     return { access_token };
+  }
+
+  private shouldBootstrapDefaultAdmin() {
+    return this.configService.get<string>('ENABLE_DEFAULT_ADMIN', 'true') !== 'false';
+  }
+
+  private getDefaultAdminEmail() {
+    return this.configService.get<string>('ADMIN_EMAIL', 'admin@tarmac.local');
+  }
+
+  private getDefaultAdminPassword() {
+    return this.configService.get<string>('ADMIN_PASSWORD', 'admin123');
+  }
+
+  private async ensureDefaultAdmin() {
+    const email = this.getDefaultAdminEmail();
+    const plainPassword = this.getDefaultAdminPassword();
+    const passwordHash = await bcrypt.hash(plainPassword, 10);
+    await this.prisma.user.upsert({
+      where: { email },
+      update: { passwordHash },
+      create: { email, passwordHash },
+    });
   }
 }
