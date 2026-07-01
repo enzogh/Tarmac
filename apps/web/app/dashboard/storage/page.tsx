@@ -2,8 +2,8 @@
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Database, HardDrive, Plus, Info } from 'lucide-react';
-import { api, ShareItem, MountItem, NodeItem } from '../../../lib/api';
+import { Database, HardDrive, Plus, Info, Activity, ArrowDownToLine, ArrowUpToLine } from 'lucide-react';
+import { api, ShareItem, MountItem, NodeItem, StorageOverview } from '../../../lib/api';
 import { DashboardLayout } from '../../../components/DashboardLayout';
 import { Badge } from '../../../components/ui';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
@@ -27,18 +27,23 @@ export default function StoragePage() {
   const [shares, setShares] = useState<ShareItem[]>([]);
   const [mounts, setMounts] = useState<MountItem[]>([]);
   const [nodes, setNodes] = useState<NodeItem[]>([]);
+  const [overview, setOverview] = useState<StorageOverview | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState('all');
 
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [mountDialogOpen, setMountDialogOpen] = useState(false);
 
   const [shareName, setShareName] = useState('');
   const [sharePath, setSharePath] = useState('');
-  const [shareNodeId, setShareNodeId] = useState('');
+  const [shareNodeId, setShareNodeId] = useState('auto');
 
   const [mountName, setMountName] = useState('');
   const [mountSource, setMountSource] = useState('');
+  const [mountAdditionalSources, setMountAdditionalSources] = useState('');
   const [mountTarget, setMountTarget] = useState('');
-  const [mountNodeId, setMountNodeId] = useState('');
+  const [mountFsType, setMountFsType] = useState('nfs');
+  const [mountOptions, setMountOptions] = useState('hard,intr,nfsvers=4.2,timeo=600,retrans=2');
+  const [mountNodeId, setMountNodeId] = useState('auto');
 
   const load = async () => {
     if (!token) return;
@@ -69,17 +74,34 @@ export default function StoragePage() {
     return () => clearInterval(id);
   }, [token]);
 
+  useEffect(() => {
+    if (!token) return;
+    void api.storage
+      .overview(token, selectedNodeId === 'all' ? undefined : selectedNodeId)
+      .then(setOverview)
+      .catch(() => undefined);
+  }, [token, selectedNodeId, shares, mounts, nodes]);
+
+  const filteredShares = useMemo(
+    () => (selectedNodeId === 'all' ? shares : shares.filter((share) => share.nodeId === selectedNodeId)),
+    [shares, selectedNodeId],
+  );
+  const filteredMounts = useMemo(
+    () => (selectedNodeId === 'all' ? mounts : mounts.filter((mount) => mount.nodeId === selectedNodeId)),
+    [mounts, selectedNodeId],
+  );
+
   const createShare = async (e: FormEvent) => {
     e.preventDefault();
     if (!token) return;
     await api.shares.create(token, {
       name: shareName,
       path: sharePath,
-      nodeId: shareNodeId || undefined,
+      nodeId: shareNodeId !== 'auto' ? shareNodeId : undefined,
     });
     setShareName('');
     setSharePath('');
-    setShareNodeId('');
+    setShareNodeId('auto');
     await load();
     setShareDialogOpen(false);
   };
@@ -90,13 +112,22 @@ export default function StoragePage() {
     await api.mounts.create(token, {
       name: mountName,
       sourcePath: mountSource,
+      additionalSources: mountAdditionalSources
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean),
       targetPath: mountTarget,
-      nodeId: mountNodeId || undefined,
+      fsType: mountFsType,
+      mountOptions: mountOptions.trim() || undefined,
+      nodeId: mountNodeId !== 'auto' ? mountNodeId : undefined,
     });
     setMountName('');
     setMountSource('');
+    setMountAdditionalSources('');
     setMountTarget('');
-    setMountNodeId('');
+    setMountFsType('nfs');
+    setMountOptions('hard,intr,nfsvers=4.2,timeo=600,retrans=2');
+    setMountNodeId('auto');
     await load();
     setMountDialogOpen(false);
   };
@@ -106,8 +137,56 @@ export default function StoragePage() {
       <div className="space-y-8">
         <div className="space-y-1">
           <h1 className="text-3xl font-semibold tracking-tight text-foreground">Stockage</h1>
-          <p className="text-sm text-muted-foreground">Gestion des partages réseau et des montages.</p>
+          <p className="text-sm text-muted-foreground">Suivi temps réel du stockage et réseau par nœud.</p>
         </div>
+
+        <Card>
+          <CardContent className="pt-6 space-y-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+                <p className="text-xs text-muted-foreground">Capacité totale</p>
+                <p className="mt-1 text-2xl font-semibold">{overview?.totalCapacityGb ?? 0} GB</p>
+              </div>
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+                <p className="text-xs text-muted-foreground">Occupation actuelle</p>
+                <p className="mt-1 text-2xl font-semibold">{overview?.totalUsedGb ?? 0} GB</p>
+              </div>
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground"><ArrowDownToLine className="h-3.5 w-3.5" />Réseau RX</div>
+                <p className="mt-1 text-2xl font-semibold">{Math.round(overview?.metrics.networkRx ?? 0)} B/s</p>
+              </div>
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground"><ArrowUpToLine className="h-3.5 w-3.5" />Réseau TX</div>
+                <p className="mt-1 text-2xl font-semibold">{Math.round(overview?.metrics.networkTx ?? 0)} B/s</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="md:col-span-1 space-y-2">
+                <Label htmlFor="node-filter">Filtrer par nœud</Label>
+                <Select value={selectedNodeId} onValueChange={setSelectedNodeId}>
+                  <SelectTrigger id="node-filter">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Tous les nœuds</SelectItem>
+                    {nodes.map((n) => (
+                      <SelectItem key={n.id} value={n.id}>{n.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 md:col-span-2">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Activity className="h-3.5 w-3.5" />
+                  Charge moyenne
+                </div>
+                <p className="mt-1 text-sm text-foreground">
+                  CPU {Math.round(overview?.metrics.cpu ?? 0)}% · RAM {Math.round(overview?.metrics.ram ?? 0)}% · I/O lecture {Math.round(overview?.metrics.ioRead ?? 0)} B/s · I/O écriture {Math.round(overview?.metrics.ioWrite ?? 0)} B/s
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Shares info callout */}
         <div className="flex items-start gap-3 rounded-xl border border-blue-500/20 bg-blue-500/[0.07] px-4 py-3">
@@ -139,7 +218,7 @@ export default function StoragePage() {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {shares.map((share) => (
+              {filteredShares.map((share) => (
                 <div key={share.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 transition-colors hover:bg-white/[0.04]">
                   <div className="mb-3 flex items-start justify-between">
                     <h4 className="font-semibold text-foreground">{share.name}</h4>
@@ -157,7 +236,7 @@ export default function StoragePage() {
                   </div>
                 </div>
               ))}
-              {shares.length === 0 && (
+              {filteredShares.length === 0 && (
                 <p className="col-span-full py-6 text-center text-sm text-muted-foreground">
                   Aucun partage. Cliquez sur «&nbsp;Nouveau partage&nbsp;» pour en créer un.
                 </p>
@@ -186,7 +265,7 @@ export default function StoragePage() {
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            {mounts.map((mount) => (
+            {filteredMounts.map((mount) => (
               <div key={mount.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 transition-colors hover:bg-white/[0.04]">
                 <div className="mb-2 flex items-start justify-between">
                   <h4 className="font-semibold text-foreground">{mount.name}</h4>
@@ -197,12 +276,46 @@ export default function StoragePage() {
                   <span className="text-zinc-600">→</span>
                   <span>{mount.targetPath}</span>
                 </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Type: <span className="font-mono text-foreground/80">{mount.fsType}</span>
+                  {mount.mountOptions ? <> · Options: <span className="font-mono text-foreground/80 break-all">{mount.mountOptions}</span></> : null}
+                </p>
+                {mount.additionalSources.length > 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Sources fallback: <span className="font-mono text-foreground/80 break-all">{mount.additionalSources.join(', ')}</span>
+                  </p>
+                )}
               </div>
             ))}
-            {mounts.length === 0 && (
+            {filteredMounts.length === 0 && (
               <p className="py-6 text-center text-sm text-muted-foreground">
                 Aucun montage. Cliquez sur «&nbsp;Nouveau montage&nbsp;» pour en créer un.
               </p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Volumes détectés</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {(overview?.disks ?? []).map((disk) => (
+              <div key={disk.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-semibold">{disk.nodeName} · {disk.mountPath}</p>
+                    <p className="text-xs text-muted-foreground">{disk.name} ({disk.type})</p>
+                  </div>
+                  <Badge label={disk.health} type={disk.health === 'healthy' ? 'success' : 'warning'} />
+                </div>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {disk.usedGb} GB / {disk.capacityGb} GB ({Math.round(disk.usageRatio * 100)}%)
+                </p>
+              </div>
+            ))}
+            {(overview?.disks ?? []).length === 0 && (
+              <p className="py-4 text-center text-sm text-muted-foreground">Aucun volume remonté par les agents.</p>
             )}
           </CardContent>
         </Card>
@@ -241,7 +354,7 @@ export default function StoragePage() {
                     <SelectValue placeholder="Automatique" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Automatique</SelectItem>
+                    <SelectItem value="auto">Automatique</SelectItem>
                     {nodes.map((n) => (
                       <SelectItem key={n.id} value={n.id}>{n.name}</SelectItem>
                     ))}
@@ -279,21 +392,51 @@ export default function StoragePage() {
                 <Label htmlFor="mount-source">Source (partage réseau)</Label>
                 <Input
                   id="mount-source"
-                  placeholder="ex: //server/share"
+                  placeholder="ex: nas-1:/export/movies"
                   value={mountSource}
                   onChange={(e) => setMountSource(e.target.value)}
                   required
                 />
               </div>
               <div className="space-y-2">
+                <Label htmlFor="mount-additional-sources">Sources NFS additionnelles (optionnel)</Label>
+                <Input
+                  id="mount-additional-sources"
+                  placeholder="ex: nas-2:/export/movies,nas-3:/export/movies"
+                  value={mountAdditionalSources}
+                  onChange={(e) => setMountAdditionalSources(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="mount-target">Destination (chemin local)</Label>
                 <Input
                   id="mount-target"
-                  placeholder="ex: /mnt/data"
+                  placeholder="ex: /data/movies"
                   value={mountTarget}
                   onChange={(e) => setMountTarget(e.target.value)}
                   required
                 />
+              </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="mount-fstype">Type de filesystem</Label>
+                  <Input
+                    id="mount-fstype"
+                    placeholder="nfs"
+                    value={mountFsType}
+                    onChange={(e) => setMountFsType(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="mount-options">Options montage</Label>
+                  <Input
+                    id="mount-options"
+                    placeholder="hard,intr,nfsvers=4.2,timeo=600,retrans=2"
+                    value={mountOptions}
+                    onChange={(e) => setMountOptions(e.target.value)}
+                  />
+                </div>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="mount-node">Nœud (optionnel)</Label>
@@ -302,7 +445,7 @@ export default function StoragePage() {
                     <SelectValue placeholder="Automatique" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Automatique</SelectItem>
+                    <SelectItem value="auto">Automatique</SelectItem>
                     {nodes.map((n) => (
                       <SelectItem key={n.id} value={n.id}>{n.name}</SelectItem>
                     ))}

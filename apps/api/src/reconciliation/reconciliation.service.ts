@@ -53,7 +53,10 @@ export class ReconciliationService implements OnModuleInit {
         payload: {
           mountId: mount.id,
           sourcePath: mount.sourcePath,
+          additionalSources: mount.additionalSources,
           targetPath: mount.targetPath,
+          fsType: mount.fsType,
+          mountOptions: mount.mountOptions,
         },
       });
       this.logger.debug(`Sent mount command for mount ${mount.id}`);

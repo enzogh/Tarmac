@@ -20,7 +20,10 @@ export class MountsService {
     const data: Prisma.MountCreateInput = {
       name: dto.name,
       sourcePath: dto.sourcePath,
+      additionalSources: dto.additionalSources ?? [],
       targetPath: dto.targetPath,
+      fsType: dto.fsType ?? 'nfs',
+      mountOptions: dto.mountOptions,
       ...(dto.nodeId ? { node: { connect: { id: dto.nodeId } } } : {}),
     };
 
@@ -39,7 +42,10 @@ export class MountsService {
     const data: Prisma.MountUpdateInput = {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
       ...(dto.sourcePath !== undefined ? { sourcePath: dto.sourcePath } : {}),
+      ...(dto.additionalSources !== undefined ? { additionalSources: dto.additionalSources } : {}),
       ...(dto.targetPath !== undefined ? { targetPath: dto.targetPath } : {}),
+      ...(dto.fsType !== undefined ? { fsType: dto.fsType } : {}),
+      ...(dto.mountOptions !== undefined ? { mountOptions: dto.mountOptions } : {}),
       ...(dto.status !== undefined ? { status: dto.status as MountStatus } : {}),
       ...(dto.nodeId !== undefined ? { node: { connect: { id: dto.nodeId } } } : {}),
     };
