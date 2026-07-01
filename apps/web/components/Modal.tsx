@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 
 interface ModalProps {
   title: string;
@@ -11,22 +11,37 @@ interface ModalProps {
 export function Modal({ title, trigger, children }: ModalProps) {
   const [isOpen, setIsOpen] = useState(false);
 
+  useEffect(() => {
+    if (!isOpen) return undefined;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen]);
+
   return (
     <>
-      <button onClick={() => setIsOpen(true)} className="btn-primary">
+      <button type="button" onClick={() => setIsOpen(true)} className="btn-primary">
         {trigger}
       </button>
 
       {isOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-slate-900 border border-slate-800 rounded-lg p-6 max-w-lg w-full mx-4 max-h-96 overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-slate-100">{title}</h3>
+        <div className="modal-backdrop flex items-center justify-center p-4">
+          <div className="modal-panel max-h-[min(90vh,48rem)] overflow-y-auto">
+            <div className="mb-5 flex items-center justify-between gap-4">
+              <h3 className="text-lg font-semibold tracking-tight text-slate-50">{title}</h3>
               <button
+                type="button"
                 onClick={() => setIsOpen(false)}
-                className="text-slate-400 hover:text-slate-200"
+                className="btn-ghost h-9 w-9 rounded-full p-0"
+                aria-label="Fermer"
               >
-                ✕
+                ×
               </button>
             </div>
             {children(() => setIsOpen(false))}

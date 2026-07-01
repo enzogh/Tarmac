@@ -75,15 +75,17 @@ export default function ReplicationPage() {
 
   return (
     <DashboardLayout>
-      <div>
-        <div className="flex items-center justify-between mb-8">
-          <h1 className="text-3xl font-bold text-slate-100">🔄 Réplication</h1>
-          <p className="text-slate-400">Synchronisation de données entre serveurs</p>
+      <div className="space-y-8">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h1 className="page-heading">Réplication</h1>
+            <p className="page-subtitle">Synchronisation de données entre serveurs.</p>
+          </div>
         </div>
 
         <Card title="Travaux de synchronisation">
-          <div className="mb-4 flex items-center justify-between">
-            <p className="text-sm text-slate-400">
+          <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <p className="max-w-3xl text-sm text-slate-400">
               <strong>Qu'est-ce qu'un travail de sync ?</strong> Une tâche qui copie automatiquement des données 
               d'une source à une destination. Utile pour les sauvegardes ou la réplication.
             </p>
@@ -164,8 +166,11 @@ export default function ReplicationPage() {
 
           <div className="space-y-3">
             {syncJobs.map((job) => (
-              <div key={job.id} className="p-4 bg-slate-800 rounded-lg border border-slate-700 hover:border-slate-600 transition-colors">
-                <div className="flex items-start justify-between mb-3">
+              <div
+                key={job.id}
+                className="rounded-2xl border border-white/8 bg-white/[0.03] p-4 transition-colors hover:bg-white/[0.05]"
+              >
+                <div className="mb-3 flex items-start justify-between">
                   <div>
                     <h4 className="font-semibold text-slate-100">{job.name}</h4>
                     <p className="text-xs text-slate-400 mt-1">{job.sourcePath} → {job.targetPath}</p>

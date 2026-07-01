@@ -4,8 +4,9 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, NodeItem, PoolItem } from '../../../lib/api';
 import { DashboardLayout } from '../../../components/DashboardLayout';
-import { Card, Badge, Table } from '../../../components/ui';
+import { Card, Badge } from '../../../components/ui';
 import { Modal } from '../../../components/Modal';
+import { NodeOnboardingModal } from '../../../components/NodeOnboardingModal';
 
 export default function InfrastructurePage() {
   const router = useRouter();
@@ -14,9 +15,6 @@ export default function InfrastructurePage() {
   const [nodes, setNodes] = useState<NodeItem[]>([]);
   const [pools, setPools] = useState<PoolItem[]>([]);
 
-  // Form states
-  const [nodeName, setNodeName] = useState('');
-  const [nodeRole, setNodeRole] = useState('worker');
   const [poolName, setPoolName] = useState('');
   const [poolStrategy, setPoolStrategy] = useState('mirror');
 
@@ -47,16 +45,6 @@ export default function InfrastructurePage() {
     return () => clearInterval(id);
   }, [token]);
 
-  const createNode = async (e: FormEvent, close: () => void) => {
-    e.preventDefault();
-    if (!token) return;
-    await api.nodes.create(token, { name: nodeName, role: nodeRole });
-    setNodeName('');
-    setNodeRole('worker');
-    await load();
-    close();
-  };
-
   const createPool = async (e: FormEvent, close: () => void) => {
     e.preventDefault();
     if (!token) return;
@@ -69,56 +57,25 @@ export default function InfrastructurePage() {
 
   return (
     <DashboardLayout>
-      <div>
-        <div className="flex items-center justify-between mb-8">
-          <h1 className="text-3xl font-bold text-slate-100">🖥️ Infrastructure</h1>
-          <p className="text-slate-400">Gestion des nœuds et des pools de stockage</p>
+      <div className="space-y-8">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h1 className="page-heading">Infrastructure</h1>
+            <p className="page-subtitle">Gestion des nœuds et des pools de stockage.</p>
+          </div>
+          <NodeOnboardingModal />
         </div>
 
         {/* Nodes Section */}
         <Card title="Nœuds (Serveurs)">
-          <div className="mb-4 flex items-center justify-between">
-            <p className="text-sm text-slate-400">
+          <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <p className="max-w-3xl text-sm text-slate-400">
               <strong>Qu'est-ce qu'un nœud ?</strong> Un serveur qui exécute Tarmac et stocke vos données. 
               Chaque nœud peut être un <strong>worker</strong> (stockage) ou un <strong>controller</strong> (gestion).
             </p>
-            <Modal
-              title="Créer un nœud"
-              trigger="➕ Nouveau nœud"
-            >
-              {(close) => (
-                <form onSubmit={(e) => createNode(e, close)} className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Nom du nœud</label>
-                    <input
-                      type="text"
-                      className="input"
-                      placeholder="ex: storage-1"
-                      value={nodeName}
-                      onChange={(e) => setNodeName(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Rôle</label>
-                    <select
-                      className="select"
-                      value={nodeRole}
-                      onChange={(e) => setNodeRole(e.target.value)}
-                    >
-                      <option value="worker">🖥️ Worker (Stockage)</option>
-                      <option value="controller">⚙️ Controller (Gestion)</option>
-                    </select>
-                  </div>
-                  <button type="submit" className="btn-primary w-full">
-                    Créer nœud
-                  </button>
-                </form>
-              )}
-            </Modal>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto rounded-2xl border border-white/8">
             <table className="table">
               <thead>
                 <tr>
@@ -130,7 +87,7 @@ export default function InfrastructurePage() {
               </thead>
               <tbody>
                 {nodes.map((node) => (
-                  <tr key={node.id}>
+                  <tr key={node.id} className="transition-colors hover:bg-white/[0.03]">
                     <td className="font-medium">{node.name}</td>
                     <td className="text-slate-400">
                       {node.role === 'worker' ? '🖥️ Worker' : '⚙️ Controller'}
@@ -155,8 +112,8 @@ export default function InfrastructurePage() {
 
         {/* Pools Section */}
         <Card title="Pools de stockage">
-          <div className="mb-4 flex items-center justify-between">
-            <p className="text-sm text-slate-400">
+          <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <p className="max-w-3xl text-sm text-slate-400">
               <strong>Qu'est-ce qu'un pool ?</strong> Un groupe de disques fonctionnant ensemble selon une 
               <strong> stratégie</strong> (mirror = copie, raid = distribution, etc).
             </p>
@@ -197,10 +154,10 @@ export default function InfrastructurePage() {
             </Modal>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
             {pools.map((pool) => (
-              <div key={pool.id} className="p-4 bg-slate-800 rounded-lg border border-slate-700">
-                <div className="flex items-start justify-between mb-3">
+              <div key={pool.id} className="rounded-2xl border border-white/8 bg-white/[0.03] p-4 transition-colors hover:bg-white/[0.05]">
+                <div className="mb-3 flex items-start justify-between">
                   <h4 className="font-semibold text-slate-100">{pool.name}</h4>
                   <Badge label={pool.status} type="info" />
                 </div>
