@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:20-bookworm AS builder
 WORKDIR /app
 COPY package.json package-lock.json* ./
 COPY apps/api/package.json apps/api/package.json
@@ -10,7 +10,7 @@ RUN npm --workspace @tarmac/shared run build
 RUN npm --workspace @tarmac/api run prisma:generate
 RUN npm --workspace @tarmac/api run build
 
-FROM node:20-alpine
+FROM node:20-bookworm
 WORKDIR /app
 COPY --from=builder /app /app
 EXPOSE 3001
