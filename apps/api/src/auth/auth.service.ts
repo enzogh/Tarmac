@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleInit, UnauthorizedException } from '@nestjs/common';
+import type { User } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
@@ -32,17 +33,19 @@ export class AuthService implements OnModuleInit {
   }
 
   async login(dto: LoginDto) {
-    let user = await this.prisma.user.findUnique({ where: { email: dto.email } });
-    if (!user && this.shouldBootstrapDefaultAdmin() && dto.email === this.getDefaultAdminEmail()) {
+    const email = dto.email.trim().toLowerCase();
+
+    let user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user && this.shouldBootstrapDefaultAdmin() && email === this.getDefaultAdminEmail()) {
       await this.ensureDefaultAdmin();
-      user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+      user = await this.prisma.user.findUnique({ where: { email } });
     }
 
     if (!user) {
       throw new UnauthorizedException('Identifiants invalides');
     }
 
-    const passwordOk = await bcrypt.compare(dto.password, user.passwordHash);
+    const passwordOk = await this.verifyPassword(dto.password, user);
     if (!passwordOk) {
       throw new UnauthorizedException('Identifiants invalides');
     }
@@ -60,7 +63,8 @@ export class AuthService implements OnModuleInit {
   }
 
   private getDefaultAdminEmail() {
-    return this.configService.get<string>('ADMIN_EMAIL', 'admin@tarmac.local');
+    const email = this.configService.get<string>('ADMIN_EMAIL', 'admin@tarmac.local');
+    return email.trim().toLowerCase();
   }
 
   private getDefaultAdminPassword() {
@@ -76,5 +80,26 @@ export class AuthService implements OnModuleInit {
       update: { passwordHash },
       create: { email, passwordHash },
     });
+  }
+
+  private async verifyPassword(plainPassword: string, user: User) {
+    try {
+      return await bcrypt.compare(plainPassword, user.passwordHash);
+    } catch (error) {
+      if (user.passwordHash === plainPassword) {
+        const passwordHash = await bcrypt.hash(plainPassword, 10);
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { passwordHash },
+        });
+        this.logger.warn(`Recovered legacy plaintext password hash for user ${user.email}`);
+        return true;
+      }
+
+      this.logger.warn(
+        `Invalid password hash for user ${user.email}: ${error instanceof Error ? error.message : error}`,
+      );
+      return false;
+    }
   }
 }
