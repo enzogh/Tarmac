@@ -14,6 +14,15 @@ export interface HeartbeatPayload {
     endpoint?: string;
     listenPort?: number;
   };
+  linkMetrics?: Array<{
+    targetPublicKey: string;
+    targetVlanIp?: string;
+    handshakeAgeSec?: number;
+    txMbps?: number;
+    rxMbps?: number;
+    latencyMs?: number;
+    packetLoss?: number;
+  }>;
 }
 
 export interface StateReportPayload {

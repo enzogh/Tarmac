@@ -25,15 +25,26 @@ import (
 )
 
 type heartbeat struct {
-	NodeID  string        `json:"nodeId"`
-	Metrics metricState   `json:"metrics"`
-	Overlay *overlayState `json:"overlay,omitempty"`
+	NodeID      string              `json:"nodeId"`
+	Metrics     metricState         `json:"metrics"`
+	Overlay     *overlayState       `json:"overlay,omitempty"`
+	LinkMetrics []overlayLinkMetric `json:"linkMetrics,omitempty"`
 }
 
 type overlayState struct {
 	PublicKey  string `json:"publicKey"`
 	Endpoint   string `json:"endpoint"`
 	ListenPort int    `json:"listenPort"`
+}
+
+type overlayLinkMetric struct {
+	TargetPublicKey string   `json:"targetPublicKey"`
+	TargetVlanIP    string   `json:"targetVlanIp,omitempty"`
+	HandshakeAgeSec *int64   `json:"handshakeAgeSec,omitempty"`
+	TxMbps          float64  `json:"txMbps"`
+	RxMbps          float64  `json:"rxMbps"`
+	LatencyMs       *float64 `json:"latencyMs,omitempty"`
+	PacketLoss      *float64 `json:"packetLoss,omitempty"`
 }
 
 type metricState struct {
@@ -126,10 +137,24 @@ type ioSnapshot struct {
 	valid bool
 }
 
+type overlayTrafficSnapshot struct {
+	rxBytes uint64
+	txBytes uint64
+	at      time.Time
+}
+
+type overlayProbeSnapshot struct {
+	latencyMs  float64
+	packetLoss float64
+	at         time.Time
+}
+
 type collector struct {
-	lastCPU cpuSnapshot
-	lastNet netSnapshot
-	lastIO  ioSnapshot
+	lastCPU        cpuSnapshot
+	lastNet        netSnapshot
+	lastIO         ioSnapshot
+	lastOverlay    map[string]overlayTrafficSnapshot
+	lastOverlayRtt map[string]overlayProbeSnapshot
 }
 
 func round2(v float64) float64 {
@@ -345,6 +370,184 @@ func (c *collector) collectMetrics(disks []diskState) metricState {
 		IORead:    ioRead,
 		IOWrite:   ioWrite,
 	}
+}
+
+func firstAllowedIP(allowed string) string {
+	parts := strings.Split(allowed, ",")
+	for _, part := range parts {
+		candidate := strings.TrimSpace(part)
+		if candidate == "" {
+			continue
+		}
+		if strings.Contains(candidate, "/") {
+			candidate = strings.SplitN(candidate, "/", 2)[0]
+		}
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func parsePingStats(output string) (*float64, *float64) {
+	var latencyMs *float64
+	var packetLoss *float64
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "packet loss") {
+			chunks := strings.Split(trimmed, ",")
+			for _, chunk := range chunks {
+				value := strings.TrimSpace(chunk)
+				if !strings.Contains(value, "packet loss") || !strings.Contains(value, "%") {
+					continue
+				}
+				raw := strings.TrimSpace(strings.Split(value, "%")[0])
+				fields := strings.Fields(raw)
+				if len(fields) > 0 {
+					if parsed, err := strconv.ParseFloat(fields[len(fields)-1], 64); err == nil {
+						packetLoss = &parsed
+					}
+				}
+			}
+		}
+		if strings.Contains(trimmed, "min/avg/max") && strings.Contains(trimmed, "=") {
+			stats := strings.TrimSpace(strings.SplitN(trimmed, "=", 2)[1])
+			values := strings.Split(stats, "/")
+			if len(values) >= 2 {
+				avgRaw := strings.TrimSpace(values[1])
+				if parsed, err := strconv.ParseFloat(avgRaw, 64); err == nil {
+					latencyMs = &parsed
+				}
+			}
+		}
+	}
+	return latencyMs, packetLoss
+}
+
+func probeOverlayLatency(iface, targetIP string) (*float64, *float64) {
+	if targetIP == "" || !commandExists("ping") {
+		return nil, nil
+	}
+	cmd := exec.Command("ping", "-I", iface, "-c", "2", "-W", "1", targetIP)
+	output, err := cmd.CombinedOutput()
+	latencyMs, packetLoss := parsePingStats(string(output))
+	if err != nil && latencyMs == nil && packetLoss == nil {
+		return nil, nil
+	}
+	return latencyMs, packetLoss
+}
+
+func int64Ptr(value int64) *int64 {
+	v := value
+	return &v
+}
+
+func (c *collector) collectOverlayLinkMetrics(iface string) []overlayLinkMetric {
+	if !commandExists("wg") {
+		return nil
+	}
+	out, err := exec.Command("wg", "show", iface, "dump").Output()
+	if err != nil {
+		return nil
+	}
+
+	if c.lastOverlay == nil {
+		c.lastOverlay = make(map[string]overlayTrafficSnapshot)
+	}
+	if c.lastOverlayRtt == nil {
+		c.lastOverlayRtt = make(map[string]overlayProbeSnapshot)
+	}
+
+	now := time.Now()
+	metrics := make([]overlayLinkMetric, 0, 8)
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	lineIndex := 0
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		lineIndex++
+		// First line is the local interface dump; peers start after that.
+		if lineIndex == 1 {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 8 {
+			continue
+		}
+
+		publicKey := strings.TrimSpace(fields[0])
+		allowedIPs := fields[4]
+		latestHandshake, handshakeErr := strconv.ParseInt(fields[5], 10, 64)
+		rxBytes, rxErr := strconv.ParseUint(fields[6], 10, 64)
+		txBytes, txErr := strconv.ParseUint(fields[7], 10, 64)
+		if publicKey == "" || handshakeErr != nil || rxErr != nil || txErr != nil {
+			continue
+		}
+
+		metric := overlayLinkMetric{
+			TargetPublicKey: publicKey,
+			TargetVlanIP:    firstAllowedIP(allowedIPs),
+		}
+		if latestHandshake > 0 {
+			metric.HandshakeAgeSec = int64Ptr(now.Unix() - latestHandshake)
+		}
+
+		if prev, ok := c.lastOverlay[publicKey]; ok {
+			if now.After(prev.at) {
+				seconds := now.Sub(prev.at).Seconds()
+				if seconds > 0 {
+					if txBytes >= prev.txBytes {
+						metric.TxMbps = round2((float64(txBytes-prev.txBytes) * 8) / seconds / 1_000_000)
+					}
+					if rxBytes >= prev.rxBytes {
+						metric.RxMbps = round2((float64(rxBytes-prev.rxBytes) * 8) / seconds / 1_000_000)
+					}
+				}
+			}
+		}
+		c.lastOverlay[publicKey] = overlayTrafficSnapshot{rxBytes: rxBytes, txBytes: txBytes, at: now}
+
+		cacheKey := publicKey
+		if metric.TargetVlanIP != "" {
+			cacheKey = publicKey + "|" + metric.TargetVlanIP
+		}
+		needProbe := true
+		if cached, ok := c.lastOverlayRtt[cacheKey]; ok {
+			metric.LatencyMs = &cached.latencyMs
+			metric.PacketLoss = &cached.packetLoss
+			needProbe = now.Sub(cached.at) >= 10*time.Second
+		}
+		if needProbe && metric.TargetVlanIP != "" {
+			latencyMs, packetLoss := probeOverlayLatency(iface, metric.TargetVlanIP)
+			if latencyMs != nil || packetLoss != nil {
+				if latencyMs != nil {
+					metric.LatencyMs = latencyMs
+				}
+				if packetLoss != nil {
+					metric.PacketLoss = packetLoss
+				}
+				cachedLatency := 0.0
+				if metric.LatencyMs != nil {
+					cachedLatency = *metric.LatencyMs
+				}
+				cachedLoss := 0.0
+				if metric.PacketLoss != nil {
+					cachedLoss = *metric.PacketLoss
+				}
+				c.lastOverlayRtt[cacheKey] = overlayProbeSnapshot{
+					latencyMs:  cachedLatency,
+					packetLoss: cachedLoss,
+					at:         now,
+				}
+			}
+		}
+
+		metrics = append(metrics, metric)
+	}
+
+	return metrics
 }
 
 func isVirtualFs(fsType string) bool {
@@ -882,12 +1085,14 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 	sendReport := func() error {
 		report := buildStateReport(nodeID)
 		metrics := c.collectMetrics(report.Disks)
+		linkMetrics := c.collectOverlayLinkMetrics("tarmacwg0")
 		if err := client.send(envelope{
 			Type: "agent.heartbeat",
 			Payload: heartbeat{
-				NodeID:  nodeID,
-				Metrics: metrics,
-				Overlay: overlay,
+				NodeID:      nodeID,
+				Metrics:     metrics,
+				Overlay:     overlay,
+				LinkMetrics: linkMetrics,
 			},
 		}); err != nil {
 			return err
@@ -919,12 +1124,14 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 		case <-heartbeatTicker.C:
 			disks := collectDisks()
 			metrics := c.collectMetrics(disks)
+			linkMetrics := c.collectOverlayLinkMetrics("tarmacwg0")
 			if err := client.send(envelope{
 				Type: "agent.heartbeat",
 				Payload: heartbeat{
-					NodeID:  nodeID,
-					Metrics: metrics,
-					Overlay: overlay,
+					NodeID:      nodeID,
+					Metrics:     metrics,
+					Overlay:     overlay,
+					LinkMetrics: linkMetrics,
 				},
 			}); err != nil {
 				return err

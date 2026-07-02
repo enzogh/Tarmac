@@ -11,6 +11,8 @@ type SendFn = (event: string, payload: unknown) => void;
 
 // Node is considered offline if no heartbeat received within this time
 const NODE_HEARTBEAT_TIMEOUT_MS = 60 * 1000; // 60 seconds
+const LINK_OFFLINE_HANDSHAKE_SEC = 60;
+const LINK_DEGRADED_HANDSHAKE_SEC = 20;
 
 @Injectable()
 export class AgentsService implements OnModuleInit {
@@ -88,7 +90,7 @@ export class AgentsService implements OnModuleInit {
   }
 
   async onHeartbeat(payload: HeartbeatPayload) {
-    const { nodeId, metrics, overlay } = payload;
+    const { nodeId, metrics, overlay, linkMetrics } = payload;
     const now = new Date();
 
     const node = await this.prisma.node
@@ -157,6 +159,10 @@ export class AgentsService implements OnModuleInit {
         ioWrite: metrics.ioWrite ?? 0,
       },
     });
+
+    if (linkMetrics && linkMetrics.length > 0) {
+      await this.ingestOverlayLinkMetrics(nodeId, linkMetrics);
+    }
 
     const lastSync = this.overlaySyncAt.get(nodeId) ?? 0;
     if (Date.now() - lastSync >= 15_000) {
@@ -299,6 +305,121 @@ export class AgentsService implements OnModuleInit {
       }
     } catch (error) {
       this.logger.warn(`Failed to reconcile overlay for node ${nodeId}:`, error);
+    }
+  }
+
+  private async ingestOverlayLinkMetrics(
+    sourceNodeId: string,
+    linkMetrics: NonNullable<HeartbeatPayload['linkMetrics']>,
+  ) {
+    const sourceMembership = await this.prisma.vlanMember.findFirst({
+      where: { nodeId: sourceNodeId },
+      select: { vlanId: true },
+    });
+    if (!sourceMembership) return;
+
+    const publicKeys = Array.from(
+      new Set(linkMetrics.map((metric) => metric.targetPublicKey).filter((value): value is string => Boolean(value))),
+    );
+    if (publicKeys.length === 0) return;
+
+    const targetNodes = await this.prisma.node.findMany({
+      where: {
+        overlayPublicKey: { in: publicKeys },
+      },
+      select: {
+        id: true,
+        status: true,
+        overlayPublicKey: true,
+      },
+    });
+    const nodeByPublicKey = new Map(
+      targetNodes
+        .filter((node): node is { id: string; status: 'online' | 'offline' | 'degraded'; overlayPublicKey: string } =>
+          Boolean(node.overlayPublicKey),
+        )
+        .map((node) => [node.overlayPublicKey, node]),
+    );
+
+    const updates = linkMetrics.flatMap((metric) => {
+      const target = nodeByPublicKey.get(metric.targetPublicKey);
+      if (!target || target.id === sourceNodeId) return [];
+
+      const txMbps = metric.txMbps ?? 0;
+      const rxMbps = metric.rxMbps ?? 0;
+      const handshakeAgeSec = metric.handshakeAgeSec;
+
+      const status: 'healthy' | 'degraded' | 'offline' =
+        target.status !== 'online' ||
+        handshakeAgeSec === undefined ||
+        handshakeAgeSec < 0 ||
+        handshakeAgeSec >= LINK_OFFLINE_HANDSHAKE_SEC
+          ? 'offline'
+          : handshakeAgeSec >= LINK_DEGRADED_HANDSHAKE_SEC ||
+              (metric.packetLoss ?? 0) >= 2 ||
+              (metric.latencyMs ?? 0) >= 70
+            ? 'degraded'
+            : 'healthy';
+
+      const commonData = {
+        status,
+        latencyMs:
+          metric.latencyMs !== undefined && Number.isFinite(metric.latencyMs)
+            ? Math.round(metric.latencyMs)
+            : null,
+        packetLoss:
+          metric.packetLoss !== undefined && Number.isFinite(metric.packetLoss)
+            ? Number(metric.packetLoss.toFixed(1))
+            : null,
+        lastCheckedAt: new Date(),
+      };
+
+      return [
+        this.prisma.vlanConnection.upsert({
+          where: {
+            vlanId_sourceNodeId_targetNodeId: {
+              vlanId: sourceMembership.vlanId,
+              sourceNodeId,
+              targetNodeId: target.id,
+            },
+          },
+          update: {
+            ...commonData,
+            bandwidth: Math.max(0, Math.round(txMbps)),
+          },
+          create: {
+            vlanId: sourceMembership.vlanId,
+            sourceNodeId,
+            targetNodeId: target.id,
+            ...commonData,
+            bandwidth: Math.max(0, Math.round(txMbps)),
+          },
+        }),
+        this.prisma.vlanConnection.upsert({
+          where: {
+            vlanId_sourceNodeId_targetNodeId: {
+              vlanId: sourceMembership.vlanId,
+              sourceNodeId: target.id,
+              targetNodeId: sourceNodeId,
+            },
+          },
+          update: {
+            ...commonData,
+            bandwidth: Math.max(0, Math.round(rxMbps)),
+          },
+          create: {
+            vlanId: sourceMembership.vlanId,
+            sourceNodeId: target.id,
+            targetNodeId: sourceNodeId,
+            ...commonData,
+            bandwidth: Math.max(0, Math.round(rxMbps)),
+          },
+        }),
+      ];
+    });
+
+    if (updates.length > 0) {
+      await this.prisma.$transaction(updates);
     }
   }
 }
