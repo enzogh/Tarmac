@@ -349,13 +349,22 @@ export class AgentsService implements OnModuleInit {
       const rxMbps = metric.rxMbps ?? 0;
       const handshakeAgeSec = metric.handshakeAgeSec;
 
+      const hasTraffic = txMbps > 0 || rxMbps > 0;
+      const hasUsableProbe =
+        (metric.packetLoss !== undefined && metric.packetLoss < 100) ||
+        (metric.latencyMs !== undefined && metric.latencyMs > 0);
+      const handshakeUnknown = handshakeAgeSec === undefined || handshakeAgeSec < 0;
+      const handshakeOffline = handshakeAgeSec !== undefined && handshakeAgeSec >= LINK_OFFLINE_HANDSHAKE_SEC;
+      const handshakeDegraded =
+        handshakeAgeSec !== undefined &&
+        handshakeAgeSec >= LINK_DEGRADED_HANDSHAKE_SEC &&
+        handshakeAgeSec < LINK_OFFLINE_HANDSHAKE_SEC;
+
       const status: 'healthy' | 'degraded' | 'offline' =
-        target.status !== 'online' ||
-        handshakeAgeSec === undefined ||
-        handshakeAgeSec < 0 ||
-        handshakeAgeSec >= LINK_OFFLINE_HANDSHAKE_SEC
+        target.status !== 'online' || (handshakeOffline && !hasTraffic && !hasUsableProbe)
           ? 'offline'
-          : handshakeAgeSec >= LINK_DEGRADED_HANDSHAKE_SEC ||
+          : handshakeUnknown ||
+              handshakeDegraded ||
               (metric.packetLoss ?? 0) >= 2 ||
               (metric.latencyMs ?? 0) >= 70
             ? 'degraded'

@@ -146,6 +146,8 @@ type overlayTrafficSnapshot struct {
 type overlayProbeSnapshot struct {
 	latencyMs  float64
 	packetLoss float64
+	hasLatency bool
+	hasLoss    bool
 	at         time.Time
 }
 
@@ -428,13 +430,24 @@ func probeOverlayLatency(iface, targetIP string) (*float64, *float64) {
 	if targetIP == "" || !commandExists("ping") {
 		return nil, nil
 	}
-	cmd := exec.Command("ping", "-I", iface, "-c", "2", "-W", "1", targetIP)
-	output, err := cmd.CombinedOutput()
-	latencyMs, packetLoss := parsePingStats(string(output))
-	if err != nil && latencyMs == nil && packetLoss == nil {
-		return nil, nil
+
+	// Try without forcing interface first (kernel routing already prefers WG route).
+	commands := [][]string{
+		{"-c", "2", "-W", "1", targetIP},
+		{"-I", iface, "-c", "2", "-W", "1", targetIP},
 	}
-	return latencyMs, packetLoss
+	for _, args := range commands {
+		cmd := exec.Command("ping", args...)
+		output, err := cmd.CombinedOutput()
+		latencyMs, packetLoss := parsePingStats(string(output))
+		if latencyMs != nil || packetLoss != nil {
+			return latencyMs, packetLoss
+		}
+		if err == nil {
+			return nil, nil
+		}
+	}
+	return nil, nil
 }
 
 func int64Ptr(value int64) *int64 {
@@ -515,8 +528,14 @@ func (c *collector) collectOverlayLinkMetrics(iface string) []overlayLinkMetric 
 		}
 		needProbe := true
 		if cached, ok := c.lastOverlayRtt[cacheKey]; ok {
-			metric.LatencyMs = &cached.latencyMs
-			metric.PacketLoss = &cached.packetLoss
+			if cached.hasLatency {
+				cachedLatency := cached.latencyMs
+				metric.LatencyMs = &cachedLatency
+			}
+			if cached.hasLoss {
+				cachedLoss := cached.packetLoss
+				metric.PacketLoss = &cachedLoss
+			}
 			needProbe = now.Sub(cached.at) >= 10*time.Second
 		}
 		if needProbe && metric.TargetVlanIP != "" {
@@ -539,6 +558,8 @@ func (c *collector) collectOverlayLinkMetrics(iface string) []overlayLinkMetric 
 				c.lastOverlayRtt[cacheKey] = overlayProbeSnapshot{
 					latencyMs:  cachedLatency,
 					packetLoss: cachedLoss,
+					hasLatency: metric.LatencyMs != nil,
+					hasLoss:    metric.PacketLoss != nil,
 					at:         now,
 				}
 			}
