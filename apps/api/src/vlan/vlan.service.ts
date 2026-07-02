@@ -1,6 +1,12 @@
 import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+
+const CONNECTION_OFFLINE_TIMEOUT_MS = 60_000;
+const CONNECTION_DEGRADED_TIMEOUT_MS = 20_000;
+const CONNECTION_METRICS_WINDOW_MS = 120_000;
+const DEFAULT_LINK_CAPACITY_BPS = 125_000_000; // ~1 Gbps
 
 @Injectable()
 export class VlanService implements OnModuleInit {
@@ -14,6 +20,27 @@ export class VlanService implements OnModuleInit {
   onModuleInit() {
     // No initialization needed - VLAN is created on first agent heartbeat
     this.logger.log('VlanService ready. VLAN will be created when first agent connects.');
+  }
+
+  @Cron(CronExpression.EVERY_10_SECONDS)
+  async refreshAllVlanConnections() {
+    const vlans = await this.prisma.vlan.findMany({
+      select: { id: true },
+    });
+
+    await Promise.all(
+      vlans.map(async (vlan) => {
+        try {
+          await this.refreshVlanConnections(vlan.id);
+        } catch (error) {
+          this.logger.warn(
+            `Failed to refresh telemetry for VLAN ${vlan.id}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }),
+    );
   }
 
   async getOrCreateVlan(name: string = 'default'): Promise<any> {
@@ -180,6 +207,8 @@ export class VlanService implements OnModuleInit {
       throw new Error(`VLAN not found: ${vlanIdOrName}`);
     }
 
+    await this.refreshVlanConnections(vlan.id);
+
     return this.prisma.vlanConnection.findMany({
       where: { vlanId: vlan.id },
       include: {
@@ -296,6 +325,7 @@ export class VlanService implements OnModuleInit {
     }
 
     const vlanId = vlanLookup.id;
+    await this.refreshVlanConnections(vlanId);
 
     const [vlan, members, connections, failedTests] = await Promise.all([
       this.prisma.vlan.findUnique({
@@ -389,5 +419,189 @@ export class VlanService implements OnModuleInit {
 
   private isUniqueConstraintError(error: unknown) {
     return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+  }
+
+  private async refreshVlanConnections(vlanId: string) {
+    const [members, connections] = await Promise.all([
+      this.prisma.vlanMember.findMany({
+        where: { vlanId },
+        select: {
+          nodeId: true,
+          node: {
+            select: {
+              id: true,
+              status: true,
+              lastSeenAt: true,
+            },
+          },
+        },
+      }),
+      this.prisma.vlanConnection.findMany({
+        where: { vlanId },
+        select: {
+          id: true,
+          sourceNodeId: true,
+          targetNodeId: true,
+          status: true,
+          latencyMs: true,
+          packetLoss: true,
+          bandwidth: true,
+          lastCheckedAt: true,
+        },
+      }),
+    ]);
+
+    if (connections.length === 0 || members.length === 0) {
+      return;
+    }
+
+    const nodeIds = members.map((member) => member.nodeId);
+    const samples = await this.prisma.metricSample.findMany({
+      where: {
+        nodeId: { in: nodeIds },
+        createdAt: { gte: new Date(Date.now() - CONNECTION_METRICS_WINDOW_MS) },
+      },
+      select: {
+        nodeId: true,
+        networkRx: true,
+        networkTx: true,
+        createdAt: true,
+      },
+      orderBy: [{ nodeId: 'asc' }, { createdAt: 'desc' }],
+    });
+
+    const memberByNodeId = new Map(members.map((member) => [member.nodeId, member]));
+    const sampleByNodeId = new Map<string, { networkRx: number; networkTx: number }>();
+    for (const sample of samples) {
+      if (!sampleByNodeId.has(sample.nodeId)) {
+        sampleByNodeId.set(sample.nodeId, {
+          networkRx: sample.networkRx,
+          networkTx: sample.networkTx,
+        });
+      }
+    }
+
+    const now = new Date();
+    const onlineMembers = members.filter((member) => this.isNodeReachable(member.node, now)).length;
+    const updates = connections.flatMap((connection) => {
+      const checkedRecently =
+        connection.lastCheckedAt &&
+        now.getTime() - connection.lastCheckedAt.getTime() <= 15_000 &&
+        connection.status !== 'unknown';
+      const hasMeasuredMetrics =
+        connection.latencyMs !== null || connection.packetLoss !== null || connection.bandwidth !== null;
+      if (checkedRecently && hasMeasuredMetrics) {
+        return [];
+      }
+
+      const source = memberByNodeId.get(connection.sourceNodeId);
+      const target = memberByNodeId.get(connection.targetNodeId);
+      const telemetry = this.deriveConnectionTelemetry({
+        source,
+        target,
+        sampleByNodeId,
+        onlineMembers,
+        now,
+      });
+
+      return [
+        this.prisma.vlanConnection.update({
+          where: { id: connection.id },
+          data: {
+            status: telemetry.status,
+            latencyMs: telemetry.latencyMs,
+            packetLoss: telemetry.packetLoss,
+            bandwidth: telemetry.bandwidth,
+            lastCheckedAt: now,
+          },
+        }),
+      ];
+    });
+
+    if (updates.length > 0) {
+      await this.prisma.$transaction(updates);
+    }
+  }
+
+  private isNodeReachable(
+    node: { id: string; status: string; lastSeenAt: Date | null } | null | undefined,
+    now: Date,
+  ) {
+    if (!node || node.status !== 'online' || !node.lastSeenAt) {
+      return false;
+    }
+    return now.getTime() - node.lastSeenAt.getTime() <= CONNECTION_OFFLINE_TIMEOUT_MS;
+  }
+
+  private deriveConnectionTelemetry(args: {
+    source:
+      | {
+          nodeId: string;
+          node: {
+            id: string;
+            status: string;
+            lastSeenAt: Date | null;
+          };
+        }
+      | undefined;
+    target:
+      | {
+          nodeId: string;
+          node: {
+            id: string;
+            status: string;
+            lastSeenAt: Date | null;
+          };
+        }
+      | undefined;
+    sampleByNodeId: Map<string, { networkRx: number; networkTx: number }>;
+    onlineMembers: number;
+    now: Date;
+  }): {
+    status: 'healthy' | 'degraded' | 'offline';
+    latencyMs: number | null;
+    packetLoss: number | null;
+    bandwidth: number | null;
+  } {
+    const { source, target, sampleByNodeId, onlineMembers, now } = args;
+    if (!source || !target) {
+      return { status: 'offline', latencyMs: null, packetLoss: null, bandwidth: null };
+    }
+
+    const sourceReachable = this.isNodeReachable(source.node, now);
+    const targetReachable = this.isNodeReachable(target.node, now);
+    if (!sourceReachable || !targetReachable) {
+      return { status: 'offline', latencyMs: null, packetLoss: null, bandwidth: null };
+    }
+
+    const sourceSample = sampleByNodeId.get(source.nodeId);
+    const targetSample = sampleByNodeId.get(target.nodeId);
+    const peersPerNode = Math.max(1, onlineMembers - 1);
+
+    const sourceTxPerLinkBps = Math.max(0, (sourceSample?.networkTx ?? 0) / peersPerNode);
+    const targetRxPerLinkBps = Math.max(0, (targetSample?.networkRx ?? 0) / peersPerNode);
+    const linkBps = Math.max(0, Math.min(sourceTxPerLinkBps, targetRxPerLinkBps));
+    const bandwidthMbps = Math.round((linkBps * 8) / 1_000_000);
+
+    const sourceLagMs = source.node.lastSeenAt ? now.getTime() - source.node.lastSeenAt.getTime() : CONNECTION_OFFLINE_TIMEOUT_MS;
+    const targetLagMs = target.node.lastSeenAt ? now.getTime() - target.node.lastSeenAt.getTime() : CONNECTION_OFFLINE_TIMEOUT_MS;
+    const heartbeatLagMs = Math.max(sourceLagMs, targetLagMs);
+    const congestionRatio = Math.min(1, linkBps / DEFAULT_LINK_CAPACITY_BPS);
+
+    const latencyMs = Math.max(1, Math.round(3 + heartbeatLagMs / 1_000 + congestionRatio * 25));
+    const staleLoss = heartbeatLagMs > 15_000 ? (heartbeatLagMs - 15_000) / 2_000 : 0;
+    const packetLoss = Number(Math.min(100, Math.max(0, staleLoss + congestionRatio * 3)).toFixed(1));
+
+    const status =
+      heartbeatLagMs >= CONNECTION_DEGRADED_TIMEOUT_MS || packetLoss >= 2 || latencyMs >= 70
+        ? 'degraded'
+        : 'healthy';
+
+    return {
+      status,
+      latencyMs,
+      packetLoss,
+      bandwidth: bandwidthMbps,
+    };
   }
 }

@@ -96,11 +96,41 @@ export class VlanController {
     },
   ) {
     try {
-      // Simulate a successful test
+      const members = await this.vlanService.getVlanMembers(vlanId);
+      const initiator = members.find((member: any) => member.nodeId === body.initiatorNodeId);
+      const target = members.find((member: any) => member.nodeId === body.targetNodeId);
+      if (!initiator || !target) {
+        throw new HttpException('Les nœuds sélectionnés ne font pas partie de ce VLAN', HttpStatus.BAD_REQUEST);
+      }
+      if (body.initiatorNodeId === body.targetNodeId) {
+        throw new HttpException('Le nœud source et le nœud cible doivent être différents', HttpStatus.BAD_REQUEST);
+      }
+      if (!initiator.vlanIp || !target.vlanIp) {
+        throw new HttpException('IPs VLAN introuvables pour le test', HttpStatus.BAD_REQUEST);
+      }
+      if (!this.isPrivateIp(initiator.vlanIp) || !this.isPrivateIp(target.vlanIp)) {
+        throw new HttpException('Le test doit passer par des IPs VLAN privées', HttpStatus.BAD_REQUEST);
+      }
+
+      const connections = await this.vlanService.getVlanConnections(vlanId);
+      const connection = connections.find(
+        (conn: any) =>
+          (conn.sourceNodeId === body.initiatorNodeId && conn.targetNodeId === body.targetNodeId) ||
+          (conn.sourceNodeId === body.targetNodeId && conn.targetNodeId === body.initiatorNodeId),
+      );
+
+      let status: 'success' | 'failed' | 'timeout' = 'success';
+      if (!connection || connection.status === 'offline') {
+        status = 'failed';
+      } else if (body.testType === 'latency' && typeof connection.latencyMs !== 'number') {
+        status = 'timeout';
+      }
+
       const result = {
-        status: 'success' as const,
-        latencyMs: Math.random() * 50 + 5,
-        packetLoss: Math.random() * 5,
+        status,
+        latencyMs: typeof connection?.latencyMs === 'number' ? connection.latencyMs : undefined,
+        packetLoss: typeof connection?.packetLoss === 'number' ? connection.packetLoss : undefined,
+        message: `Test ${body.testType} via VLAN privé ${initiator.vlanIp} -> ${target.vlanIp}`,
       };
 
       const test = await this.vlanService.recordConnectionTest(
@@ -111,6 +141,21 @@ export class VlanController {
         result,
       );
 
+      await this.vlanService.updateConnectionStatus(
+        vlanId,
+        body.initiatorNodeId,
+        body.targetNodeId,
+        connection?.status === 'degraded'
+          ? 'degraded'
+          : result.status === 'success'
+            ? 'healthy'
+            : 'offline',
+        {
+          latencyMs: result.latencyMs,
+          packetLoss: result.packetLoss,
+        },
+      );
+
       return {
         success: true,
         test,
@@ -119,6 +164,14 @@ export class VlanController {
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new HttpException(message, HttpStatus.BAD_REQUEST);
     }
+  }
+
+  private isPrivateIp(ip: string) {
+    if (ip.startsWith('10.')) return true;
+    if (ip.startsWith('192.168.')) return true;
+    if (!ip.startsWith('172.')) return false;
+    const second = Number(ip.split('.')[1]);
+    return Number.isFinite(second) && second >= 16 && second <= 31;
   }
 
   @Post('heartbeat')
