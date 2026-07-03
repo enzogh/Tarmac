@@ -444,8 +444,8 @@ export class AgentsService implements OnModuleInit {
           update: {
             ...commonData,
             bandwidth: measuredTxMbps,
-            ...(measuredLatencyMs !== undefined ? { latencyMs: measuredLatencyMs } : {}),
-            ...(measuredPacketLoss !== undefined ? { packetLoss: measuredPacketLoss } : {}),
+            latencyMs: measuredLatencyMs ?? null,
+            packetLoss: measuredPacketLoss ?? null,
           },
           create: {
             vlanId: sourceMembership.vlanId,
@@ -468,8 +468,8 @@ export class AgentsService implements OnModuleInit {
           update: {
             ...commonData,
             bandwidth: measuredRxMbps,
-            ...(measuredLatencyMs !== undefined ? { latencyMs: measuredLatencyMs } : {}),
-            ...(measuredPacketLoss !== undefined ? { packetLoss: measuredPacketLoss } : {}),
+            latencyMs: measuredLatencyMs ?? null,
+            packetLoss: measuredPacketLoss ?? null,
           },
           create: {
             vlanId: sourceMembership.vlanId,
