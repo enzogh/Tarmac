@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { randomUUID, generateKeyPairSync } from 'crypto';
+import { randomUUID } from 'crypto';
 import { Client, ConnectConfig } from 'ssh2';
 import { CreateNodeDto } from './dto/create-node.dto';
 import { StartNodeOnboardingDto } from './dto/start-node-onboarding.dto';
@@ -23,7 +23,6 @@ type NodeOnboardingSession = {
   repoRef: string;
   controlPlaneWs: string;
   deployKeyPublic: string;
-  deployKeyPrivate: string;
 };
 
 type RemoteCommandResult = {
@@ -54,11 +53,12 @@ export class NodeOnboardingService {
     };
     const node = await this.nodesService.create(createNodeDto, actorUserId);
 
-    const { publicKey, privateKey } = generateKeyPairSync('ed25519', {
-      publicKeyEncoding: { type: 'spki', format: 'pem' },
-      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    const deployKeyPublic = await this.ensureRemoteDeployKey({
+      provider: dto.provider,
+      hostIp: dto.hostIp.trim(),
+      sshUsername: dto.sshUsername.trim(),
+      sshPassword: dto.sshPassword,
     });
-    const deployKeyPublic = this.toOpenSshPublicKey(publicKey);
 
     const onboardingId = randomUUID();
     const now = new Date();
@@ -80,7 +80,6 @@ export class NodeOnboardingService {
       repoRef,
       controlPlaneWs,
       deployKeyPublic,
-      deployKeyPrivate: privateKey,
     });
 
     this.cleanupExpiredSessions();
@@ -157,29 +156,6 @@ export class NodeOnboardingService {
     return trimmed;
   }
 
-  private toOpenSshPublicKey(spkiPem: string): string {
-    const lines = spkiPem
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => !line.startsWith('-----') && line.length > 0);
-    const derBase64 = lines.join('');
-    const der = Buffer.from(derBase64, 'base64');
-    // Extract raw ed25519 key from SPKI wrapper.
-    const rawKey = der.subarray(der.length - 32);
-    const type = Buffer.from('ssh-ed25519');
-    const keyBody = Buffer.concat([
-      this.packSshBuffer(type),
-      this.packSshBuffer(rawKey),
-    ]).toString('base64');
-    return `ssh-ed25519 ${keyBody}`;
-  }
-
-  private packSshBuffer(content: Buffer): Buffer {
-    const length = Buffer.alloc(4);
-    length.writeUInt32BE(content.length, 0);
-    return Buffer.concat([length, content]);
-  }
-
   private shellQuote(value: string): string {
     return `'${value.replace(/'/g, `'\"'\"'`)}'`;
   }
@@ -192,12 +168,58 @@ export class NodeOnboardingService {
     return `printf '%s\\n' ${escapedPassword} | sudo -S -p '' bash -lc ${this.shellQuote(script)}`;
   }
 
+  private async ensureRemoteDeployKey(input: {
+    provider: OnboardingProvider;
+    hostIp: string;
+    sshUsername: string;
+    sshPassword: string;
+  }): Promise<string> {
+    const ephemeralSession = {
+      provider: input.provider,
+      hostIp: input.hostIp,
+      sshUsername: input.sshUsername,
+      sshPassword: input.sshPassword,
+    } as NodeOnboardingSession;
+    const client = await this.openSshConnection(ephemeralSession);
+    try {
+      const result = await this.execRemote(
+        client,
+        this.buildRemoteCommand(
+          ephemeralSession,
+          [
+            'set -euo pipefail',
+            'mkdir -p "$HOME/.ssh" "$HOME/.apps"',
+            'chmod 700 "$HOME/.ssh"',
+            'KEY="$HOME/.ssh/tarmac_deploy_ed25519"',
+            'if [ -f "$KEY" ] && ssh-keygen -y -f "$KEY" >/dev/null 2>&1; then',
+            '  :',
+            'else',
+            '  rm -f "$KEY" "$KEY.pub"',
+            '  ssh-keygen -t ed25519 -N "" -C "tarmac-deploy" -f "$KEY" >/dev/null',
+            'fi',
+            'chmod 600 "$KEY"',
+            'chmod 644 "$KEY.pub"',
+            'cat "$KEY.pub"',
+          ].join('\n'),
+        ),
+      );
+      if (result.code !== 0) {
+        throw new Error((result.stderr || result.stdout || '').trim() || 'failed to generate deploy key');
+      }
+      const publicKey = (result.stdout || '').trim();
+      if (!publicKey.startsWith('ssh-ed25519 ')) {
+        throw new Error('invalid deploy public key generated on remote host');
+      }
+      return publicKey;
+    } finally {
+      client.end();
+    }
+  }
+
   private async runRemoteInstall(session: NodeOnboardingSession): Promise<string> {
     const client = await this.openSshConnection(session);
     const logs: string[] = [];
     try {
-      const privateKeyBase64 = Buffer.from(session.deployKeyPrivate, 'utf8').toString('base64');
-      const publicKeyBase64 = Buffer.from(session.deployKeyPublic, 'utf8').toString('base64');
       const nodeIdQuoted = this.shellQuote(session.nodeId);
       const wsQuoted = this.shellQuote(session.controlPlaneWs);
       const tokenQuoted = this.shellQuote(this.configService.get<string>('AGENT_SHARED_TOKEN') ?? '');
@@ -218,18 +240,6 @@ export class NodeOnboardingService {
             'export DEBIAN_FRONTEND=noninteractive',
             'apt-get update -y',
             'apt-get install -y --no-install-recommends ca-certificates curl git golang-go nfs-common cifs-utils wireguard-tools iproute2 util-linux',
-          ].join('\n'),
-        },
-        {
-          label: 'Write deploy key',
-          script: [
-            'set -euo pipefail',
-            'mkdir -p "$HOME/.ssh" "$HOME/.apps"',
-            'chmod 700 "$HOME/.ssh"',
-            `printf '%s' ${this.shellQuote(privateKeyBase64)} | base64 -d > "$HOME/.ssh/tarmac_deploy_ed25519"`,
-            `printf '%s' ${this.shellQuote(publicKeyBase64)} | base64 -d > "$HOME/.ssh/tarmac_deploy_ed25519.pub"`,
-            'chmod 600 "$HOME/.ssh/tarmac_deploy_ed25519"',
-            'chmod 644 "$HOME/.ssh/tarmac_deploy_ed25519.pub"',
           ].join('\n'),
         },
         {
