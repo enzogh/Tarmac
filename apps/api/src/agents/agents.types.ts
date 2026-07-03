@@ -56,6 +56,7 @@ export interface CommandPayload {
     | 'command.stop_rsync'
     | 'command.apply_overlay'
     | 'command.list_directories'
+    | 'command.list_remote_directories'
     | 'command.scan_directory_sizes'
     | 'command.apply_ssh_authorized_keys'
     | 'command.update_agent';
@@ -71,6 +72,7 @@ export interface CommandResultPayload {
     | 'stop_rsync'
     | 'apply_overlay'
     | 'list_directories'
+    | 'list_remote_directories'
     | 'scan_directory_sizes'
     | 'apply_ssh_authorized_keys'
     | 'update_agent';

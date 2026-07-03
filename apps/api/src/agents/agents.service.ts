@@ -469,6 +469,46 @@ export class AgentsService implements OnModuleInit {
     });
   }
 
+  requestRemoteDirectories(
+    nodeId: string,
+    payload: { host: string; username: string; password?: string; port?: number; basePath?: string },
+    timeoutMs = 7000,
+  ): Promise<{ basePath: string; directories: string[] }> {
+    const requestId = `rdirs:${nodeId}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingDirectoryRequests.delete(requestId);
+        reject(new Error('remote directory listing timeout'));
+      }, timeoutMs);
+
+      this.pendingDirectoryRequests.set(requestId, {
+        nodeId,
+        resolve,
+        reject,
+        timeout,
+      });
+
+      const sent = this.sendCommand(nodeId, {
+        type: 'command.list_remote_directories',
+        payload: {
+          requestId,
+          host: payload.host,
+          username: payload.username,
+          password: payload.password,
+          port: payload.port,
+          basePath: payload.basePath ?? '/',
+        },
+      });
+
+      if (!sent) {
+        clearTimeout(timeout);
+        this.pendingDirectoryRequests.delete(requestId);
+        reject(new Error(`node ${nodeId} is offline`));
+      }
+    });
+  }
+
   async handleAgentUninstall(nodeId: string) {
     const memberships = await this.prisma.vlanMember.findMany({
       where: { nodeId },

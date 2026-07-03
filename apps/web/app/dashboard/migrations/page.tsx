@@ -104,11 +104,21 @@ export default function MigrationsPage() {
 
   const [formData, setFormData] = useState({
     name: '',
+    sourceKind: 'node' as 'node' | 'seedbox',
+    targetKind: 'node' as 'node' | 'seedbox',
     sourceNodeId: '',
     targetNodeId: '',
     sourcePath: '',
     targetPath: '',
     reason: '',
+    sourceSeedboxHost: '',
+    sourceSeedboxUser: '',
+    sourceSeedboxPassword: '',
+    sourceSeedboxPort: '22',
+    targetSeedboxHost: '',
+    targetSeedboxUser: '',
+    targetSeedboxPassword: '',
+    targetSeedboxPort: '22',
   });
   const [sourceDirectories, setSourceDirectories] = useState<string[]>([]);
   const [targetDirectories, setTargetDirectories] = useState<string[]>([]);
@@ -140,11 +150,31 @@ export default function MigrationsPage() {
     }
   };
 
-  const loadDirectories = async (kind: 'source' | 'target', nodeId: string, basePath: string) => {
-    if (!token || !nodeId) return;
+  const loadDirectories = async (kind: 'source' | 'target', basePath: string) => {
+    if (!token) return;
+    const isRemote = kind === 'source' ? formData.sourceKind === 'seedbox' : formData.targetKind === 'seedbox';
+    const nodeId =
+      kind === 'source'
+        ? isRemote
+          ? formData.targetNodeId
+          : formData.sourceNodeId
+        : isRemote
+          ? formData.sourceNodeId
+          : formData.targetNodeId;
+    if (!nodeId) return;
+
     setDirectoriesLoading((prev) => ({ ...prev, [kind]: true }));
     try {
-      const payload = await api.migrations.listDirectories(token, nodeId, basePath || '/');
+      const payload = isRemote
+        ? await api.migrations.listRemoteDirectories(token, {
+            nodeId,
+            host: kind === 'source' ? formData.sourceSeedboxHost : formData.targetSeedboxHost,
+            username: kind === 'source' ? formData.sourceSeedboxUser : formData.targetSeedboxUser,
+            password: kind === 'source' ? formData.sourceSeedboxPassword : formData.targetSeedboxPassword,
+            port: Number.parseInt(kind === 'source' ? formData.sourceSeedboxPort : formData.targetSeedboxPort, 10) || 22,
+            basePath: basePath || '/',
+          })
+        : await api.migrations.listDirectories(token, nodeId, basePath || '/');
       const sorted = [...payload.directories].sort((a, b) => a.localeCompare(b));
       if (kind === 'source') {
         setSourceBrowsePath(payload.basePath);
@@ -161,7 +191,7 @@ export default function MigrationsPage() {
       }
       setNotice({
         type: 'error',
-        message: "Impossible de charger les dossiers en direct depuis le serveur sélectionné.",
+        message: "Impossible de charger les dossiers en direct depuis l'endpoint sélectionné.",
       });
     } finally {
       setDirectoriesLoading((prev) => ({ ...prev, [kind]: false }));
@@ -179,24 +209,46 @@ export default function MigrationsPage() {
   }, [token]);
 
   useEffect(() => {
-    if (!formData.sourceNodeId) {
+    const sourceReady =
+      formData.sourceKind === 'node'
+        ? !!formData.sourceNodeId
+        : !!formData.targetNodeId && !!formData.sourceSeedboxHost && !!formData.sourceSeedboxUser;
+    if (!sourceReady) {
       setSourceBrowsePath('/');
       setSourceDirectories([]);
       return;
     }
     setSourceBrowsePath('/');
-    void loadDirectories('source', formData.sourceNodeId, '/');
-  }, [formData.sourceNodeId]);
+    void loadDirectories('source', '/');
+  }, [
+    formData.sourceKind,
+    formData.sourceNodeId,
+    formData.targetNodeId,
+    formData.sourceSeedboxHost,
+    formData.sourceSeedboxUser,
+    formData.sourceSeedboxPort,
+  ]);
 
   useEffect(() => {
-    if (!formData.targetNodeId) {
+    const targetReady =
+      formData.targetKind === 'node'
+        ? !!formData.targetNodeId
+        : !!formData.sourceNodeId && !!formData.targetSeedboxHost && !!formData.targetSeedboxUser;
+    if (!targetReady) {
       setTargetBrowsePath('/');
       setTargetDirectories([]);
       return;
     }
     setTargetBrowsePath('/');
-    void loadDirectories('target', formData.targetNodeId, '/');
-  }, [formData.targetNodeId]);
+    void loadDirectories('target', '/');
+  }, [
+    formData.targetKind,
+    formData.targetNodeId,
+    formData.sourceNodeId,
+    formData.targetSeedboxHost,
+    formData.targetSeedboxUser,
+    formData.targetSeedboxPort,
+  ]);
 
   const nodesById = useMemo(() => Object.fromEntries(nodes.map((node) => [node.id, node.name] as const)), [nodes]);
   const activeMigrations = useMemo(() => migrations.filter((migration) => migration.status !== 'completed'), [migrations]);
@@ -225,16 +277,49 @@ export default function MigrationsPage() {
     [migrations],
   );
 
-  const canEditMigration = (migration: MigrationItem) => migration.status === 'pending' || migration.status === 'failed';
+  const canEditMigration = (migration: MigrationItem) =>
+    (migration.status === 'pending' || migration.status === 'failed') &&
+    migration.sourceKind !== 'seedbox' &&
+    migration.targetKind !== 'seedbox';
   const canDeleteMigration = (migration: MigrationItem) => migration.status === 'pending';
+  const formatMigrationEndpoint = (migration: MigrationItem, kind: 'source' | 'target') => {
+    if (kind === 'source' && migration.sourceKind === 'seedbox') {
+      return `${migration.sourceSeedboxUser ?? 'user'}@${migration.sourceSeedboxHost ?? 'seedbox'}`;
+    }
+    if (kind === 'target' && migration.targetKind === 'seedbox') {
+      return `${migration.targetSeedboxUser ?? 'user'}@${migration.targetSeedboxHost ?? 'seedbox'}`;
+    }
+    const nodeId = kind === 'source' ? migration.sourceNodeId : migration.targetNodeId;
+    return nodesById[nodeId ?? ''] ?? 'Non défini';
+  };
 
-  const validateMigrationInput = (name: string, sourceNodeId: string, targetNodeId: string) => {
-    if (!name.trim() || !sourceNodeId || !targetNodeId) {
-      setNotice({ type: 'error', message: 'Complétez le nom, la source et la destination.' });
+  const validateMigrationInput = () => {
+    if (!formData.name.trim()) {
+      setNotice({ type: 'error', message: 'Complétez le nom de la migration.' });
       return false;
     }
-    if (sourceNodeId === targetNodeId) {
+    if (formData.sourceKind === 'seedbox' && formData.targetKind === 'seedbox') {
+      setNotice({ type: 'error', message: 'Au moins un côté doit être un serveur Tarmac.' });
+      return false;
+    }
+    if (formData.sourceKind === 'node' && !formData.sourceNodeId) {
+      setNotice({ type: 'error', message: 'Sélectionnez un serveur source.' });
+      return false;
+    }
+    if (formData.targetKind === 'node' && !formData.targetNodeId) {
+      setNotice({ type: 'error', message: 'Sélectionnez un serveur destination.' });
+      return false;
+    }
+    if (formData.sourceKind === 'node' && formData.targetKind === 'node' && formData.sourceNodeId === formData.targetNodeId) {
       setNotice({ type: 'error', message: 'La source et la destination doivent être différentes.' });
+      return false;
+    }
+    if (formData.sourceKind === 'seedbox' && (!formData.sourceSeedboxHost || !formData.sourceSeedboxUser || !formData.sourceSeedboxPassword)) {
+      setNotice({ type: 'error', message: 'Complétez les accès seedbox source (hôte, utilisateur, mot de passe).' });
+      return false;
+    }
+    if (formData.targetKind === 'seedbox' && (!formData.targetSeedboxHost || !formData.targetSeedboxUser || !formData.targetSeedboxPassword)) {
+      setNotice({ type: 'error', message: 'Complétez les accès seedbox destination (hôte, utilisateur, mot de passe).' });
       return false;
     }
     return true;
@@ -242,7 +327,7 @@ export default function MigrationsPage() {
 
   const createMigration = async () => {
     if (!token) return;
-    if (!validateMigrationInput(formData.name, formData.sourceNodeId, formData.targetNodeId)) return;
+    if (!validateMigrationInput()) return;
     if (!formData.sourcePath || !formData.targetPath) {
       setNotice({
         type: 'error',
@@ -253,14 +338,41 @@ export default function MigrationsPage() {
     try {
       await api.migrations.create(token, {
         name: formData.name.trim(),
-        sourceNodeId: formData.sourceNodeId,
-        targetNodeId: formData.targetNodeId,
+        sourceNodeId: formData.sourceNodeId || undefined,
+        targetNodeId: formData.targetNodeId || undefined,
         sourcePath: formData.sourcePath,
         targetPath: formData.targetPath,
         reason: formData.reason || undefined,
+        sourceKind: formData.sourceKind,
+        targetKind: formData.targetKind,
+        sourceSeedboxHost: formData.sourceKind === 'seedbox' ? formData.sourceSeedboxHost : undefined,
+        sourceSeedboxUser: formData.sourceKind === 'seedbox' ? formData.sourceSeedboxUser : undefined,
+        sourceSeedboxPassword: formData.sourceKind === 'seedbox' ? formData.sourceSeedboxPassword : undefined,
+        sourceSeedboxPort: formData.sourceKind === 'seedbox' ? formData.sourceSeedboxPort : undefined,
+        targetSeedboxHost: formData.targetKind === 'seedbox' ? formData.targetSeedboxHost : undefined,
+        targetSeedboxUser: formData.targetKind === 'seedbox' ? formData.targetSeedboxUser : undefined,
+        targetSeedboxPassword: formData.targetKind === 'seedbox' ? formData.targetSeedboxPassword : undefined,
+        targetSeedboxPort: formData.targetKind === 'seedbox' ? formData.targetSeedboxPort : undefined,
       });
       setWizardOpen(false);
-      setFormData({ name: '', sourceNodeId: '', targetNodeId: '', sourcePath: '', targetPath: '', reason: '' });
+      setFormData({
+        name: '',
+        sourceKind: 'node',
+        targetKind: 'node',
+        sourceNodeId: '',
+        targetNodeId: '',
+        sourcePath: '',
+        targetPath: '',
+        reason: '',
+        sourceSeedboxHost: '',
+        sourceSeedboxUser: '',
+        sourceSeedboxPassword: '',
+        sourceSeedboxPort: '22',
+        targetSeedboxHost: '',
+        targetSeedboxUser: '',
+        targetSeedboxPassword: '',
+        targetSeedboxPort: '22',
+      });
       setSelectedPreset(null);
       setNotice({ type: 'success', message: 'Migration créée.' });
       await load();
@@ -323,7 +435,14 @@ export default function MigrationsPage() {
 
   const saveEdit = async () => {
     if (!token || !editMigration) return;
-    if (!validateMigrationInput(editForm.name, editForm.sourceNodeId, editForm.targetNodeId)) return;
+    if (!editForm.name.trim() || !editForm.sourceNodeId || !editForm.targetNodeId) {
+      setNotice({ type: 'error', message: 'Complétez le nom, la source et la destination.' });
+      return;
+    }
+    if (editForm.sourceNodeId === editForm.targetNodeId) {
+      setNotice({ type: 'error', message: 'La source et la destination doivent être différentes.' });
+      return;
+    }
     setBusyId(editMigration.id);
     try {
       await api.migrations.update(token, editMigration.id, {
@@ -402,6 +521,36 @@ export default function MigrationsPage() {
 
           <div>
             <Label className="mb-2 block text-sm font-medium text-zinc-200">
+              Type de source
+              <HelpText text="Serveur Tarmac ou seedbox SSH (Ultra.cc, etc.)" />
+            </Label>
+            <Select
+              value={formData.sourceKind}
+              onValueChange={(value: 'node' | 'seedbox') => {
+                setSourceBrowsePath('/');
+                setSourceDirectories([]);
+                setFormData((prev) => ({
+                  ...prev,
+                  sourceKind: value,
+                  targetKind: value === 'seedbox' && prev.targetKind === 'seedbox' ? 'node' : prev.targetKind,
+                  sourceNodeId: value === 'node' ? prev.sourceNodeId : '',
+                  sourcePath: '',
+                }));
+              }}
+            >
+              <SelectTrigger className="h-10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="node">Serveur Tarmac</SelectItem>
+                <SelectItem value="seedbox">Seedbox SSH</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {formData.sourceKind === 'node' ? (
+            <div>
+              <Label className="mb-2 block text-sm font-medium text-zinc-200">
               Serveur source
               <HelpText text="Le serveur qui contient les données actuellement" />
             </Label>
@@ -429,10 +578,77 @@ export default function MigrationsPage() {
                 ))}
               </SelectContent>
             </Select>
-          </div>
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2">
+              <div>
+                <Label className="mb-2 block text-sm font-medium text-zinc-200">Host seedbox source</Label>
+                <Input
+                  value={formData.sourceSeedboxHost}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, sourceSeedboxHost: e.target.value, sourcePath: '' }))}
+                  placeholder="xx.ultra.cc"
+                />
+              </div>
+              <div>
+                <Label className="mb-2 block text-sm font-medium text-zinc-200">Utilisateur source</Label>
+                <Input
+                  value={formData.sourceSeedboxUser}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, sourceSeedboxUser: e.target.value, sourcePath: '' }))}
+                  placeholder="username"
+                />
+              </div>
+              <div>
+                <Label className="mb-2 block text-sm font-medium text-zinc-200">Mot de passe source</Label>
+                <Input
+                  type="password"
+                  value={formData.sourceSeedboxPassword}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, sourceSeedboxPassword: e.target.value, sourcePath: '' }))}
+                  placeholder="••••••••"
+                />
+              </div>
+              <div>
+                <Label className="mb-2 block text-sm font-medium text-zinc-200">Port SSH source</Label>
+                <Input
+                  value={formData.sourceSeedboxPort}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, sourceSeedboxPort: e.target.value, sourcePath: '' }))}
+                  placeholder="22"
+                />
+              </div>
+            </div>
+          )}
 
           <div>
             <Label className="mb-2 block text-sm font-medium text-zinc-200">
+              Type de destination
+              <HelpText text="Serveur Tarmac ou seedbox SSH distante" />
+            </Label>
+            <Select
+              value={formData.targetKind}
+              onValueChange={(value: 'node' | 'seedbox') => {
+                setTargetBrowsePath('/');
+                setTargetDirectories([]);
+                setFormData((prev) => ({
+                  ...prev,
+                  targetKind: value,
+                  sourceKind: value === 'seedbox' && prev.sourceKind === 'seedbox' ? 'node' : prev.sourceKind,
+                  targetNodeId: value === 'node' ? prev.targetNodeId : '',
+                  targetPath: '',
+                }));
+              }}
+            >
+              <SelectTrigger className="h-10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="node">Serveur Tarmac</SelectItem>
+                <SelectItem value="seedbox">Seedbox SSH</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {formData.targetKind === 'node' ? (
+            <div>
+              <Label className="mb-2 block text-sm font-medium text-zinc-200">
               Serveur destination
               <HelpText text="Le serveur qui recevra les données" />
             </Label>
@@ -448,7 +664,7 @@ export default function MigrationsPage() {
               </SelectTrigger>
               <SelectContent>
                 {nodes
-                  .filter((node) => node.id !== formData.sourceNodeId)
+                  .filter((node) => formData.sourceKind !== 'node' || node.id !== formData.sourceNodeId)
                   .map((node) => (
                     <SelectItem key={node.id} value={node.id}>
                       {node.name} ({node.status})
@@ -456,7 +672,44 @@ export default function MigrationsPage() {
                   ))}
               </SelectContent>
             </Select>
-          </div>
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2">
+              <div>
+                <Label className="mb-2 block text-sm font-medium text-zinc-200">Host seedbox destination</Label>
+                <Input
+                  value={formData.targetSeedboxHost}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, targetSeedboxHost: e.target.value, targetPath: '' }))}
+                  placeholder="yy.ultra.cc"
+                />
+              </div>
+              <div>
+                <Label className="mb-2 block text-sm font-medium text-zinc-200">Utilisateur destination</Label>
+                <Input
+                  value={formData.targetSeedboxUser}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, targetSeedboxUser: e.target.value, targetPath: '' }))}
+                  placeholder="username"
+                />
+              </div>
+              <div>
+                <Label className="mb-2 block text-sm font-medium text-zinc-200">Mot de passe destination</Label>
+                <Input
+                  type="password"
+                  value={formData.targetSeedboxPassword}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, targetSeedboxPassword: e.target.value, targetPath: '' }))}
+                  placeholder="••••••••"
+                />
+              </div>
+              <div>
+                <Label className="mb-2 block text-sm font-medium text-zinc-200">Port SSH destination</Label>
+                <Input
+                  value={formData.targetSeedboxPort}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, targetSeedboxPort: e.target.value, targetPath: '' }))}
+                  placeholder="22"
+                />
+              </div>
+            </div>
+          )}
 
           <Alert variant="info">
             <ArrowRightLeft className="h-4 w-4" />
@@ -465,33 +718,61 @@ export default function MigrationsPage() {
           <div className="rounded-lg border border-white/10 bg-zinc-950/60 p-3">
             <p className="text-xs text-muted-foreground">Résultat attendu</p>
             <div className="mt-2 flex items-center gap-2 text-sm font-medium">
-              <span>{formData.sourceNodeId ? (nodesById[formData.sourceNodeId] ?? 'Source') : 'Source'}</span>
+              <span>
+                {formData.sourceKind === 'seedbox'
+                  ? `${formData.sourceSeedboxUser || 'user'}@${formData.sourceSeedboxHost || 'seedbox'}`
+                  : formData.sourceNodeId
+                    ? (nodesById[formData.sourceNodeId] ?? 'Source')
+                    : 'Source'}
+              </span>
               <ArrowRight className="h-4 w-4 text-violet-300" />
-              <span>{formData.targetNodeId ? (nodesById[formData.targetNodeId] ?? 'Destination') : 'Destination'}</span>
+              <span>
+                {formData.targetKind === 'seedbox'
+                  ? `${formData.targetSeedboxUser || 'user'}@${formData.targetSeedboxHost || 'seedbox'}`
+                  : formData.targetNodeId
+                    ? (nodesById[formData.targetNodeId] ?? 'Destination')
+                    : 'Destination'}
+              </span>
             </div>
           </div>
 
           <DirectoryBrowser
             title="Dossier source (live)"
-            description="Navigation en direct sur le serveur source. Un clic sur un dossier le sélectionne et l’ouvre."
+            description={
+              formData.sourceKind === 'seedbox'
+                ? "Navigation en direct sur la seedbox source via un nœud Tarmac connecté."
+                : "Navigation en direct sur le serveur source. Un clic sur un dossier le sélectionne et l’ouvre."
+            }
             currentPath={sourceBrowsePath}
             selectedPath={formData.sourcePath}
             directories={sourceDirectories}
             loading={directoriesLoading.source}
-            disabled={!formData.sourceNodeId}
-            onBrowse={(path) => void loadDirectories('source', formData.sourceNodeId, path)}
+            disabled={
+              formData.sourceKind === 'node'
+                ? !formData.sourceNodeId
+                : !formData.targetNodeId || !formData.sourceSeedboxHost || !formData.sourceSeedboxUser
+            }
+            onBrowse={(path) => void loadDirectories('source', path)}
             onSelect={(path) => setFormData((prev) => ({ ...prev, sourcePath: path }))}
           />
 
           <DirectoryBrowser
             title="Dossier destination (live)"
-            description="Navigation en direct sur le serveur de destination."
+            description={
+              formData.targetKind === 'seedbox'
+                ? 'Navigation en direct sur la seedbox destination.'
+                : 'Navigation en direct sur le serveur de destination.'
+            }
             currentPath={targetBrowsePath}
             selectedPath={formData.targetPath}
             directories={targetDirectories}
             loading={directoriesLoading.target}
-            disabled={!formData.targetNodeId}
-            onBrowse={(path) => void loadDirectories('target', formData.targetNodeId, path)}
+            disabled={
+              formData.targetKind === 'node'
+                ? !formData.targetNodeId
+                : !formData.sourceNodeId || !formData.targetSeedboxHost || !formData.targetSeedboxUser
+            }
+            onBrowse={(path) => void loadDirectories('target', path)}
             onSelect={(path) => setFormData((prev) => ({ ...prev, targetPath: path }))}
           />
         </div>
@@ -513,7 +794,7 @@ export default function MigrationsPage() {
               {
                 id: 'transfer',
                 title: 'Transfert sécurisé',
-                description: 'Migration via le réseau VLAN',
+                description: 'Migration via SSH/rsync (nœud Tarmac ou seedbox)',
               },
               {
                 id: 'verify',
@@ -530,11 +811,19 @@ export default function MigrationsPage() {
             </div>
             <div className="flex justify-between border-b pb-2">
               <span className="text-muted-foreground">Source:</span>
-              <span className="font-mono">{nodesById[formData.sourceNodeId] ?? '—'}</span>
+              <span className="font-mono">
+                {formData.sourceKind === 'seedbox'
+                  ? `${formData.sourceSeedboxUser || 'user'}@${formData.sourceSeedboxHost || 'seedbox'}`
+                  : (nodesById[formData.sourceNodeId] ?? '—')}
+              </span>
             </div>
             <div className="flex justify-between border-b pb-2">
               <span className="text-muted-foreground">Destination:</span>
-              <span className="font-mono">{nodesById[formData.targetNodeId] ?? '—'}</span>
+              <span className="font-mono">
+                {formData.targetKind === 'seedbox'
+                  ? `${formData.targetSeedboxUser || 'user'}@${formData.targetSeedboxHost || 'seedbox'}`
+                  : (nodesById[formData.targetNodeId] ?? '—')}
+              </span>
             </div>
             <div className="flex justify-between border-b pb-2">
               <span className="text-muted-foreground">Dossier source:</span>
@@ -654,12 +943,12 @@ export default function MigrationsPage() {
                       <div className="flex items-center gap-2 text-sm">
                         <Server className="h-4 w-4 text-violet-300" />
                         <span className="text-muted-foreground">Source:</span>
-                        <span className="font-medium">{nodesById[migration.sourceNodeId ?? ''] ?? 'Non défini'}</span>
+                        <span className="font-medium">{formatMigrationEndpoint(migration, 'source')}</span>
                       </div>
                       <div className="flex items-center gap-2 text-sm">
                         <Server className="h-4 w-4 text-sky-300" />
                         <span className="text-muted-foreground">Destination:</span>
-                        <span className="font-medium">{nodesById[migration.targetNodeId ?? ''] ?? 'Non défini'}</span>
+                        <span className="font-medium">{formatMigrationEndpoint(migration, 'target')}</span>
                       </div>
                     </div>
 
@@ -770,8 +1059,8 @@ export default function MigrationsPage() {
                   {archivedMigrations.map((migration) => (
                     <TableRow key={migration.id}>
                       <TableCell className="font-medium">{migration.name}</TableCell>
-                      <TableCell>{nodesById[migration.sourceNodeId ?? ''] ?? 'Non défini'}</TableCell>
-                      <TableCell>{nodesById[migration.targetNodeId ?? ''] ?? 'Non défini'}</TableCell>
+                      <TableCell>{formatMigrationEndpoint(migration, 'source')}</TableCell>
+                      <TableCell>{formatMigrationEndpoint(migration, 'target')}</TableCell>
                       <TableCell>{new Date(migration.createdAt).toLocaleDateString('fr-FR')}</TableCell>
                       <TableCell className="text-right">
                         <Badge variant="success">Terminée</Badge>

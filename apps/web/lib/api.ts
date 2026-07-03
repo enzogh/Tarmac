@@ -95,6 +95,14 @@ export type MigrationItem = {
   sourcePath?: string | null;
   targetPath?: string | null;
   reason?: string | null;
+  sourceKind?: 'node' | 'seedbox' | null;
+  targetKind?: 'node' | 'seedbox' | null;
+  sourceSeedboxHost?: string | null;
+  sourceSeedboxUser?: string | null;
+  sourceSeedboxPort?: number | null;
+  targetSeedboxHost?: string | null;
+  targetSeedboxUser?: string | null;
+  targetSeedboxPort?: number | null;
   sourceNode?: { id: string; name: string } | null;
   targetNode?: { id: string; name: string } | null;
   createdAt: string;
@@ -375,6 +383,16 @@ export const api = {
         targetPath?: string;
         reason?: string;
         notes?: string;
+        sourceKind?: 'node' | 'seedbox';
+        targetKind?: 'node' | 'seedbox';
+        sourceSeedboxHost?: string;
+        sourceSeedboxUser?: string;
+        sourceSeedboxPassword?: string;
+        sourceSeedboxPort?: string;
+        targetSeedboxHost?: string;
+        targetSeedboxUser?: string;
+        targetSeedboxPassword?: string;
+        targetSeedboxPort?: string;
       },
     ) => request<MigrationItem>('/api/v1/migrations', token, { method: 'POST', body: JSON.stringify(payload) }),
     listDirectories: (token: string, nodeId: string, basePath = '/') =>
@@ -387,6 +405,14 @@ export const api = {
         `/api/v1/migrations/directories/scan?nodeId=${encodeURIComponent(nodeId)}&basePath=${encodeURIComponent(basePath)}&maxEntries=${encodeURIComponent(String(maxEntries))}`,
         token,
       ),
+    listRemoteDirectories: (
+      token: string,
+      payload: { nodeId: string; host: string; username: string; password?: string; port?: number; basePath?: string },
+    ) =>
+      request<{ basePath: string; directories: string[] }>('/api/v1/migrations/directories/remote', token, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
     update: (
       token: string,
       id: string,
