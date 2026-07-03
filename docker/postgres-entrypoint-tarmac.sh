@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+# Self-heal for persistent clusters where role attributes were altered.
+# Runs before the standard Postgres entrypoint startup.
+if [ -n "${PGDATA:-}" ] && [ -f "$PGDATA/global/pg_control" ]; then
+  echo "Tarmac: enforcing postgres role LOGIN flag in existing cluster..."
+  postgres --single -D "$PGDATA" postgres <<SQL >/dev/null
+ALTER ROLE postgres WITH LOGIN SUPERUSER PASSWORD '${POSTGRES_PASSWORD:-postgres}';
+SQL
+fi
+
+exec /usr/local/bin/docker-entrypoint.sh "$@"

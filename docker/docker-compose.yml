@@ -1,6 +1,8 @@
 services:
   postgres:
     image: postgres:16
+    entrypoint: ["/bin/sh", "/docker-entrypoint-tarmac.sh"]
+    command: ["postgres"]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -9,6 +11,7 @@ services:
       - "5432:5432"
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
+      - ./postgres-entrypoint-tarmac.sh:/docker-entrypoint-tarmac.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
