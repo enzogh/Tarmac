@@ -2,10 +2,12 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, HardDrive, Zap, Shield, Grid3x3 } from 'lucide-react';
+import { Plus, HardDrive, Zap, Shield, Grid3x3, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { api, NodeItem } from '../../../lib/api';
 import { DashboardLayout } from '../../../components/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Button } from '../../../components/ui/button';
+import { Alert, AlertDescription } from '../../../components/ui/alert';
 import {
   WizardDialog,
   PresetSelector,
@@ -76,6 +78,7 @@ export default function StoragePage() {
   const [pools, setPools] = useState<any[]>([]);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState<PresetOption | null>(null);
+  const [notice, setNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -129,7 +132,7 @@ export default function StoragePage() {
             }}
           />
           {selectedPreset && (
-            <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded text-sm text-green-900">
+            <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/[0.08] p-3 text-sm text-emerald-100">
               ✓ Sélectionné: <strong>{selectedPreset.name}</strong>
             </div>
           )}
@@ -143,7 +146,7 @@ export default function StoragePage() {
       content: (
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="mb-2 block text-sm font-medium text-zinc-200">
               Nom du Pool
               <HelpText text="Identifiant unique pour ce pool de stockage" />
             </label>
@@ -152,19 +155,19 @@ export default function StoragePage() {
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               placeholder="ex: pool-principal"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="mb-2 block text-sm font-medium text-zinc-200">
               Nœud Hôte
               <HelpText text="Le serveur qui hébergera ce pool" />
             </label>
             <select
               value={formData.nodeId}
               onChange={(e) => setFormData({ ...formData, nodeId: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
             >
               <option value="">-- Choisir un nœud --</option>
               {nodes.map((node) => (
@@ -176,7 +179,7 @@ export default function StoragePage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="mb-2 block text-sm font-medium text-zinc-200">
               Chemins des Disques
               <HelpText text={`Entrez les chemins (ex: /dev/sda), minimum ${selectedPreset?.config?.minDisks || 1} disque(s)`} />
             </label>
@@ -185,9 +188,9 @@ export default function StoragePage() {
               onChange={(e) => setFormData({ ...formData, diskPaths: e.target.value.split('\n').filter(Boolean) })}
               placeholder="/dev/sda&#10;/dev/sdb&#10;/dev/sdc"
               rows={5}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-xs"
+              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
             />
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="mt-1 text-xs text-muted-foreground">
               {formData.diskPaths.length} disque(s) - {selectedPreset?.config?.minDisks ? `Min: ${selectedPreset.config?.minDisks}` : ''}
             </p>
           </div>
@@ -210,8 +213,8 @@ export default function StoragePage() {
                   className="w-4 h-4 rounded"
                 />
                 <div>
-                  <span className="font-medium text-gray-700">Activer le Cache</span>
-                  <p className="text-xs text-gray-500">Les données fréquemment accédées sont cachées en mémoire</p>
+                  <span className="font-medium text-zinc-200">Activer le Cache</span>
+                  <p className="text-xs text-muted-foreground">Les données fréquemment accédées sont cachées en mémoire</p>
                 </div>
               </label>
 
@@ -223,8 +226,8 @@ export default function StoragePage() {
                   className="w-4 h-4 rounded"
                 />
                 <div>
-                  <span className="font-medium text-gray-700">Compression</span>
-                  <p className="text-xs text-gray-500">Réduire la taille des données stockées</p>
+                  <span className="font-medium text-zinc-200">Compression</span>
+                  <p className="text-xs text-muted-foreground">Réduire la taille des données stockées</p>
                 </div>
               </label>
             </div>
@@ -263,21 +266,21 @@ export default function StoragePage() {
             ]}
           />
 
-          <div className="bg-gray-50 rounded-lg p-4 space-y-3 text-sm">
+          <div className="space-y-3 rounded-lg border border-white/[0.08] bg-zinc-900/60 p-4 text-sm">
             <div className="flex justify-between border-b pb-2">
-              <span className="text-gray-600">Pool:</span>
+              <span className="text-muted-foreground">Pool:</span>
               <span className="font-mono font-semibold">{formData.name}</span>
             </div>
             <div className="flex justify-between border-b pb-2">
-              <span className="text-gray-600">Stratégie:</span>
+              <span className="text-muted-foreground">Stratégie:</span>
               <span className="font-mono">{selectedPreset?.name}</span>
             </div>
             <div className="flex justify-between border-b pb-2">
-              <span className="text-gray-600">Disques:</span>
+              <span className="text-muted-foreground">Disques:</span>
               <span className="font-mono">{formData.diskPaths.length}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-600">Options:</span>
+              <span className="text-muted-foreground">Options:</span>
               <span className="font-mono">
                 {[formData.cacheEnabled && 'Cache', formData.compression && 'Compression'].filter(Boolean).join(', ')}
               </span>
@@ -298,7 +301,7 @@ export default function StoragePage() {
     try {
       // TODO: Call API endpoint when available
       // await api.pools.create(token, formData);
-      alert('Pool créé (endpoint à implémenter)');
+      setNotice({ type: 'success', message: 'Pool créé (endpoint à implémenter).' });
       setWizardOpen(false);
       setFormData({
         name: '',
@@ -311,26 +314,33 @@ export default function StoragePage() {
       });
       setSelectedPreset(null);
     } catch (error) {
-      alert('Erreur lors de la création du pool');
+      setNotice({ type: 'error', message: 'Erreur lors de la création du pool.' });
     }
   };
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
+      <div className="space-y-8">
+        {notice && (
+          <Alert variant={notice.type === 'error' ? 'destructive' : 'success'}>
+            {notice.type === 'error' ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+            <AlertDescription>{notice.message}</AlertDescription>
+          </Alert>
+        )}
+
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Pools de Stockage</h1>
-            <p className="text-gray-600 mt-1">Gérez vos pools de stockage et configurations RAID</p>
+            <h1 className="text-3xl font-semibold tracking-tight text-foreground">Pools de Stockage</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Gérez vos pools de stockage et configurations RAID.</p>
           </div>
-          <button
+          <Button
             onClick={() => setWizardOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold"
+            className="gap-2 bg-violet-600 text-white hover:bg-violet-500"
           >
             <Plus className="w-5 h-5" />
             Nouveau Pool
-          </button>
+          </Button>
         </div>
 
         {/* Info Box */}
@@ -341,7 +351,7 @@ export default function StoragePage() {
 
         {/* RAID Strategies Overview */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Card>
+          <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Shield className="w-5 h-5 text-red-500" />
@@ -349,14 +359,14 @@ export default function StoragePage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-gray-600">
+              <p className="text-sm text-muted-foreground">
                 RAID 1, 5, 6: Protection contre la perte de disques. Plus la redondance est élevée, plus on tolère de
                 défaillances.
               </p>
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Zap className="w-5 h-5 text-yellow-500" />
@@ -364,7 +374,7 @@ export default function StoragePage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-gray-600">
+              <p className="text-sm text-muted-foreground">
                 RAID 0 (simple): Performance maximale, 0 redondance. RAID 5/6: Bon compromis entre sécurité et vitesse.
               </p>
             </CardContent>
@@ -373,17 +383,17 @@ export default function StoragePage() {
 
         {/* Existing Pools */}
         {pools.length === 0 ? (
-          <Card>
+          <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
             <CardContent className="pt-12 pb-12 text-center">
               <div className="text-6xl mb-4">💾</div>
-              <p className="text-gray-600 font-medium">Aucun pool créé</p>
-              <p className="text-sm text-gray-500 mt-2">Cliquez sur "Nouveau Pool" pour en créer un</p>
+              <p className="font-medium text-muted-foreground">Aucun pool créé</p>
+              <p className="mt-2 text-sm text-muted-foreground">Cliquez sur "Nouveau Pool" pour en créer un.</p>
             </CardContent>
           </Card>
         ) : (
           <div className="grid gap-4">
             {pools.map((pool: any) => (
-              <Card key={pool.id}>
+              <Card key={pool.id} className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Grid3x3 className="w-5 h-5" />
@@ -393,19 +403,19 @@ export default function StoragePage() {
                 <CardContent>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                     <div>
-                      <p className="text-gray-600">Type</p>
+                      <p className="text-muted-foreground">Type</p>
                       <p className="font-mono font-semibold">{pool.raidLevel?.toUpperCase()}</p>
                     </div>
                     <div>
-                      <p className="text-gray-600">Disques</p>
+                      <p className="text-muted-foreground">Disques</p>
                       <p className="font-mono font-semibold">{pool.diskCount}</p>
                     </div>
                     <div>
-                      <p className="text-gray-600">Capacité</p>
+                      <p className="text-muted-foreground">Capacité</p>
                       <p className="font-mono font-semibold">{pool.capacityGb} GB</p>
                     </div>
                     <div>
-                      <p className="text-gray-600">État</p>
+                      <p className="text-muted-foreground">État</p>
                       <p className="font-mono font-semibold">{pool.status}</p>
                     </div>
                   </div>

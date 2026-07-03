@@ -40,11 +40,10 @@ npm run dev
 ## Version affichée (toutes les pages)
 - Le web affiche `Version <valeur>` en bas à droite sur toutes les pages.
 - En Docker Compose, la version est alimentée par `GITHUB_SHA` (commit du push).  
-  Si `GITHUB_SHA` n'est pas défini, fallback: `dev-local`.
+  Si `GITHUB_SHA` n'est pas défini, le conteneur web récupère automatiquement le commit du dépôt au build.
 
 Exemple local:
 ```bash
-export GITHUB_SHA=$(git rev-parse --short HEAD)
 docker compose -f docker/docker-compose.yml up -d --build
 ```
 

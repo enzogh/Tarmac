@@ -2,7 +2,6 @@ FROM node:20-bookworm AS builder
 ARG NEXT_PUBLIC_API_URL=http://localhost:3001
 ARG NEXT_PUBLIC_APP_VERSION=dev-local
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
-ENV NEXT_PUBLIC_APP_VERSION=$NEXT_PUBLIC_APP_VERSION
 WORKDIR /app
 COPY package.json package-lock.json* ./
 COPY apps/api/package.json apps/api/package.json
@@ -11,10 +10,18 @@ COPY packages/shared/package.json packages/shared/package.json
 RUN npm install
 COPY . .
 RUN npm --workspace @tarmac/shared run build
-RUN npm --workspace @tarmac/web run build
+RUN BUILD_GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo dev-local)" && \
+    echo "$BUILD_GIT_SHA" > /app/.git-version && \
+    if [ -z "$NEXT_PUBLIC_APP_VERSION" ] || [ "$NEXT_PUBLIC_APP_VERSION" = "dev-local" ]; then \
+      NEXT_PUBLIC_APP_VERSION="$BUILD_GIT_SHA"; \
+    fi && \
+    NEXT_PUBLIC_APP_VERSION="$NEXT_PUBLIC_APP_VERSION" npm --workspace @tarmac/web run build
 
 FROM node:20-bookworm
 WORKDIR /app
 COPY --from=builder /app /app
+COPY apps/web/docker-entrypoint.sh /usr/local/bin/tarmac-web-entrypoint.sh
+RUN chmod +x /usr/local/bin/tarmac-web-entrypoint.sh
 EXPOSE 3000
+ENTRYPOINT ["/usr/local/bin/tarmac-web-entrypoint.sh"]
 CMD ["npm", "--workspace", "@tarmac/web", "run", "start"]
