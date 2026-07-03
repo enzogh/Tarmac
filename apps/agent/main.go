@@ -436,18 +436,25 @@ func probeOverlayLatency(iface, targetIP string) (*float64, *float64) {
 		{"-c", "2", "-W", "1", targetIP},
 		{"-I", iface, "-c", "2", "-W", "1", targetIP},
 	}
+	var fallbackLatency *float64
+	var fallbackLoss *float64
 	for _, args := range commands {
 		cmd := exec.Command("ping", args...)
 		output, err := cmd.CombinedOutput()
 		latencyMs, packetLoss := parsePingStats(string(output))
-		if latencyMs != nil || packetLoss != nil {
+
+		if err == nil {
 			return latencyMs, packetLoss
 		}
-		if err == nil {
-			return nil, nil
+
+		// Keep parsed failure stats as fallback, but continue to try the next command.
+		// This avoids false negatives when the first probe path fails and -I succeeds.
+		if latencyMs != nil || packetLoss != nil {
+			fallbackLatency = latencyMs
+			fallbackLoss = packetLoss
 		}
 	}
-	return nil, nil
+	return fallbackLatency, fallbackLoss
 }
 
 func int64Ptr(value int64) *int64 {
