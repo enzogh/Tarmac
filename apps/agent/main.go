@@ -1041,6 +1041,87 @@ func applySSHAuthorizedKeys(payload map[string]interface{}) (string, error) {
 	return fmt.Sprintf("configured %d ssh keys for user %s", len(keys), targetUser), nil
 }
 
+func updateAgent(payload map[string]interface{}) (string, error) {
+	repoURL := readString(payload, "repoUrl")
+	if repoURL == "" {
+		repoURL = envOrDefault("AGENT_REPO_URL", "https://github.com/enzogh/Tarmac.git")
+	}
+
+	ref := readString(payload, "ref")
+	if ref == "" {
+		ref = envOrDefault("AGENT_REF", "main")
+	}
+
+	serviceName := readString(payload, "serviceName")
+	if serviceName == "" {
+		serviceName = envOrDefault("AGENT_SERVICE_NAME", "tarmac-agent.service")
+	}
+
+	if matched, _ := regexp.MatchString(`^[a-zA-Z0-9_.@-]+$`, serviceName); !matched {
+		return "", errors.New("serviceName contains invalid characters")
+	}
+
+	installDir := envOrDefault("AGENT_INSTALL_DIR", "/opt/tarmac-agent-build")
+	binPath := envOrDefault("AGENT_BIN_PATH", "/usr/local/bin/tarmac-agent")
+	tmpBinPath := binPath + ".new"
+
+	if !commandExists("git") {
+		return "", errors.New("git not found on agent")
+	}
+	if !commandExists("go") {
+		return "", errors.New("go not found on agent")
+	}
+	if !commandExists("systemctl") {
+		return "", errors.New("systemctl not found; restart cannot be automated")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+
+	if _, err := os.Stat(filepath.Join(installDir, ".git")); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("cannot access install dir: %w", err)
+		}
+		clone := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--branch", ref, repoURL, installDir)
+		if output, cloneErr := clone.CombinedOutput(); cloneErr != nil {
+			return "", fmt.Errorf("cannot clone repository: %s", strings.TrimSpace(string(output)))
+		}
+	} else {
+		fetch := exec.CommandContext(ctx, "git", "-C", installDir, "fetch", "--depth", "1", "origin", ref)
+		if output, fetchErr := fetch.CombinedOutput(); fetchErr != nil {
+			return "", fmt.Errorf("cannot fetch repository: %s", strings.TrimSpace(string(output)))
+		}
+		checkout := exec.CommandContext(ctx, "git", "-C", installDir, "checkout", "--force", "FETCH_HEAD")
+		if output, checkoutErr := checkout.CombinedOutput(); checkoutErr != nil {
+			return "", fmt.Errorf("cannot checkout fetched ref: %s", strings.TrimSpace(string(output)))
+		}
+	}
+
+	build := exec.CommandContext(ctx, "go", "build", "-o", tmpBinPath, "./apps/agent")
+	build.Dir = installDir
+	if output, buildErr := build.CombinedOutput(); buildErr != nil {
+		return "", fmt.Errorf("cannot build agent: %s", strings.TrimSpace(string(output)))
+	}
+
+	if err := os.Chmod(tmpBinPath, 0o755); err != nil {
+		return "", fmt.Errorf("cannot chmod new binary: %w", err)
+	}
+	if err := os.Rename(tmpBinPath, binPath); err != nil {
+		return "", fmt.Errorf("cannot replace agent binary: %w", err)
+	}
+
+	restartShell := fmt.Sprintf(
+		"nohup sh -c 'sleep 1 && systemctl restart %s' >/dev/null 2>&1 &",
+		serviceName,
+	)
+	restart := exec.Command("sh", "-c", restartShell)
+	if output, restartErr := restart.CombinedOutput(); restartErr != nil {
+		return "", fmt.Errorf("binary updated but restart scheduling failed: %s", strings.TrimSpace(string(output)))
+	}
+
+	return fmt.Sprintf("agent updated from %s@%s; service restart scheduled", repoURL, ref), nil
+}
+
 func parseOverlayPeers(payload map[string]interface{}) []overlayPeer {
 	rawPeers, ok := payload["peers"]
 	if !ok {
@@ -1157,6 +1238,125 @@ func isTargetMounted(target string) (string, bool) {
 	return source, source != ""
 }
 
+func isNFSFilesystem(fsType string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(fsType))
+	return strings.HasPrefix(normalized, "nfs")
+}
+
+func parseMountOptions(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	seen := make(map[string]struct{}, len(parts))
+	options := make([]string, 0, len(parts))
+	for _, part := range parts {
+		opt := strings.TrimSpace(part)
+		if opt == "" {
+			continue
+		}
+		if _, exists := seen[opt]; exists {
+			continue
+		}
+		seen[opt] = struct{}{}
+		options = append(options, opt)
+	}
+	return options
+}
+
+func appendMissingOptions(options []string, required ...string) []string {
+	seen := make(map[string]struct{}, len(options))
+	result := make([]string, 0, len(options)+len(required))
+	for _, opt := range options {
+		trimmed := strings.TrimSpace(opt)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	for _, opt := range required {
+		trimmed := strings.TrimSpace(opt)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result
+}
+
+func joinMountOptions(options []string) string {
+	if len(options) == 0 {
+		return ""
+	}
+	return strings.Join(options, ",")
+}
+
+func persistMountInFstab(source, target, fsType, options string) error {
+	const fstabPath = "/etc/fstab"
+	entry := fmt.Sprintf("%s %s %s %s 0 0", source, target, fsType, options)
+
+	content, err := os.ReadFile(fstabPath)
+	if err != nil {
+		return fmt.Errorf("cannot read %s: %w", fstabPath, err)
+	}
+
+	lines := strings.Split(strings.ReplaceAll(string(content), "\r\n", "\n"), "\n")
+	foundTarget := false
+	changed := false
+
+	for idx, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		fields := strings.Fields(trimmed)
+		if len(fields) < 2 {
+			continue
+		}
+
+		if fields[1] != target {
+			continue
+		}
+
+		foundTarget = true
+		if trimmed != entry {
+			lines[idx] = entry
+			changed = true
+		}
+	}
+
+	if !foundTarget {
+		lines = append(lines, entry)
+		changed = true
+	}
+
+	if !changed {
+		return nil
+	}
+
+	normalized := strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
+	if err := os.WriteFile(fstabPath, []byte(normalized), 0o644); err != nil {
+		return fmt.Errorf("cannot write %s: %w", fstabPath, err)
+	}
+
+	if commandExists("systemctl") {
+		if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
+			return fmt.Errorf("systemctl daemon-reload failed: %s", strings.TrimSpace(string(out)))
+		}
+	}
+
+	return nil
+}
+
 func applyMount(payload map[string]interface{}) (string, error) {
 	source := readString(payload, "sourcePath")
 	target := readString(payload, "targetPath")
@@ -1169,6 +1369,25 @@ func applyMount(payload map[string]interface{}) (string, error) {
 		fsType = "nfs"
 	}
 	options := readString(payload, "mountOptions")
+	runtimeOptionsSlice := parseMountOptions(options)
+	runtimeOptions := joinMountOptions(runtimeOptionsSlice)
+
+	fstabSourceOptions := runtimeOptionsSlice
+	if len(fstabSourceOptions) == 0 {
+		fstabSourceOptions = []string{"defaults"}
+	}
+	persistentOptions := joinMountOptions(fstabSourceOptions)
+	if isNFSFilesystem(fsType) {
+		persistentOptions = joinMountOptions(appendMissingOptions(
+			fstabSourceOptions,
+			"_netdev",
+			"nofail",
+			"x-systemd.automount",
+			"x-systemd.requires=network-online.target",
+			"x-systemd.device-timeout=10s",
+			"x-systemd.mount-timeout=30s",
+		))
+	}
 
 	sources := []string{source}
 	sources = append(sources, readStringSlice(payload, "additionalSources")...)
@@ -1202,11 +1421,17 @@ func applyMount(payload map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("target path already mounted from %s", currentSource)
 	}
 
-	if fsType == "nfs" && !commandExists("mount.nfs") {
+	if isNFSFilesystem(fsType) && !commandExists("mount.nfs") {
 		return "", errors.New("mount.nfs not found (install nfs-common)")
 	}
 	if fsType == "cifs" && !commandExists("mount.cifs") {
 		return "", errors.New("mount.cifs not found (install cifs-utils)")
+	}
+
+	if isNFSFilesystem(fsType) {
+		if err := persistMountInFstab(filtered[0], target, fsType, persistentOptions); err != nil {
+			return "", fmt.Errorf("cannot persist mount for reboot recovery: %w", err)
+		}
 	}
 
 	var attempts []string
@@ -1215,17 +1440,31 @@ func applyMount(payload map[string]interface{}) (string, error) {
 		if fsType != "" {
 			args = append(args, "-t", fsType)
 		}
-		if options != "" {
-			args = append(args, "-o", options)
+		if runtimeOptions != "" {
+			args = append(args, "-o", runtimeOptions)
 		}
 		args = append(args, candidate, target)
 
 		cmd := exec.Command("mount", args...)
 		output, err := cmd.CombinedOutput()
 		if err == nil {
-			return fmt.Sprintf("mounted %s on %s", candidate, target), nil
+			if isNFSFilesystem(fsType) && candidate != filtered[0] {
+				if updateErr := persistMountInFstab(candidate, target, fsType, persistentOptions); updateErr != nil {
+					return "", fmt.Errorf("mounted %s but failed to update persistent source: %w", candidate, updateErr)
+				}
+			}
+			return fmt.Sprintf("mounted %s on %s (persistent via /etc/fstab)", candidate, target), nil
 		}
 		attempts = append(attempts, fmt.Sprintf("%s: %s", candidate, strings.TrimSpace(string(output))))
+	}
+
+	if isNFSFilesystem(fsType) {
+		return "", fmt.Errorf(
+			"mount failed now: %s (persistent retry configured at boot for %s -> %s)",
+			strings.Join(attempts, " | "),
+			filtered[0],
+			target,
+		)
 	}
 
 	return "", fmt.Errorf("mount failed: %s", strings.Join(attempts, " | "))
@@ -1537,6 +1776,20 @@ func handleCommand(cmd commandPayload, onProgress func(progress commandProgress)
 			result.ResourceID = "root"
 		}
 		message, err := applySSHAuthorizedKeys(cmd.Payload)
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Message = message
+		}
+	case "command.update_agent":
+		result.Command = "update_agent"
+		result.ResourceType = "agent"
+		result.ResourceID = readString(cmd.Payload, "nodeId")
+		if result.ResourceID == "" {
+			result.ResourceID = envOrDefault("NODE_ID", "agent")
+		}
+		message, err := updateAgent(cmd.Payload)
 		if err != nil {
 			result.Success = false
 			result.Message = err.Error()
