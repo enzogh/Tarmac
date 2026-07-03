@@ -385,7 +385,7 @@ func firstAllowedIP(allowed string) string {
 		if strings.Contains(candidate, "/") {
 			candidate = strings.SplitN(candidate, "/", 2)[0]
 		}
-		if candidate != "" {
+		if candidate != "" && net.ParseIP(candidate) != nil {
 			return candidate
 		}
 	}
@@ -517,10 +517,10 @@ func (c *collector) collectOverlayLinkMetrics(iface string) []overlayLinkMetric 
 		}
 
 		publicKey := strings.TrimSpace(fields[0])
-		allowedIPs := fields[4]
-		latestHandshake, handshakeErr := strconv.ParseInt(fields[5], 10, 64)
-		rxBytes, rxErr := strconv.ParseUint(fields[6], 10, 64)
-		txBytes, txErr := strconv.ParseUint(fields[7], 10, 64)
+		allowedIPs := fields[3]
+		latestHandshake, handshakeErr := strconv.ParseInt(fields[4], 10, 64)
+		rxBytes, rxErr := strconv.ParseUint(fields[5], 10, 64)
+		txBytes, txErr := strconv.ParseUint(fields[6], 10, 64)
 		if publicKey == "" || handshakeErr != nil || rxErr != nil || txErr != nil {
 			continue
 		}
