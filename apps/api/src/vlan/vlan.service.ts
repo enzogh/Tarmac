@@ -5,8 +5,6 @@ import { PrismaService } from '../prisma/prisma.service';
 
 const CONNECTION_OFFLINE_TIMEOUT_MS = 60_000;
 const CONNECTION_DEGRADED_TIMEOUT_MS = 20_000;
-const CONNECTION_METRICS_WINDOW_MS = 120_000;
-const DEFAULT_LINK_CAPACITY_BPS = 125_000_000; // ~1 Gbps
 
 @Injectable()
 export class VlanService implements OnModuleInit {
@@ -455,41 +453,21 @@ export class VlanService implements OnModuleInit {
       return;
     }
 
-    const nodeIds = members.map((member) => member.nodeId);
-    const samples = await this.prisma.metricSample.findMany({
-      where: {
-        nodeId: { in: nodeIds },
-        createdAt: { gte: new Date(Date.now() - CONNECTION_METRICS_WINDOW_MS) },
-      },
-      select: {
-        nodeId: true,
-        networkRx: true,
-        networkTx: true,
-        createdAt: true,
-      },
-      orderBy: [{ nodeId: 'asc' }, { createdAt: 'desc' }],
-    });
-
     const memberByNodeId = new Map(members.map((member) => [member.nodeId, member]));
-    const sampleByNodeId = new Map<string, { networkRx: number; networkTx: number }>();
-    for (const sample of samples) {
-      if (!sampleByNodeId.has(sample.nodeId)) {
-        sampleByNodeId.set(sample.nodeId, {
-          networkRx: sample.networkRx,
-          networkTx: sample.networkTx,
-        });
-      }
-    }
 
     const now = new Date();
-    const onlineMembers = members.filter((member) => this.isNodeReachable(member.node, now)).length;
     const updates = connections.flatMap((connection) => {
       const checkedRecently =
         connection.lastCheckedAt &&
         now.getTime() - connection.lastCheckedAt.getTime() <= 15_000 &&
         connection.status !== 'unknown';
+      const looksLikeSyntheticFailure =
+        connection.packetLoss === 100 &&
+        connection.latencyMs === null &&
+        (connection.bandwidth === null || connection.bandwidth === 0);
       const hasMeasuredMetrics =
-        connection.latencyMs !== null || connection.packetLoss !== null || connection.bandwidth !== null;
+        !looksLikeSyntheticFailure &&
+        (connection.latencyMs !== null || connection.packetLoss !== null || connection.bandwidth !== null);
       if (checkedRecently && hasMeasuredMetrics) {
         return [];
       }
@@ -499,8 +477,6 @@ export class VlanService implements OnModuleInit {
       const telemetry = this.deriveConnectionTelemetry({
         source,
         target,
-        sampleByNodeId,
-        onlineMembers,
         now,
       });
 
@@ -554,8 +530,6 @@ export class VlanService implements OnModuleInit {
           };
         }
       | undefined;
-    sampleByNodeId: Map<string, { networkRx: number; networkTx: number }>;
-    onlineMembers: number;
     now: Date;
   }): {
     status: 'healthy' | 'degraded' | 'offline';
@@ -563,7 +537,7 @@ export class VlanService implements OnModuleInit {
     packetLoss: number | null;
     bandwidth: number | null;
   } {
-    const { source, target, sampleByNodeId, onlineMembers, now } = args;
+    const { source, target, now } = args;
     if (!source || !target) {
       return { status: 'offline', latencyMs: null, packetLoss: null, bandwidth: null };
     }
@@ -574,34 +548,18 @@ export class VlanService implements OnModuleInit {
       return { status: 'offline', latencyMs: null, packetLoss: null, bandwidth: null };
     }
 
-    const sourceSample = sampleByNodeId.get(source.nodeId);
-    const targetSample = sampleByNodeId.get(target.nodeId);
-    const peersPerNode = Math.max(1, onlineMembers - 1);
-
-    const sourceTxPerLinkBps = Math.max(0, (sourceSample?.networkTx ?? 0) / peersPerNode);
-    const targetRxPerLinkBps = Math.max(0, (targetSample?.networkRx ?? 0) / peersPerNode);
-    const linkBps = Math.max(0, Math.min(sourceTxPerLinkBps, targetRxPerLinkBps));
-    const bandwidthMbps = Math.round((linkBps * 8) / 1_000_000);
-
     const sourceLagMs = source.node.lastSeenAt ? now.getTime() - source.node.lastSeenAt.getTime() : CONNECTION_OFFLINE_TIMEOUT_MS;
     const targetLagMs = target.node.lastSeenAt ? now.getTime() - target.node.lastSeenAt.getTime() : CONNECTION_OFFLINE_TIMEOUT_MS;
     const heartbeatLagMs = Math.max(sourceLagMs, targetLagMs);
-    const congestionRatio = Math.min(1, linkBps / DEFAULT_LINK_CAPACITY_BPS);
 
-    const latencyMs = Math.max(1, Math.round(3 + heartbeatLagMs / 1_000 + congestionRatio * 25));
-    const staleLoss = heartbeatLagMs > 15_000 ? (heartbeatLagMs - 15_000) / 2_000 : 0;
-    const packetLoss = Number(Math.min(100, Math.max(0, staleLoss + congestionRatio * 3)).toFixed(1));
-
-    const status =
-      heartbeatLagMs >= CONNECTION_DEGRADED_TIMEOUT_MS || packetLoss >= 2 || latencyMs >= 70
-        ? 'degraded'
-        : 'healthy';
+    const status = heartbeatLagMs >= CONNECTION_DEGRADED_TIMEOUT_MS ? 'degraded' : 'healthy';
 
     return {
       status,
-      latencyMs,
-      packetLoss,
-      bandwidth: bandwidthMbps,
+      // Keep link metrics truthful: only the agent should provide measured values.
+      latencyMs: null,
+      packetLoss: null,
+      bandwidth: null,
     };
   }
 }
