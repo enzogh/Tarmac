@@ -51,6 +51,17 @@ type GraphLink = {
   trafficScore: number;
 };
 
+type DirectedFlow = {
+  key: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  status: LinkStatus;
+  latencyMs?: number | null;
+  packetLoss?: number | null;
+  bandwidth?: number | null;
+  trafficScore: number;
+};
+
 const TEST_OPTIONS: Array<{ value: TestType; label: string }> = [
   { value: 'ping', label: 'Ping' },
   { value: 'connectivity', label: 'Connectivité' },
@@ -71,7 +82,7 @@ const formatLoss = (value?: number | null) =>
   typeof value === 'number' ? `${value} %` : '—';
 
 const formatBandwidth = (value?: number | null) =>
-  typeof value === 'number' ? `${value} Mbps` : '—';
+  typeof value === 'number' ? `${value} MBPS` : '—';
 
 const isTestType = (value: string): value is TestType =>
   value === 'ping' || value === 'connectivity' || value === 'latency';
@@ -137,7 +148,8 @@ export default function NetworkPage() {
   const inFlightRef = useRef(false);
   const [testRunning, setTestRunning] = useState(false);
   const [notice, setNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
-  const [selectedLinkKey, setSelectedLinkKey] = useState<string | null>(null);
+  const [selectedPairKey, setSelectedPairKey] = useState<string | null>(null);
+  const [selectedFlowKey, setSelectedFlowKey] = useState<string | null>(null);
   const [selectedTest, setSelectedTest] = useState<{
     from?: string;
     to?: string;
@@ -247,16 +259,34 @@ export default function NetworkPage() {
     () => new Map((vlanStatus?.vlan.members || []).map((member) => [member.nodeId, member])),
     [vlanStatus],
   );
-  const topTrafficLinks = useMemo(
+  const directedFlows = useMemo(
     () =>
-      [...graph.links]
-        .sort((a, b) => b.trafficScore - a.trafficScore)
-        .slice(0, 5),
-    [graph.links],
+      [...connections]
+        .map(
+          (connection) =>
+            ({
+              key: `${connection.sourceNodeId}__${connection.targetNodeId}`,
+              sourceNodeId: connection.sourceNodeId,
+              targetNodeId: connection.targetNodeId,
+              status: connection.status,
+              latencyMs: connection.latencyMs,
+              packetLoss: connection.packetLoss,
+              bandwidth: connection.bandwidth,
+              trafficScore:
+                (typeof connection.bandwidth === 'number' ? Math.max(connection.bandwidth, 0) : 0) +
+                (typeof connection.latencyMs === 'number' ? Math.max(150 - connection.latencyMs, 0) : 0),
+            }) satisfies DirectedFlow,
+        )
+        .sort((a, b) => b.trafficScore - a.trafficScore),
+    [connections],
   );
-  const selectedLink = useMemo(
-    () => graph.links.find((link) => link.key === selectedLinkKey) ?? null,
-    [graph.links, selectedLinkKey],
+  const selectedFlow = useMemo(
+    () => directedFlows.find((flow) => flow.key === selectedFlowKey) ?? null,
+    [directedFlows, selectedFlowKey],
+  );
+  const topTrafficFlows = useMemo(
+    () => directedFlows.slice(0, 5),
+    [directedFlows],
   );
 
   const handleRunTest = async () => {
@@ -392,9 +422,19 @@ export default function NetworkPage() {
                   const target = nodeById.get(link.targetNodeId);
                   if (!source || !target) return null;
 
-                  const isSelected = selectedLinkKey === link.key;
+                  const isSelected = selectedPairKey === link.key;
                   return (
-                    <g key={link.key} onClick={() => setSelectedLinkKey(link.key)} className="cursor-pointer">
+                    <g
+                      key={link.key}
+                      onClick={() => {
+                        setSelectedPairKey(link.key);
+                        const bestDirectional = directedFlows.find(
+                          (flow) => [flow.sourceNodeId, flow.targetNodeId].sort().join('__') === link.key,
+                        );
+                        setSelectedFlowKey(bestDirectional?.key ?? null);
+                      }}
+                      className="cursor-pointer"
+                    >
                       <line
                         x1={source.x}
                         y1={source.y}
@@ -464,46 +504,49 @@ export default function NetworkPage() {
             <CardTitle className="text-base">Flux actifs</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {(selectedLink ? [selectedLink] : topTrafficLinks).map((link) => {
-              const source = nodeById.get(link.sourceNodeId);
-              const target = nodeById.get(link.targetNodeId);
+            {(selectedFlow ? [selectedFlow] : topTrafficFlows).map((flow) => {
+              const source = nodeById.get(flow.sourceNodeId);
+              const target = nodeById.get(flow.targetNodeId);
               if (!source || !target) return null;
               return (
                 <div
-                  key={`${link.key}-card`}
+                  key={`${flow.key}-card`}
                   className="rounded-xl border border-white/[0.08] bg-zinc-950/60 p-3"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-medium text-zinc-100">
                       {source.label} → {target.label}
                     </p>
-                    <Badge variant={getConnectionBadgeVariant(link.status)}>{getConnectionLabel(link.status)}</Badge>
+                    <Badge variant={getConnectionBadgeVariant(flow.status)}>{getConnectionLabel(flow.status)}</Badge>
                   </div>
                   <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
                     <div className="rounded-lg border border-white/[0.07] bg-black/25 px-2 py-1.5">
                       <p className="text-[10px] text-muted-foreground">Latence</p>
-                      <p className="font-mono">{formatLatency(link.latencyMs)}</p>
+                      <p className="font-mono">{formatLatency(flow.latencyMs)}</p>
                     </div>
                     <div className="rounded-lg border border-white/[0.07] bg-black/25 px-2 py-1.5">
                       <p className="text-[10px] text-muted-foreground">Loss</p>
-                      <p className="font-mono">{formatLoss(link.packetLoss)}</p>
+                      <p className="font-mono">{formatLoss(flow.packetLoss)}</p>
                     </div>
                     <div className="rounded-lg border border-white/[0.07] bg-black/25 px-2 py-1.5">
                       <p className="text-[10px] text-muted-foreground">Débit</p>
-                      <p className="font-mono">{formatBandwidth(link.bandwidth)}</p>
+                      <p className="font-mono">{formatBandwidth(flow.bandwidth)}</p>
                     </div>
                   </div>
                 </div>
               );
             })}
-            {!selectedLink && topTrafficLinks.length === 0 && (
+            {!selectedFlow && topTrafficFlows.length === 0 && (
               <p className="text-xs text-muted-foreground">Aucun flux détecté.</p>
             )}
-            {selectedLink && (
+            {selectedFlow && (
               <Button
                 variant="outline"
                 className="w-full"
-                onClick={() => setSelectedLinkKey(null)}
+                onClick={() => {
+                  setSelectedFlowKey(null);
+                  setSelectedPairKey(null);
+                }}
               >
                 Revenir au top flux
               </Button>
@@ -556,25 +599,22 @@ export default function NetworkPage() {
                       );
                     }
 
-                    const direct =
-                      connectionByDirection.get(`${row.id}__${col.id}`) ??
-                      connectionByDirection.get(`${col.id}__${row.id}`);
+                    const direct = connectionByDirection.get(`${row.id}__${col.id}`);
 
                     return (
                       <button
                         key={`cell-${row.id}-${col.id}`}
                         type="button"
-                        onClick={() =>
-                          setSelectedLinkKey(
-                            [row.id, col.id].sort().join('__'),
-                          )
-                        }
+                        onClick={() => {
+                          setSelectedPairKey([row.id, col.id].sort().join('__'));
+                          setSelectedFlowKey(`${row.id}__${col.id}`);
+                        }}
                         className={`rounded-lg border px-2 py-2 text-left transition hover:border-violet-400/40 ${matrixCellTone(
                           direct?.status,
                         )}`}
                       >
                         <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                          {direct ? getConnectionLabel(direct.status) : 'No link'}
+                          {direct ? getConnectionLabel(direct.status) : 'No route'}
                         </p>
                         <p className="font-mono text-[11px]">{formatLatency(direct?.latencyMs)}</p>
                         <p className="font-mono text-[10px] text-zinc-400">

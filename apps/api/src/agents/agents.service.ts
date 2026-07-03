@@ -14,6 +14,16 @@ type PendingDirectoryRequest = {
   reject: (reason: Error) => void;
   timeout: NodeJS.Timeout;
 };
+type PendingDirectoryScanRequest = {
+  nodeId: string;
+  resolve: (value: {
+    basePath: string;
+    entries: Array<{ path: string; sizeBytes: number }>;
+    truncated: boolean;
+  }) => void;
+  reject: (reason: Error) => void;
+  timeout: NodeJS.Timeout;
+};
 
 // Node is considered offline if no heartbeat received within this time
 const NODE_HEARTBEAT_TIMEOUT_MS = 60 * 1000; // 60 seconds
@@ -26,6 +36,7 @@ export class AgentsService implements OnModuleInit {
   private readonly senders = new Map<string, SendFn>();
   private readonly overlaySyncAt = new Map<string, number>();
   private readonly pendingDirectoryRequests = new Map<string, PendingDirectoryRequest>();
+  private readonly pendingDirectoryScanRequests = new Map<string, PendingDirectoryScanRequest>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -51,6 +62,12 @@ export class AgentsService implements OnModuleInit {
       clearTimeout(request.timeout);
       request.reject(new Error(`node ${nodeId} disconnected`));
       this.pendingDirectoryRequests.delete(requestId);
+    }
+    for (const [requestId, request] of this.pendingDirectoryScanRequests.entries()) {
+      if (request.nodeId !== nodeId) continue;
+      clearTimeout(request.timeout);
+      request.reject(new Error(`node ${nodeId} disconnected`));
+      this.pendingDirectoryScanRequests.delete(requestId);
     }
   }
 
@@ -288,6 +305,35 @@ export class AgentsService implements OnModuleInit {
       return;
     }
 
+    if (result.resourceType === 'directory_scan') {
+      const pending = this.pendingDirectoryScanRequests.get(result.resourceId);
+      if (!pending) return;
+
+      clearTimeout(pending.timeout);
+      this.pendingDirectoryScanRequests.delete(result.resourceId);
+
+      if (!result.success) {
+        pending.reject(new Error(result.message ?? 'failed to scan directories'));
+        return;
+      }
+
+      const payload = result.data;
+      pending.resolve({
+        basePath: payload?.basePath ?? '/',
+        entries: Array.isArray(payload?.entries)
+          ? payload.entries
+              .filter((entry): entry is { path: string; sizeBytes: number } =>
+                Boolean(entry) &&
+                typeof entry.path === 'string' &&
+                typeof entry.sizeBytes === 'number',
+              )
+              .map((entry) => ({ path: entry.path, sizeBytes: entry.sizeBytes }))
+          : [],
+        truncated: Boolean(payload?.truncated),
+      });
+      return;
+    }
+
     if (result.resourceType === 'migration') {
       if (result.command === 'stop_rsync') {
         return;
@@ -384,6 +430,40 @@ export class AgentsService implements OnModuleInit {
       if (!sent) {
         clearTimeout(timeout);
         this.pendingDirectoryRequests.delete(requestId);
+        reject(new Error(`node ${nodeId} is offline`));
+      }
+    });
+  }
+
+  requestDirectoryScan(nodeId: string, basePath = '/', maxEntries = 20, timeoutMs = 7000): Promise<{
+    basePath: string;
+    entries: Array<{ path: string; sizeBytes: number }>;
+    truncated: boolean;
+  }> {
+    const requestId = `scan:${nodeId}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
+    const boundedMaxEntries = Math.max(1, Math.min(maxEntries, 100));
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingDirectoryScanRequests.delete(requestId);
+        reject(new Error('directory scan timeout'));
+      }, timeoutMs);
+
+      this.pendingDirectoryScanRequests.set(requestId, {
+        nodeId,
+        resolve,
+        reject,
+        timeout,
+      });
+
+      const sent = this.sendCommand(nodeId, {
+        type: 'command.scan_directory_sizes',
+        payload: { requestId, basePath, maxEntries: boundedMaxEntries },
+      });
+
+      if (!sent) {
+        clearTimeout(timeout);
+        this.pendingDirectoryScanRequests.delete(requestId);
         reject(new Error(`node ${nodeId} is offline`));
       }
     });

@@ -130,6 +130,10 @@ export class MigrationsService {
     return this.agentsService.requestDirectories(nodeId, basePath);
   }
 
+  async scanDirectories(nodeId: string, basePath = '/', maxEntries = 20) {
+    return this.agentsService.requestDirectoryScan(nodeId, basePath, maxEntries);
+  }
+
   async start(id: string, actorUserId?: string) {
     const migration = await this.prisma.migrationTask.findUniqueOrThrow({
       where: { id },

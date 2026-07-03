@@ -72,6 +72,11 @@ export type MigrationItem = {
   updatedAt?: string;
 };
 
+export type DirectoryScanEntry = {
+  path: string;
+  sizeBytes: number;
+};
+
 export type Forecast = {
   nodeId?: string | null;
   totalCapacityGb: number;
@@ -325,6 +330,11 @@ export const api = {
     listDirectories: (token: string, nodeId: string, basePath = '/') =>
       request<{ basePath: string; directories: string[] }>(
         `/api/v1/migrations/directories?nodeId=${encodeURIComponent(nodeId)}&basePath=${encodeURIComponent(basePath)}`,
+        token,
+      ),
+    scanDirectories: (token: string, nodeId: string, basePath = '/', maxEntries = 20) =>
+      request<{ basePath: string; entries: DirectoryScanEntry[]; truncated: boolean }>(
+        `/api/v1/migrations/directories/scan?nodeId=${encodeURIComponent(nodeId)}&basePath=${encodeURIComponent(basePath)}&maxEntries=${encodeURIComponent(String(maxEntries))}`,
         token,
       ),
     update: (
