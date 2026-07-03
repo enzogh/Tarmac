@@ -151,6 +151,10 @@ export class MigrationsService {
       migration.sourceNodeId && migration.targetNodeId !== migration.sourceNodeId
         ? migration.sourceNode?.vlanIp ?? undefined
         : undefined;
+    const sourceUser =
+      migration.sourceNodeId && migration.targetNodeId !== migration.sourceNodeId
+        ? migration.sourceNode?.overlaySshUser ?? 'root'
+        : undefined;
 
     const updated = await this.prisma.migrationTask.update({
       where: { id },
@@ -166,7 +170,7 @@ export class MigrationsService {
         sourcePath,
         targetPath,
         sourceHost,
-        sourceUser: 'root',
+        sourceUser,
       },
     });
 
@@ -188,6 +192,7 @@ export class MigrationsService {
         sourcePath,
         targetPath,
         sourceHost: sourceHost ?? null,
+        sourceUser: sourceUser ?? null,
         targetNodeId: migration.targetNodeId,
       },
     });
@@ -204,12 +209,12 @@ export class MigrationsService {
       throw new BadRequestException('only failed migrations can be retried');
     }
 
-    const updated = await this.prisma.migrationTask.update({
+    await this.prisma.migrationTask.update({
       where: { id },
       data: {
-        status: 'running',
+        status: 'pending',
         progress: 0,
-        startedAt: new Date(),
+        startedAt: null,
         completedAt: null,
       },
     });
@@ -220,7 +225,7 @@ export class MigrationsService {
       resourceId: id,
       details: { previousStatus: existing.status } as Prisma.InputJsonValue,
     });
-    return updated;
+    return this.start(id, actorUserId);
   }
 
   async removePending(id: string, actorUserId?: string) {
