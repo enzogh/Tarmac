@@ -12,6 +12,38 @@ SERVICE_FILE="/etc/systemd/system/tarmac-agent.service"
 ENV_FILE="/etc/tarmac-agent.env"
 BIN_FILE="/usr/local/bin/tarmac-agent"
 
+to_https_repo_url() {
+  local input="$1"
+  if [[ "$input" =~ ^git@github\.com:(.+)$ ]]; then
+    echo "https://github.com/${BASH_REMATCH[1]}"
+    return 0
+  fi
+  if [[ "$input" =~ ^ssh://git@github\.com/(.+)$ ]]; then
+    echo "https://github.com/${BASH_REMATCH[1]}"
+    return 0
+  fi
+  echo "$input"
+}
+
+clone_repo() {
+  local repo_url="$1"
+  local clone_output=""
+  local clone_cmd=(git clone --depth 1 --branch "$AGENT_REF" "$repo_url" "$INSTALL_DIR")
+
+  if command -v timeout >/dev/null 2>&1; then
+    if ! clone_output="$(GIT_TERMINAL_PROMPT=0 timeout 120 "${clone_cmd[@]}" 2>&1)"; then
+      echo "$clone_output" >&2
+      return 1
+    fi
+  else
+    if ! clone_output="$(GIT_TERMINAL_PROMPT=0 "${clone_cmd[@]}" 2>&1)"; then
+      echo "$clone_output" >&2
+      return 1
+    fi
+  fi
+  return 0
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -102,7 +134,20 @@ apt-get install -y --no-install-recommends \
   util-linux
 
 rm -rf "$INSTALL_DIR"
-git clone --depth 1 --branch "$AGENT_REF" "$REPO_URL" "$INSTALL_DIR"
+if ! clone_repo "$REPO_URL"; then
+  FALLBACK_REPO_URL="$(to_https_repo_url "$REPO_URL")"
+  if [[ "$FALLBACK_REPO_URL" != "$REPO_URL" ]]; then
+    echo "Primary clone failed, retrying with HTTPS repository URL..." >&2
+    rm -rf "$INSTALL_DIR"
+    if ! clone_repo "$FALLBACK_REPO_URL"; then
+      echo "Repository clone failed for both SSH and HTTPS URLs." >&2
+      exit 1
+    fi
+  else
+    echo "Repository clone failed." >&2
+    exit 1
+  fi
+fi
 
 pushd "$INSTALL_DIR/apps/agent" >/dev/null
 go build -o "$BIN_FILE" .
