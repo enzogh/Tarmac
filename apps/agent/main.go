@@ -119,6 +119,17 @@ type directoryListData struct {
 	Directories []string `json:"directories"`
 }
 
+type directorySizeEntry struct {
+	Path      string `json:"path"`
+	SizeBytes int64  `json:"sizeBytes"`
+}
+
+type directoryScanData struct {
+	BasePath  string               `json:"basePath"`
+	Entries   []directorySizeEntry `json:"entries"`
+	Truncated bool                 `json:"truncated"`
+}
+
 var rsyncExecutions = struct {
 	mu    sync.Mutex
 	byKey map[string]context.CancelFunc
@@ -1503,6 +1514,149 @@ func listDirectories(payload map[string]interface{}) (directoryListData, error) 
 	}, nil
 }
 
+func scanDirectorySizes(payload map[string]interface{}) (directoryScanData, error) {
+	basePath := strings.TrimSpace(readString(payload, "basePath"))
+	if basePath == "" {
+		basePath = "/"
+	}
+	basePath = filepath.Clean(basePath)
+	if !filepath.IsAbs(basePath) {
+		return directoryScanData{}, errors.New("basePath must be absolute")
+	}
+
+	maxEntries := readInt(payload, "maxEntries", 20)
+	if maxEntries < 1 {
+		maxEntries = 1
+	}
+	if maxEntries > 100 {
+		maxEntries = 100
+	}
+
+	entries, err := os.ReadDir(basePath)
+	if err != nil {
+		return directoryScanData{}, fmt.Errorf("cannot read %s: %w", basePath, err)
+	}
+
+	directories := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		directories = append(directories, filepath.Clean(filepath.Join(basePath, entry.Name())))
+	}
+	sort.Strings(directories)
+
+	const scanInputLimit = 120
+	truncated := false
+	if len(directories) > scanInputLimit {
+		directories = directories[:scanInputLimit]
+		truncated = true
+	}
+
+	timeoutMs := readInt(payload, "timeoutMs", 3500)
+	if timeoutMs < 500 {
+		timeoutMs = 500
+	}
+	if timeoutMs > 15000 {
+		timeoutMs = 15000
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
+	defer cancel()
+
+	type result struct {
+		entry directorySizeEntry
+		ok    bool
+	}
+
+	workCh := make(chan string)
+	resultCh := make(chan result, len(directories))
+	workerCount := 6
+	if len(directories) < workerCount {
+		workerCount = len(directories)
+	}
+
+	var wg sync.WaitGroup
+	worker := func() {
+		defer wg.Done()
+		for directory := range workCh {
+			cmd := exec.CommandContext(ctx, "du", "-sk", directory)
+			output, err := cmd.Output()
+			if err != nil {
+				continue
+			}
+			fields := strings.Fields(string(output))
+			if len(fields) == 0 {
+				continue
+			}
+			sizeKb, parseErr := strconv.ParseInt(fields[0], 10, 64)
+			if parseErr != nil {
+				continue
+			}
+			select {
+			case resultCh <- result{
+				entry: directorySizeEntry{
+					Path:      directory,
+					SizeBytes: sizeKb * 1024,
+				},
+				ok: true,
+			}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go worker()
+	}
+
+	go func() {
+		defer close(workCh)
+		for _, directory := range directories {
+			select {
+			case workCh <- directory:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	wg.Wait()
+	close(resultCh)
+
+	bySize := make([]directorySizeEntry, 0, len(directories))
+	for item := range resultCh {
+		if !item.ok {
+			continue
+		}
+		bySize = append(bySize, item.entry)
+	}
+
+	if ctx.Err() != nil {
+		truncated = true
+	}
+	if len(bySize) < len(directories) {
+		truncated = true
+	}
+
+	sort.Slice(bySize, func(i, j int) bool {
+		return bySize[i].SizeBytes > bySize[j].SizeBytes
+	})
+
+	if len(bySize) > maxEntries {
+		bySize = bySize[:maxEntries]
+		truncated = true
+	}
+
+	return directoryScanData{
+		BasePath:  basePath,
+		Entries:   bySize,
+		Truncated: truncated,
+	}, nil
+}
+
 func splitByCRLF(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	for i := 0; i < len(data); i++ {
 		if data[i] == '\n' || data[i] == '\r' {
@@ -1767,6 +1921,21 @@ func handleCommand(cmd commandPayload, onProgress func(progress commandProgress)
 		} else {
 			result.Data = data
 			result.Message = fmt.Sprintf("%d directories listed", len(data.Directories))
+		}
+	case "command.scan_directory_sizes":
+		result.Command = "scan_directory_sizes"
+		result.ResourceType = "directory_scan"
+		result.ResourceID = readString(cmd.Payload, "requestId")
+		if result.ResourceID == "" {
+			result.ResourceID = fmt.Sprintf("scan-%d", time.Now().UnixNano())
+		}
+		data, err := scanDirectorySizes(cmd.Payload)
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Data = data
+			result.Message = fmt.Sprintf("%d directories scanned", len(data.Entries))
 		}
 	case "command.apply_ssh_authorized_keys":
 		result.Command = "apply_ssh_authorized_keys"
