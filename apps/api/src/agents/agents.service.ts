@@ -358,6 +358,48 @@ export class AgentsService implements OnModuleInit {
     });
   }
 
+  async handleAgentUninstall(nodeId: string) {
+    const memberships = await this.prisma.vlanMember.findMany({
+      where: { nodeId },
+      select: { vlanId: true },
+    });
+    const affectedVlanIds = Array.from(new Set(memberships.map((m) => m.vlanId)));
+
+    await this.prisma.$transaction([
+      this.prisma.vlanConnection.deleteMany({
+        where: {
+          OR: [{ sourceNodeId: nodeId }, { targetNodeId: nodeId }],
+        },
+      }),
+      this.prisma.vlanMember.deleteMany({ where: { nodeId } }),
+      this.prisma.node.updateMany({
+        where: { id: nodeId },
+        data: {
+          status: 'offline',
+          overlayPublicKey: null,
+          overlayEndpoint: null,
+          overlayListenPort: null,
+          overlaySshPublicKey: null,
+          overlaySshUser: null,
+          vlanIp: null,
+          vlanMac: null,
+        },
+      }),
+    ]);
+
+    this.unregister(nodeId);
+
+    for (const vlanId of affectedVlanIds) {
+      const members = await this.prisma.vlanMember.findMany({
+        where: { vlanId },
+        select: { nodeId: true },
+      });
+      for (const member of members) {
+        await this.reconcileOverlayForNode(member.nodeId);
+      }
+    }
+  }
+
   private async reconcileOverlayForNode(nodeId: string) {
     try {
       const membership = await this.prisma.vlanMember.findFirst({

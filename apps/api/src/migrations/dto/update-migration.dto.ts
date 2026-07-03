@@ -7,6 +7,14 @@ export class UpdateMigrationDto {
 
   @IsOptional()
   @IsString()
+  sourceNodeId?: string;
+
+  @IsOptional()
+  @IsString()
+  targetNodeId?: string;
+
+  @IsOptional()
+  @IsString()
   notes?: string;
 
   @IsOptional()

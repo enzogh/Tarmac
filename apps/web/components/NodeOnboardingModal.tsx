@@ -47,12 +47,15 @@ function buildDockerCommand(params: {
 function buildSystemdInstallCommand(params: {
   wsUrl: string;
   nodeId: string;
+  provider: HostProvider;
 }) {
-  const { wsUrl, nodeId } = params;
+  const { wsUrl, nodeId, provider } = params;
+  const sshUser = provider === 'ovh' ? 'ubuntu' : 'root';
   return `curl -fsSL https://raw.githubusercontent.com/enzogh/Tarmac/main/apps/agent/scripts/install-agent-service.sh | sudo bash -s -- \\
   --node-id "${nodeId}" \\
   --control-plane-ws "${wsUrl}" \\
-  --agent-token "<AGENT_SHARED_TOKEN>"`;
+  --agent-token "<AGENT_SHARED_TOKEN>" \\
+  --ssh-user "${sshUser}"`;
 }
 
 function buildRemoteBootstrapCommand(params: {
@@ -63,7 +66,8 @@ function buildRemoteBootstrapCommand(params: {
   const install = `curl -fsSL https://raw.githubusercontent.com/enzogh/Tarmac/main/apps/agent/scripts/install-agent-service.sh | bash -s -- \\
   --node-id "${params.nodeId}" \\
   --control-plane-ws "${params.wsUrl}" \\
-  --agent-token "<AGENT_SHARED_TOKEN>"`;
+  --agent-token "<AGENT_SHARED_TOKEN>" \\
+  --ssh-user "${params.provider === 'ovh' ? 'ubuntu' : 'root'}"`;
 
   if (params.provider === 'ovh') {
     return `# OVH (login ubuntu, puis élévation root)
@@ -274,7 +278,12 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
                         type="button"
                         variant="secondary"
                         size="sm"
-                        onClick={() => copy(buildSystemdInstallCommand({ wsUrl, nodeId: createdNode.id }), setCopySystemdState)}
+                        onClick={() =>
+                          copy(
+                            buildSystemdInstallCommand({ wsUrl, nodeId: createdNode.id, provider }),
+                            setCopySystemdState,
+                          )
+                        }
                       >
                         {copySystemdState === 'copied' ? (
                           <><Check className="h-3.5 w-3.5" /> Copié</>
@@ -287,7 +296,7 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
                   </Tooltip>
                 </div>
                 <pre className="code-block whitespace-pre-wrap break-words">
-                  {buildSystemdInstallCommand({ wsUrl, nodeId: createdNode.id })}
+                  {buildSystemdInstallCommand({ wsUrl, nodeId: createdNode.id, provider })}
                 </pre>
               </div>
 
