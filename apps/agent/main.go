@@ -1495,6 +1495,82 @@ func listDirectories(payload map[string]interface{}) (directoryListData, error) 
 	}, nil
 }
 
+func shellSingleQuote(input string) string {
+	return "'" + strings.ReplaceAll(input, "'", `'"'"'`) + "'"
+}
+
+func listRemoteDirectories(payload map[string]interface{}) (directoryListData, error) {
+	host := readString(payload, "host")
+	username := readString(payload, "username")
+	password := readString(payload, "password")
+	if host == "" || username == "" {
+		return directoryListData{}, errors.New("host and username are required")
+	}
+
+	basePath := strings.TrimSpace(readString(payload, "basePath"))
+	if basePath == "" {
+		basePath = "/"
+	}
+	if !strings.HasPrefix(basePath, "/") {
+		return directoryListData{}, errors.New("basePath must be absolute")
+	}
+	port := readInt(payload, "port", 22)
+	if port <= 0 || port > 65535 {
+		port = 22
+	}
+
+	sshArgs := []string{
+		"-p", strconv.Itoa(port),
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "ConnectTimeout=10",
+		fmt.Sprintf("%s@%s", username, host),
+		fmt.Sprintf("find %s -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null", shellSingleQuote(basePath)),
+	}
+
+	var cmd *exec.Cmd
+	if password != "" {
+		if !commandExists("sshpass") {
+			return directoryListData{}, errors.New("sshpass not found on agent")
+		}
+		cmd = exec.Command("sshpass", append([]string{"-p", password, "ssh"}, sshArgs...)...)
+	} else {
+		sshKeyPath := envOrDefault("AGENT_SSH_PRIVATE_KEY_PATH", "/var/lib/tarmac-agent/ssh/id_ed25519")
+		sshArgs = append([]string{
+			"-i", sshKeyPath,
+			"-o", "IdentitiesOnly=yes",
+			"-o", "BatchMode=yes",
+			"-o", "PasswordAuthentication=no",
+			"-o", "PreferredAuthentications=publickey",
+		}, sshArgs...)
+		cmd = exec.Command("ssh", sshArgs...)
+	}
+
+	output, err := cmd.Output()
+	if err != nil {
+		return directoryListData{}, fmt.Errorf("cannot list remote directories: %w", err)
+	}
+
+	lines := strings.Split(string(output), "\n")
+	directories := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		directories = append(directories, trimmed)
+	}
+	sort.Strings(directories)
+	if len(directories) > 500 {
+		directories = directories[:500]
+	}
+
+	return directoryListData{
+		BasePath:    basePath,
+		Directories: directories,
+	}, nil
+}
+
 func scanDirectorySizes(payload map[string]interface{}) (directoryScanData, error) {
 	basePath := strings.TrimSpace(readString(payload, "basePath"))
 	if basePath == "" {
@@ -1704,10 +1780,21 @@ func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progre
 
 	sourceHost := readString(payload, "sourceHost")
 	sourceUser := readString(payload, "sourceUser")
+	sourcePassword := readString(payload, "sourcePassword")
 	if sourceUser == "" {
 		sourceUser = "root"
 	}
-	sshPort := readInt(payload, "sshPort", 22)
+	sourceSshPort := readInt(payload, "sourceSshPort", readInt(payload, "sshPort", 22))
+	targetHost := readString(payload, "targetHost")
+	targetUser := readString(payload, "targetUser")
+	targetPassword := readString(payload, "targetPassword")
+	targetSshPort := readInt(payload, "targetSshPort", 22)
+	if targetUser == "" {
+		targetUser = "root"
+	}
+	if sourceHost != "" && targetHost != "" {
+		return "", errors.New("run_rsync supports only one remote endpoint")
+	}
 	timeoutSeconds := readInt(payload, "timeoutSeconds", 3600)
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = 3600
@@ -1735,20 +1822,57 @@ func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progre
 		}
 	}
 
-	if err := os.MkdirAll(targetPath, 0o755); err != nil {
+	targetArg := targetPath
+	if targetHost != "" {
+		if targetUser != "" {
+			targetArg = fmt.Sprintf("%s@%s:%s", targetUser, targetHost, targetPath)
+		} else {
+			targetArg = fmt.Sprintf("%s:%s", targetHost, targetPath)
+		}
+	} else if err := os.MkdirAll(targetPath, 0o755); err != nil {
 		return "", fmt.Errorf("cannot create target path: %w", err)
 	}
 
-	args := []string{"-a", "--delete", "--info=progress2", sourceArg, targetPath}
+	args := []string{"-a", "--delete", "--info=progress2", sourceArg, targetArg}
 	if sourceHost != "" {
-		args = append([]string{
-			"-e",
-			fmt.Sprintf(
-				"ssh -p %d -i %s -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o PreferredAuthentications=publickey -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10",
-				sshPort,
+		sshCommand := fmt.Sprintf(
+			"ssh -p %d -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10",
+			sourceSshPort,
+		)
+		usePassword := sourcePassword != ""
+		if !usePassword {
+			sshCommand += fmt.Sprintf(
+				" -i %s -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o PreferredAuthentications=publickey",
 				sshKeyPath,
-			),
-		}, args...)
+			)
+		}
+		args = append([]string{"-e", sshCommand}, args...)
+		if usePassword {
+			if !commandExists("sshpass") {
+				return "", errors.New("sshpass not found on agent")
+			}
+			args = append([]string{"-p", sourcePassword, "rsync"}, args...)
+		}
+	}
+	if targetHost != "" {
+		sshCommand := fmt.Sprintf(
+			"ssh -p %d -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10",
+			targetSshPort,
+		)
+		usePassword := targetPassword != ""
+		if !usePassword {
+			sshCommand += fmt.Sprintf(
+				" -i %s -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o PreferredAuthentications=publickey",
+				sshKeyPath,
+			)
+		}
+		args = append([]string{"-e", sshCommand}, args...)
+		if usePassword {
+			if !commandExists("sshpass") {
+				return "", errors.New("sshpass not found on agent")
+			}
+			args = append([]string{"-p", targetPassword, "rsync"}, args...)
+		}
 	}
 
 	baseCtx, cancel := context.WithCancel(context.Background())
@@ -1759,7 +1883,11 @@ func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progre
 	}()
 	ctx, timeoutCancel := context.WithTimeout(baseCtx, time.Duration(timeoutSeconds)*time.Second)
 	defer timeoutCancel()
-	cmd := exec.CommandContext(ctx, "rsync", args...)
+	cmdName := "rsync"
+	if len(args) > 0 && args[0] == "-p" {
+		cmdName = "sshpass"
+	}
+	cmd := exec.CommandContext(ctx, cmdName, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", fmt.Errorf("cannot open rsync stdout: %w", err)
@@ -1923,6 +2051,21 @@ func handleCommand(cmd commandPayload, onProgress func(progress commandProgress)
 		} else {
 			result.Data = data
 			result.Message = fmt.Sprintf("%d directories listed", len(data.Directories))
+		}
+	case "command.list_remote_directories":
+		result.Command = "list_remote_directories"
+		result.ResourceType = "directory_list"
+		result.ResourceID = readString(cmd.Payload, "requestId")
+		if result.ResourceID == "" {
+			result.ResourceID = fmt.Sprintf("rdirs-%d", time.Now().UnixNano())
+		}
+		data, err := listRemoteDirectories(cmd.Payload)
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Data = data
+			result.Message = fmt.Sprintf("%d remote directories listed", len(data.Directories))
 		}
 	case "command.scan_directory_sizes":
 		result.Command = "scan_directory_sizes"
