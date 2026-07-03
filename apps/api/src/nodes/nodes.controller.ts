@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -12,7 +13,10 @@ import {
 } from '@nestjs/common';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { CompleteNodeOnboardingDto } from './dto/complete-node-onboarding.dto';
 import { CreateNodeDto } from './dto/create-node.dto';
+import { StartNodeOnboardingDto } from './dto/start-node-onboarding.dto';
+import { NodeOnboardingService } from './node-onboarding.service';
 import { UpdateNodeDto } from './dto/update-node.dto';
 import { NodesService } from './nodes.service';
 
@@ -23,7 +27,10 @@ interface AuthenticatedRequest extends Request {
 @UseGuards(JwtAuthGuard)
 @Controller('nodes')
 export class NodesController {
-  constructor(private readonly nodesService: NodesService) {}
+  constructor(
+    private readonly nodesService: NodesService,
+    private readonly nodeOnboardingService: NodeOnboardingService,
+  ) {}
 
   @Get()
   list() {
@@ -33,6 +40,36 @@ export class NodesController {
   @Post()
   create(@Body() dto: CreateNodeDto, @Req() req: AuthenticatedRequest) {
     return this.nodesService.create(dto, req.user?.userId);
+  }
+
+  @Post('onboarding/start')
+  startOnboarding(@Body() dto: StartNodeOnboardingDto, @Req() req: AuthenticatedRequest) {
+    const forwardedProto = req.headers['x-forwarded-proto'];
+    const rawProto = Array.isArray(forwardedProto)
+      ? forwardedProto[0]
+      : typeof forwardedProto === 'string'
+        ? forwardedProto.split(',')[0]
+        : req.protocol;
+    const wsProto = rawProto === 'https' ? 'wss' : 'ws';
+    const host = req.headers['x-forwarded-host'] ?? req.headers.host;
+    const hostValue = Array.isArray(host) ? host[0] : host;
+    const controlPlaneWs = dto.controlPlaneWs ?? (hostValue ? `${wsProto}://${hostValue}/agents-ws` : undefined);
+
+    return this.nodeOnboardingService.startOnboarding(
+      {
+        ...dto,
+        controlPlaneWs,
+      },
+      req.user?.userId,
+    );
+  }
+
+  @Post('onboarding/:id/install')
+  completeOnboarding(@Param('id') id: string, @Body() dto: CompleteNodeOnboardingDto) {
+    if (!dto.deployKeyConfirmed) {
+      throw new BadRequestException('deployKeyConfirmed must be true');
+    }
+    return this.nodeOnboardingService.completeOnboarding(id);
   }
 
   @Patch(':id')

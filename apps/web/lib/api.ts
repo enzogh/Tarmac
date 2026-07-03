@@ -8,6 +8,35 @@ export type NodeItem = {
   lastSeenAt?: string | null;
 };
 
+export type NodeOnboardingStartPayload = {
+  name: string;
+  role: 'controller' | 'worker';
+  provider: 'ovh' | 'standard';
+  hostIp: string;
+  sshUsername: string;
+  sshPassword: string;
+  repoUrl?: string;
+  repoRef?: string;
+};
+
+export type NodeOnboardingStartResult = {
+  onboardingId: string;
+  expiresAt: string;
+  node: NodeItem;
+  githubDeployKey: {
+    title: string;
+    publicKey: string;
+    repoUrl: string;
+  };
+};
+
+export type NodeOnboardingInstallResult = {
+  success: boolean;
+  nodeId: string;
+  nodeName: string;
+  output: string;
+};
+
 export type ShareItem = {
   id: string;
   name: string;
@@ -235,7 +264,18 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
   });
 
   if (!res.ok) {
-    throw new Error(`API error ${res.status}`);
+    let message = `API error ${res.status}`;
+    try {
+      const payload = (await res.json()) as { message?: string | string[] };
+      if (typeof payload.message === 'string') {
+        message = payload.message;
+      } else if (Array.isArray(payload.message) && payload.message.length > 0) {
+        message = payload.message.join(', ');
+      }
+    } catch {
+      // keep fallback message
+    }
+    throw new Error(message);
   }
 
   return res.json() as Promise<T>;
@@ -260,6 +300,16 @@ export const api = {
       request<NodeMetricSample[]>(`/api/v1/nodes/${id}/metrics?range=${range}`, token),
     create: (token: string, payload: { name: string; role: string }) =>
       request<NodeItem>('/api/v1/nodes', token, { method: 'POST', body: JSON.stringify(payload) }),
+    onboardingStart: (token: string, payload: NodeOnboardingStartPayload) =>
+      request<NodeOnboardingStartResult>('/api/v1/nodes/onboarding/start', token, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    onboardingInstall: (token: string, onboardingId: string) =>
+      request<NodeOnboardingInstallResult>(`/api/v1/nodes/onboarding/${encodeURIComponent(onboardingId)}/install`, token, {
+        method: 'POST',
+        body: JSON.stringify({ deployKeyConfirmed: true }),
+      }),
     update: (token: string, id: string, payload: { name?: string; role?: string }) =>
       request<NodeItem>(`/api/v1/nodes/${id}`, token, { method: 'PATCH', body: JSON.stringify(payload) }),
     delete: (token: string, id: string) =>
