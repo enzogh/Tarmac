@@ -289,6 +289,9 @@ export class AgentsService implements OnModuleInit {
     }
 
     if (result.resourceType === 'migration') {
+      if (result.command === 'stop_rsync') {
+        return;
+      }
       await this.prisma.migrationTask.update({
         where: { id: result.resourceId },
         data: result.success
