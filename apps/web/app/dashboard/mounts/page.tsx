@@ -7,6 +7,8 @@ import { api, MountItem, NodeItem } from '../../../lib/api';
 import { DashboardLayout } from '../../../components/DashboardLayout';
 import { Badge } from '../../../components/ui';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Button } from '../../../components/ui/button';
+import { Alert, AlertDescription } from '../../../components/ui/alert';
 import {
   WizardDialog,
   PresetSelector,
@@ -73,6 +75,7 @@ export default function MountsPage() {
   const [nodes, setNodes] = useState<NodeItem[]>([]);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState<PresetOption | null>(null);
+  const [notice, setNotice] = useState<{ type: 'error' | 'success' | 'warning'; message: string } | null>(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -127,7 +130,7 @@ export default function MountsPage() {
             }}
           />
           {selectedPreset && (
-            <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded text-sm text-green-900">
+            <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/[0.08] p-3 text-sm text-emerald-100">
               ✓ Modèle sélectionné: <strong>{selectedPreset.name}</strong>
             </div>
           )}
@@ -141,7 +144,7 @@ export default function MountsPage() {
       content: (
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="mb-2 block text-sm font-medium text-zinc-200">
               Nom du montage
               <HelpText text="Donnez un nom descriptif à ce montage (ex: backup-db, media-store)" />
             </label>
@@ -150,12 +153,12 @@ export default function MountsPage() {
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               placeholder="ex: backup-mensuel"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="mb-2 block text-sm font-medium text-zinc-200">
               Chemin source
               <HelpText text="Exemple: /home/user/data ou nfs://server/share" />
             </label>
@@ -164,12 +167,12 @@ export default function MountsPage() {
               value={formData.sourcePath}
               onChange={(e) => setFormData({ ...formData, sourcePath: e.target.value })}
               placeholder="ex: /data/backup"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="mb-2 block text-sm font-medium text-zinc-200">
               Chemin destination sur le serveur
               <HelpText text="Où monter le partage (ex: /mnt/backup, /mnt/media)" />
             </label>
@@ -178,19 +181,19 @@ export default function MountsPage() {
               value={formData.targetPath}
               onChange={(e) => setFormData({ ...formData, targetPath: e.target.value })}
               placeholder="ex: /mnt/backup"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="mb-2 block text-sm font-medium text-zinc-200">
               Serveur destination
               <HelpText text="Sélectionnez le nœud où sera monté le partage" />
             </label>
             <select
               value={formData.nodeId}
               onChange={(e) => setFormData({ ...formData, nodeId: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
             >
               <option value="">-- Choisir un serveur --</option>
               {nodes.map((node) => (
@@ -210,14 +213,14 @@ export default function MountsPage() {
       content: (
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="mb-2 block text-sm font-medium text-zinc-200">
               Type de système de fichiers
               <HelpText text="NFS4 est recommandé. NFS3 est compatible mais moins sûr." />
             </label>
             <select
               value={formData.fsType}
               onChange={(e) => setFormData({ ...formData, fsType: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
             >
               <option value="nfs4">NFS 4 (Recommandé)</option>
               <option value="nfs3">NFS 3</option>
@@ -226,7 +229,7 @@ export default function MountsPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="mb-2 block text-sm font-medium text-zinc-200">
               Options de montage
               <HelpText text="Paramètres avancés NFS. Conservez la valeur par défaut si vous n'êtes pas sûr." />
             </label>
@@ -234,9 +237,9 @@ export default function MountsPage() {
               value={formData.mountOptions}
               onChange={(e) => setFormData({ ...formData, mountOptions: e.target.value })}
               rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
             />
-            <p className="text-xs text-gray-600 mt-2">
+            <p className="mt-2 text-xs text-muted-foreground">
               <strong>defaults:</strong> options de base
               <br />
               <strong>hard:</strong> attendez le serveur si indisponible
@@ -273,25 +276,25 @@ export default function MountsPage() {
             ]}
           />
 
-          <div className="bg-gray-50 rounded-lg p-4 space-y-2 text-sm">
+          <div className="space-y-2 rounded-lg border border-white/[0.08] bg-zinc-900/60 p-4 text-sm">
             <div className="flex justify-between">
-              <span className="text-gray-600">Nom:</span>
+              <span className="text-muted-foreground">Nom:</span>
               <span className="font-mono">{formData.name}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-600">Source:</span>
+              <span className="text-muted-foreground">Source:</span>
               <span className="font-mono">{formData.sourcePath}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-600">Destination:</span>
+              <span className="text-muted-foreground">Destination:</span>
               <span className="font-mono">{formData.targetPath}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-600">Serveur:</span>
+              <span className="text-muted-foreground">Serveur:</span>
               <span className="font-mono">{nodes.find((n) => n.id === formData.nodeId)?.name}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-600">Type FS:</span>
+              <span className="text-muted-foreground">Type FS:</span>
               <span className="font-mono">{formData.fsType}</span>
             </div>
           </div>
@@ -329,7 +332,7 @@ export default function MountsPage() {
       setSelectedPreset(null);
       await load();
     } catch (error) {
-      alert('Erreur lors de la création du montage');
+      setNotice({ type: 'error', message: 'Erreur lors de la création du montage.' });
     }
   };
 
@@ -341,20 +344,27 @@ export default function MountsPage() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
+      <div className="space-y-8">
+        {notice && (
+          <Alert variant={notice.type === 'error' ? 'destructive' : notice.type === 'warning' ? 'warning' : 'success'}>
+            {notice.type === 'error' ? <AlertCircle className="h-4 w-4" /> : notice.type === 'warning' ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+            <AlertDescription>{notice.message}</AlertDescription>
+          </Alert>
+        )}
+
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Montages Réseau</h1>
-            <p className="text-gray-600 mt-1">Gérez les montages NFS et les partages réseau</p>
+            <h1 className="text-3xl font-semibold tracking-tight text-foreground">Montages Réseau</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Gérez les montages NFS et les partages réseau.</p>
           </div>
-          <button
+          <Button
             onClick={() => setWizardOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold"
+            className="gap-2 bg-violet-600 text-white hover:bg-violet-500"
           >
             <Plus className="w-5 h-5" />
             Nouveau Montage
-          </button>
+          </Button>
         </div>
 
         {/* Info Box */}
@@ -365,51 +375,52 @@ export default function MountsPage() {
 
         {/* Mounts List */}
         {mounts.length === 0 ? (
-          <Card>
+          <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
             <CardContent className="pt-12 pb-12 text-center">
               <div className="text-6xl mb-4">📂</div>
-              <p className="text-gray-600 font-medium">Aucun montage configuré</p>
-              <p className="text-sm text-gray-500 mt-2">Créez votre premier montage NFS en cliquant sur "Nouveau Montage"</p>
+              <p className="font-medium text-muted-foreground">Aucun montage configuré</p>
+              <p className="mt-2 text-sm text-muted-foreground">Créez votre premier montage NFS en cliquant sur "Nouveau Montage".</p>
             </CardContent>
           </Card>
         ) : (
           <div className="grid gap-4">
             {mounts.map((mount) => (
-              <Card key={mount.id}>
+              <Card key={mount.id} className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <div className="flex items-center gap-3">
-                        <h3 className="text-lg font-semibold text-gray-900">{mount.name}</h3>
+                        <h3 className="text-lg font-semibold text-foreground">{mount.name}</h3>
                         <div className={`px-2 py-1 rounded text-white text-sm font-semibold ${statusColors[mount.status as keyof typeof statusColors]}`}>
                           {mount.status === 'active' && '✓ Actif'}
                           {mount.status === 'pending' && '⏳ En attente'}
                           {mount.status === 'error' && '✗ Erreur'}
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-4 mt-3 text-sm text-gray-600">
+                      <div className="mt-3 grid grid-cols-2 gap-4 text-sm text-muted-foreground">
                         <div>
-                          <span className="text-gray-500">Source:</span>
+                          <span>Source:</span>
                           <p className="font-mono">{mount.sourcePath}</p>
                         </div>
                         <div>
-                          <span className="text-gray-500">Destination:</span>
+                          <span>Destination:</span>
                           <p className="font-mono">{mount.targetPath}</p>
                         </div>
                         {mount.additionalSources.length > 0 && (
                           <div className="col-span-2">
-                            <span className="text-gray-500">Sources additionnelles:</span>
+                            <span>Sources additionnelles:</span>
                             <p className="font-mono text-xs">{mount.additionalSources.join(', ')}</p>
                           </div>
                         )}
                       </div>
                     </div>
-                    <button
-                      className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
-                      onClick={() => alert('Suppression non implémentée')}
+                    <Button
+                      variant="ghost"
+                      className="p-2 text-rose-400 hover:bg-rose-500/10 hover:text-rose-300"
+                      onClick={() => setNotice({ type: 'warning', message: 'Suppression non implémentée.' })}
                     >
                       <Trash2 className="w-5 h-5" />
-                    </button>
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
