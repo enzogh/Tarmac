@@ -281,6 +281,10 @@ export const api = {
         nodeId?: string;
       },
     ) => request<MountItem>('/api/v1/mounts', token, { method: 'POST', body: JSON.stringify(payload) }),
+    delete: (token: string, id: string) =>
+      request<void>(`/api/v1/mounts/${id}`, token, { method: 'DELETE' }),
+    remount: (token: string, id: string) =>
+      request<MountItem>(`/api/v1/mounts/${id}/remount`, token, { method: 'POST' }),
   },
 
   pools: {

@@ -1,7 +1,7 @@
 'use client';
 
 import { ReactNode, useState } from 'react';
-import { ChevronDown, HelpCircle, AlertCircle, CheckCircle2, Info, TriangleAlert } from 'lucide-react';
+import { ChevronDown, CheckCircle2, HelpCircle, AlertCircle, Info, TriangleAlert } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './tooltip';
 import { Button } from './button';
 import { Alert, AlertDescription, AlertTitle } from './alert';
@@ -119,11 +119,13 @@ export interface PresetOption {
 export function PresetSelector({
   presets,
   onSelect,
+  selectedId,
   title = 'Choisir un modèle',
   description,
 }: {
   presets: PresetOption[];
   onSelect: (preset: PresetOption) => void;
+  selectedId?: string;
   title?: string;
   description?: string;
 }) {
@@ -131,23 +133,33 @@ export function PresetSelector({
     <div>
       {title && <h3 className="font-semibold text-lg text-foreground mb-2">{title}</h3>}
       {description && <p className="text-sm text-muted-foreground mb-4">{description}</p>}
-      
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {presets.map((preset) => (
-          <button
-            key={preset.id}
-            onClick={() => onSelect(preset)}
-            className="rounded-xl border border-white/[0.08] bg-zinc-900/70 p-4 text-left transition-all hover:border-violet-400/40 hover:bg-zinc-900"
-          >
-            <div className="flex items-start gap-3">
-              {preset.icon && <div className="text-2xl mt-1">{preset.icon}</div>}
-              <div>
-                <h4 className="font-semibold text-foreground">{preset.name}</h4>
-                <p className="text-xs text-muted-foreground mt-1">{preset.description}</p>
+        {presets.map((preset) => {
+          const isSelected = selectedId === preset.id;
+          return (
+            <button
+              key={preset.id}
+              onClick={() => onSelect(preset)}
+              className={`rounded-xl border p-4 text-left transition-all ${
+                isSelected
+                  ? 'border-violet-500/60 bg-violet-500/[0.1] ring-1 ring-violet-500/20'
+                  : 'border-white/[0.08] bg-zinc-900/70 hover:border-violet-400/40 hover:bg-zinc-900'
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                {preset.icon && <div className="text-2xl mt-1">{preset.icon}</div>}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="font-semibold text-foreground">{preset.name}</h4>
+                    {isSelected && <CheckCircle2 className="h-4 w-4 shrink-0 text-violet-400" />}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">{preset.description}</p>
+                </div>
               </div>
-            </div>
-          </button>
-        ))}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
