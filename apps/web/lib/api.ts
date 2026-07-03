@@ -342,6 +342,22 @@ export const api = {
     get: (token: string) => request<Record<string, unknown>>('/api/v1/topology', token),
   },
 
+  agents: {
+    update: (
+      token: string,
+      nodeId: string,
+      payload?: { ref?: string; repoUrl?: string; serviceName?: string },
+    ) =>
+      request<{ queued: boolean; message: string }>(
+        `/api/v1/agents/${encodeURIComponent(nodeId)}/update`,
+        token,
+        {
+          method: 'POST',
+          body: JSON.stringify(payload ?? {}),
+        },
+      ),
+  },
+
   storage: {
     forecast: (token: string, nodeId?: string) =>
       request<Forecast>(`/api/v1/storage/forecast${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`, token),

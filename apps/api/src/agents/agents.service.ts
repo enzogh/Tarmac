@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { MountsService } from '../mounts/mounts.service';
@@ -298,6 +298,11 @@ export class AgentsService implements OnModuleInit {
           ? { status: 'completed', progress: 100, completedAt: new Date() }
           : { status: 'failed' },
       });
+      return;
+    }
+
+    if (result.resourceType === 'agent') {
+      return;
     }
   }
 
@@ -330,6 +335,29 @@ export class AgentsService implements OnModuleInit {
 
     sender('command', command);
     return true;
+  }
+
+  async triggerAgentUpdate(nodeId: string, options?: { ref?: string; repoUrl?: string; serviceName?: string }) {
+    const node = await this.prisma.node.findUnique({ where: { id: nodeId }, select: { id: true } });
+    if (!node) {
+      throw new NotFoundException('node not found');
+    }
+
+    const sent = this.sendCommand(nodeId, {
+      type: 'command.update_agent',
+      payload: {
+        nodeId,
+        ref: options?.ref,
+        repoUrl: options?.repoUrl,
+        serviceName: options?.serviceName,
+      },
+    });
+
+    if (!sent) {
+      return { queued: false as const, message: 'node is offline' };
+    }
+
+    return { queued: true as const, message: 'agent update command sent' };
   }
 
   requestDirectories(nodeId: string, basePath = '/', timeoutMs = 5000): Promise<{ basePath: string; directories: string[] }> {

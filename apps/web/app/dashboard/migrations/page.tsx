@@ -56,6 +56,7 @@ import {
   PresetOption,
   StepConfig,
 } from '../../../components/ui/wizard';
+import { DirectoryBrowser } from '../../../components/ui/directory-browser';
 
 const MIGRATION_PRESETS: PresetOption[] = [
   {
@@ -179,18 +180,22 @@ export default function MigrationsPage() {
 
   useEffect(() => {
     if (!formData.sourceNodeId) {
+      setSourceBrowsePath('/');
       setSourceDirectories([]);
       return;
     }
-    void loadDirectories('source', formData.sourceNodeId, sourceBrowsePath);
+    setSourceBrowsePath('/');
+    void loadDirectories('source', formData.sourceNodeId, '/');
   }, [formData.sourceNodeId]);
 
   useEffect(() => {
     if (!formData.targetNodeId) {
+      setTargetBrowsePath('/');
       setTargetDirectories([]);
       return;
     }
-    void loadDirectories('target', formData.targetNodeId, targetBrowsePath);
+    setTargetBrowsePath('/');
+    void loadDirectories('target', formData.targetNodeId, '/');
   }, [formData.targetNodeId]);
 
   const nodesById = useMemo(() => Object.fromEntries(nodes.map((node) => [node.id, node.name] as const)), [nodes]);
@@ -402,15 +407,16 @@ export default function MigrationsPage() {
             </Label>
             <Select
               value={formData.sourceNodeId}
-              onValueChange={(value) =>
+              onValueChange={(value) => {
+                setSourceBrowsePath('/');
                 setFormData((prev) => ({
                   ...prev,
                   sourceNodeId: value,
                   targetNodeId: prev.targetNodeId === value ? '' : prev.targetNodeId,
                   sourcePath: '',
                   targetPath: '',
-                }))
-              }
+                }));
+              }}
             >
               <SelectTrigger className="h-10">
                 <SelectValue placeholder="Choisir un serveur source" />
@@ -432,7 +438,10 @@ export default function MigrationsPage() {
             </Label>
             <Select
               value={formData.targetNodeId}
-              onValueChange={(value) => setFormData((prev) => ({ ...prev, targetNodeId: value, targetPath: '' }))}
+              onValueChange={(value) => {
+                setTargetBrowsePath('/');
+                setFormData((prev) => ({ ...prev, targetNodeId: value, targetPath: '' }));
+              }}
             >
               <SelectTrigger className="h-10">
                 <SelectValue placeholder="Choisir un serveur destination" />
@@ -462,99 +471,29 @@ export default function MigrationsPage() {
             </div>
           </div>
 
-          <div className="space-y-2 rounded-lg border border-white/[0.08] bg-zinc-900/60 p-4">
-            <div className="flex items-center justify-between gap-3">
-              <label className="block text-sm font-medium text-zinc-200">
-                Dossier source (live)
-                <HelpText text="Dossier lu en direct sur le serveur source via l'agent connecté" />
-              </label>
-              <Button
-                type="button"
-                variant="outline"
-                className="h-8"
-                onClick={() => void loadDirectories('source', formData.sourceNodeId, sourceBrowsePath)}
-                disabled={!formData.sourceNodeId || directoriesLoading.source}
-              >
-                {directoriesLoading.source ? 'Chargement…' : 'Actualiser'}
-              </Button>
-            </div>
-            <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-              <input
-                type="text"
-                value={sourceBrowsePath}
-                onChange={(e) => setSourceBrowsePath(e.target.value || '/')}
-                className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
-                placeholder="/"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => void loadDirectories('source', formData.sourceNodeId, sourceBrowsePath)}
-                disabled={!formData.sourceNodeId || directoriesLoading.source}
-              >
-                Ouvrir
-              </Button>
-            </div>
-            <select
-              value={formData.sourcePath}
-              onChange={(e) => setFormData({ ...formData, sourcePath: e.target.value })}
-              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
-            >
-              <option value="">-- Choisir un dossier source --</option>
-              {sourceDirectories.map((path) => (
-                <option key={path} value={path}>
-                  {path}
-                </option>
-              ))}
-            </select>
-          </div>
+          <DirectoryBrowser
+            title="Dossier source (live)"
+            description="Navigation en direct sur le serveur source. Un clic sur un dossier le sélectionne et l’ouvre."
+            currentPath={sourceBrowsePath}
+            selectedPath={formData.sourcePath}
+            directories={sourceDirectories}
+            loading={directoriesLoading.source}
+            disabled={!formData.sourceNodeId}
+            onBrowse={(path) => void loadDirectories('source', formData.sourceNodeId, path)}
+            onSelect={(path) => setFormData((prev) => ({ ...prev, sourcePath: path }))}
+          />
 
-          <div className="space-y-2 rounded-lg border border-white/[0.08] bg-zinc-900/60 p-4">
-            <div className="flex items-center justify-between gap-3">
-              <label className="block text-sm font-medium text-zinc-200">
-                Dossier destination (live)
-                <HelpText text="Chemin de destination final sur le serveur de réception" />
-              </label>
-              <Button
-                type="button"
-                variant="outline"
-                className="h-8"
-                onClick={() => void loadDirectories('target', formData.targetNodeId, targetBrowsePath)}
-                disabled={!formData.targetNodeId || directoriesLoading.target}
-              >
-                {directoriesLoading.target ? 'Chargement…' : 'Actualiser'}
-              </Button>
-            </div>
-            <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-              <input
-                type="text"
-                value={targetBrowsePath}
-                onChange={(e) => setTargetBrowsePath(e.target.value || '/')}
-                className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
-                placeholder="/"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => void loadDirectories('target', formData.targetNodeId, targetBrowsePath)}
-                disabled={!formData.targetNodeId || directoriesLoading.target}
-              >
-                Ouvrir
-              </Button>
-            </div>
-            <select
-              value={formData.targetPath}
-              onChange={(e) => setFormData({ ...formData, targetPath: e.target.value })}
-              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
-            >
-              <option value="">-- Choisir un dossier destination --</option>
-              {targetDirectories.map((path) => (
-                <option key={path} value={path}>
-                  {path}
-                </option>
-              ))}
-            </select>
-          </div>
+          <DirectoryBrowser
+            title="Dossier destination (live)"
+            description="Navigation en direct sur le serveur de destination."
+            currentPath={targetBrowsePath}
+            selectedPath={formData.targetPath}
+            directories={targetDirectories}
+            loading={directoriesLoading.target}
+            disabled={!formData.targetNodeId}
+            onBrowse={(path) => void loadDirectories('target', formData.targetNodeId, path)}
+            onSelect={(path) => setFormData((prev) => ({ ...prev, targetPath: path }))}
+          />
         </div>
       ),
     },
@@ -643,7 +582,7 @@ export default function MigrationsPage() {
         <Alert variant="info">
           <ArrowRightLeft className="h-4 w-4" />
           <AlertDescription>
-            Vous pouvez modifier une migration tant qu’elle est en attente, puis la relancer après un échec.
+            Vous pouvez modifier une migration tant qu’elle est en attente, puis la relancer après un échec. Les dossiers source/destination se choisissent en navigation live, sans CLI.
           </AlertDescription>
         </Alert>
 
