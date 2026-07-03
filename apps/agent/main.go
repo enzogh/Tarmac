@@ -543,7 +543,7 @@ func (c *collector) collectOverlayLinkMetrics(iface string) []overlayLinkMetric 
 				cachedLoss := cached.packetLoss
 				metric.PacketLoss = &cachedLoss
 			}
-			needProbe = now.Sub(cached.at) >= 10*time.Second
+			needProbe = now.Sub(cached.at) >= 5*time.Second
 		}
 		if needProbe && metric.TargetVlanIP != "" {
 			latencyMs, packetLoss := probeOverlayLatency(iface, metric.TargetVlanIP)

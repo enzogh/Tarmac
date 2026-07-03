@@ -321,28 +321,73 @@ export class AgentsService implements OnModuleInit {
     const publicKeys = Array.from(
       new Set(linkMetrics.map((metric) => metric.targetPublicKey).filter((value): value is string => Boolean(value))),
     );
-    if (publicKeys.length === 0) return;
+    const targetVlanIps = Array.from(
+      new Set(linkMetrics.map((metric) => metric.targetVlanIp).filter((value): value is string => Boolean(value))),
+    );
 
-    const targetNodes = await this.prisma.node.findMany({
-      where: {
-        overlayPublicKey: { in: publicKeys },
-      },
-      select: {
-        id: true,
-        status: true,
-        overlayPublicKey: true,
-      },
-    });
+    if (publicKeys.length === 0 && targetVlanIps.length === 0) return;
+
+    const [targetNodesByKey, vlanMembers] = await Promise.all([
+      publicKeys.length > 0
+        ? this.prisma.node.findMany({
+            where: {
+              overlayPublicKey: { in: publicKeys },
+            },
+            select: {
+              id: true,
+              status: true,
+              overlayPublicKey: true,
+              vlanIp: true,
+            },
+          })
+        : Promise.resolve([]),
+      this.prisma.vlanMember.findMany({
+        where: { vlanId: sourceMembership.vlanId },
+        include: {
+          node: {
+            select: {
+              id: true,
+              status: true,
+              overlayPublicKey: true,
+              vlanIp: true,
+            },
+          },
+        },
+      }),
+    ]);
+
+    const targetNodes = [
+      ...targetNodesByKey,
+      ...vlanMembers.map((member) => member.node),
+    ];
     const nodeByPublicKey = new Map(
       targetNodes
-        .filter((node): node is { id: string; status: 'online' | 'offline' | 'degraded'; overlayPublicKey: string } =>
+        .filter(
+          (node): node is {
+            id: string;
+            status: 'online' | 'offline' | 'degraded';
+            overlayPublicKey: string;
+            vlanIp: string | null;
+          } =>
           Boolean(node.overlayPublicKey),
         )
         .map((node) => [node.overlayPublicKey, node]),
     );
+    const nodeByVlanIp = new Map(
+      targetNodes
+        .filter(
+          (node): node is {
+            id: string;
+            status: 'online' | 'offline' | 'degraded';
+            overlayPublicKey: string | null;
+            vlanIp: string;
+          } => Boolean(node.vlanIp),
+        )
+        .map((node) => [node.vlanIp, node]),
+    );
 
     const updates = linkMetrics.flatMap((metric) => {
-      const target = nodeByPublicKey.get(metric.targetPublicKey);
+      const target = nodeByPublicKey.get(metric.targetPublicKey) ?? (metric.targetVlanIp ? nodeByVlanIp.get(metric.targetVlanIp) : undefined);
       if (!target || target.id === sourceNodeId) return [];
 
       const txMbps = metric.txMbps ?? 0;
@@ -376,16 +421,16 @@ export class AgentsService implements OnModuleInit {
 
       const commonData = {
         status,
-        latencyMs:
-          metric.latencyMs !== undefined && Number.isFinite(metric.latencyMs)
-            ? Math.round(metric.latencyMs)
-            : null,
-        packetLoss:
-          metric.packetLoss !== undefined && Number.isFinite(metric.packetLoss)
-            ? Number(metric.packetLoss.toFixed(1))
-            : null,
         lastCheckedAt: new Date(),
       };
+      const measuredLatencyMs =
+        metric.latencyMs !== undefined && Number.isFinite(metric.latencyMs) ? Math.round(metric.latencyMs) : undefined;
+      const measuredPacketLoss =
+        metric.packetLoss !== undefined && Number.isFinite(metric.packetLoss)
+          ? Number(metric.packetLoss.toFixed(1))
+          : undefined;
+      const measuredTxMbps = Math.max(0, Math.round(txMbps));
+      const measuredRxMbps = Math.max(0, Math.round(rxMbps));
 
       return [
         this.prisma.vlanConnection.upsert({
@@ -398,14 +443,18 @@ export class AgentsService implements OnModuleInit {
           },
           update: {
             ...commonData,
-            bandwidth: Math.max(0, Math.round(txMbps)),
+            bandwidth: measuredTxMbps,
+            ...(measuredLatencyMs !== undefined ? { latencyMs: measuredLatencyMs } : {}),
+            ...(measuredPacketLoss !== undefined ? { packetLoss: measuredPacketLoss } : {}),
           },
           create: {
             vlanId: sourceMembership.vlanId,
             sourceNodeId,
             targetNodeId: target.id,
             ...commonData,
-            bandwidth: Math.max(0, Math.round(txMbps)),
+            bandwidth: measuredTxMbps,
+            latencyMs: measuredLatencyMs ?? null,
+            packetLoss: measuredPacketLoss ?? null,
           },
         }),
         this.prisma.vlanConnection.upsert({
@@ -418,14 +467,18 @@ export class AgentsService implements OnModuleInit {
           },
           update: {
             ...commonData,
-            bandwidth: Math.max(0, Math.round(rxMbps)),
+            bandwidth: measuredRxMbps,
+            ...(measuredLatencyMs !== undefined ? { latencyMs: measuredLatencyMs } : {}),
+            ...(measuredPacketLoss !== undefined ? { packetLoss: measuredPacketLoss } : {}),
           },
           create: {
             vlanId: sourceMembership.vlanId,
             sourceNodeId: target.id,
             targetNodeId: sourceNodeId,
             ...commonData,
-            bandwidth: Math.max(0, Math.round(rxMbps)),
+            bandwidth: measuredRxMbps,
+            latencyMs: measuredLatencyMs ?? null,
+            packetLoss: measuredPacketLoss ?? null,
           },
         }),
       ];
