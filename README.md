@@ -97,7 +97,7 @@ curl -fsSL https://raw.githubusercontent.com/enzogh/Tarmac/main/apps/agent/scrip
   --ssh-user "ubuntu"
 ```
 `--ssh-user` est optionnel. Si omis, l'install choisit automatiquement `ubuntu` (si l'utilisateur existe), sinon `root`.
-Le script installe automatiquement les dépendances nécessaires (`golang-go`, `nfs-common`, `cifs-utils`, `util-linux`), compile l'agent, puis active `tarmac-agent.service` avec auto-restart.
+Le script installe automatiquement les dépendances nécessaires (`golang-go`, `nfs-common`, `cifs-utils`, `util-linux`), clone le repo (avec fallback HTTPS si un clone SSH échoue), compile l'agent, puis active `tarmac-agent.service` avec auto-restart.
 
 ## API V1 (préfixe `/api/v1`)
 Auth:
