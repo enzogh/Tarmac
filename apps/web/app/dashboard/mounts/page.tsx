@@ -40,6 +40,7 @@ import {
   PresetOption,
   StepConfig,
 } from '../../../components/ui/wizard';
+import { DirectoryBrowser } from '../../../components/ui/directory-browser';
 
 // ─── Presets ────────────────────────────────────────────────────────────────
 
@@ -199,6 +200,17 @@ export default function MountsPage() {
     fsType: 'nfs4',
     mountOptions: 'defaults,hard,intr',
   });
+  const [exportDirectories, setExportDirectories] = useState<string[]>([]);
+  const [clientDirectories, setClientDirectories] = useState<string[]>([]);
+  const [existingMountDirectories, setExistingMountDirectories] = useState<string[]>([]);
+  const [exportBrowsePath, setExportBrowsePath] = useState('/');
+  const [clientBrowsePath, setClientBrowsePath] = useState('/');
+  const [existingBrowsePath, setExistingBrowsePath] = useState('/');
+  const [directoryLoading, setDirectoryLoading] = useState({
+    export: false,
+    client: false,
+    existing: false,
+  });
 
   // VLAN IP lookup: nodeId → vlanIp
   const nodeVlanIps = useMemo(() => {
@@ -259,6 +271,69 @@ export default function MountsPage() {
     const id = setInterval(() => void load(), 5000);
     return () => clearInterval(id);
   }, [token]);
+
+  const loadLiveDirectories = async (
+    kind: 'export' | 'client' | 'existing',
+    nodeId: string,
+    basePath: string,
+  ) => {
+    if (!token || !nodeId) return;
+    setDirectoryLoading((prev) => ({ ...prev, [kind]: true }));
+    try {
+      const payload = await api.migrations.listDirectories(token, nodeId, basePath || '/');
+      const sorted = [...payload.directories].sort((a, b) => a.localeCompare(b));
+      if (kind === 'export') {
+        setExportBrowsePath(payload.basePath);
+        setExportDirectories(sorted);
+      } else if (kind === 'client') {
+        setClientBrowsePath(payload.basePath);
+        setClientDirectories(sorted);
+      } else {
+        setExistingBrowsePath(payload.basePath);
+        setExistingMountDirectories(sorted);
+      }
+    } catch {
+      if (kind === 'export') setExportDirectories([]);
+      if (kind === 'client') setClientDirectories([]);
+      if (kind === 'existing') setExistingMountDirectories([]);
+      setNotice({
+        type: 'warning',
+        message: "Navigation live indisponible pour ce nœud (agent hors ligne ou accès dossier refusé).",
+      });
+    } finally {
+      setDirectoryLoading((prev) => ({ ...prev, [kind]: false }));
+    }
+  };
+
+  useEffect(() => {
+    if (!shareForm.exportNodeId) {
+      setExportBrowsePath('/');
+      setExportDirectories([]);
+      return;
+    }
+    setExportBrowsePath('/');
+    void loadLiveDirectories('export', shareForm.exportNodeId, '/');
+  }, [shareForm.exportNodeId]);
+
+  useEffect(() => {
+    if (!shareForm.mountNodeId) {
+      setClientBrowsePath('/');
+      setClientDirectories([]);
+      return;
+    }
+    setClientBrowsePath('/');
+    void loadLiveDirectories('client', shareForm.mountNodeId, '/');
+  }, [shareForm.mountNodeId]);
+
+  useEffect(() => {
+    if (!mountForm.nodeId) {
+      setExistingBrowsePath('/');
+      setExistingMountDirectories([]);
+      return;
+    }
+    setExistingBrowsePath('/');
+    void loadLiveDirectories('existing', mountForm.nodeId, '/');
+  }, [mountForm.nodeId]);
 
   const openWizard = (mode: WizardMode) => {
     setWizardMode(mode);
@@ -407,6 +482,7 @@ export default function MountsPage() {
                         ...prev,
                         exportNodeId: node.id,
                         mountNodeId: prev.mountNodeId === node.id ? '' : prev.mountNodeId,
+                        exportPath: '/exports',
                       }))
                     }
                   />
@@ -420,15 +496,17 @@ export default function MountsPage() {
               Dossier à exporter
               <HelpText text="Chemin absolu du répertoire qui sera partagé en NFS. Il sera créé s'il n'existe pas." />
             </Label>
-            <Input
-              value={shareForm.exportPath}
-              onChange={(e) => setShareForm((prev) => ({ ...prev, exportPath: e.target.value }))}
-              placeholder="/exports/media"
-              className="font-mono"
+            <DirectoryBrowser
+              title="Navigateur de dossiers export (live)"
+              description="Explorez le serveur NFS en direct, sans saisir les chemins à la main."
+              currentPath={exportBrowsePath}
+              selectedPath={shareForm.exportPath}
+              directories={exportDirectories}
+              loading={directoryLoading.export}
+              disabled={!shareForm.exportNodeId}
+              onBrowse={(path) => void loadLiveDirectories('export', shareForm.exportNodeId, path)}
+              onSelect={(path) => setShareForm((prev) => ({ ...prev, exportPath: path }))}
             />
-            <p className="mt-1 text-xs text-muted-foreground">
-              Ce chemin sera exposé via NFS sur l'IP VLAN du serveur
-            </p>
           </div>
         </div>
       ),
@@ -454,7 +532,13 @@ export default function MountsPage() {
                     vlanIp={nodeVlanIps[node.id]}
                     selected={shareForm.mountNodeId === node.id}
                     disabled={node.status === 'offline'}
-                    onClick={() => setShareForm((prev) => ({ ...prev, mountNodeId: node.id }))}
+                    onClick={() =>
+                      setShareForm((prev) => ({
+                        ...prev,
+                        mountNodeId: node.id,
+                        mountPath: '/mnt/nfs',
+                      }))
+                    }
                   />
                 ))}
             </div>
@@ -465,11 +549,16 @@ export default function MountsPage() {
               Point de montage local
               <HelpText text="Dossier local sur le serveur client où le partage sera accessible." />
             </Label>
-            <Input
-              value={shareForm.mountPath}
-              onChange={(e) => setShareForm((prev) => ({ ...prev, mountPath: e.target.value }))}
-              placeholder="/mnt/media"
-              className="font-mono"
+            <DirectoryBrowser
+              title="Navigateur dossier client (live)"
+              description="Choisissez où monter le partage sur le serveur client."
+              currentPath={clientBrowsePath}
+              selectedPath={shareForm.mountPath}
+              directories={clientDirectories}
+              loading={directoryLoading.client}
+              disabled={!shareForm.mountNodeId}
+              onBrowse={(path) => void loadLiveDirectories('client', shareForm.mountNodeId, path)}
+              onSelect={(path) => setShareForm((prev) => ({ ...prev, mountPath: path }))}
             />
           </div>
 
@@ -643,11 +732,16 @@ export default function MountsPage() {
               Point de montage local
               <HelpText text="Où monter le partage sur le serveur destination" />
             </Label>
-            <Input
-              value={mountForm.targetPath}
-              onChange={(e) => setMountForm((prev) => ({ ...prev, targetPath: e.target.value }))}
-              placeholder="/mnt/backup"
-              className="font-mono"
+            <DirectoryBrowser
+              title="Navigateur dossier de montage (live)"
+              description="Navigation dynamique sur le serveur client pour éviter la saisie manuelle."
+              currentPath={existingBrowsePath}
+              selectedPath={mountForm.targetPath}
+              directories={existingMountDirectories}
+              loading={directoryLoading.existing}
+              disabled={!mountForm.nodeId}
+              onBrowse={(path) => void loadLiveDirectories('existing', mountForm.nodeId, path)}
+              onSelect={(path) => setMountForm((prev) => ({ ...prev, targetPath: path }))}
             />
           </div>
 
@@ -658,7 +752,9 @@ export default function MountsPage() {
             </Label>
             <Select
               value={mountForm.nodeId}
-              onValueChange={(v) => setMountForm((prev) => ({ ...prev, nodeId: v }))}
+              onValueChange={(v) =>
+                setMountForm((prev) => ({ ...prev, nodeId: v, targetPath: '/mnt' }))
+              }
             >
               <SelectTrigger className="h-10">
                 <SelectValue placeholder="Choisir un serveur" />
@@ -736,7 +832,7 @@ export default function MountsPage() {
             ))}
           </div>
           <InfoBox type="info" title="Prêt à continuer ?">
-            L'opération prendra quelques secondes. Vous pourrez suivre le statut dans la liste des montages.
+            Le montage est persisté automatiquement dans <code>/etc/fstab</code> avec reprise auto au redémarrage.
           </InfoBox>
         </div>
       ),
@@ -793,6 +889,7 @@ export default function MountsPage() {
           <p className="text-sm text-zinc-300">
             <span className="font-medium text-violet-300">Nouveau partage NFS</span> crée et monte un dossier partagé entre deux serveurs via le réseau VLAN en un seul clic.
             <span className="text-zinc-400"> Monter un partage</span> permet de connecter un partage NFS existant.
+            <span className="text-violet-200"> Tous les montages NFS sont rendus persistants automatiquement.</span>
           </p>
         </div>
 
