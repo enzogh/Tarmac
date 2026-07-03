@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  GatewayTimeoutException,
+  Injectable,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
@@ -30,6 +36,19 @@ export class MigrationsService {
     private readonly agentsService: AgentsService,
     private readonly auditLogsService: AuditLogsService,
   ) {}
+
+  private rethrowDirectoryRequestError(error: unknown, fallbackMessage: string): never {
+    const message = error instanceof Error ? error.message.trim() : fallbackMessage;
+    const normalized = message.toLowerCase();
+
+    if (normalized.includes('timeout')) {
+      throw new GatewayTimeoutException(message || fallbackMessage);
+    }
+    if (normalized.includes('offline') || normalized.includes('disconnected')) {
+      throw new ServiceUnavailableException(message || fallbackMessage);
+    }
+    throw new BadRequestException(message || fallbackMessage);
+  }
 
   private parseNotesMetadata(value?: string | null, includeSecrets = false): MigrationNotesMetadata {
     if (!value) return {};
@@ -189,24 +208,36 @@ export class MigrationsService {
   }
 
   async listDirectories(nodeId: string, basePath = '/') {
-    return this.agentsService.requestDirectories(nodeId, basePath);
+    try {
+      return await this.agentsService.requestDirectories(nodeId, basePath);
+    } catch (error) {
+      this.rethrowDirectoryRequestError(error, 'Unable to list directories from the selected node');
+    }
   }
 
   async scanDirectories(nodeId: string, basePath = '/', maxEntries = 20) {
-    return this.agentsService.requestDirectoryScan(nodeId, basePath, maxEntries);
+    try {
+      return await this.agentsService.requestDirectoryScan(nodeId, basePath, maxEntries);
+    } catch (error) {
+      this.rethrowDirectoryRequestError(error, 'Unable to scan directories from the selected node');
+    }
   }
 
   async listRemoteDirectories(
     nodeId: string,
     payload: { host: string; username: string; password?: string; port?: number; basePath?: string },
   ) {
-    return this.agentsService.requestRemoteDirectories(nodeId, {
-      host: payload.host,
-      username: payload.username,
-      password: payload.password,
-      port: payload.port,
-      basePath: payload.basePath,
-    });
+    try {
+      return await this.agentsService.requestRemoteDirectories(nodeId, {
+        host: payload.host,
+        username: payload.username,
+        password: payload.password,
+        port: payload.port,
+        basePath: payload.basePath,
+      });
+    } catch (error) {
+      this.rethrowDirectoryRequestError(error, 'Unable to list directories from the selected remote endpoint');
+    }
   }
 
   async start(id: string, actorUserId?: string) {

@@ -183,7 +183,7 @@ export default function MigrationsPage() {
         setTargetBrowsePath(payload.basePath);
         setTargetDirectories(sorted);
       }
-    } catch {
+    } catch (error) {
       if (kind === 'source') {
         setSourceDirectories([]);
       } else {
@@ -191,7 +191,10 @@ export default function MigrationsPage() {
       }
       setNotice({
         type: 'error',
-        message: "Impossible de charger les dossiers en direct depuis l'endpoint sélectionné.",
+        message:
+          error instanceof Error && error.message
+            ? error.message
+            : "Impossible de charger les dossiers en direct depuis l'endpoint sélectionné.",
       });
     } finally {
       setDirectoriesLoading((prev) => ({ ...prev, [kind]: false }));

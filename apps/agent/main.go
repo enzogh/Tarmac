@@ -1518,6 +1518,13 @@ func listRemoteDirectories(payload map[string]interface{}) (directoryListData, e
 	if port <= 0 || port > 65535 {
 		port = 22
 	}
+	timeoutMs := readInt(payload, "timeoutMs", 12000)
+	if timeoutMs < 1000 {
+		timeoutMs = 1000
+	}
+	if timeoutMs > 30000 {
+		timeoutMs = 30000
+	}
 
 	sshArgs := []string{
 		"-p", strconv.Itoa(port),
@@ -1529,11 +1536,13 @@ func listRemoteDirectories(payload map[string]interface{}) (directoryListData, e
 	}
 
 	var cmd *exec.Cmd
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
+	defer cancel()
 	if password != "" {
 		if !commandExists("sshpass") {
 			return directoryListData{}, errors.New("sshpass not found on agent")
 		}
-		cmd = exec.Command("sshpass", append([]string{"-p", password, "ssh"}, sshArgs...)...)
+		cmd = exec.CommandContext(ctx, "sshpass", append([]string{"-p", password, "ssh"}, sshArgs...)...)
 	} else {
 		sshKeyPath := envOrDefault("AGENT_SSH_PRIVATE_KEY_PATH", "/var/lib/tarmac-agent/ssh/id_ed25519")
 		sshArgs = append([]string{
@@ -1543,11 +1552,18 @@ func listRemoteDirectories(payload map[string]interface{}) (directoryListData, e
 			"-o", "PasswordAuthentication=no",
 			"-o", "PreferredAuthentications=publickey",
 		}, sshArgs...)
-		cmd = exec.Command("ssh", sshArgs...)
+		cmd = exec.CommandContext(ctx, "ssh", sshArgs...)
 	}
 
-	output, err := cmd.Output()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return directoryListData{}, errors.New("remote directory listing timeout")
+		}
+		details := strings.TrimSpace(string(output))
+		if details != "" {
+			return directoryListData{}, fmt.Errorf("cannot list remote directories: %s", details)
+		}
 		return directoryListData{}, fmt.Errorf("cannot list remote directories: %w", err)
 	}
 
