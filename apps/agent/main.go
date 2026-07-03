@@ -1491,19 +1491,10 @@ func listDirectories(payload map[string]interface{}) (directoryListData, error) 
 		return directoryListData{}, errors.New("basePath must be absolute")
 	}
 
-	entries, err := os.ReadDir(basePath)
+	directories, err := listBrowsableDirectories(basePath)
 	if err != nil {
-		return directoryListData{}, fmt.Errorf("cannot read %s: %w", basePath, err)
+		return directoryListData{}, err
 	}
-
-	directories := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		directories = append(directories, filepath.Clean(filepath.Join(basePath, entry.Name())))
-	}
-	sort.Strings(directories)
 	if len(directories) > 500 {
 		directories = directories[:500]
 	}
@@ -1532,19 +1523,10 @@ func scanDirectorySizes(payload map[string]interface{}) (directoryScanData, erro
 		maxEntries = 100
 	}
 
-	entries, err := os.ReadDir(basePath)
+	directories, err := listBrowsableDirectories(basePath)
 	if err != nil {
-		return directoryScanData{}, fmt.Errorf("cannot read %s: %w", basePath, err)
+		return directoryScanData{}, err
 	}
-
-	directories := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		directories = append(directories, filepath.Clean(filepath.Join(basePath, entry.Name())))
-	}
-	sort.Strings(directories)
 
 	const scanInputLimit = 120
 	truncated := false
@@ -1655,6 +1637,36 @@ func scanDirectorySizes(payload map[string]interface{}) (directoryScanData, erro
 		Entries:   bySize,
 		Truncated: truncated,
 	}, nil
+}
+
+func listBrowsableDirectories(basePath string) ([]string, error) {
+	entries, err := os.ReadDir(basePath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read %s: %w", basePath, err)
+	}
+
+	directories := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		entryPath := filepath.Clean(filepath.Join(basePath, entry.Name()))
+		if entry.IsDir() {
+			directories = append(directories, entryPath)
+			continue
+		}
+
+		entryType := entry.Type()
+		if entryType != 0 && entryType&os.ModeSymlink == 0 {
+			continue
+		}
+
+		info, statErr := os.Stat(entryPath)
+		if statErr != nil || !info.IsDir() {
+			continue
+		}
+		directories = append(directories, entryPath)
+	}
+
+	sort.Strings(directories)
+	return directories, nil
 }
 
 func splitByCRLF(data []byte, atEOF bool) (advance int, token []byte, err error) {

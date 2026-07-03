@@ -84,7 +84,11 @@ export default function OverviewPage() {
   const nodesOnline = activities.filter((node) => node.status === 'online').length;
   const alertsCritical = alerts.filter((a) => a.severity === 'critical').length;
   const alertsWarning = alerts.filter((a) => a.severity === 'high').length;
-  const migrationsActive = migrations.filter((m) => m.status === 'running').length;
+  const activeMigrations = migrations.filter(
+    (migration) =>
+      (migration.status === 'pending' || migration.status === 'running') && migration.progress < 100,
+  );
+  const migrationsActive = activeMigrations.length;
   const averageCpu =
     activities.length > 0 ? activities.reduce((acc, node) => acc + node.metrics.cpu, 0) / activities.length : 0;
   const averageRam =
@@ -96,27 +100,6 @@ export default function OverviewPage() {
   return (
     <DashboardLayout>
       <div className="space-y-8">
-        <section className="relative overflow-hidden rounded-3xl border border-violet-500/20 bg-radial-premium p-6 shadow-panel lg:p-8">
-          <div className="pointer-events-none absolute -right-12 -top-16 h-56 w-56 rounded-full bg-violet-500/20 blur-3xl" />
-          <div className="relative space-y-3">
-            <h1 className="text-3xl font-semibold tracking-tight text-foreground">Command Center</h1>
-            <p className="max-w-3xl text-sm text-zinc-300">
-              Vue synthétique orientée opérations: capacité, incidents, performance nœuds, trafic et migrations en cours.
-            </p>
-            <div className="flex flex-wrap items-center gap-3 text-xs">
-              <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-emerald-200">
-                Auto-refresh 5s
-              </span>
-              <span className="rounded-full border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-violet-200">
-                Theme premium shadcn
-              </span>
-              <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-3 py-1 text-sky-200">
-                CPU/RAM en %
-              </span>
-            </div>
-          </div>
-        </section>
-
         <Card className="border-violet-500/20 bg-violet-500/[0.07]">
           <CardContent className="flex items-start gap-3 p-4">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-violet-300" />
@@ -294,7 +277,7 @@ export default function OverviewPage() {
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            {migrations.slice(0, 5).map((migration) => (
+            {activeMigrations.slice(0, 5).map((migration) => (
               <div key={migration.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
                 <div className="mb-2 flex items-center justify-between">
                   <p className="text-sm font-medium text-foreground">{migration.name}</p>
@@ -306,7 +289,9 @@ export default function OverviewPage() {
                 />
               </div>
             ))}
-            {migrations.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">Aucune migration</p>}
+            {activeMigrations.length === 0 && (
+              <p className="py-4 text-center text-sm text-muted-foreground">Aucune migration</p>
+            )}
           </CardContent>
         </Card>
       </div>
