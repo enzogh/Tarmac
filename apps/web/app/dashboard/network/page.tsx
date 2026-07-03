@@ -12,6 +12,7 @@ import {
   RadioTower,
   RefreshCw,
   Waves,
+  Zap,
 } from 'lucide-react';
 import { api, VlanConnection, VlanConnectionTest, VlanStatus } from '@/lib/api';
 import { DashboardLayout } from '@/components/DashboardLayout';
@@ -19,14 +20,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import {
   Select,
   SelectContent,
@@ -48,12 +41,14 @@ type GraphNode = {
 };
 
 type GraphLink = {
+  key: string;
   sourceNodeId: string;
   targetNodeId: string;
   status: LinkStatus;
   latencyMs?: number | null;
   packetLoss?: number | null;
   bandwidth?: number | null;
+  trafficScore: number;
 };
 
 const TEST_OPTIONS: Array<{ value: TestType; label: string }> = [
@@ -107,6 +102,26 @@ const nodeFill = (status: GraphNode['status']) => {
   return '#f43f5e';
 };
 
+const linkPulseDuration = (latencyMs?: number | null) => {
+  if (typeof latencyMs !== 'number' || latencyMs <= 0) return '3s';
+  const clamped = Math.max(900, Math.min(5000, latencyMs * 18));
+  return `${Math.round(clamped)}ms`;
+};
+
+const linkGlow = (status: LinkStatus) => {
+  if (status === 'healthy') return 'drop-shadow(0 0 9px rgba(16,185,129,0.6))';
+  if (status === 'degraded') return 'drop-shadow(0 0 9px rgba(245,158,11,0.55))';
+  if (status === 'offline') return 'drop-shadow(0 0 9px rgba(244,63,94,0.5))';
+  return 'drop-shadow(0 0 7px rgba(161,161,170,0.45))';
+};
+
+const matrixCellTone = (status?: VlanConnection['status']) => {
+  if (status === 'healthy') return 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100';
+  if (status === 'degraded') return 'border-amber-400/30 bg-amber-500/10 text-amber-100';
+  if (status === 'offline') return 'border-rose-400/30 bg-rose-500/10 text-rose-100';
+  return 'border-white/10 bg-zinc-900/60 text-zinc-400';
+};
+
 export default function NetworkPage() {
   const token = useMemo(
     () => (typeof window !== 'undefined' ? localStorage.getItem('tarmac_token') : null),
@@ -122,6 +137,7 @@ export default function NetworkPage() {
   const inFlightRef = useRef(false);
   const [testRunning, setTestRunning] = useState(false);
   const [notice, setNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
+  const [selectedLinkKey, setSelectedLinkKey] = useState<string | null>(null);
   const [selectedTest, setSelectedTest] = useState<{
     from?: string;
     to?: string;
@@ -202,12 +218,16 @@ export default function NetworkPage() {
       const previous = bestByPair.get(pair);
       if (!previous || STATUS_PRIORITY[connection.status] > STATUS_PRIORITY[previous.status]) {
         bestByPair.set(pair, {
+          key: pair,
           sourceNodeId: connection.sourceNodeId,
           targetNodeId: connection.targetNodeId,
           status: connection.status,
           latencyMs: connection.latencyMs,
           packetLoss: connection.packetLoss,
           bandwidth: connection.bandwidth,
+          trafficScore:
+            (typeof connection.bandwidth === 'number' ? Math.max(connection.bandwidth, 0) : 0) +
+            (typeof connection.latencyMs === 'number' ? Math.max(150 - connection.latencyMs, 0) : 0),
         });
       }
     }
@@ -226,6 +246,17 @@ export default function NetworkPage() {
   const memberByNodeId = useMemo(
     () => new Map((vlanStatus?.vlan.members || []).map((member) => [member.nodeId, member])),
     [vlanStatus],
+  );
+  const topTrafficLinks = useMemo(
+    () =>
+      [...graph.links]
+        .sort((a, b) => b.trafficScore - a.trafficScore)
+        .slice(0, 5),
+    [graph.links],
+  );
+  const selectedLink = useMemo(
+    () => graph.links.find((link) => link.key === selectedLinkKey) ?? null,
+    [graph.links, selectedLinkKey],
   );
 
   const handleRunTest = async () => {
@@ -348,111 +379,214 @@ export default function NetworkPage() {
         </Card>
       </div>
 
-      <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
-        <CardHeader>
-          <CardTitle className="text-base">Vue interconnexion (mind map)</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-4">
-            <svg viewBox="0 0 1000 520" className="h-[420px] w-full">
-              {graph.links.map((link) => {
-                const source = nodeById.get(link.sourceNodeId);
-                const target = nodeById.get(link.targetNodeId);
-                if (!source || !target) return null;
-                return (
-                  <g key={`${link.sourceNodeId}-${link.targetNodeId}`}>
-                    <line
-                      x1={source.x}
-                      y1={source.y}
-                      x2={target.x}
-                      y2={target.y}
-                      stroke={linkStroke(link.status)}
-                      strokeWidth={link.status === 'offline' ? 2 : 3}
-                      strokeDasharray={link.status === 'offline' ? '6 6' : undefined}
-                    />
-                    <title>
-                      {source.label} ↔ {target.label} · {getConnectionLabel(link.status)} ·{' '}
-                      {source.vlanIp} ↔ {target.vlanIp} ·{' '}
-                      {formatLatency(link.latencyMs)} · {formatLoss(link.packetLoss)} ·{' '}
-                      {formatBandwidth(link.bandwidth)}
-                    </title>
+      <div className="grid gap-4 xl:grid-cols-[1.6fr_minmax(0,1fr)]">
+        <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+          <CardHeader>
+            <CardTitle className="text-base">Vue interconnexion (mind map live)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-4">
+              <svg viewBox="0 0 1000 520" className="h-[420px] w-full">
+                {graph.links.map((link) => {
+                  const source = nodeById.get(link.sourceNodeId);
+                  const target = nodeById.get(link.targetNodeId);
+                  if (!source || !target) return null;
+
+                  const isSelected = selectedLinkKey === link.key;
+                  return (
+                    <g key={link.key} onClick={() => setSelectedLinkKey(link.key)} className="cursor-pointer">
+                      <line
+                        x1={source.x}
+                        y1={source.y}
+                        x2={target.x}
+                        y2={target.y}
+                        stroke={linkStroke(link.status)}
+                        strokeWidth={isSelected ? 4 : link.status === 'offline' ? 2 : 3}
+                        strokeDasharray={link.status === 'offline' ? '6 6' : undefined}
+                        style={{ filter: linkGlow(link.status) }}
+                      />
+                      {link.status !== 'offline' && (
+                        <circle r={isSelected ? 5 : 4} fill={linkStroke(link.status)}>
+                          <animateMotion dur={linkPulseDuration(link.latencyMs)} repeatCount="indefinite" rotate="auto">
+                            <mpath href={`#path-${link.key}`} />
+                          </animateMotion>
+                        </circle>
+                      )}
+                      <path
+                        id={`path-${link.key}`}
+                        d={`M ${source.x} ${source.y} L ${target.x} ${target.y}`}
+                        fill="none"
+                        stroke="none"
+                      />
+                      <title>
+                        {source.label} ↔ {target.label} · {getConnectionLabel(link.status)} ·{' '}
+                        {source.vlanIp} ↔ {target.vlanIp} ·{' '}
+                        {formatLatency(link.latencyMs)} · {formatLoss(link.packetLoss)} ·{' '}
+                        {formatBandwidth(link.bandwidth)}
+                      </title>
+                    </g>
+                  );
+                })}
+
+                {graph.nodes.map((node) => (
+                  <g key={node.id}>
+                    <circle cx={node.x} cy={node.y} r={26} fill="rgba(9,9,11,0.95)" stroke={nodeFill(node.status)} strokeWidth={2.5} />
+                    <circle cx={node.x} cy={node.y} r={10} fill={nodeFill(node.status)} />
+                    <text
+                      x={node.x}
+                      y={node.y + 48}
+                      textAnchor="middle"
+                      fill="rgba(244,244,245,0.94)"
+                      fontSize={13}
+                      fontFamily="ui-sans-serif, system-ui, sans-serif"
+                    >
+                      {node.label}
+                    </text>
+                    <text
+                      x={node.x}
+                      y={node.y + 65}
+                      textAnchor="middle"
+                      fill="rgba(161,161,170,0.95)"
+                      fontSize={11}
+                      fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+                    >
+                      {node.vlanIp}
+                    </text>
                   </g>
-                );
-              })}
+                ))}
+              </svg>
+            </div>
+          </CardContent>
+        </Card>
 
-              {graph.nodes.map((node) => (
-                <g key={node.id}>
-                  <circle cx={node.x} cy={node.y} r={26} fill="rgba(9,9,11,0.95)" stroke={nodeFill(node.status)} strokeWidth={2.5} />
-                  <circle cx={node.x} cy={node.y} r={10} fill={nodeFill(node.status)} />
-                  <text
-                    x={node.x}
-                    y={node.y + 48}
-                    textAnchor="middle"
-                    fill="rgba(244,244,245,0.94)"
-                    fontSize={13}
-                    fontFamily="ui-sans-serif, system-ui, sans-serif"
-                  >
-                    {node.label}
-                  </text>
-                  <text
-                    x={node.x}
-                    y={node.y + 65}
-                    textAnchor="middle"
-                    fill="rgba(161,161,170,0.95)"
-                    fontSize={11}
-                    fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-                  >
-                    {node.vlanIp}
-                  </text>
-                </g>
-              ))}
-            </svg>
-          </div>
-        </CardContent>
-      </Card>
+        <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+          <CardHeader>
+            <CardTitle className="text-base">Flux actifs</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {(selectedLink ? [selectedLink] : topTrafficLinks).map((link) => {
+              const source = nodeById.get(link.sourceNodeId);
+              const target = nodeById.get(link.targetNodeId);
+              if (!source || !target) return null;
+              return (
+                <div
+                  key={`${link.key}-card`}
+                  className="rounded-xl border border-white/[0.08] bg-zinc-950/60 p-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-medium text-zinc-100">
+                      {source.label} → {target.label}
+                    </p>
+                    <Badge variant={getConnectionBadgeVariant(link.status)}>{getConnectionLabel(link.status)}</Badge>
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+                    <div className="rounded-lg border border-white/[0.07] bg-black/25 px-2 py-1.5">
+                      <p className="text-[10px] text-muted-foreground">Latence</p>
+                      <p className="font-mono">{formatLatency(link.latencyMs)}</p>
+                    </div>
+                    <div className="rounded-lg border border-white/[0.07] bg-black/25 px-2 py-1.5">
+                      <p className="text-[10px] text-muted-foreground">Loss</p>
+                      <p className="font-mono">{formatLoss(link.packetLoss)}</p>
+                    </div>
+                    <div className="rounded-lg border border-white/[0.07] bg-black/25 px-2 py-1.5">
+                      <p className="text-[10px] text-muted-foreground">Débit</p>
+                      <p className="font-mono">{formatBandwidth(link.bandwidth)}</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {!selectedLink && topTrafficLinks.length === 0 && (
+              <p className="text-xs text-muted-foreground">Aucun flux détecté.</p>
+            )}
+            {selectedLink && (
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => setSelectedLinkKey(null)}
+              >
+                Revenir au top flux
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
         <CardHeader>
-          <CardTitle className="text-base">Matrice de connexion</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Zap className="h-4 w-4 text-violet-300" />
+            Matrice de connexion (vue grille)
+          </CardTitle>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>IP VLAN source</TableHead>
-                <TableHead>IP VLAN cible</TableHead>
-                <TableHead className="text-center">Statut</TableHead>
-                <TableHead className="text-right">Latence</TableHead>
-                <TableHead className="text-right">Loss</TableHead>
-                <TableHead className="text-right">Débit sortant</TableHead>
-                <TableHead className="text-right">Débit entrant</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {connections.map((conn) => {
-                const reverse = connectionByDirection.get(`${conn.targetNodeId}__${conn.sourceNodeId}`);
-                return (
-                  <TableRow key={conn.id}>
-                    <TableCell className="max-w-[280px] truncate font-mono text-xs">
-                      <div>{conn.sourceNode?.vlanIp || '—'}</div>
-                      <div className="text-[10px] text-muted-foreground">{conn.sourceNodeId.slice(0, 8)}</div>
-                    </TableCell>
-                    <TableCell className="max-w-[280px] truncate font-mono text-xs">
-                      <div>{conn.targetNode?.vlanIp || '—'}</div>
-                      <div className="text-[10px] text-muted-foreground">{conn.targetNodeId.slice(0, 8)}</div>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <Badge variant={getConnectionBadgeVariant(conn.status)}>{getConnectionLabel(conn.status)}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-xs">{formatLatency(conn.latencyMs)}</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{formatLoss(conn.packetLoss)}</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{formatBandwidth(conn.bandwidth)}</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{formatBandwidth(reverse?.bandwidth)}</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+          <div className="overflow-auto rounded-xl border border-white/[0.08] bg-zinc-950/45 p-3">
+            <div
+              className="grid min-w-[760px] gap-2"
+              style={{ gridTemplateColumns: `220px repeat(${graph.nodes.length}, minmax(128px, 1fr))` }}
+            >
+              <div className="sticky left-0 z-10 rounded-lg border border-white/[0.08] bg-zinc-900/95 px-3 py-2 text-xs font-medium text-muted-foreground">
+                Source \ Cible
+              </div>
+              {graph.nodes.map((col) => (
+                <div
+                  key={`col-${col.id}`}
+                  className="rounded-lg border border-white/[0.08] bg-zinc-900/85 px-3 py-2 text-xs"
+                >
+                  <p className="truncate font-medium text-zinc-100">{col.label}</p>
+                  <p className="truncate font-mono text-[10px] text-zinc-400">{col.vlanIp}</p>
+                </div>
+              ))}
+
+              {graph.nodes.map((row) => (
+                <div key={`row-${row.id}`} className="contents">
+                  <div className="sticky left-0 z-10 rounded-lg border border-white/[0.08] bg-zinc-900/95 px-3 py-2 text-xs">
+                    <p className="truncate font-medium text-zinc-100">{row.label}</p>
+                    <p className="truncate font-mono text-[10px] text-zinc-400">{row.vlanIp}</p>
+                  </div>
+                  {graph.nodes.map((col) => {
+                    if (row.id === col.id) {
+                      return (
+                        <div
+                          key={`cell-${row.id}-${col.id}`}
+                          className="rounded-lg border border-dashed border-white/10 bg-zinc-900/40 px-3 py-2 text-center text-[10px] text-zinc-500"
+                        >
+                          same node
+                        </div>
+                      );
+                    }
+
+                    const direct =
+                      connectionByDirection.get(`${row.id}__${col.id}`) ??
+                      connectionByDirection.get(`${col.id}__${row.id}`);
+
+                    return (
+                      <button
+                        key={`cell-${row.id}-${col.id}`}
+                        type="button"
+                        onClick={() =>
+                          setSelectedLinkKey(
+                            [row.id, col.id].sort().join('__'),
+                          )
+                        }
+                        className={`rounded-lg border px-2 py-2 text-left transition hover:border-violet-400/40 ${matrixCellTone(
+                          direct?.status,
+                        )}`}
+                      >
+                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          {direct ? getConnectionLabel(direct.status) : 'No link'}
+                        </p>
+                        <p className="font-mono text-[11px]">{formatLatency(direct?.latencyMs)}</p>
+                        <p className="font-mono text-[10px] text-zinc-400">
+                          {formatLoss(direct?.packetLoss)} · {formatBandwidth(direct?.bandwidth)}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
         </CardContent>
       </Card>
 

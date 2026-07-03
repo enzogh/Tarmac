@@ -2,7 +2,19 @@
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Server, Plus, Pencil, Trash2, Info, Layers3, Cpu, ArrowDownToLine, ArrowUpToLine, HardDrive } from 'lucide-react';
+import {
+  Server,
+  Plus,
+  Pencil,
+  Trash2,
+  Info,
+  Layers3,
+  Cpu,
+  ArrowDownToLine,
+  ArrowUpToLine,
+  HardDrive,
+  RefreshCcw,
+} from 'lucide-react';
 import { api, NodeActivityItem, NodeMetricSample, PoolItem } from '../../../lib/api';
 import { DashboardLayout } from '../../../components/DashboardLayout';
 import { ServerTrendCard } from '../../../components/ServerTrendCard';
@@ -53,6 +65,8 @@ export default function InfrastructurePage() {
   const [editRole, setEditRole] = useState('');
   const [editLoading, setEditLoading] = useState(false);
   const [nodeToDelete, setNodeToDelete] = useState<NodeActivityItem | null>(null);
+  const [updatingNodeId, setUpdatingNodeId] = useState<string | null>(null);
+  const [updateNotice, setUpdateNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
 
   const load = async () => {
     if (!token) return;
@@ -119,6 +133,32 @@ export default function InfrastructurePage() {
     }
   };
 
+  const triggerAgentUpdate = async (node: NodeActivityItem) => {
+    if (!token) return;
+    setUpdatingNodeId(node.id);
+    try {
+      const result = await api.agents.update(token, node.id);
+      if (!result.queued) {
+        setUpdateNotice({
+          type: 'error',
+          message: `Impossible de mettre à jour ${node.name}: agent hors ligne.`,
+        });
+        return;
+      }
+      setUpdateNotice({
+        type: 'success',
+        message: `Mise à jour de ${node.name} lancée (recompile + restart du service).`,
+      });
+    } catch {
+      setUpdateNotice({
+        type: 'error',
+        message: `Échec du lancement de la mise à jour pour ${node.name}.`,
+      });
+    } finally {
+      setUpdatingNodeId(null);
+    }
+  };
+
   return (
     <DashboardLayout>
       <div className="space-y-8">
@@ -137,6 +177,17 @@ export default function InfrastructurePage() {
             agrégés à partir du dernier heartbeat et du dernier état de stockage reçu.
           </p>
         </div>
+        {updateNotice && (
+          <div
+            className={`rounded-xl border px-4 py-3 text-sm ${
+              updateNotice.type === 'error'
+                ? 'border-rose-500/30 bg-rose-500/10 text-rose-200'
+                : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+            }`}
+          >
+            {updateNotice.message}
+          </div>
+        )}
 
         <Card>
           <CardHeader>
@@ -232,6 +283,26 @@ export default function InfrastructurePage() {
                             <Button
                               variant="ghost"
                               size="icon"
+                              onClick={() => void triggerAgentUpdate(node)}
+                              disabled={node.status !== 'online' || updatingNodeId === node.id}
+                              className="h-8 w-8 text-muted-foreground hover:text-emerald-400 disabled:opacity-50"
+                            >
+                              <RefreshCcw
+                                className={`h-3.5 w-3.5 ${updatingNodeId === node.id ? 'animate-spin' : ''}`}
+                              />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {node.status === 'online'
+                              ? 'Mettre à jour l’agent (recompile + redémarrage service)'
+                              : 'Agent hors ligne'}
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
                               onClick={() => openEditModal(node)}
                               className="h-8 w-8 text-muted-foreground hover:text-foreground"
                             >
@@ -259,7 +330,7 @@ export default function InfrastructurePage() {
                 ))}
                 {nodes.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
+                    <TableCell colSpan={10} className="py-8 text-center text-muted-foreground">
                       Aucun nœud enregistré. Cliquez sur «&nbsp;Onboarder un nœud&nbsp;» pour commencer.
                     </TableCell>
                   </TableRow>

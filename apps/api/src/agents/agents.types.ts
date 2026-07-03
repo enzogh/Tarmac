@@ -56,7 +56,8 @@ export interface CommandPayload {
     | 'command.stop_rsync'
     | 'command.apply_overlay'
     | 'command.list_directories'
-    | 'command.apply_ssh_authorized_keys';
+    | 'command.apply_ssh_authorized_keys'
+    | 'command.update_agent';
   payload: Record<string, unknown>;
 }
 
@@ -69,8 +70,17 @@ export interface CommandResultPayload {
     | 'stop_rsync'
     | 'apply_overlay'
     | 'list_directories'
-    | 'apply_ssh_authorized_keys';
-  resourceType: 'share' | 'mount' | 'pool_member' | 'sync_job_run' | 'overlay' | 'directory_list' | 'migration';
+    | 'apply_ssh_authorized_keys'
+    | 'update_agent';
+  resourceType:
+    | 'share'
+    | 'mount'
+    | 'pool_member'
+    | 'sync_job_run'
+    | 'overlay'
+    | 'directory_list'
+    | 'migration'
+    | 'agent';
   resourceId: string;
   success: boolean;
   message?: string;
