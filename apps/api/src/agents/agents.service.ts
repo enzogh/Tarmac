@@ -115,6 +115,8 @@ export class AgentsService implements OnModuleInit {
           overlayPublicKey: overlay?.publicKey,
           overlayEndpoint: overlay?.endpoint,
           overlayListenPort: overlay?.listenPort,
+          overlaySshPublicKey: overlay?.sshPublicKey,
+          overlaySshUser: overlay?.sshUser,
         },
       })
       .catch(async () => {
@@ -129,6 +131,8 @@ export class AgentsService implements OnModuleInit {
             overlayPublicKey: overlay?.publicKey,
             overlayEndpoint: overlay?.endpoint,
             overlayListenPort: overlay?.listenPort,
+            overlaySshPublicKey: overlay?.sshPublicKey,
+            overlaySshUser: overlay?.sshUser,
           },
         });
         
@@ -354,6 +358,48 @@ export class AgentsService implements OnModuleInit {
     });
   }
 
+  async handleAgentUninstall(nodeId: string) {
+    const memberships = await this.prisma.vlanMember.findMany({
+      where: { nodeId },
+      select: { vlanId: true },
+    });
+    const affectedVlanIds = Array.from(new Set(memberships.map((m) => m.vlanId)));
+
+    await this.prisma.$transaction([
+      this.prisma.vlanConnection.deleteMany({
+        where: {
+          OR: [{ sourceNodeId: nodeId }, { targetNodeId: nodeId }],
+        },
+      }),
+      this.prisma.vlanMember.deleteMany({ where: { nodeId } }),
+      this.prisma.node.updateMany({
+        where: { id: nodeId },
+        data: {
+          status: 'offline',
+          overlayPublicKey: null,
+          overlayEndpoint: null,
+          overlayListenPort: null,
+          overlaySshPublicKey: null,
+          overlaySshUser: null,
+          vlanIp: null,
+          vlanMac: null,
+        },
+      }),
+    ]);
+
+    this.unregister(nodeId);
+
+    for (const vlanId of affectedVlanIds) {
+      const members = await this.prisma.vlanMember.findMany({
+        where: { vlanId },
+        select: { nodeId: true },
+      });
+      for (const member of members) {
+        await this.reconcileOverlayForNode(member.nodeId);
+      }
+    }
+  }
+
   private async reconcileOverlayForNode(nodeId: string) {
     try {
       const membership = await this.prisma.vlanMember.findFirst({
@@ -385,6 +431,9 @@ export class AgentsService implements OnModuleInit {
             allowedIps: [`${candidate.node.vlanIp}/32`],
             persistentKeepalive: 25,
           }));
+        const authorizedKeys = members
+          .filter((candidate) => candidate.nodeId !== member.nodeId && Boolean(candidate.node.overlaySshPublicKey))
+          .map((candidate) => candidate.node.overlaySshPublicKey as string);
 
         const command: CommandPayload = {
           type: 'command.apply_overlay',
@@ -397,6 +446,15 @@ export class AgentsService implements OnModuleInit {
         };
 
         this.sendCommand(member.nodeId, command);
+        if (authorizedKeys.length > 0) {
+          this.sendCommand(member.nodeId, {
+            type: 'command.apply_ssh_authorized_keys',
+            payload: {
+              user: member.node.overlaySshUser ?? 'root',
+              authorizedKeys,
+            },
+          });
+        }
       }
     } catch (error) {
       this.logger.warn(`Failed to reconcile overlay for node ${nodeId}:`, error);

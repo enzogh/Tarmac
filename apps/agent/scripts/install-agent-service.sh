@@ -6,6 +6,7 @@ CONTROL_PLANE_WS=""
 AGENT_TOKEN=""
 AGENT_REF="main"
 REPO_URL="https://github.com/enzogh/Tarmac.git"
+SSH_USER=""
 INSTALL_DIR="/opt/tarmac-agent-build"
 SERVICE_FILE="/etc/systemd/system/tarmac-agent.service"
 ENV_FILE="/etc/tarmac-agent.env"
@@ -18,6 +19,7 @@ Usage:
     --node-id <node-id> \
     --control-plane-ws <ws-url> \
     --agent-token <shared-token> \
+    [--ssh-user <ssh-user>] \
     [--agent-ref <git-ref>] \
     [--repo-url <git-url>]
 
@@ -41,6 +43,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --agent-token)
       AGENT_TOKEN="${2:-}"
+      shift 2
+      ;;
+    --ssh-user)
+      SSH_USER="${2:-}"
       shift 2
       ;;
     --agent-ref)
@@ -67,6 +73,14 @@ if [[ -z "$NODE_ID" || -z "$CONTROL_PLANE_WS" || -z "$AGENT_TOKEN" ]]; then
   echo "Missing required arguments." >&2
   usage
   exit 1
+fi
+
+if [[ -z "$SSH_USER" ]]; then
+  if id -u ubuntu >/dev/null 2>&1; then
+    SSH_USER="ubuntu"
+  else
+    SSH_USER="root"
+  fi
 fi
 
 if [[ "${EUID}" -ne 0 ]]; then
@@ -100,6 +114,7 @@ cat >"$ENV_FILE" <<EOF
 NODE_ID=${NODE_ID}
 CONTROL_PLANE_WS=${CONTROL_PLANE_WS}
 AGENT_TOKEN=${AGENT_TOKEN}
+AGENT_SSH_USER=${SSH_USER}
 EOF
 chmod 0600 "$ENV_FILE"
 

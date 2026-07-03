@@ -17,6 +17,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 
 type NodeRole = 'controller' | 'worker';
+type HostProvider = 'ovh' | 'standard';
 
 function buildDaemonCommand(params: {
   wsUrl: string;
@@ -46,12 +47,38 @@ function buildDockerCommand(params: {
 function buildSystemdInstallCommand(params: {
   wsUrl: string;
   nodeId: string;
+  provider: HostProvider;
 }) {
-  const { wsUrl, nodeId } = params;
+  const { wsUrl, nodeId, provider } = params;
+  const sshUser = provider === 'ovh' ? 'ubuntu' : 'root';
   return `curl -fsSL https://raw.githubusercontent.com/enzogh/Tarmac/main/apps/agent/scripts/install-agent-service.sh | sudo bash -s -- \\
   --node-id "${nodeId}" \\
   --control-plane-ws "${wsUrl}" \\
-  --agent-token "<AGENT_SHARED_TOKEN>"`;
+  --agent-token "<AGENT_SHARED_TOKEN>" \\
+  --ssh-user "${sshUser}"`;
+}
+
+function buildRemoteBootstrapCommand(params: {
+  wsUrl: string;
+  nodeId: string;
+  provider: HostProvider;
+}) {
+  const install = `curl -fsSL https://raw.githubusercontent.com/enzogh/Tarmac/main/apps/agent/scripts/install-agent-service.sh | bash -s -- \\
+  --node-id "${params.nodeId}" \\
+  --control-plane-ws "${params.wsUrl}" \\
+  --agent-token "<AGENT_SHARED_TOKEN>" \\
+  --ssh-user "${params.provider === 'ovh' ? 'ubuntu' : 'root'}"`;
+
+  if (params.provider === 'ovh') {
+    return `# OVH (login ubuntu, puis élévation root)
+ssh ubuntu@<SERVER_IP>
+sudo -i
+${install}`;
+  }
+
+  return `# Non-OVH (root direct)
+ssh root@<SERVER_IP>
+${install}`;
 }
 
 type Step = 'form' | 'command';
@@ -67,6 +94,7 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('storage-1');
   const [role, setRole] = useState<NodeRole>('worker');
+  const [provider, setProvider] = useState<HostProvider>('ovh');
   const [step, setStep] = useState<Step>('form');
   const [createdNode, setCreatedNode] = useState<NodeItem | null>(null);
   const [loading, setLoading] = useState(false);
@@ -74,6 +102,7 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
   const [copyDockerState, setCopyDockerState] = useState<'idle' | 'copied' | 'error'>('idle');
   const [copySystemdState, setCopySystemdState] = useState<'idle' | 'copied' | 'error'>('idle');
+  const [copyRemoteState, setCopyRemoteState] = useState<'idle' | 'copied' | 'error'>('idle');
   const [token, setToken] = useState('');
 
   useEffect(() => {
@@ -98,15 +127,23 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
     return () => window.clearTimeout(id);
   }, [copySystemdState]);
 
+  useEffect(() => {
+    if (copyRemoteState !== 'copied') return undefined;
+    const id = window.setTimeout(() => setCopyRemoteState('idle'), 1800);
+    return () => window.clearTimeout(id);
+  }, [copyRemoteState]);
+
   const resetForm = () => {
     setStep('form');
     setCreatedNode(null);
     setError('');
     setName('storage-1');
     setRole('worker');
+    setProvider('ovh');
     setCopyState('idle');
     setCopyDockerState('idle');
     setCopySystemdState('idle');
+    setCopyRemoteState('idle');
   };
 
   const handleOpenChange = (val: boolean) => {
@@ -183,6 +220,18 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="node-provider">Type d’hébergement</Label>
+                  <Select value={provider} onValueChange={(v) => setProvider(v as HostProvider)}>
+                    <SelectTrigger id="node-provider">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ovh">OVH (connexion ubuntu + sudo root)</SelectItem>
+                      <SelectItem value="standard">Autre VPS (connexion root directe)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               {error && (
@@ -229,7 +278,12 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
                         type="button"
                         variant="secondary"
                         size="sm"
-                        onClick={() => copy(buildSystemdInstallCommand({ wsUrl, nodeId: createdNode.id }), setCopySystemdState)}
+                        onClick={() =>
+                          copy(
+                            buildSystemdInstallCommand({ wsUrl, nodeId: createdNode.id, provider }),
+                            setCopySystemdState,
+                          )
+                        }
                       >
                         {copySystemdState === 'copied' ? (
                           <><Check className="h-3.5 w-3.5" /> Copié</>
@@ -242,7 +296,45 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
                   </Tooltip>
                 </div>
                 <pre className="code-block whitespace-pre-wrap break-words">
-                  {buildSystemdInstallCommand({ wsUrl, nodeId: createdNode.id })}
+                  {buildSystemdInstallCommand({ wsUrl, nodeId: createdNode.id, provider })}
+                </pre>
+              </div>
+
+              <div className="rounded-xl border border-violet-500/20 bg-violet-500/[0.08] p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">Connexion SSH guidée</p>
+                    <p className="text-xs text-muted-foreground">
+                      {provider === 'ovh'
+                        ? 'OVH: connexion en utilisateur ubuntu puis passage root.'
+                        : 'Autre fournisseur: connexion root directe.'}
+                    </p>
+                  </div>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() =>
+                          copy(
+                            buildRemoteBootstrapCommand({ wsUrl, nodeId: createdNode.id, provider }),
+                            setCopyRemoteState,
+                          )
+                        }
+                      >
+                        {copyRemoteState === 'copied' ? (
+                          <><Check className="h-3.5 w-3.5" /> Copié</>
+                        ) : (
+                          <><Copy className="h-3.5 w-3.5" /> Copier</>
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Copier la séquence SSH</TooltipContent>
+                  </Tooltip>
+                </div>
+                <pre className="code-block whitespace-pre-wrap break-words">
+                  {buildRemoteBootstrapCommand({ wsUrl, nodeId: createdNode.id, provider })}
                 </pre>
               </div>
 

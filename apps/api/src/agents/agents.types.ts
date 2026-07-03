@@ -13,6 +13,8 @@ export interface HeartbeatPayload {
     publicKey?: string;
     endpoint?: string;
     listenPort?: number;
+    sshPublicKey?: string;
+    sshUser?: string;
   };
   linkMetrics?: Array<{
     targetPublicKey: string;
@@ -52,12 +54,20 @@ export interface CommandPayload {
     | 'command.apply_pool'
     | 'command.run_rsync'
     | 'command.apply_overlay'
-    | 'command.list_directories';
+    | 'command.list_directories'
+    | 'command.apply_ssh_authorized_keys';
   payload: Record<string, unknown>;
 }
 
 export interface CommandResultPayload {
-  command: 'apply_export' | 'apply_mount' | 'apply_pool' | 'run_rsync' | 'apply_overlay' | 'list_directories';
+  command:
+    | 'apply_export'
+    | 'apply_mount'
+    | 'apply_pool'
+    | 'run_rsync'
+    | 'apply_overlay'
+    | 'list_directories'
+    | 'apply_ssh_authorized_keys';
   resourceType: 'share' | 'mount' | 'pool_member' | 'sync_job_run' | 'overlay' | 'directory_list' | 'migration';
   resourceId: string;
   success: boolean;
