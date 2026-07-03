@@ -47,6 +47,11 @@ export class MigrationsController {
     return this.migrationsService.retry(id, req.user?.userId);
   }
 
+  @Post(':id/stop')
+  stop(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.migrationsService.stop(id, req.user?.userId);
+  }
+
   @Post(':id/complete')
   complete(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.migrationsService.update(id, { status: 'completed' }, req.user?.userId);

@@ -119,6 +119,51 @@ type directoryListData struct {
 	Directories []string `json:"directories"`
 }
 
+var rsyncExecutions = struct {
+	mu    sync.Mutex
+	byKey map[string]context.CancelFunc
+}{
+	byKey: make(map[string]context.CancelFunc),
+}
+
+func rsyncExecutionKey(resourceType, resourceID string) string {
+	resourceType = strings.TrimSpace(resourceType)
+	resourceID = strings.TrimSpace(resourceID)
+	if resourceType == "" || resourceID == "" {
+		return ""
+	}
+	return resourceType + ":" + resourceID
+}
+
+func registerRsyncExecution(key string, cancel context.CancelFunc) {
+	rsyncExecutions.mu.Lock()
+	defer rsyncExecutions.mu.Unlock()
+	rsyncExecutions.byKey[key] = cancel
+}
+
+func unregisterRsyncExecution(key string) {
+	rsyncExecutions.mu.Lock()
+	defer rsyncExecutions.mu.Unlock()
+	delete(rsyncExecutions.byKey, key)
+}
+
+func stopRsyncExecution(resourceType, resourceID string) bool {
+	key := rsyncExecutionKey(resourceType, resourceID)
+	if key == "" {
+		return false
+	}
+
+	rsyncExecutions.mu.Lock()
+	cancel, ok := rsyncExecutions.byKey[key]
+	rsyncExecutions.mu.Unlock()
+	if !ok {
+		return false
+	}
+
+	cancel()
+	return true
+}
+
 func envOrDefault(key, fallback string) string {
 	value := os.Getenv(key)
 	if value == "" {
@@ -1273,6 +1318,18 @@ func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progre
 		timeoutSeconds = 3600
 	}
 	sshKeyPath := envOrDefault("AGENT_SSH_PRIVATE_KEY_PATH", "/var/lib/tarmac-agent/ssh/id_ed25519")
+	resourceType := readString(payload, "resourceType")
+	if resourceType == "" {
+		resourceType = "sync_job_run"
+	}
+	resourceID := readString(payload, "resourceId")
+	if resourceID == "" {
+		resourceID = readString(payload, "runId")
+	}
+	key := rsyncExecutionKey(resourceType, resourceID)
+	if key == "" {
+		return "", errors.New("run_rsync payload must include resourceType/resourceId")
+	}
 
 	sourceArg := sourcePath
 	if sourceHost != "" {
@@ -1299,8 +1356,14 @@ func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progre
 		}, args...)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
-	defer cancel()
+	baseCtx, cancel := context.WithCancel(context.Background())
+	registerRsyncExecution(key, cancel)
+	defer func() {
+		unregisterRsyncExecution(key)
+		cancel()
+	}()
+	ctx, timeoutCancel := context.WithTimeout(baseCtx, time.Duration(timeoutSeconds)*time.Second)
+	defer timeoutCancel()
 	cmd := exec.CommandContext(ctx, "rsync", args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -1349,6 +1412,9 @@ func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progre
 
 	waitErr := cmd.Wait()
 	wg.Wait()
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return "", errors.New("rsync stopped by user")
+	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return "", fmt.Errorf("rsync timed out after %ds", timeoutSeconds)
 	}
@@ -1412,6 +1478,27 @@ func handleCommand(cmd commandPayload, onProgress func(progress commandProgress)
 			result.Message = err.Error()
 		} else {
 			result.Message = message
+		}
+	case "command.stop_rsync":
+		result.Command = "stop_rsync"
+		result.ResourceType = readString(cmd.Payload, "resourceType")
+		if result.ResourceType == "" {
+			result.ResourceType = "sync_job_run"
+		}
+		result.ResourceID = readString(cmd.Payload, "resourceId")
+		if result.ResourceID == "" {
+			result.ResourceID = readString(cmd.Payload, "runId")
+		}
+		if result.ResourceID == "" {
+			result.Success = false
+			result.Message = "resourceId is required"
+			break
+		}
+		if stopped := stopRsyncExecution(result.ResourceType, result.ResourceID); !stopped {
+			result.Success = false
+			result.Message = "no running rsync found for this resource"
+		} else {
+			result.Message = "stop signal sent"
 		}
 	case "command.apply_overlay":
 		result.Command = "apply_overlay"
@@ -1511,15 +1598,20 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 			if err := json.Unmarshal(raw, &cmd); err != nil {
 				continue
 			}
-			result := handleCommand(cmd, func(progress commandProgress) {
-				if err := client.send(envelope{Type: "command_progress", Payload: progress}); err != nil {
-					log.Printf("failed to send command_progress: %v", err)
+			command := cmd
+			go func() {
+				result := handleCommand(command, func(progress commandProgress) {
+					if err := client.send(envelope{Type: "command_progress", Payload: progress}); err != nil {
+						log.Printf("failed to send command_progress: %v", err)
+					}
+				})
+				if err := client.send(envelope{Type: "command_result", Payload: result}); err != nil {
+					select {
+					case readDone <- err:
+					default:
+					}
 				}
-			})
-			if err := client.send(envelope{Type: "command_result", Payload: result}); err != nil {
-				readDone <- err
-				return
-			}
+			}()
 		}
 	}()
 
