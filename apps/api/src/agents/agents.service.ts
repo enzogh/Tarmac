@@ -11,7 +11,7 @@ type SendFn = (event: string, payload: unknown) => void;
 
 // Node is considered offline if no heartbeat received within this time
 const NODE_HEARTBEAT_TIMEOUT_MS = 60 * 1000; // 60 seconds
-const LINK_OFFLINE_HANDSHAKE_SEC = 60;
+const LINK_OFFLINE_HANDSHAKE_SEC = 180;
 const LINK_DEGRADED_HANDSHAKE_SEC = 20;
 
 @Injectable()
@@ -351,7 +351,7 @@ export class AgentsService implements OnModuleInit {
 
       const hasTraffic = txMbps > 0 || rxMbps > 0;
       const hasUsableProbe =
-        (metric.packetLoss !== undefined && metric.packetLoss < 100) ||
+        metric.packetLoss !== undefined ||
         (metric.latencyMs !== undefined && metric.latencyMs > 0);
       const handshakeUnknown = handshakeAgeSec === undefined || handshakeAgeSec < 0;
       const handshakeOffline = handshakeAgeSec !== undefined && handshakeAgeSec >= LINK_OFFLINE_HANDSHAKE_SEC;
