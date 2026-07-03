@@ -56,6 +56,7 @@ export interface CommandPayload {
     | 'command.stop_rsync'
     | 'command.apply_overlay'
     | 'command.list_directories'
+    | 'command.scan_directory_sizes'
     | 'command.apply_ssh_authorized_keys'
     | 'command.update_agent';
   payload: Record<string, unknown>;
@@ -70,6 +71,7 @@ export interface CommandResultPayload {
     | 'stop_rsync'
     | 'apply_overlay'
     | 'list_directories'
+    | 'scan_directory_sizes'
     | 'apply_ssh_authorized_keys'
     | 'update_agent';
   resourceType:
@@ -79,6 +81,7 @@ export interface CommandResultPayload {
     | 'sync_job_run'
     | 'overlay'
     | 'directory_list'
+    | 'directory_scan'
     | 'migration'
     | 'agent';
   resourceId: string;
@@ -87,6 +90,11 @@ export interface CommandResultPayload {
   data?: {
     basePath: string;
     directories: string[];
+    entries?: Array<{
+      path: string;
+      sizeBytes: number;
+    }>;
+    truncated?: boolean;
   };
 }
 

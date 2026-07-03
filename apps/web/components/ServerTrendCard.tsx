@@ -14,6 +14,8 @@ type SparklineProps = {
   fillClassName?: string;
   className?: string;
   height?: number;
+  minValue?: number;
+  maxValue?: number;
 };
 
 export function Sparkline({
@@ -22,6 +24,8 @@ export function Sparkline({
   fillClassName = 'fill-violet-500/10',
   className,
   height = 56,
+  minValue = 0,
+  maxValue = 100,
 }: SparklineProps) {
   const gradientId = useId();
 
@@ -33,8 +37,8 @@ export function Sparkline({
     const width = 100;
     const chartHeight = 40;
     const padding = 4;
-    const min = Math.min(...values);
-    const max = Math.max(...values);
+    const min = Math.min(minValue, ...values);
+    const max = Math.max(maxValue, ...values);
     const range = max - min || 1;
     const points = values.map((value, index) => {
       const x = values.length === 1 ? width / 2 : (index / (values.length - 1)) * width;
@@ -50,7 +54,7 @@ export function Sparkline({
       linePath: line,
       areaPath: area,
     };
-  }, [values]);
+  }, [maxValue, minValue, values]);
 
   return (
     <svg
@@ -72,10 +76,10 @@ export function Sparkline({
         </linearGradient>
       </defs>
 
-      <g className="opacity-30">
-        <line x1="0" y1="10" x2="100" y2="10" stroke="currentColor" strokeOpacity="0.12" strokeWidth="0.5" />
-        <line x1="0" y1="20" x2="100" y2="20" stroke="currentColor" strokeOpacity="0.08" strokeWidth="0.5" />
-        <line x1="0" y1="30" x2="100" y2="30" stroke="currentColor" strokeOpacity="0.08" strokeWidth="0.5" />
+      <g className="opacity-40">
+        <line x1="0" y1="4" x2="100" y2="4" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
+        <line x1="0" y1="20" x2="100" y2="20" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
+        <line x1="0" y1="36" x2="100" y2="36" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
       </g>
 
       {areaPath && <path d={areaPath} className={cn(fillClassName)} fill={`url(#${gradientId}-fill)`} />}
@@ -100,7 +104,7 @@ type ServerTrendCardProps = {
   className?: string;
 };
 
-const formatRate = (value: number) => `${Math.round(value)} B/s`;
+const formatRate = (value: number) => `${((value * 8) / 1_000_000).toFixed(2)} MBPS`;
 
 export function ServerTrendCard({ node, samples, className }: ServerTrendCardProps) {
   const cpuSeries = samples.map((sample) => sample.cpu);
@@ -138,17 +142,17 @@ export function ServerTrendCard({ node, samples, className }: ServerTrendCardPro
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="rounded-xl border border-white/[0.05] bg-white/[0.015] p-3">
               <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
-                <span>CPU trend</span>
-                <span>{cpuSeries.length > 0 ? `${cpuSeries.length} pts` : 'N/A'}</span>
+                <span>CPU (%)</span>
+                <span>{cpuSeries.length > 0 ? `${Math.round(cpuSeries[cpuSeries.length - 1])}%` : 'N/A'}</span>
               </div>
-              <Sparkline values={cpuSeries} className="text-violet-300" height={44} />
+              <Sparkline values={cpuSeries} className="text-violet-300" height={44} minValue={0} maxValue={100} />
             </div>
             <div className="rounded-xl border border-white/[0.05] bg-white/[0.015] p-3">
               <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
-                <span>RAM trend</span>
-                <span>{ramSeries.length > 0 ? `${ramSeries.length} pts` : 'N/A'}</span>
+                <span>RAM (%)</span>
+                <span>{ramSeries.length > 0 ? `${Math.round(ramSeries[ramSeries.length - 1])}%` : 'N/A'}</span>
               </div>
-              <Sparkline values={ramSeries} className="text-cyan-300" height={44} />
+              <Sparkline values={ramSeries} className="text-cyan-300" height={44} minValue={0} maxValue={100} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3 text-xs">
