@@ -72,7 +72,17 @@ export default function MigrationsPage() {
     name: '',
     sourceNodeId: '',
     targetNodeId: '',
+    sourcePath: '',
+    targetPath: '',
     reason: '',
+  });
+  const [sourceDirectories, setSourceDirectories] = useState<string[]>([]);
+  const [targetDirectories, setTargetDirectories] = useState<string[]>([]);
+  const [sourceBrowsePath, setSourceBrowsePath] = useState('/');
+  const [targetBrowsePath, setTargetBrowsePath] = useState('/');
+  const [directoriesLoading, setDirectoriesLoading] = useState<{ source: boolean; target: boolean }>({
+    source: false,
+    target: false,
   });
 
   const load = async () => {
@@ -90,6 +100,34 @@ export default function MigrationsPage() {
     }
   };
 
+  const loadDirectories = async (kind: 'source' | 'target', nodeId: string, basePath: string) => {
+    if (!token || !nodeId) return;
+    setDirectoriesLoading((prev) => ({ ...prev, [kind]: true }));
+    try {
+      const payload = await api.migrations.listDirectories(token, nodeId, basePath || '/');
+      const sorted = [...payload.directories].sort((a, b) => a.localeCompare(b));
+      if (kind === 'source') {
+        setSourceBrowsePath(payload.basePath);
+        setSourceDirectories(sorted);
+      } else {
+        setTargetBrowsePath(payload.basePath);
+        setTargetDirectories(sorted);
+      }
+    } catch {
+      if (kind === 'source') {
+        setSourceDirectories([]);
+      } else {
+        setTargetDirectories([]);
+      }
+      setNotice({
+        type: 'error',
+        message: "Impossible de charger les dossiers en direct depuis le serveur sélectionné.",
+      });
+    } finally {
+      setDirectoriesLoading((prev) => ({ ...prev, [kind]: false }));
+    }
+  };
+
   useEffect(() => {
     if (!token) {
       router.push('/login');
@@ -99,6 +137,22 @@ export default function MigrationsPage() {
     const id = setInterval(() => void load(), 5000);
     return () => clearInterval(id);
   }, [token]);
+
+  useEffect(() => {
+    if (!formData.sourceNodeId) {
+      setSourceDirectories([]);
+      return;
+    }
+    void loadDirectories('source', formData.sourceNodeId, sourceBrowsePath);
+  }, [formData.sourceNodeId]);
+
+  useEffect(() => {
+    if (!formData.targetNodeId) {
+      setTargetDirectories([]);
+      return;
+    }
+    void loadDirectories('target', formData.targetNodeId, targetBrowsePath);
+  }, [formData.targetNodeId]);
 
   const wizardSteps: StepConfig[] = [
     {
@@ -151,7 +205,15 @@ export default function MigrationsPage() {
             </label>
             <select
               value={formData.sourceNodeId}
-              onChange={(e) => setFormData({ ...formData, sourceNodeId: e.target.value })}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  sourceNodeId: e.target.value,
+                  targetNodeId: formData.targetNodeId === e.target.value ? '' : formData.targetNodeId,
+                  sourcePath: '',
+                  targetPath: '',
+                })
+              }
               className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
             >
               <option value="">-- Choisir un serveur source --</option>
@@ -170,7 +232,13 @@ export default function MigrationsPage() {
             </label>
             <select
               value={formData.targetNodeId}
-              onChange={(e) => setFormData({ ...formData, targetNodeId: e.target.value })}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  targetNodeId: e.target.value,
+                  targetPath: '',
+                })
+              }
               className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
             >
               <option value="">-- Choisir un serveur destination --</option>
@@ -181,6 +249,100 @@ export default function MigrationsPage() {
                     {node.name} ({node.status})
                   </option>
                 ))}
+            </select>
+          </div>
+
+          <div className="space-y-2 rounded-lg border border-white/[0.08] bg-zinc-900/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <label className="block text-sm font-medium text-zinc-200">
+                Dossier source (live)
+                <HelpText text="Dossier lu en direct sur le serveur source via l'agent connecté" />
+              </label>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-8"
+                onClick={() => void loadDirectories('source', formData.sourceNodeId, sourceBrowsePath)}
+                disabled={!formData.sourceNodeId || directoriesLoading.source}
+              >
+                {directoriesLoading.source ? 'Chargement…' : 'Actualiser'}
+              </Button>
+            </div>
+            <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+              <input
+                type="text"
+                value={sourceBrowsePath}
+                onChange={(e) => setSourceBrowsePath(e.target.value || '/')}
+                className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
+                placeholder="/"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void loadDirectories('source', formData.sourceNodeId, sourceBrowsePath)}
+                disabled={!formData.sourceNodeId || directoriesLoading.source}
+              >
+                Ouvrir
+              </Button>
+            </div>
+            <select
+              value={formData.sourcePath}
+              onChange={(e) => setFormData({ ...formData, sourcePath: e.target.value })}
+              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
+            >
+              <option value="">-- Choisir un dossier source --</option>
+              {sourceDirectories.map((path) => (
+                <option key={path} value={path}>
+                  {path}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-2 rounded-lg border border-white/[0.08] bg-zinc-900/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <label className="block text-sm font-medium text-zinc-200">
+                Dossier destination (live)
+                <HelpText text="Chemin de destination final sur le serveur de réception" />
+              </label>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-8"
+                onClick={() => void loadDirectories('target', formData.targetNodeId, targetBrowsePath)}
+                disabled={!formData.targetNodeId || directoriesLoading.target}
+              >
+                {directoriesLoading.target ? 'Chargement…' : 'Actualiser'}
+              </Button>
+            </div>
+            <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+              <input
+                type="text"
+                value={targetBrowsePath}
+                onChange={(e) => setTargetBrowsePath(e.target.value || '/')}
+                className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
+                placeholder="/"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void loadDirectories('target', formData.targetNodeId, targetBrowsePath)}
+                disabled={!formData.targetNodeId || directoriesLoading.target}
+              >
+                Ouvrir
+              </Button>
+            </div>
+            <select
+              value={formData.targetPath}
+              onChange={(e) => setFormData({ ...formData, targetPath: e.target.value })}
+              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
+            >
+              <option value="">-- Choisir un dossier destination --</option>
+              {targetDirectories.map((path) => (
+                <option key={path} value={path}>
+                  {path}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -230,6 +392,14 @@ export default function MigrationsPage() {
               <span className="text-muted-foreground">Destination:</span>
               <span className="font-mono">{nodes.find((n) => n.id === formData.targetNodeId)?.name}</span>
             </div>
+            <div className="flex justify-between border-b pb-2">
+              <span className="text-muted-foreground">Dossier source:</span>
+              <span className="font-mono break-all text-right">{formData.sourcePath || '—'}</span>
+            </div>
+            <div className="flex justify-between border-b pb-2">
+              <span className="text-muted-foreground">Dossier destination:</span>
+              <span className="font-mono break-all text-right">{formData.targetPath || '—'}</span>
+            </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Raison:</span>
               <span className="font-mono">{selectedPreset?.name}</span>
@@ -247,17 +417,29 @@ export default function MigrationsPage() {
 
   const createMigration = async () => {
     if (!token) return;
+    if (!formData.name || !formData.sourceNodeId || !formData.targetNodeId || !formData.sourcePath || !formData.targetPath) {
+      setNotice({
+        type: 'error',
+        message: 'Merci de renseigner le nom, les serveurs et les dossiers source/destination.',
+      });
+      return;
+    }
     try {
       await api.migrations.create(token, {
         name: formData.name,
         sourceNodeId: formData.sourceNodeId || undefined,
         targetNodeId: formData.targetNodeId || undefined,
+        sourcePath: formData.sourcePath || undefined,
+        targetPath: formData.targetPath || undefined,
+        reason: formData.reason || undefined,
       });
       setWizardOpen(false);
       setFormData({
         name: '',
         sourceNodeId: '',
         targetNodeId: '',
+        sourcePath: '',
+        targetPath: '',
         reason: '',
       });
       setSelectedPreset(null);
@@ -269,8 +451,15 @@ export default function MigrationsPage() {
 
   const startMigration = async (migrationId: string) => {
     if (!token) return;
-    await api.migrations.start(token, migrationId);
-    await load();
+    try {
+      await api.migrations.start(token, migrationId);
+      await load();
+    } catch {
+      setNotice({
+        type: 'error',
+        message: "Impossible de démarrer la migration. Vérifiez les chemins et la connectivité entre nœuds.",
+      });
+    }
   };
 
   const statusIcons = {
@@ -366,11 +555,13 @@ export default function MigrationsPage() {
                 <div className="grid grid-cols-2 gap-2 text-sm mb-4">
                   <div>
                     <span className="opacity-75">Source:</span>
-                    <p className="font-mono text-xs">nœud-source</p>
+                    <p className="font-mono text-xs">{migration.sourceNode?.name ?? migration.sourceNodeId ?? '—'}</p>
+                    {migration.sourcePath && <p className="font-mono text-[11px] opacity-75 break-all">{migration.sourcePath}</p>}
                   </div>
                   <div>
                     <span className="opacity-75">Destination:</span>
-                    <p className="font-mono text-xs">nœud-destination</p>
+                    <p className="font-mono text-xs">{migration.targetNode?.name ?? migration.targetNodeId ?? '—'}</p>
+                    {migration.targetPath && <p className="font-mono text-[11px] opacity-75 break-all">{migration.targetPath}</p>}
                   </div>
                 </div>
 
