@@ -359,11 +359,15 @@ export class AgentsService implements OnModuleInit {
         handshakeAgeSec !== undefined &&
         handshakeAgeSec >= LINK_DEGRADED_HANDSHAKE_SEC &&
         handshakeAgeSec < LINK_OFFLINE_HANDSHAKE_SEC;
+      const peerReportedOffline = target.status !== 'online';
 
       const status: 'healthy' | 'degraded' | 'offline' =
-        target.status !== 'online' || (handshakeOffline && !hasTraffic && !hasUsableProbe)
+        // Only classify as offline from hard link telemetry signals.
+        // Node status can be stale while tunnel traffic/probes are actually healthy.
+        (handshakeOffline && !hasTraffic && !hasUsableProbe)
           ? 'offline'
-          : handshakeUnknown ||
+          : peerReportedOffline ||
+              handshakeUnknown ||
               handshakeDegraded ||
               (metric.packetLoss ?? 0) >= 2 ||
               (metric.latencyMs ?? 0) >= 70
