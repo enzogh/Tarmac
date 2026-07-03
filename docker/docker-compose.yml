@@ -8,7 +8,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -19,6 +19,8 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    volumes:
+      - ./data/redis:/data
 
   api:
     build:
@@ -45,12 +47,11 @@ services:
       args:
         # Remplace par l'IP publique de ton serveur
         NEXT_PUBLIC_API_URL: http://CHANGE_MOI_IP_SERVEUR:3001
+        NEXT_PUBLIC_APP_VERSION: ${GITHUB_SHA:-dev-local}
     environment:
       NEXT_PUBLIC_API_URL: http://CHANGE_MOI_IP_SERVEUR:3001
+      NEXT_PUBLIC_APP_VERSION: ${GITHUB_SHA:-dev-local}
     ports:
       - "3000:3000"
     depends_on:
       - api
-
-volumes:
-  pgdata:
