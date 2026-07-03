@@ -141,6 +141,22 @@ export class NodeOnboardingService {
     return trimmed;
   }
 
+  private toHttpsRepoUrl(repoUrl: string) {
+    const trimmed = repoUrl.trim();
+    if (trimmed.startsWith('https://github.com/')) {
+      return trimmed;
+    }
+    const sshMatch = trimmed.match(/^git@github\.com:(.+)$/);
+    if (sshMatch) {
+      return `https://github.com/${sshMatch[1]}`;
+    }
+    const sshUrlMatch = trimmed.match(/^ssh:\/\/git@github\.com\/(.+)$/);
+    if (sshUrlMatch) {
+      return `https://github.com/${sshUrlMatch[1]}`;
+    }
+    return trimmed;
+  }
+
   private toOpenSshPublicKey(spkiPem: string): string {
     const lines = spkiPem
       .split('\n')
@@ -186,6 +202,7 @@ export class NodeOnboardingService {
       const wsQuoted = this.shellQuote(session.controlPlaneWs);
       const tokenQuoted = this.shellQuote(this.configService.get<string>('AGENT_SHARED_TOKEN') ?? '');
       const repoUrlQuoted = this.shellQuote(session.repoUrl);
+      const repoUrlHttpsQuoted = this.shellQuote(this.toHttpsRepoUrl(session.repoUrl));
       const repoRefQuoted = this.shellQuote(session.repoRef);
       const sshUserQuoted = this.shellQuote(session.sshUsername);
 
@@ -222,15 +239,22 @@ export class NodeOnboardingService {
             'TARGET="$HOME/.apps/Tarmac"',
             'KEY="$HOME/.ssh/tarmac_deploy_ed25519"',
             `REPO_URL=${repoUrlQuoted}`,
+            `REPO_URL_HTTPS=${repoUrlHttpsQuoted}`,
             `REPO_REF=${repoRefQuoted}`,
             'GIT_SSH_COMMAND="ssh -i $KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"',
+            'export GIT_TERMINAL_PROMPT=0',
             'if [ -d "$TARGET/.git" ]; then',
             '  git -C "$TARGET" remote set-url origin "$REPO_URL"',
-            '  GIT_SSH_COMMAND="$GIT_SSH_COMMAND" git -C "$TARGET" fetch --depth 1 origin "$REPO_REF"',
+            '  if ! GIT_SSH_COMMAND="$GIT_SSH_COMMAND" git -C "$TARGET" fetch --depth 1 origin "$REPO_REF"; then',
+            '    git -C "$TARGET" remote set-url origin "$REPO_URL_HTTPS"',
+            '    git -C "$TARGET" fetch --depth 1 origin "$REPO_REF"',
+            '  fi',
             '  git -C "$TARGET" checkout -f "$REPO_REF"',
             'else',
             '  rm -rf "$TARGET"',
-            '  GIT_SSH_COMMAND="$GIT_SSH_COMMAND" git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" "$TARGET"',
+            '  if ! GIT_SSH_COMMAND="$GIT_SSH_COMMAND" git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" "$TARGET"; then',
+            '    git clone --depth 1 --branch "$REPO_REF" "$REPO_URL_HTTPS" "$TARGET"',
+            '  fi',
             'fi',
           ].join('\n'),
         },
@@ -245,6 +269,7 @@ export class NodeOnboardingService {
             `AGENT_TOKEN=${tokenQuoted}`,
             `SSH_USER=${sshUserQuoted}`,
             `REPO_URL=${repoUrlQuoted}`,
+            `REPO_URL_HTTPS=${repoUrlHttpsQuoted}`,
             `REPO_REF=${repoRefQuoted}`,
             'GIT_SSH_COMMAND="ssh -i $KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \\',
             'bash "$TARGET/apps/agent/scripts/install-agent-service.sh" \\',
@@ -253,7 +278,14 @@ export class NodeOnboardingService {
             '  --agent-token "$AGENT_TOKEN" \\',
             '  --ssh-user "$SSH_USER" \\',
             '  --agent-ref "$REPO_REF" \\',
-            '  --repo-url "$REPO_URL"',
+            '  --repo-url "$REPO_URL" || \\',
+            'bash "$TARGET/apps/agent/scripts/install-agent-service.sh" \\',
+            '  --node-id "$NODE_ID" \\',
+            '  --control-plane-ws "$CONTROL_PLANE_WS" \\',
+            '  --agent-token "$AGENT_TOKEN" \\',
+            '  --ssh-user "$SSH_USER" \\',
+            '  --agent-ref "$REPO_REF" \\',
+            '  --repo-url "$REPO_URL_HTTPS"',
             'systemctl is-active tarmac-agent.service',
           ].join('\n'),
         },
