@@ -442,6 +442,11 @@ func probeOverlayLatency(iface, targetIP string) (*float64, *float64) {
 		cmd := exec.Command("ping", args...)
 		output, err := cmd.CombinedOutput()
 		latencyMs, packetLoss := parsePingStats(string(output))
+		// Ignore pure 100% loss samples without RTT: they are often probe artifacts
+		// and cause false degraded states in the dashboard.
+		if latencyMs == nil && packetLoss != nil && *packetLoss >= 100 {
+			packetLoss = nil
+		}
 
 		if err == nil {
 			return latencyMs, packetLoss
