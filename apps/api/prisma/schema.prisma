@@ -407,9 +407,9 @@ model VlanConnection {
   sourceNodeId String
   targetNodeId String
   status    VlanConnectionStatus  @default(unknown)
-  latencyMs Int?
+  latencyMs Float?
   packetLoss Float?
-  bandwidth  Int?
+  bandwidth  Float?
   lastCheckedAt DateTime?
   createdAt DateTime              @default(now())
   updatedAt DateTime              @updatedAt
@@ -432,7 +432,7 @@ model VlanConnectionTest {
   status      String         @default("pending")
   resultCode  Int?
   resultMessage String?
-  latencyMs   Int?
+  latencyMs   Float?
   packetLoss  Float?
   startedAt   DateTime       @default(now())
   completedAt DateTime?
