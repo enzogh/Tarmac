@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
+  AlertCircle,
   AlertTriangle,
+  CheckCircle2,
   Gauge,
   Network,
   Play,
@@ -15,6 +17,7 @@ import { api, VlanConnection, VlanConnectionTest, VlanStatus } from '@/lib/api';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import {
   Table,
@@ -118,6 +121,7 @@ export default function NetworkPage() {
   const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null);
   const inFlightRef = useRef(false);
   const [testRunning, setTestRunning] = useState(false);
+  const [notice, setNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
   const [selectedTest, setSelectedTest] = useState<{
     from?: string;
     to?: string;
@@ -226,7 +230,7 @@ export default function NetworkPage() {
 
   const handleRunTest = async () => {
     if (!token || !vlanStatus || !selectedTest.from || !selectedTest.to || !selectedTest.type) {
-      alert('Veuillez sélectionner les paramètres du test');
+      setNotice({ type: 'error', message: 'Veuillez sélectionner les paramètres du test.' });
       return;
     }
 
@@ -240,9 +244,10 @@ export default function NetworkPage() {
         selectedTest.type,
       );
       setTests((prev) => [result.test, ...prev]);
+      setNotice({ type: 'success', message: 'Le test de connectivité a été lancé.' });
     } catch (error) {
       console.error('Test failed:', error);
-      alert('Le test de connectivité a échoué');
+      setNotice({ type: 'error', message: 'Le test de connectivité a échoué.' });
     } finally {
       setTestRunning(false);
     }
@@ -264,6 +269,13 @@ export default function NetworkPage() {
     </Card>
   ) : (
     <div className="space-y-6">
+      {notice && (
+        <Alert variant={notice.type === 'error' ? 'destructive' : 'success'}>
+          {notice.type === 'error' ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+          <AlertDescription>{notice.message}</AlertDescription>
+        </Alert>
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-500/20 bg-violet-500/[0.07] px-4 py-3">
         <p className="text-sm text-violet-200/90">
           Monitoring asynchrone : mise à jour silencieuse toutes les 5 secondes, sans réactualiser la page.
