@@ -67,13 +67,13 @@ const STATUS_PRIORITY: Record<LinkStatus, number> = {
 };
 
 const formatLatency = (value?: number | null) =>
-  typeof value === 'number' ? `${value.toFixed(1)} ms` : '—';
+  typeof value === 'number' ? `${value} ms` : '—';
 
 const formatLoss = (value?: number | null) =>
-  typeof value === 'number' ? `${value.toFixed(1)} %` : '—';
+  typeof value === 'number' ? `${value} %` : '—';
 
 const formatBandwidth = (value?: number | null) =>
-  typeof value === 'number' ? `${value.toFixed(1)} Mbps` : '—';
+  typeof value === 'number' ? `${value} Mbps` : '—';
 
 const isTestType = (value: string): value is TestType =>
   value === 'ping' || value === 'connectivity' || value === 'latency';

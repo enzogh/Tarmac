@@ -424,13 +424,13 @@ export class AgentsService implements OnModuleInit {
         lastCheckedAt: new Date(),
       };
       const measuredLatencyMs =
-        metric.latencyMs !== undefined && Number.isFinite(metric.latencyMs) ? Math.round(metric.latencyMs) : undefined;
+        metric.latencyMs !== undefined && Number.isFinite(metric.latencyMs) ? metric.latencyMs : undefined;
       const measuredPacketLoss =
         metric.packetLoss !== undefined && Number.isFinite(metric.packetLoss)
-          ? Number(metric.packetLoss.toFixed(1))
+          ? metric.packetLoss
           : undefined;
-      const measuredTxMbps = Math.max(0, Math.round(txMbps));
-      const measuredRxMbps = Math.max(0, Math.round(rxMbps));
+      const measuredTxMbps = Math.max(0, txMbps);
+      const measuredRxMbps = Math.max(0, rxMbps);
 
       return [
         this.prisma.vlanConnection.upsert({
