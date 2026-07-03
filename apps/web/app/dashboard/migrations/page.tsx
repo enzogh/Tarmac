@@ -171,7 +171,7 @@ export default function MigrationsPage() {
             host: kind === 'source' ? formData.sourceSeedboxHost : formData.targetSeedboxHost,
             username: kind === 'source' ? formData.sourceSeedboxUser : formData.targetSeedboxUser,
             password: kind === 'source' ? formData.sourceSeedboxPassword : formData.targetSeedboxPassword,
-            port: Number.parseInt(kind === 'source' ? formData.sourceSeedboxPort : formData.targetSeedboxPort, 10) || 22,
+            port: kind === 'source' ? formData.sourceSeedboxPort || '22' : formData.targetSeedboxPort || '22',
             basePath: basePath || '/',
           })
         : await api.migrations.listDirectories(token, nodeId, basePath || '/');
