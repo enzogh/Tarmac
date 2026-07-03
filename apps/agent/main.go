@@ -1268,6 +1268,11 @@ func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progre
 		sourceUser = "root"
 	}
 	sshPort := readInt(payload, "sshPort", 22)
+	timeoutSeconds := readInt(payload, "timeoutSeconds", 3600)
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 3600
+	}
+	sshKeyPath := envOrDefault("AGENT_SSH_PRIVATE_KEY_PATH", "/var/lib/tarmac-agent/ssh/id_ed25519")
 
 	sourceArg := sourcePath
 	if sourceHost != "" {
@@ -1286,11 +1291,17 @@ func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progre
 	if sourceHost != "" {
 		args = append([]string{
 			"-e",
-			fmt.Sprintf("ssh -p %d -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", sshPort),
+			fmt.Sprintf(
+				"ssh -p %d -i %s -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o PreferredAuthentications=publickey -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10",
+				sshPort,
+				sshKeyPath,
+			),
 		}, args...)
 	}
 
-	cmd := exec.Command("rsync", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "rsync", args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", fmt.Errorf("cannot open rsync stdout: %w", err)
@@ -1338,6 +1349,9 @@ func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progre
 
 	waitErr := cmd.Wait()
 	wg.Wait()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "", fmt.Errorf("rsync timed out after %ds", timeoutSeconds)
+	}
 	if waitErr != nil {
 		return "", fmt.Errorf("rsync failed: %w", waitErr)
 	}
