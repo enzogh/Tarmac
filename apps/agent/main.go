@@ -1053,16 +1053,7 @@ func applySSHAuthorizedKeys(payload map[string]interface{}) (string, error) {
 }
 
 func updateAgent(payload map[string]interface{}) (string, error) {
-	repoURL := readString(payload, "repoUrl")
-	if repoURL == "" {
-		repoURL = envOrDefault("AGENT_REPO_URL", "https://github.com/enzogh/Tarmac.git")
-	}
-
 	ref := readString(payload, "ref")
-	if ref == "" {
-		ref = envOrDefault("AGENT_REF", "main")
-	}
-
 	serviceName := readString(payload, "serviceName")
 	if serviceName == "" {
 		serviceName = envOrDefault("AGENT_SERVICE_NAME", "tarmac-agent.service")
@@ -1072,7 +1063,8 @@ func updateAgent(payload map[string]interface{}) (string, error) {
 		return "", errors.New("serviceName contains invalid characters")
 	}
 
-	installDir := envOrDefault("AGENT_INSTALL_DIR", "/opt/tarmac-agent-build")
+	workDir := envOrDefault("AGENT_WORKTREE_DIR", "/root/.apps/Tarmac")
+	agentSourceDir := filepath.Join(workDir, "apps", "agent")
 	binPath := envOrDefault("AGENT_BIN_PATH", "/usr/local/bin/tarmac-agent")
 	tmpBinPath := binPath + ".new"
 
@@ -1089,27 +1081,24 @@ func updateAgent(payload map[string]interface{}) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 
-	if _, err := os.Stat(filepath.Join(installDir, ".git")); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("cannot access install dir: %w", err)
+	if _, err := os.Stat(filepath.Join(workDir, ".git")); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("repository not found in %s", workDir)
 		}
-		clone := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--branch", ref, repoURL, installDir)
-		if output, cloneErr := clone.CombinedOutput(); cloneErr != nil {
-			return "", fmt.Errorf("cannot clone repository: %s", strings.TrimSpace(string(output)))
-		}
-	} else {
-		fetch := exec.CommandContext(ctx, "git", "-C", installDir, "fetch", "--depth", "1", "origin", ref)
-		if output, fetchErr := fetch.CombinedOutput(); fetchErr != nil {
-			return "", fmt.Errorf("cannot fetch repository: %s", strings.TrimSpace(string(output)))
-		}
-		checkout := exec.CommandContext(ctx, "git", "-C", installDir, "checkout", "--force", "FETCH_HEAD")
-		if output, checkoutErr := checkout.CombinedOutput(); checkoutErr != nil {
-			return "", fmt.Errorf("cannot checkout fetched ref: %s", strings.TrimSpace(string(output)))
-		}
+		return "", fmt.Errorf("cannot access repository dir: %w", err)
 	}
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", tmpBinPath, "./apps/agent")
-	build.Dir = installDir
+	pullArgs := []string{"-C", workDir, "pull", "--ff-only"}
+	if strings.TrimSpace(ref) != "" {
+		pullArgs = append(pullArgs, "origin", ref)
+	}
+	pull := exec.CommandContext(ctx, "git", pullArgs...)
+	if output, pullErr := pull.CombinedOutput(); pullErr != nil {
+		return "", fmt.Errorf("cannot pull repository: %s", strings.TrimSpace(string(output)))
+	}
+
+	build := exec.CommandContext(ctx, "go", "build", "-o", tmpBinPath, ".")
+	build.Dir = agentSourceDir
 	if output, buildErr := build.CombinedOutput(); buildErr != nil {
 		return "", fmt.Errorf("cannot build agent: %s", strings.TrimSpace(string(output)))
 	}
@@ -1122,7 +1111,8 @@ func updateAgent(payload map[string]interface{}) (string, error) {
 	}
 
 	restartShell := fmt.Sprintf(
-		"nohup sh -c 'sleep 1 && systemctl restart %s' >/dev/null 2>&1 &",
+		"nohup sh -c 'sleep 1; if [ \"$(id -u)\" -eq 0 ]; then systemctl daemon-reload && systemctl restart %s; else sudo systemctl daemon-reload && sudo systemctl restart %s; fi' >/dev/null 2>&1 &",
+		serviceName,
 		serviceName,
 	)
 	restart := exec.Command("sh", "-c", restartShell)
@@ -1130,7 +1120,7 @@ func updateAgent(payload map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("binary updated but restart scheduling failed: %s", strings.TrimSpace(string(output)))
 	}
 
-	return fmt.Sprintf("agent updated from %s@%s; service restart scheduled", repoURL, ref), nil
+	return fmt.Sprintf("agent updated from %s; service daemon-reload+restart scheduled", workDir), nil
 }
 
 func parseOverlayPeers(payload map[string]interface{}) []overlayPeer {
