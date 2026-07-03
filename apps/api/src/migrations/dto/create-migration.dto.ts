@@ -32,4 +32,44 @@ export class CreateMigrationDto {
   @IsOptional()
   @IsString()
   reason?: string;
+
+  @IsOptional()
+  @IsString()
+  sourceKind?: 'node' | 'seedbox';
+
+  @IsOptional()
+  @IsString()
+  targetKind?: 'node' | 'seedbox';
+
+  @IsOptional()
+  @IsString()
+  sourceSeedboxHost?: string;
+
+  @IsOptional()
+  @IsString()
+  sourceSeedboxUser?: string;
+
+  @IsOptional()
+  @IsString()
+  sourceSeedboxPassword?: string;
+
+  @IsOptional()
+  @IsString()
+  sourceSeedboxPort?: string;
+
+  @IsOptional()
+  @IsString()
+  targetSeedboxHost?: string;
+
+  @IsOptional()
+  @IsString()
+  targetSeedboxUser?: string;
+
+  @IsOptional()
+  @IsString()
+  targetSeedboxPassword?: string;
+
+  @IsOptional()
+  @IsString()
+  targetSeedboxPort?: string;
 }

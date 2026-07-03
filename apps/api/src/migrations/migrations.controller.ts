@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Delete, Get, HttpCode, HttpStatu
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateMigrationDto } from './dto/create-migration.dto';
+import { ListRemoteDirectoriesDto } from './dto/list-remote-directories.dto';
 import { UpdateMigrationDto } from './dto/update-migration.dto';
 import { MigrationsService } from './migrations.service';
 
@@ -42,6 +43,18 @@ export class MigrationsController {
       basePath || '/',
       Number.isFinite(parsedMaxEntries) ? parsedMaxEntries : 20,
     );
+  }
+
+  @Post('directories/remote')
+  listRemoteDirectories(@Body() dto: ListRemoteDirectoriesDto) {
+    const parsedPort = dto.port ? Number.parseInt(dto.port, 10) : undefined;
+    return this.migrationsService.listRemoteDirectories(dto.nodeId, {
+      host: dto.host,
+      username: dto.username,
+      password: dto.password,
+      port: Number.isFinite(parsedPort) ? parsedPort : undefined,
+      basePath: dto.basePath,
+    });
   }
 
   @Post()

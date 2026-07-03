@@ -11,6 +11,16 @@ type MigrationNotesMetadata = {
   sourcePath?: string;
   targetPath?: string;
   notes?: string;
+  sourceKind?: 'node' | 'seedbox';
+  targetKind?: 'node' | 'seedbox';
+  sourceSeedboxHost?: string;
+  sourceSeedboxUser?: string;
+  sourceSeedboxPassword?: string;
+  sourceSeedboxPort?: number;
+  targetSeedboxHost?: string;
+  targetSeedboxUser?: string;
+  targetSeedboxPassword?: string;
+  targetSeedboxPort?: number;
 };
 
 @Injectable()
@@ -21,7 +31,7 @@ export class MigrationsService {
     private readonly auditLogsService: AuditLogsService,
   ) {}
 
-  private parseNotesMetadata(value?: string | null): MigrationNotesMetadata {
+  private parseNotesMetadata(value?: string | null, includeSecrets = false): MigrationNotesMetadata {
     if (!value) return {};
     try {
       const parsed = JSON.parse(value) as MigrationNotesMetadata;
@@ -31,6 +41,28 @@ export class MigrationsService {
         sourcePath: typeof parsed.sourcePath === 'string' ? parsed.sourcePath : undefined,
         targetPath: typeof parsed.targetPath === 'string' ? parsed.targetPath : undefined,
         notes: typeof parsed.notes === 'string' ? parsed.notes : undefined,
+        sourceKind: parsed.sourceKind === 'seedbox' ? 'seedbox' : parsed.sourceKind === 'node' ? 'node' : undefined,
+        targetKind: parsed.targetKind === 'seedbox' ? 'seedbox' : parsed.targetKind === 'node' ? 'node' : undefined,
+        sourceSeedboxHost:
+          typeof parsed.sourceSeedboxHost === 'string' ? parsed.sourceSeedboxHost : undefined,
+        sourceSeedboxUser:
+          typeof parsed.sourceSeedboxUser === 'string' ? parsed.sourceSeedboxUser : undefined,
+        sourceSeedboxPassword:
+          includeSecrets && typeof parsed.sourceSeedboxPassword === 'string'
+            ? parsed.sourceSeedboxPassword
+            : undefined,
+        sourceSeedboxPort:
+          typeof parsed.sourceSeedboxPort === 'number' ? parsed.sourceSeedboxPort : undefined,
+        targetSeedboxHost:
+          typeof parsed.targetSeedboxHost === 'string' ? parsed.targetSeedboxHost : undefined,
+        targetSeedboxUser:
+          typeof parsed.targetSeedboxUser === 'string' ? parsed.targetSeedboxUser : undefined,
+        targetSeedboxPassword:
+          includeSecrets && typeof parsed.targetSeedboxPassword === 'string'
+            ? parsed.targetSeedboxPassword
+            : undefined,
+        targetSeedboxPort:
+          typeof parsed.targetSeedboxPort === 'number' ? parsed.targetSeedboxPort : undefined,
       };
     } catch {
       return { notes: value };
@@ -38,12 +70,42 @@ export class MigrationsService {
   }
 
   private serializeNotes(dto: CreateMigrationDto): string | undefined {
-    if (!dto.notes && !dto.reason && !dto.sourcePath && !dto.targetPath) return undefined;
+    if (
+      !dto.notes &&
+      !dto.reason &&
+      !dto.sourcePath &&
+      !dto.targetPath &&
+      !dto.sourceKind &&
+      !dto.targetKind &&
+      !dto.sourceSeedboxHost &&
+      !dto.sourceSeedboxUser &&
+      !dto.sourceSeedboxPassword &&
+      !dto.sourceSeedboxPort &&
+      !dto.targetSeedboxHost &&
+      !dto.targetSeedboxUser &&
+      !dto.targetSeedboxPassword &&
+      !dto.targetSeedboxPort
+    )
+      return undefined;
+    const sourceSeedboxPort =
+      dto.sourceSeedboxPort !== undefined ? Number.parseInt(dto.sourceSeedboxPort, 10) : undefined;
+    const targetSeedboxPort =
+      dto.targetSeedboxPort !== undefined ? Number.parseInt(dto.targetSeedboxPort, 10) : undefined;
     return JSON.stringify({
       notes: dto.notes ?? null,
       reason: dto.reason ?? null,
       sourcePath: dto.sourcePath ?? null,
       targetPath: dto.targetPath ?? null,
+      sourceKind: dto.sourceKind ?? null,
+      targetKind: dto.targetKind ?? null,
+      sourceSeedboxHost: dto.sourceSeedboxHost ?? null,
+      sourceSeedboxUser: dto.sourceSeedboxUser ?? null,
+      sourceSeedboxPassword: dto.sourceSeedboxPassword ?? null,
+      sourceSeedboxPort: Number.isFinite(sourceSeedboxPort) ? sourceSeedboxPort : null,
+      targetSeedboxHost: dto.targetSeedboxHost ?? null,
+      targetSeedboxUser: dto.targetSeedboxUser ?? null,
+      targetSeedboxPassword: dto.targetSeedboxPassword ?? null,
+      targetSeedboxPort: Number.isFinite(targetSeedboxPort) ? targetSeedboxPort : null,
     });
   }
 
@@ -134,12 +196,25 @@ export class MigrationsService {
     return this.agentsService.requestDirectoryScan(nodeId, basePath, maxEntries);
   }
 
+  async listRemoteDirectories(
+    nodeId: string,
+    payload: { host: string; username: string; password?: string; port?: number; basePath?: string },
+  ) {
+    return this.agentsService.requestRemoteDirectories(nodeId, {
+      host: payload.host,
+      username: payload.username,
+      password: payload.password,
+      port: payload.port,
+      basePath: payload.basePath,
+    });
+  }
+
   async start(id: string, actorUserId?: string) {
     const migration = await this.prisma.migrationTask.findUniqueOrThrow({
       where: { id },
       include: { sourceNode: true, targetNode: true },
     });
-    const metadata = this.parseNotesMetadata(migration.notes);
+    const metadata = this.parseNotesMetadata(migration.notes, true);
 
     const sourcePath = metadata.sourcePath?.trim();
     const targetPath = metadata.targetPath?.trim();
@@ -147,18 +222,56 @@ export class MigrationsService {
       throw new BadRequestException('Migration paths are missing');
     }
 
-    if (!migration.targetNodeId) {
-      throw new BadRequestException('Target node is missing');
+    const sourceKind = metadata.sourceKind === 'seedbox' ? 'seedbox' : 'node';
+    const targetKind = metadata.targetKind === 'seedbox' ? 'seedbox' : 'node';
+
+    if (sourceKind === 'seedbox' && targetKind === 'seedbox') {
+      throw new BadRequestException('At least one side must be a node managed by Tarmac');
     }
 
-    const sourceHost =
-      migration.sourceNodeId && migration.targetNodeId !== migration.sourceNodeId
-        ? migration.sourceNode?.vlanIp ?? undefined
-        : undefined;
-    const sourceUser =
-      migration.sourceNodeId && migration.targetNodeId !== migration.sourceNodeId
-        ? migration.sourceNode?.overlaySshUser ?? 'root'
-        : undefined;
+    let executionNodeId: string | undefined;
+    if (targetKind === 'seedbox') {
+      executionNodeId = migration.sourceNodeId ?? undefined;
+      if (!executionNodeId) {
+        throw new BadRequestException('Source node is required when destination is a seedbox');
+      }
+    } else {
+      executionNodeId = migration.targetNodeId ?? undefined;
+      if (!executionNodeId) {
+        throw new BadRequestException('Target node is required');
+      }
+    }
+
+    let sourceHost: string | undefined;
+    let sourceUser: string | undefined;
+    let sourcePassword: string | undefined;
+    let sourceSshPort: number | undefined;
+    if (sourceKind === 'seedbox') {
+      sourceHost = metadata.sourceSeedboxHost?.trim();
+      sourceUser = metadata.sourceSeedboxUser?.trim();
+      sourcePassword = metadata.sourceSeedboxPassword;
+      sourceSshPort = metadata.sourceSeedboxPort;
+      if (!sourceHost || !sourceUser) {
+        throw new BadRequestException('Seedbox source credentials are incomplete');
+      }
+    } else if (migration.sourceNodeId && executionNodeId !== migration.sourceNodeId) {
+      sourceHost = migration.sourceNode?.vlanIp ?? undefined;
+      sourceUser = migration.sourceNode?.overlaySshUser ?? 'root';
+    }
+
+    let targetHost: string | undefined;
+    let targetUser: string | undefined;
+    let targetPassword: string | undefined;
+    let targetSshPort: number | undefined;
+    if (targetKind === 'seedbox') {
+      targetHost = metadata.targetSeedboxHost?.trim();
+      targetUser = metadata.targetSeedboxUser?.trim();
+      targetPassword = metadata.targetSeedboxPassword;
+      targetSshPort = metadata.targetSeedboxPort;
+      if (!targetHost || !targetUser) {
+        throw new BadRequestException('Seedbox destination credentials are incomplete');
+      }
+    }
 
     const updated = await this.prisma.migrationTask.update({
       where: { id },
@@ -166,7 +279,7 @@ export class MigrationsService {
       include: { sourceNode: true, targetNode: true },
     });
 
-    const sent = this.agentsService.sendCommand(migration.targetNodeId, {
+    const sent = this.agentsService.sendCommand(executionNodeId, {
       type: 'command.run_rsync',
       payload: {
         resourceType: 'migration',
@@ -175,6 +288,12 @@ export class MigrationsService {
         targetPath,
         sourceHost,
         sourceUser,
+        sourcePassword,
+        sourceSshPort,
+        targetHost,
+        targetUser,
+        targetPassword,
+        targetSshPort,
       },
     });
 
@@ -195,9 +314,14 @@ export class MigrationsService {
       details: {
         sourcePath,
         targetPath,
+        sourceKind,
+        targetKind,
         sourceHost: sourceHost ?? null,
         sourceUser: sourceUser ?? null,
-        targetNodeId: migration.targetNodeId,
+        targetHost: targetHost ?? null,
+        targetUser: targetUser ?? null,
+        executionNodeId,
+        targetNodeId: migration.targetNodeId ?? null,
       },
     });
 
