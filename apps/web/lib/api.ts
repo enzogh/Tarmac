@@ -62,6 +62,12 @@ export type MigrationItem = {
   progress: number;
   sourceNodeId?: string | null;
   targetNodeId?: string | null;
+  sourcePath?: string | null;
+  targetPath?: string | null;
+  reason?: string | null;
+  notes?: string | null;
+  sourceNode?: { id: string; name: string } | null;
+  targetNode?: { id: string; name: string } | null;
   createdAt: string;
 };
 
@@ -301,8 +307,21 @@ export const api = {
     list: (token: string) => request<MigrationItem[]>('/api/v1/migrations', token),
     create: (
       token: string,
-      payload: { name: string; sourceNodeId?: string; targetNodeId?: string; notes?: string },
+      payload: {
+        name: string;
+        sourceNodeId?: string;
+        targetNodeId?: string;
+        sourcePath?: string;
+        targetPath?: string;
+        reason?: string;
+        notes?: string;
+      },
     ) => request<MigrationItem>('/api/v1/migrations', token, { method: 'POST', body: JSON.stringify(payload) }),
+    listDirectories: (token: string, nodeId: string, basePath = '/') =>
+      request<{ basePath: string; directories: string[] }>(
+        `/api/v1/migrations/directories?nodeId=${encodeURIComponent(nodeId)}&basePath=${encodeURIComponent(basePath)}`,
+        token,
+      ),
     start: (token: string, id: string) => request(`/api/v1/migrations/${id}/start`, token, { method: 'POST' }),
   },
 

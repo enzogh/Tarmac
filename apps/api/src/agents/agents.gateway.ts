@@ -8,7 +8,7 @@ import {
 } from '@nestjs/websockets';
 import { Socket } from 'socket.io';
 import { AgentsService } from './agents.service';
-import { CommandResultPayload, HeartbeatPayload, StateReportPayload } from './agents.types';
+import { CommandProgressPayload, CommandResultPayload, HeartbeatPayload, StateReportPayload } from './agents.types';
 
 @WebSocketGateway({ namespace: '/agents', cors: { origin: '*' } })
 export class AgentsGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -49,5 +49,13 @@ export class AgentsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() payload: CommandResultPayload,
   ) {
     await this.agentsService.onCommandResult(payload);
+  }
+
+  @SubscribeMessage('command_progress')
+  async onCommandProgress(
+    @ConnectedSocket() _client: Socket,
+    @MessageBody() payload: CommandProgressPayload,
+  ) {
+    await this.agentsService.onCommandProgress(payload);
   }
 }

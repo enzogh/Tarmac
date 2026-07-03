@@ -20,4 +20,16 @@ export class CreateMigrationDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsString()
+  sourcePath?: string;
+
+  @IsOptional()
+  @IsString()
+  targetPath?: string;
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
 }
