@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -462,6 +463,19 @@ func probeOverlayLatency(iface, targetIP string) (*float64, *float64) {
 	return fallbackLatency, fallbackLoss
 }
 
+func pokeOverlayTraffic(targetIP string) bool {
+	if targetIP == "" {
+		return false
+	}
+	conn, err := net.DialTimeout("udp", net.JoinHostPort(targetIP, "9"), 800*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	_, err = conn.Write(make([]byte, 8192))
+	return err == nil
+}
+
 func int64Ptr(value int64) *int64 {
 	v := value
 	return &v
@@ -574,6 +588,9 @@ func (c *collector) collectOverlayLinkMetrics(iface string) []overlayLinkMetric 
 					hasLoss:    metric.PacketLoss != nil,
 					at:         now,
 				}
+			} else {
+				// Keep overlay telemetry active even when ICMP probing is unavailable.
+				_ = pokeOverlayTraffic(metric.TargetVlanIP)
 			}
 		}
 

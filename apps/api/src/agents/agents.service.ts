@@ -11,8 +11,8 @@ type SendFn = (event: string, payload: unknown) => void;
 
 // Node is considered offline if no heartbeat received within this time
 const NODE_HEARTBEAT_TIMEOUT_MS = 60 * 1000; // 60 seconds
-const LINK_OFFLINE_HANDSHAKE_SEC = 180;
-const LINK_DEGRADED_HANDSHAKE_SEC = 20;
+const LINK_OFFLINE_HANDSHAKE_SEC = 600;
+const LINK_DEGRADED_HANDSHAKE_SEC = 90;
 
 @Injectable()
 export class AgentsService implements OnModuleInit {
