@@ -1,8 +1,8 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
-import { Plus, CheckCircle, Copy, Check, AlertTriangle } from 'lucide-react';
-import { api, NodeItem } from '../lib/api';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, Check, CheckCircle, Copy, Loader2, Plus } from 'lucide-react';
+import { api, NodeOnboardingInstallResult, NodeOnboardingStartResult } from '../lib/api';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -10,170 +10,143 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from './ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 
 type NodeRole = 'controller' | 'worker';
 type HostProvider = 'ovh' | 'standard';
-
-function buildDaemonCommand(params: {
-  wsUrl: string;
-  nodeId: string;
-}) {
-  const { wsUrl, nodeId } = params;
-  return `NODE_ID="${nodeId}" \\
-AGENT_TOKEN="<AGENT_SHARED_TOKEN>" \\
-CONTROL_PLANE_WS="${wsUrl}" \\
-./tarmac-agent`;
-}
-
-function buildDockerCommand(params: {
-  wsUrl: string;
-  nodeId: string;
-}) {
-  const { wsUrl, nodeId } = params;
-  return `docker run -d \\
-  --name tarmac-agent \\
-  --restart=unless-stopped \\
-  -e NODE_ID="${nodeId}" \\
-  -e AGENT_TOKEN="<AGENT_SHARED_TOKEN>" \\
-  -e CONTROL_PLANE_WS="${wsUrl}" \\
-  ghcr.io/enzogh/tarmac/agent:latest`;
-}
-
-function buildSystemdInstallCommand(params: {
-  wsUrl: string;
-  nodeId: string;
-  provider: HostProvider;
-}) {
-  const { wsUrl, nodeId, provider } = params;
-  const sshUser = provider === 'ovh' ? 'ubuntu' : 'root';
-  return `curl -fsSL https://raw.githubusercontent.com/enzogh/Tarmac/main/apps/agent/scripts/install-agent-service.sh | sudo bash -s -- \\
-  --node-id "${nodeId}" \\
-  --control-plane-ws "${wsUrl}" \\
-  --agent-token "<AGENT_SHARED_TOKEN>" \\
-  --ssh-user "${sshUser}"`;
-}
-
-function buildRemoteBootstrapCommand(params: {
-  wsUrl: string;
-  nodeId: string;
-  provider: HostProvider;
-}) {
-  const install = `curl -fsSL https://raw.githubusercontent.com/enzogh/Tarmac/main/apps/agent/scripts/install-agent-service.sh | bash -s -- \\
-  --node-id "${params.nodeId}" \\
-  --control-plane-ws "${params.wsUrl}" \\
-  --agent-token "<AGENT_SHARED_TOKEN>" \\
-  --ssh-user "${params.provider === 'ovh' ? 'ubuntu' : 'root'}"`;
-
-  if (params.provider === 'ovh') {
-    return `# OVH (login ubuntu, puis élévation root)
-ssh ubuntu@<SERVER_IP>
-sudo -i
-${install}`;
-  }
-
-  return `# Non-OVH (root direct)
-ssh root@<SERVER_IP>
-${install}`;
-}
-
-type Step = 'form' | 'command';
+type Step = 'form' | 'deploy-key' | 'installing' | 'done';
 
 interface NodeOnboardingModalProps {
   onCreated?: () => void;
 }
 
 export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
-  const wsUrl = apiUrl.replace(/^http/, 'ws') + '/agents-ws';
-
   const [open, setOpen] = useState(false);
+  const [step, setStep] = useState<Step>('form');
+  const [token, setToken] = useState('');
+
   const [name, setName] = useState('storage-1');
   const [role, setRole] = useState<NodeRole>('worker');
   const [provider, setProvider] = useState<HostProvider>('ovh');
-  const [step, setStep] = useState<Step>('form');
-  const [createdNode, setCreatedNode] = useState<NodeItem | null>(null);
+  const [hostIp, setHostIp] = useState('');
+  const [sshUsername, setSshUsername] = useState('ubuntu');
+  const [sshPassword, setSshPassword] = useState('');
+  const [repoUrl, setRepoUrl] = useState('git@github.com:enzogh/Tarmac.git');
+  const [repoRef, setRepoRef] = useState('main');
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
-  const [copyDockerState, setCopyDockerState] = useState<'idle' | 'copied' | 'error'>('idle');
-  const [copySystemdState, setCopySystemdState] = useState<'idle' | 'copied' | 'error'>('idle');
-  const [copyRemoteState, setCopyRemoteState] = useState<'idle' | 'copied' | 'error'>('idle');
-  const [token, setToken] = useState('');
+  const [onboarding, setOnboarding] = useState<NodeOnboardingStartResult | null>(null);
+  const [installResult, setInstallResult] = useState<NodeOnboardingInstallResult | null>(null);
 
   useEffect(() => {
     setToken(localStorage.getItem('tarmac_token') ?? '');
   }, []);
 
   useEffect(() => {
-    if (copyState !== 'copied') return undefined;
-    const id = window.setTimeout(() => setCopyState('idle'), 1800);
+    if (copyState !== 'copied') return;
+    const id = window.setTimeout(() => setCopyState('idle'), 1600);
     return () => window.clearTimeout(id);
   }, [copyState]);
 
   useEffect(() => {
-    if (copyDockerState !== 'copied') return undefined;
-    const id = window.setTimeout(() => setCopyDockerState('idle'), 1800);
-    return () => window.clearTimeout(id);
-  }, [copyDockerState]);
+    if (provider === 'ovh' && sshUsername === 'root') {
+      setSshUsername('ubuntu');
+    }
+    if (provider === 'standard' && sshUsername === 'ubuntu') {
+      setSshUsername('root');
+    }
+  }, [provider, sshUsername]);
 
-  useEffect(() => {
-    if (copySystemdState !== 'copied') return undefined;
-    const id = window.setTimeout(() => setCopySystemdState('idle'), 1800);
-    return () => window.clearTimeout(id);
-  }, [copySystemdState]);
-
-  useEffect(() => {
-    if (copyRemoteState !== 'copied') return undefined;
-    const id = window.setTimeout(() => setCopyRemoteState('idle'), 1800);
-    return () => window.clearTimeout(id);
-  }, [copyRemoteState]);
-
-  const resetForm = () => {
+  const reset = () => {
     setStep('form');
-    setCreatedNode(null);
-    setError('');
     setName('storage-1');
     setRole('worker');
     setProvider('ovh');
+    setHostIp('');
+    setSshUsername('ubuntu');
+    setSshPassword('');
+    setRepoUrl('git@github.com:enzogh/Tarmac.git');
+    setRepoRef('main');
+    setError('');
+    setLoading(false);
     setCopyState('idle');
-    setCopyDockerState('idle');
-    setCopySystemdState('idle');
-    setCopyRemoteState('idle');
+    setOnboarding(null);
+    setInstallResult(null);
   };
 
-  const handleOpenChange = (val: boolean) => {
-    setOpen(val);
-    if (!val) resetForm();
+  const onOpenChange = (value: boolean) => {
+    setOpen(value);
+    if (!value) reset();
   };
 
-  const handleCreate = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!token) { setError('Token manquant, reconnectez-vous.'); return; }
+  const effectiveProviderLabel = useMemo(
+    () =>
+      provider === 'ovh'
+        ? 'OVH: connexion SSH user + élévation root via sudo'
+        : 'Standard: exécution directe avec l’utilisateur SSH fourni',
+    [provider],
+  );
+
+  const handleStart = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!token) {
+      setError('Token manquant, reconnectez-vous.');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
-      const node = await api.nodes.create(token, { name, role });
-      setCreatedNode(node);
-      setStep('command');
+      const result = await api.nodes.onboardingStart(token, {
+        name: name.trim(),
+        role,
+        provider,
+        hostIp: hostIp.trim(),
+        sshUsername: sshUsername.trim(),
+        sshPassword,
+        repoUrl: repoUrl.trim(),
+        repoRef: repoRef.trim(),
+      });
+      setOnboarding(result);
+      setStep('deploy-key');
       onCreated?.();
-    } catch {
-      setError('Erreur lors de la création du nœud.');
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Impossible de démarrer l’onboarding.');
     } finally {
       setLoading(false);
     }
   };
 
-  const copy = async (text: string, setter: (s: 'idle' | 'copied' | 'error') => void) => {
+  const handleInstall = async () => {
+    if (!token || !onboarding) return;
+    setLoading(true);
+    setError('');
+    setStep('installing');
     try {
-      await navigator.clipboard.writeText(text);
-      setter('copied');
+      const result = await api.nodes.onboardingInstall(token, onboarding.onboardingId);
+      setInstallResult(result);
+      setStep('done');
+      onCreated?.();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Installation distante échouée.');
+      setStep('deploy-key');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copyPublicKey = async () => {
+    if (!onboarding?.githubDeployKey.publicKey) return;
+    try {
+      await navigator.clipboard.writeText(onboarding.githubDeployKey.publicKey);
+      setCopyState('copied');
     } catch {
-      setter('error');
+      setCopyState('error');
     }
   };
 
@@ -186,31 +159,25 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
             Onboarder un nœud
           </Button>
         </TooltipTrigger>
-        <TooltipContent>Enregistrer un nouveau serveur et obtenir la commande de démarrage de l'agent</TooltipContent>
+        <TooltipContent>Onboarding auto: SSH + clé GitHub + install agent</TooltipContent>
       </Tooltip>
 
-      <Dialog open={open} onOpenChange={handleOpenChange}>
+      <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Onboarder un nœud</DialogTitle>
+            <DialogTitle>Onboarding automatisé d’un nœud</DialogTitle>
           </DialogHeader>
 
           {step === 'form' && (
-            <form onSubmit={handleCreate} className="space-y-5">
+            <form className="space-y-4" onSubmit={handleStart}>
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="node-name">Nom du nœud</Label>
-                  <Input
-                    id="node-name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="storage-1"
-                    required
-                  />
+                  <Input id="node-name" value={name} onChange={(e) => setName(e.target.value)} required />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="node-role">Rôle</Label>
-                  <Select value={role} onValueChange={(v) => setRole(v as NodeRole)}>
+                  <Select value={role} onValueChange={(value) => setRole(value as NodeRole)}>
                     <SelectTrigger id="node-role">
                       <SelectValue />
                     </SelectTrigger>
@@ -220,197 +187,148 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="node-provider">Type d’hébergement</Label>
-                  <Select value={provider} onValueChange={(v) => setProvider(v as HostProvider)}>
-                    <SelectTrigger id="node-provider">
+                <div className="space-y-2">
+                  <Label htmlFor="provider">Hébergeur</Label>
+                  <Select value={provider} onValueChange={(value) => setProvider(value as HostProvider)}>
+                    <SelectTrigger id="provider">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="ovh">OVH (connexion ubuntu + sudo root)</SelectItem>
-                      <SelectItem value="standard">Autre VPS (connexion root directe)</SelectItem>
+                      <SelectItem value="ovh">OVH</SelectItem>
+                      <SelectItem value="standard">Standard</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="host-ip">IP serveur</Label>
+                  <Input id="host-ip" value={hostIp} onChange={(e) => setHostIp(e.target.value)} placeholder="10.0.0.10" required />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ssh-user">Utilisateur SSH</Label>
+                  <Input id="ssh-user" value={sshUsername} onChange={(e) => setSshUsername(e.target.value)} required />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ssh-password">Mot de passe SSH</Label>
+                  <Input
+                    id="ssh-password"
+                    type="password"
+                    value={sshPassword}
+                    onChange={(e) => setSshPassword(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="repo-url">Repository agent</Label>
+                  <Input id="repo-url" value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)} required />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="repo-ref">Branch / ref</Label>
+                  <Input id="repo-ref" value={repoRef} onChange={(e) => setRepoRef(e.target.value)} required />
+                </div>
               </div>
 
-              {error && (
-                <p className="text-sm text-rose-400">{error}</p>
-              )}
+              <p className="text-xs text-muted-foreground">{effectiveProviderLabel}</p>
+
+              {error && <p className="text-sm text-rose-400">{error}</p>}
 
               <DialogFooter>
-                <Button type="button" variant="secondary" onClick={() => handleOpenChange(false)}>
+                <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
                   Annuler
                 </Button>
                 <Button type="submit" disabled={loading}>
-                  {loading ? 'Création…' : 'Créer le nœud'}
+                  {loading ? 'Initialisation…' : 'Démarrer onboarding'}
                 </Button>
               </DialogFooter>
             </form>
           )}
 
-          {step === 'command' && createdNode && (
-            <div className="space-y-5">
-              <div className="flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
-                <CheckCircle className="h-5 w-5 shrink-0 text-emerald-400" />
-                <div>
-                  <p className="text-sm font-semibold text-emerald-300">Nœud «&nbsp;{createdNode.name}&nbsp;» créé</p>
-                  <p className="text-xs text-muted-foreground">
-                    ID : <code className="text-foreground">{createdNode.id}</code>
-                  </p>
-                </div>
-              </div>
-
-              <p className="text-sm text-muted-foreground">
-                Colle l'une de ces commandes sur le serveur worker pour démarrer l'agent daemon.
-              </p>
-
-              {/* Binary */}
-              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.08] p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-foreground">Ubuntu 22.04 + systemd (auto install)</p>
-                    <p className="text-xs text-muted-foreground">Installe les dépendances, compile l'agent, crée un service avec restart auto.</p>
-                  </div>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={() =>
-                          copy(
-                            buildSystemdInstallCommand({ wsUrl, nodeId: createdNode.id, provider }),
-                            setCopySystemdState,
-                          )
-                        }
-                      >
-                        {copySystemdState === 'copied' ? (
-                          <><Check className="h-3.5 w-3.5" /> Copié</>
-                        ) : (
-                          <><Copy className="h-3.5 w-3.5" /> Copier</>
-                        )}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Copier la commande systemd</TooltipContent>
-                  </Tooltip>
-                </div>
-                <pre className="code-block whitespace-pre-wrap break-words">
-                  {buildSystemdInstallCommand({ wsUrl, nodeId: createdNode.id, provider })}
-                </pre>
-              </div>
-
-              <div className="rounded-xl border border-violet-500/20 bg-violet-500/[0.08] p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-foreground">Connexion SSH guidée</p>
-                    <p className="text-xs text-muted-foreground">
-                      {provider === 'ovh'
-                        ? 'OVH: connexion en utilisateur ubuntu puis passage root.'
-                        : 'Autre fournisseur: connexion root directe.'}
-                    </p>
-                  </div>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={() =>
-                          copy(
-                            buildRemoteBootstrapCommand({ wsUrl, nodeId: createdNode.id, provider }),
-                            setCopyRemoteState,
-                          )
-                        }
-                      >
-                        {copyRemoteState === 'copied' ? (
-                          <><Check className="h-3.5 w-3.5" /> Copié</>
-                        ) : (
-                          <><Copy className="h-3.5 w-3.5" /> Copier</>
-                        )}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Copier la séquence SSH</TooltipContent>
-                  </Tooltip>
-                </div>
-                <pre className="code-block whitespace-pre-wrap break-words">
-                  {buildRemoteBootstrapCommand({ wsUrl, nodeId: createdNode.id, provider })}
-                </pre>
-              </div>
-
-              {/* Binary */}
-              <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-foreground">Binaire (recommandé)</p>
-                    <p className="text-xs text-muted-foreground">Requiert le binaire <code>tarmac-agent</code>.</p>
-                  </div>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => copy(buildDaemonCommand({ wsUrl, nodeId: createdNode.id }), setCopyState)}
-                      >
-                        {copyState === 'copied' ? (
-                          <><Check className="h-3.5 w-3.5" /> Copié</>
-                        ) : (
-                          <><Copy className="h-3.5 w-3.5" /> Copier</>
-                        )}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Copier la commande dans le presse-papiers</TooltipContent>
-                  </Tooltip>
-                </div>
-                <pre className="code-block whitespace-pre-wrap break-words">
-                  {buildDaemonCommand({ wsUrl, nodeId: createdNode.id })}
-                </pre>
-              </div>
-
-              {/* Docker */}
-              <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-foreground">Docker</p>
-                    <p className="text-xs text-muted-foreground">Démarre l'agent en container avec restart automatique.</p>
-                  </div>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => copy(buildDockerCommand({ wsUrl, nodeId: createdNode.id }), setCopyDockerState)}
-                      >
-                        {copyDockerState === 'copied' ? (
-                          <><Check className="h-3.5 w-3.5" /> Copié</>
-                        ) : (
-                          <><Copy className="h-3.5 w-3.5" /> Copier</>
-                        )}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Copier la commande Docker dans le presse-papiers</TooltipContent>
-                  </Tooltip>
-                </div>
-                <pre className="code-block whitespace-pre-wrap break-words">
-                  {buildDockerCommand({ wsUrl, nodeId: createdNode.id })}
-                </pre>
-              </div>
-
-              <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2.5">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-                <p className="text-xs text-amber-300">
-                  Remplace <code>&lt;AGENT_SHARED_TOKEN&gt;</code> par la valeur de{' '}
-                  <code>AGENT_SHARED_TOKEN</code> configurée sur ton serveur API.
+          {step === 'deploy-key' && onboarding && (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
+                <p className="text-sm font-medium text-emerald-200">
+                  Nœud créé: <strong>{onboarding.node.name}</strong> ({onboarding.node.id})
+                </p>
+                <p className="mt-1 text-xs text-emerald-100/80">
+                  Ajoute la clé ci-dessous dans GitHub &gt; Settings &gt; Deploy keys (read-only suffit).
                 </p>
               </div>
 
+              <div className="space-y-2 rounded-xl border border-white/[0.08] bg-zinc-900/60 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium text-foreground">Clé publique deploy</p>
+                  <Button type="button" variant="secondary" size="sm" onClick={copyPublicKey}>
+                    {copyState === 'copied' ? (
+                      <>
+                        <Check className="h-3.5 w-3.5" /> Copié
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-3.5 w-3.5" /> Copier
+                      </>
+                    )}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Titre suggéré: <code>{onboarding.githubDeployKey.title}</code>
+                </p>
+                <pre className="code-block whitespace-pre-wrap break-all">
+                  {onboarding.githubDeployKey.publicKey}
+                </pre>
+              </div>
+
+              {error && <p className="text-sm text-rose-400">{error}</p>}
+
               <DialogFooter>
-                <Button type="button" variant="secondary" onClick={resetForm}>
+                <Button type="button" variant="secondary" onClick={reset}>
+                  Recommencer
+                </Button>
+                <Button type="button" onClick={handleInstall} disabled={loading}>
+                  J’ai ajouté la clé sur GitHub
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+
+          {step === 'installing' && (
+            <div className="space-y-3 py-4">
+              <div className="flex items-center gap-2 text-sm text-zinc-200">
+                <Loader2 className="h-4 w-4 animate-spin text-violet-400" />
+                Installation automatique en cours sur le serveur distant…
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Actions: création <code>~/.apps/Tarmac</code>, pull repo, installation service agent et démarrage.
+              </p>
+            </div>
+          )}
+
+          {step === 'done' && installResult && (
+            <div className="space-y-4">
+              <div className="flex items-start gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
+                <CheckCircle className="mt-0.5 h-4 w-4 text-emerald-400" />
+                <div>
+                  <p className="text-sm font-medium text-emerald-200">
+                    Agent installé sur {installResult.nodeName}
+                  </p>
+                  <p className="text-xs text-emerald-100/80">Service tarmac-agent démarré.</p>
+                </div>
+              </div>
+
+              <pre className="max-h-56 overflow-auto rounded-xl border border-white/[0.08] bg-zinc-950/70 p-3 text-xs text-zinc-300">
+                {installResult.output}
+              </pre>
+
+              {error && (
+                <div className="flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              <DialogFooter>
+                <Button type="button" variant="secondary" onClick={reset}>
                   Ajouter un autre
                 </Button>
-                <Button type="button" onClick={() => handleOpenChange(false)}>
+                <Button type="button" onClick={() => onOpenChange(false)}>
                   Terminer
                 </Button>
               </DialogFooter>
