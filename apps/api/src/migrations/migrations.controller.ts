@@ -27,6 +27,23 @@ export class MigrationsController {
     return this.migrationsService.listDirectories(nodeId, basePath || '/');
   }
 
+  @Get('directories/scan')
+  scanDirectories(
+    @Query('nodeId') nodeId?: string,
+    @Query('basePath') basePath?: string,
+    @Query('maxEntries') maxEntries?: string,
+  ) {
+    if (!nodeId) {
+      throw new BadRequestException('nodeId is required');
+    }
+    const parsedMaxEntries = Number.parseInt(maxEntries ?? '20', 10);
+    return this.migrationsService.scanDirectories(
+      nodeId,
+      basePath || '/',
+      Number.isFinite(parsedMaxEntries) ? parsedMaxEntries : 20,
+    );
+  }
+
   @Post()
   create(@Body() dto: CreateMigrationDto, @Req() req: AuthenticatedRequest) {
     return this.migrationsService.create(dto, req.user?.userId);
