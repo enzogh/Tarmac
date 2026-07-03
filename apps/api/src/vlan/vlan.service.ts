@@ -485,9 +485,6 @@ export class VlanService implements OnModuleInit {
           where: { id: connection.id },
           data: {
             status: telemetry.status,
-            latencyMs: telemetry.latencyMs,
-            packetLoss: telemetry.packetLoss,
-            bandwidth: telemetry.bandwidth,
             lastCheckedAt: now,
           },
         }),
