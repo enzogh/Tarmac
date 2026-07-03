@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -35,9 +36,11 @@ type heartbeat struct {
 }
 
 type overlayState struct {
-	PublicKey  string `json:"publicKey"`
-	Endpoint   string `json:"endpoint"`
-	ListenPort int    `json:"listenPort"`
+	PublicKey    string `json:"publicKey,omitempty"`
+	Endpoint     string `json:"endpoint,omitempty"`
+	ListenPort   int    `json:"listenPort,omitempty"`
+	SSHPublicKey string `json:"sshPublicKey,omitempty"`
+	SSHUser      string `json:"sshUser,omitempty"`
 }
 
 type overlayLinkMetric struct {
@@ -786,6 +789,11 @@ type overlayIdentity struct {
 	privateKeyPath string
 }
 
+type sshIdentity struct {
+	publicKey string
+	user      string
+}
+
 func commandExists(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
@@ -859,6 +867,133 @@ func ensureOverlayIdentity() (*overlayIdentity, error) {
 		listenPort:     listenPort,
 		privateKeyPath: privateKeyPath,
 	}, nil
+}
+
+func ensureSSHIdentity() (*sshIdentity, error) {
+	if !commandExists("ssh-keygen") {
+		return nil, errors.New("ssh-keygen not found")
+	}
+
+	sshUser := strings.TrimSpace(os.Getenv("AGENT_SSH_USER"))
+	if sshUser == "" {
+		if current, err := user.Current(); err == nil && strings.TrimSpace(current.Username) != "" {
+			sshUser = current.Username
+		}
+	}
+	if sshUser == "" {
+		sshUser = "root"
+	}
+
+	privateKeyPath := envOrDefault("AGENT_SSH_PRIVATE_KEY_PATH", "/var/lib/tarmac-agent/ssh/id_ed25519")
+	if err := os.MkdirAll(filepath.Dir(privateKeyPath), 0o700); err != nil {
+		return nil, fmt.Errorf("cannot create ssh key directory: %w", err)
+	}
+	publicKeyPath := privateKeyPath + ".pub"
+	if _, err := os.Stat(publicKeyPath); errors.Is(err, os.ErrNotExist) {
+		host, _ := os.Hostname()
+		comment := fmt.Sprintf("tarmac-agent@%s", host)
+		cmd := exec.Command("ssh-keygen", "-t", "ed25519", "-N", "", "-f", privateKeyPath, "-C", comment)
+		output, genErr := cmd.CombinedOutput()
+		if genErr != nil {
+			return nil, fmt.Errorf("cannot generate ssh key: %s", strings.TrimSpace(string(output)))
+		}
+	} else if err != nil {
+		return nil, fmt.Errorf("cannot stat ssh public key: %w", err)
+	}
+
+	publicKeyRaw, err := os.ReadFile(publicKeyPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read ssh public key: %w", err)
+	}
+	publicKey := strings.TrimSpace(string(publicKeyRaw))
+	if publicKey == "" {
+		return nil, errors.New("ssh public key is empty")
+	}
+	return &sshIdentity{publicKey: publicKey, user: sshUser}, nil
+}
+
+func applySSHAuthorizedKeys(payload map[string]interface{}) (string, error) {
+	targetUser := strings.TrimSpace(readString(payload, "user"))
+	if targetUser == "" {
+		targetUser = "root"
+	}
+
+	rawKeys := readStringSlice(payload, "authorizedKeys")
+	unique := make(map[string]struct{}, len(rawKeys))
+	keys := make([]string, 0, len(rawKeys))
+	for _, key := range rawKeys {
+		candidate := strings.TrimSpace(key)
+		if candidate == "" {
+			continue
+		}
+		if !strings.HasPrefix(candidate, "ssh-") {
+			continue
+		}
+		if _, exists := unique[candidate]; exists {
+			continue
+		}
+		unique[candidate] = struct{}{}
+		keys = append(keys, candidate)
+	}
+	if len(keys) == 0 {
+		return "", errors.New("no valid authorized keys provided")
+	}
+	sort.Strings(keys)
+
+	account, err := user.Lookup(targetUser)
+	if err != nil {
+		return "", fmt.Errorf("cannot lookup user %s: %w", targetUser, err)
+	}
+	homeDir := strings.TrimSpace(account.HomeDir)
+	if homeDir == "" {
+		return "", fmt.Errorf("user %s has no home directory", targetUser)
+	}
+
+	sshDir := filepath.Join(homeDir, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		return "", fmt.Errorf("cannot create %s: %w", sshDir, err)
+	}
+	authorizedKeysPath := filepath.Join(sshDir, "authorized_keys")
+	existingRaw, readErr := os.ReadFile(authorizedKeysPath)
+	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		return "", fmt.Errorf("cannot read authorized_keys: %w", readErr)
+	}
+	existing := string(existingRaw)
+
+	const beginMarker = "# BEGIN TARMAC MANAGED KEYS"
+	const endMarker = "# END TARMAC MANAGED KEYS"
+	managed := beginMarker + "\n" + strings.Join(keys, "\n") + "\n" + endMarker + "\n"
+
+	newContent := managed
+	start := strings.Index(existing, beginMarker)
+	end := strings.Index(existing, endMarker)
+	if start >= 0 && end > start {
+		end += len(endMarker)
+		if end < len(existing) && existing[end] == '\n' {
+			end++
+		}
+		newContent = existing[:start] + managed + existing[end:]
+	} else if strings.TrimSpace(existing) != "" {
+		if !strings.HasSuffix(existing, "\n") {
+			existing += "\n"
+		}
+		newContent = existing + managed
+	}
+
+	if err := os.WriteFile(authorizedKeysPath, []byte(newContent), 0o600); err != nil {
+		return "", fmt.Errorf("cannot write authorized_keys: %w", err)
+	}
+
+	if os.Geteuid() == 0 {
+		uid, uidErr := strconv.Atoi(account.Uid)
+		gid, gidErr := strconv.Atoi(account.Gid)
+		if uidErr == nil && gidErr == nil {
+			_ = os.Chown(sshDir, uid, gid)
+			_ = os.Chown(authorizedKeysPath, uid, gid)
+		}
+	}
+
+	return fmt.Sprintf("configured %d ssh keys for user %s", len(keys), targetUser), nil
 }
 
 func parseOverlayPeers(payload map[string]interface{}) []overlayPeer {
@@ -1293,6 +1428,20 @@ func handleCommand(cmd commandPayload, onProgress func(progress commandProgress)
 			result.Data = data
 			result.Message = fmt.Sprintf("%d directories listed", len(data.Directories))
 		}
+	case "command.apply_ssh_authorized_keys":
+		result.Command = "apply_ssh_authorized_keys"
+		result.ResourceType = "overlay"
+		result.ResourceID = readString(cmd.Payload, "user")
+		if result.ResourceID == "" {
+			result.ResourceID = "root"
+		}
+		message, err := applySSHAuthorizedKeys(cmd.Payload)
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Message = message
+		}
 	default:
 		result.Success = false
 		result.Message = fmt.Sprintf("unknown command %s", cmd.Type)
@@ -1311,14 +1460,25 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 	client := &wsClient{conn: conn}
 	c := &collector{}
 	var overlay *overlayState
+	hasOverlayState := false
+	overlayStatePayload := &overlayState{}
 	if identity, err := ensureOverlayIdentity(); err == nil {
-		overlay = &overlayState{
-			PublicKey:  identity.publicKey,
-			Endpoint:   identity.endpoint,
-			ListenPort: identity.listenPort,
-		}
+		overlayStatePayload.PublicKey = identity.publicKey
+		overlayStatePayload.Endpoint = identity.endpoint
+		overlayStatePayload.ListenPort = identity.listenPort
+		hasOverlayState = true
 	} else {
 		log.Printf("overlay identity unavailable: %v", err)
+	}
+	if identity, err := ensureSSHIdentity(); err == nil {
+		overlayStatePayload.SSHPublicKey = identity.publicKey
+		overlayStatePayload.SSHUser = identity.user
+		hasOverlayState = true
+	} else {
+		log.Printf("ssh identity unavailable: %v", err)
+	}
+	if hasOverlayState {
+		overlay = overlayStatePayload
 	}
 
 	readDone := make(chan error, 1)
