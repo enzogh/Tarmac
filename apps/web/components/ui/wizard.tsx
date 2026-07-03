@@ -37,10 +37,10 @@ export function WizardDialog({
   const isFirstStep = currentStep === 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-2xl rounded-2xl border border-white/[0.08] bg-zinc-950/95 shadow-2xl">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/70 p-4 backdrop-blur-sm sm:p-6">
+      <div className="mx-auto flex w-full max-w-2xl flex-col rounded-2xl border border-white/[0.08] bg-zinc-950/95 shadow-2xl max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-3rem)]">
         {/* Header */}
-        <div className="border-b border-white/[0.08] px-6 py-4">
+        <div className="shrink-0 border-b border-white/[0.08] px-6 py-4">
           <h2 className="text-xl font-bold text-foreground">{title}</h2>
           {description && <p className="text-sm text-muted-foreground mt-1">{description}</p>}
           
@@ -61,7 +61,7 @@ export function WizardDialog({
         </div>
 
         {/* Content */}
-        <div className="min-h-64 px-6 py-6">
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
           <div className="mb-4">
             <h3 className="font-semibold text-lg text-foreground">{step.title}</h3>
             <p className="text-sm text-muted-foreground mt-1">{step.description}</p>
@@ -70,7 +70,7 @@ export function WizardDialog({
         </div>
 
         {/* Footer */}
-        <div className="flex justify-between gap-3 border-t border-white/[0.08] px-6 py-4">
+        <div className="shrink-0 flex justify-between gap-3 border-t border-white/[0.08] px-6 py-4">
           <Button variant="outline" onClick={onCancel}>
             Annuler
           </Button>

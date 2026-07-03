@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateMigrationDto } from './dto/create-migration.dto';
@@ -19,6 +19,14 @@ export class MigrationsController {
     return this.migrationsService.list();
   }
 
+  @Get('directories')
+  listDirectories(@Query('nodeId') nodeId?: string, @Query('basePath') basePath?: string) {
+    if (!nodeId) {
+      throw new BadRequestException('nodeId is required');
+    }
+    return this.migrationsService.listDirectories(nodeId, basePath || '/');
+  }
+
   @Post()
   create(@Body() dto: CreateMigrationDto, @Req() req: AuthenticatedRequest) {
     return this.migrationsService.create(dto, req.user?.userId);
@@ -31,7 +39,7 @@ export class MigrationsController {
 
   @Post(':id/start')
   start(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.migrationsService.update(id, { status: 'running' }, req.user?.userId);
+    return this.migrationsService.start(id, req.user?.userId);
   }
 
   @Post(':id/complete')

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -98,6 +100,20 @@ type commandResult struct {
 	ResourceID   string `json:"resourceId"`
 	Success      bool   `json:"success"`
 	Message      string `json:"message,omitempty"`
+	Data         any    `json:"data,omitempty"`
+}
+
+type commandProgress struct {
+	Command      string `json:"command"`
+	ResourceType string `json:"resourceType"`
+	ResourceID   string `json:"resourceId"`
+	Progress     int    `json:"progress"`
+	Message      string `json:"message,omitempty"`
+}
+
+type directoryListData struct {
+	BasePath    string   `json:"basePath"`
+	Directories []string `json:"directories"`
 }
 
 func envOrDefault(key, fallback string) string {
@@ -912,7 +928,7 @@ func applyOverlay(payload map[string]interface{}) (string, error) {
 	if strings.TrimSpace(addressCidr) != "" {
 		// Clean old addresses first
 		exec.Command("ip", "address", "flush", "dev", iface).CombinedOutput()
-		
+
 		if out, err := exec.Command("ip", "address", "add", addressCidr, "dev", iface).CombinedOutput(); err != nil {
 			return "", fmt.Errorf("cannot assign interface address: %s", strings.TrimSpace(string(out)))
 		}
@@ -1035,7 +1051,169 @@ func applyMount(payload map[string]interface{}) (string, error) {
 	return "", fmt.Errorf("mount failed: %s", strings.Join(attempts, " | "))
 }
 
-func handleCommand(cmd commandPayload) commandResult {
+func listDirectories(payload map[string]interface{}) (directoryListData, error) {
+	basePath := strings.TrimSpace(readString(payload, "basePath"))
+	if basePath == "" {
+		basePath = "/"
+	}
+	basePath = filepath.Clean(basePath)
+	if !filepath.IsAbs(basePath) {
+		return directoryListData{}, errors.New("basePath must be absolute")
+	}
+
+	entries, err := os.ReadDir(basePath)
+	if err != nil {
+		return directoryListData{}, fmt.Errorf("cannot read %s: %w", basePath, err)
+	}
+
+	directories := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		directories = append(directories, filepath.Clean(filepath.Join(basePath, entry.Name())))
+	}
+	sort.Strings(directories)
+	if len(directories) > 500 {
+		directories = directories[:500]
+	}
+
+	return directoryListData{
+		BasePath:    basePath,
+		Directories: directories,
+	}, nil
+}
+
+func splitByCRLF(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	for i := 0; i < len(data); i++ {
+		if data[i] == '\n' || data[i] == '\r' {
+			return i + 1, bytes.TrimSpace(data[:i]), nil
+		}
+	}
+	if atEOF && len(data) > 0 {
+		return len(data), bytes.TrimSpace(data), nil
+	}
+	return 0, nil, nil
+}
+
+var progressPercentRe = regexp.MustCompile(`(\d{1,3})%`)
+
+func parseProgressPercent(line string) (int, bool) {
+	match := progressPercentRe.FindStringSubmatch(line)
+	if len(match) < 2 {
+		return 0, false
+	}
+	percent, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0, false
+	}
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	return percent, true
+}
+
+func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progress int, message string)) (string, error) {
+	if !commandExists("rsync") {
+		return "", errors.New("rsync not found on agent")
+	}
+
+	sourcePath := readString(payload, "sourcePath")
+	targetPath := readString(payload, "targetPath")
+	if sourcePath == "" || targetPath == "" {
+		return "", errors.New("run_rsync payload must include sourcePath and targetPath")
+	}
+
+	sourceHost := readString(payload, "sourceHost")
+	sourceUser := readString(payload, "sourceUser")
+	if sourceUser == "" {
+		sourceUser = "root"
+	}
+	sshPort := readInt(payload, "sshPort", 22)
+
+	sourceArg := sourcePath
+	if sourceHost != "" {
+		if sourceUser != "" {
+			sourceArg = fmt.Sprintf("%s@%s:%s", sourceUser, sourceHost, sourcePath)
+		} else {
+			sourceArg = fmt.Sprintf("%s:%s", sourceHost, sourcePath)
+		}
+	}
+
+	if err := os.MkdirAll(targetPath, 0o755); err != nil {
+		return "", fmt.Errorf("cannot create target path: %w", err)
+	}
+
+	args := []string{"-a", "--delete", "--info=progress2", sourceArg, targetPath}
+	if sourceHost != "" {
+		args = append([]string{
+			"-e",
+			fmt.Sprintf("ssh -p %d -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", sshPort),
+		}, args...)
+	}
+
+	cmd := exec.Command("rsync", args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("cannot open rsync stdout: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return "", fmt.Errorf("cannot open rsync stderr: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("cannot start rsync: %w", err)
+	}
+
+	var wg sync.WaitGroup
+	var parseMu sync.Mutex
+	lastProgress := -1
+	parseStream := func(reader io.Reader) {
+		defer wg.Done()
+		scanner := bufio.NewScanner(reader)
+		scanner.Split(splitByCRLF)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			percent, ok := parseProgressPercent(line)
+			if !ok {
+				continue
+			}
+
+			parseMu.Lock()
+			if percent > lastProgress {
+				lastProgress = percent
+				parseMu.Unlock()
+				onProgress(percent, line)
+			} else {
+				parseMu.Unlock()
+			}
+		}
+	}
+
+	wg.Add(2)
+	go parseStream(stdout)
+	go parseStream(stderr)
+
+	waitErr := cmd.Wait()
+	wg.Wait()
+	if waitErr != nil {
+		return "", fmt.Errorf("rsync failed: %w", waitErr)
+	}
+
+	if lastProgress < 100 {
+		onProgress(100, "rsync completed")
+	}
+	return "rsync completed", nil
+}
+
+func handleCommand(cmd commandPayload, onProgress func(progress commandProgress)) commandResult {
 	result := commandResult{Success: true, Message: "ok"}
 	switch cmd.Type {
 	case "command.apply_export":
@@ -1063,9 +1241,29 @@ func handleCommand(cmd commandPayload) commandResult {
 		result.Message = "pool apply simulated"
 	case "command.run_rsync":
 		result.Command = "run_rsync"
-		result.ResourceType = "sync_job_run"
-		result.ResourceID = readString(cmd.Payload, "runId")
-		result.Message = "rsync simulated"
+		result.ResourceType = readString(cmd.Payload, "resourceType")
+		if result.ResourceType == "" {
+			result.ResourceType = "sync_job_run"
+		}
+		result.ResourceID = readString(cmd.Payload, "resourceId")
+		if result.ResourceID == "" {
+			result.ResourceID = readString(cmd.Payload, "runId")
+		}
+		message, err := runRsyncWithProgress(cmd.Payload, func(progress int, msg string) {
+			onProgress(commandProgress{
+				Command:      "run_rsync",
+				ResourceType: result.ResourceType,
+				ResourceID:   result.ResourceID,
+				Progress:     progress,
+				Message:      msg,
+			})
+		})
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Message = message
+		}
 	case "command.apply_overlay":
 		result.Command = "apply_overlay"
 		result.ResourceType = "overlay"
@@ -1079,6 +1277,21 @@ func handleCommand(cmd commandPayload) commandResult {
 			result.Message = err.Error()
 		} else {
 			result.Message = message
+		}
+	case "command.list_directories":
+		result.Command = "list_directories"
+		result.ResourceType = "directory_list"
+		result.ResourceID = readString(cmd.Payload, "requestId")
+		if result.ResourceID == "" {
+			result.ResourceID = fmt.Sprintf("dirs-%d", time.Now().UnixNano())
+		}
+		data, err := listDirectories(cmd.Payload)
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Data = data
+			result.Message = fmt.Sprintf("%d directories listed", len(data.Directories))
 		}
 	default:
 		result.Success = false
@@ -1124,7 +1337,11 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 			if err := json.Unmarshal(raw, &cmd); err != nil {
 				continue
 			}
-			result := handleCommand(cmd)
+			result := handleCommand(cmd, func(progress commandProgress) {
+				if err := client.send(envelope{Type: "command_progress", Payload: progress}); err != nil {
+					log.Printf("failed to send command_progress: %v", err)
+				}
+			})
 			if err := client.send(envelope{Type: "command_result", Payload: result}); err != nil {
 				readDone <- err
 				return

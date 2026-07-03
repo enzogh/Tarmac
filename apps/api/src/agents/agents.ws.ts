@@ -4,7 +4,7 @@ import { IncomingMessage } from 'http';
 import { parse } from 'url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { AgentsService } from './agents.service';
-import { CommandResultPayload, HeartbeatPayload, StateReportPayload } from './agents.types';
+import { CommandProgressPayload, CommandResultPayload, HeartbeatPayload, StateReportPayload } from './agents.types';
 
 interface AgentWsMessage {
   type: string;
@@ -64,6 +64,10 @@ export class AgentsWsServer implements OnModuleInit {
 
         if (msg.type === 'command_result' && msg.payload) {
           await this.agentsService.onCommandResult(msg.payload as CommandResultPayload);
+        }
+
+        if (msg.type === 'command_progress' && msg.payload) {
+          await this.agentsService.onCommandProgress(msg.payload as CommandProgressPayload);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'unknown parse error';

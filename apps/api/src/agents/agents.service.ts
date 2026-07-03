@@ -5,9 +5,15 @@ import { MountsService } from '../mounts/mounts.service';
 import { PoolsService } from '../pools/pools.service';
 import { SharesService } from '../shares/shares.service';
 import { VlanService } from '../vlan/vlan.service';
-import { CommandPayload, CommandResultPayload, HeartbeatPayload, StateReportPayload } from './agents.types';
+import { CommandPayload, CommandProgressPayload, CommandResultPayload, HeartbeatPayload, StateReportPayload } from './agents.types';
 
 type SendFn = (event: string, payload: unknown) => void;
+type PendingDirectoryRequest = {
+  nodeId: string;
+  resolve: (value: { basePath: string; directories: string[] }) => void;
+  reject: (reason: Error) => void;
+  timeout: NodeJS.Timeout;
+};
 
 // Node is considered offline if no heartbeat received within this time
 const NODE_HEARTBEAT_TIMEOUT_MS = 60 * 1000; // 60 seconds
@@ -19,6 +25,7 @@ export class AgentsService implements OnModuleInit {
   private readonly logger = new Logger(AgentsService.name);
   private readonly senders = new Map<string, SendFn>();
   private readonly overlaySyncAt = new Map<string, number>();
+  private readonly pendingDirectoryRequests = new Map<string, PendingDirectoryRequest>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -39,6 +46,12 @@ export class AgentsService implements OnModuleInit {
 
   unregister(nodeId: string) {
     this.senders.delete(nodeId);
+    for (const [requestId, request] of this.pendingDirectoryRequests.entries()) {
+      if (request.nodeId !== nodeId) continue;
+      clearTimeout(request.timeout);
+      request.reject(new Error(`node ${nodeId} disconnected`));
+      this.pendingDirectoryRequests.delete(requestId);
+    }
   }
 
   isConnected(nodeId?: string | null) {
@@ -248,6 +261,59 @@ export class AgentsService implements OnModuleInit {
             data: { status: result.success ? 'success' : 'failed', lastRunAt: new Date() },
           });
         });
+      return;
+    }
+
+    if (result.resourceType === 'directory_list') {
+      const pending = this.pendingDirectoryRequests.get(result.resourceId);
+      if (!pending) return;
+
+      clearTimeout(pending.timeout);
+      this.pendingDirectoryRequests.delete(result.resourceId);
+
+      if (!result.success) {
+        pending.reject(new Error(result.message ?? 'failed to list directories'));
+        return;
+      }
+
+      const payload = result.data;
+      pending.resolve({
+        basePath: payload?.basePath ?? '/',
+        directories: Array.isArray(payload?.directories) ? payload.directories : [],
+      });
+      return;
+    }
+
+    if (result.resourceType === 'migration') {
+      await this.prisma.migrationTask.update({
+        where: { id: result.resourceId },
+        data: result.success
+          ? { status: 'completed', progress: 100, completedAt: new Date() }
+          : { status: 'failed' },
+      });
+    }
+  }
+
+  async onCommandProgress(progress: CommandProgressPayload) {
+    const normalized = Math.max(0, Math.min(100, Math.round(progress.progress)));
+
+    if (progress.resourceType === 'sync_job_run') {
+      await this.prisma.syncJobRun.update({
+        where: { id: progress.resourceId },
+        data: { bytesTransferred: normalized * 5_000_000 },
+      });
+      return;
+    }
+
+    if (progress.resourceType === 'migration') {
+      await this.prisma.migrationTask.update({
+        where: { id: progress.resourceId },
+        data: {
+          status: normalized >= 100 ? 'completed' : 'running',
+          progress: normalized,
+          ...(normalized >= 100 ? { completedAt: new Date() } : {}),
+        },
+      });
     }
   }
 
@@ -257,6 +323,35 @@ export class AgentsService implements OnModuleInit {
 
     sender('command', command);
     return true;
+  }
+
+  requestDirectories(nodeId: string, basePath = '/', timeoutMs = 5000): Promise<{ basePath: string; directories: string[] }> {
+    const requestId = `dirs:${nodeId}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingDirectoryRequests.delete(requestId);
+        reject(new Error('directory listing timeout'));
+      }, timeoutMs);
+
+      this.pendingDirectoryRequests.set(requestId, {
+        nodeId,
+        resolve,
+        reject,
+        timeout,
+      });
+
+      const sent = this.sendCommand(nodeId, {
+        type: 'command.list_directories',
+        payload: { requestId, basePath },
+      });
+
+      if (!sent) {
+        clearTimeout(timeout);
+        this.pendingDirectoryRequests.delete(requestId);
+        reject(new Error(`node ${nodeId} is offline`));
+      }
+    });
   }
 
   private async reconcileOverlayForNode(nodeId: string) {
