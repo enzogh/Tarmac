@@ -52,6 +52,7 @@ export default function InfrastructurePage() {
   const [editName, setEditName] = useState('');
   const [editRole, setEditRole] = useState('');
   const [editLoading, setEditLoading] = useState(false);
+  const [nodeToDelete, setNodeToDelete] = useState<NodeActivityItem | null>(null);
 
   const load = async () => {
     if (!token) return;
@@ -94,9 +95,9 @@ export default function InfrastructurePage() {
 
   const deleteNode = async (node: NodeActivityItem) => {
     if (!token) return;
-    if (!confirm(`Supprimer le nœud « ${node.name} » ? Cette action est irréversible.`)) return;
     await api.nodes.delete(token, node.id);
     await load();
+    setNodeToDelete(null);
   };
 
   const openEditModal = (node: NodeActivityItem) => {
@@ -244,7 +245,7 @@ export default function InfrastructurePage() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => deleteNode(node)}
+                              onClick={() => setNodeToDelete(node)}
                               className="h-8 w-8 text-muted-foreground hover:text-rose-400"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
@@ -304,6 +305,29 @@ export default function InfrastructurePage() {
                 </Button>
               </DialogFooter>
             </form>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={!!nodeToDelete} onOpenChange={(open) => { if (!open) setNodeToDelete(null); }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Supprimer ce nœud ?</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              Le nœud « {nodeToDelete?.name} » sera supprimé définitivement. Cette action est irréversible.
+            </p>
+            <DialogFooter>
+              <Button type="button" variant="secondary" onClick={() => setNodeToDelete(null)}>
+                Annuler
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={() => nodeToDelete && void deleteNode(nodeToDelete)}
+              >
+                Supprimer
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
 

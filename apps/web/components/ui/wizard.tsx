@@ -1,8 +1,10 @@
 'use client';
 
 import { ReactNode, useState } from 'react';
-import { ChevronDown, HelpCircle, AlertCircle } from 'lucide-react';
+import { ChevronDown, HelpCircle, AlertCircle, CheckCircle2, Info, TriangleAlert } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './tooltip';
+import { Button } from './button';
+import { Alert, AlertDescription, AlertTitle } from './alert';
 
 export interface StepConfig {
   id: string;
@@ -35,10 +37,10 @@ export function WizardDialog({
   const isFirstStep = currentStep === 0;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-slate-900 rounded-lg shadow-lg max-w-2xl w-full mx-4 border border-slate-700">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-2xl rounded-2xl border border-white/[0.08] bg-zinc-950/95 shadow-2xl">
         {/* Header */}
-        <div className="border-b border-slate-700 px-6 py-4">
+        <div className="border-b border-white/[0.08] px-6 py-4">
           <h2 className="text-xl font-bold text-foreground">{title}</h2>
           {description && <p className="text-sm text-muted-foreground mt-1">{description}</p>}
           
@@ -48,7 +50,7 @@ export function WizardDialog({
               <div
                 key={s.id}
                 className={`flex-1 h-1 rounded-full transition-all ${
-                  idx <= currentStep ? 'bg-blue-500' : 'bg-slate-700'
+                  idx <= currentStep ? 'bg-violet-500' : 'bg-zinc-800'
                 }`}
               />
             ))}
@@ -59,7 +61,7 @@ export function WizardDialog({
         </div>
 
         {/* Content */}
-        <div className="px-6 py-6 min-h-64">
+        <div className="min-h-64 px-6 py-6">
           <div className="mb-4">
             <h3 className="font-semibold text-lg text-foreground">{step.title}</h3>
             <p className="text-sm text-muted-foreground mt-1">{step.description}</p>
@@ -68,39 +70,36 @@ export function WizardDialog({
         </div>
 
         {/* Footer */}
-        <div className="border-t border-slate-700 px-6 py-4 flex justify-between gap-3">
-          <button
-            onClick={onCancel}
-            className="px-4 py-2 text-foreground bg-slate-800 rounded-lg hover:bg-slate-700 font-medium transition-colors border border-slate-600"
-          >
+        <div className="flex justify-between gap-3 border-t border-white/[0.08] px-6 py-4">
+          <Button variant="outline" onClick={onCancel}>
             Annuler
-          </button>
+          </Button>
 
           <div className="flex gap-3">
-            <button
+            <Button
+              variant="outline"
               onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
               disabled={isFirstStep}
-              className="px-4 py-2 text-foreground bg-slate-800 rounded-lg hover:bg-slate-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-slate-600"
             >
               Précédent
-            </button>
+            </Button>
 
             {!isLastStep && (
-              <button
+              <Button
                 onClick={() => setCurrentStep(Math.min(steps.length - 1, currentStep + 1))}
-                className="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 font-medium transition-colors"
+                className="bg-violet-600 text-white hover:bg-violet-500"
               >
                 Suivant
-              </button>
+              </Button>
             )}
 
             {isLastStep && (
-              <button
+              <Button
                 onClick={onComplete}
-                className="px-4 py-2 text-white bg-green-600 rounded-lg hover:bg-green-700 font-medium transition-colors"
+                className="bg-emerald-600 text-white hover:bg-emerald-500"
               >
                 {completeButtonLabel}
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -138,7 +137,7 @@ export function PresetSelector({
           <button
             key={preset.id}
             onClick={() => onSelect(preset)}
-            className="p-4 border-2 border-slate-700 rounded-lg hover:border-blue-500 hover:bg-slate-800 transition-all text-left"
+            className="rounded-xl border border-white/[0.08] bg-zinc-900/70 p-4 text-left transition-all hover:border-violet-400/40 hover:bg-zinc-900"
           >
             <div className="flex items-start gap-3">
               {preset.icon && <div className="text-2xl mt-1">{preset.icon}</div>}
@@ -164,10 +163,10 @@ export function AdvancedOptions({
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <div className="border-t border-slate-700 mt-6 pt-6">
+    <div className="mt-6 border-t border-white/[0.08] pt-6">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 text-sm font-semibold text-foreground hover:text-muted-foreground transition-colors"
+        className="flex items-center gap-2 text-sm font-semibold text-foreground transition-colors hover:text-muted-foreground"
       >
         <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         {label}
@@ -187,13 +186,13 @@ export interface OperationStep {
 
 export function OperationPreview({ steps }: { steps: OperationStep[] }) {
   return (
-    <div className="bg-slate-800 border border-blue-500 rounded-lg p-4">
-      <h4 className="font-semibold text-blue-400 mb-3">Aperçu de l'opération</h4>
+    <div className="rounded-xl border border-violet-500/30 bg-violet-500/[0.08] p-4">
+      <h4 className="mb-3 font-semibold text-violet-300">Aperçu de l'opération</h4>
       <div className="space-y-3">
         {steps.map((step, idx) => (
           <div key={step.id} className="flex gap-3">
             <div className="flex-shrink-0">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-white text-sm font-semibold">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-600 text-sm font-semibold text-white">
                 {idx + 1}
               </div>
             </div>
@@ -213,7 +212,7 @@ export function HelpText({ text }: { text: string }) {
     <Tooltip>
       <TooltipTrigger asChild>
         <button className="ml-1 inline-flex">
-          <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-600" />
+          <HelpCircle className="h-4 w-4 text-zinc-500 hover:text-zinc-300" />
         </button>
       </TooltipTrigger>
       <TooltipContent className="max-w-xs">{text}</TooltipContent>
@@ -230,29 +229,20 @@ export function InfoBox({
   title?: string;
   children: ReactNode;
 }) {
-  const styles = {
-    info: 'bg-blue-950 border-blue-700 text-blue-200',
-    warning: 'bg-yellow-950 border-yellow-700 text-yellow-200',
-    error: 'bg-red-950 border-red-700 text-red-200',
-    success: 'bg-green-950 border-green-700 text-green-200',
+  const variants = {
+    info: { icon: Info, variant: 'info' as const, title: title ?? 'Information' },
+    warning: { icon: TriangleAlert, variant: 'warning' as const, title: title ?? 'Attention' },
+    error: { icon: AlertCircle, variant: 'destructive' as const, title: title ?? 'Erreur' },
+    success: { icon: CheckCircle2, variant: 'success' as const, title: title ?? 'Succès' },
   };
-
-  const icons = {
-    info: '💡',
-    warning: '⚠️',
-    error: '❌',
-    success: '✅',
-  };
+  const config = variants[type];
+  const Icon = config.icon;
 
   return (
-    <div className={`border rounded-lg p-4 ${styles[type]}`}>
-      <div className="flex gap-3">
-        <span className="text-lg">{icons[type]}</span>
-        <div>
-          {title && <p className="font-semibold">{title}</p>}
-          <div className="text-sm mt-1">{children}</div>
-        </div>
-      </div>
-    </div>
+    <Alert variant={config.variant}>
+      <Icon className="h-4 w-4" />
+      <AlertTitle>{config.title}</AlertTitle>
+      <AlertDescription>{children}</AlertDescription>
+    </Alert>
   );
 }

@@ -2,11 +2,13 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRightLeft, Plus, PlayCircle, Loader2, CheckCircle2, Trash2 } from 'lucide-react';
+import { ArrowRightLeft, Plus, PlayCircle, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { api, MigrationItem, NodeItem } from '../../../lib/api';
 import { DashboardLayout } from '../../../components/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Progress } from '../../../components/ui/progress';
+import { Button } from '../../../components/ui/button';
+import { Alert, AlertDescription } from '../../../components/ui/alert';
 import {
   WizardDialog,
   PresetSelector,
@@ -64,6 +66,7 @@ export default function MigrationsPage() {
   const [nodes, setNodes] = useState<NodeItem[]>([]);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState<PresetOption | null>(null);
+  const [notice, setNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -114,7 +117,7 @@ export default function MigrationsPage() {
             }}
           />
           {selectedPreset && (
-            <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded text-sm text-green-900">
+            <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/[0.08] p-3 text-sm text-emerald-100">
               ✓ Sélectionné: <strong>{selectedPreset.name}</strong>
             </div>
           )}
@@ -128,7 +131,7 @@ export default function MigrationsPage() {
       content: (
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="mb-2 block text-sm font-medium text-zinc-200">
               Nom de la migration
               <HelpText text="Donnez un nom descriptif à cette tâche de migration" />
             </label>
@@ -137,19 +140,19 @@ export default function MigrationsPage() {
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               placeholder="ex: Migration storage-1 vers storage-2"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="mb-2 block text-sm font-medium text-zinc-200">
               Serveur Source
               <HelpText text="Le serveur dont vous migrez les données" />
             </label>
             <select
               value={formData.sourceNodeId}
               onChange={(e) => setFormData({ ...formData, sourceNodeId: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
             >
               <option value="">-- Choisir un serveur source --</option>
               {nodes.map((node) => (
@@ -161,14 +164,14 @@ export default function MigrationsPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="mb-2 block text-sm font-medium text-zinc-200">
               Serveur Destination
               <HelpText text="Le serveur qui recevra les données" />
             </label>
             <select
               value={formData.targetNodeId}
               onChange={(e) => setFormData({ ...formData, targetNodeId: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
             >
               <option value="">-- Choisir un serveur destination --</option>
               {nodes
@@ -214,21 +217,21 @@ export default function MigrationsPage() {
             ]}
           />
 
-          <div className="bg-gray-50 rounded-lg p-4 space-y-3 text-sm">
+          <div className="space-y-3 rounded-lg border border-white/[0.08] bg-zinc-900/60 p-4 text-sm">
             <div className="flex justify-between border-b pb-2">
-              <span className="text-gray-600">Migration:</span>
+              <span className="text-muted-foreground">Migration:</span>
               <span className="font-mono font-semibold">{formData.name}</span>
             </div>
             <div className="flex justify-between border-b pb-2">
-              <span className="text-gray-600">Source:</span>
+              <span className="text-muted-foreground">Source:</span>
               <span className="font-mono">{nodes.find((n) => n.id === formData.sourceNodeId)?.name}</span>
             </div>
             <div className="flex justify-between border-b pb-2">
-              <span className="text-gray-600">Destination:</span>
+              <span className="text-muted-foreground">Destination:</span>
               <span className="font-mono">{nodes.find((n) => n.id === formData.targetNodeId)?.name}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-600">Raison:</span>
+              <span className="text-muted-foreground">Raison:</span>
               <span className="font-mono">{selectedPreset?.name}</span>
             </div>
           </div>
@@ -260,7 +263,7 @@ export default function MigrationsPage() {
       setSelectedPreset(null);
       await load();
     } catch (error) {
-      alert('Erreur lors de la création de la migration');
+      setNotice({ type: 'error', message: 'Erreur lors de la création de la migration.' });
     }
   };
 
@@ -278,28 +281,35 @@ export default function MigrationsPage() {
   };
 
   const statusColors = {
-    pending: 'bg-yellow-50 border-yellow-200 text-yellow-900',
-    running: 'bg-blue-50 border-blue-200 text-blue-900',
-    completed: 'bg-green-50 border-green-200 text-green-900',
-    failed: 'bg-red-50 border-red-200 text-red-900',
+    pending: 'border-amber-500/30 bg-amber-500/[0.08] text-amber-100',
+    running: 'border-sky-500/30 bg-sky-500/[0.08] text-sky-100',
+    completed: 'border-emerald-500/30 bg-emerald-500/[0.08] text-emerald-100',
+    failed: 'border-rose-500/30 bg-rose-500/[0.08] text-rose-100',
   };
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
+      <div className="space-y-8">
+        {notice && (
+          <Alert variant={notice.type === 'error' ? 'destructive' : 'success'}>
+            {notice.type === 'error' ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+            <AlertDescription>{notice.message}</AlertDescription>
+          </Alert>
+        )}
+
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Migrations de Données</h1>
-            <p className="text-gray-600 mt-1">Déplacez vos données entre serveurs en toute sécurité</p>
+            <h1 className="text-3xl font-semibold tracking-tight text-foreground">Migrations de Données</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Déplacez vos données entre serveurs en toute sécurité.</p>
           </div>
-          <button
+          <Button
             onClick={() => setWizardOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold"
+            className="gap-2 bg-violet-600 text-white hover:bg-violet-500"
           >
             <Plus className="w-5 h-5" />
             Nouvelle Migration
-          </button>
+          </Button>
         </div>
 
         {/* Info Box */}
@@ -310,20 +320,21 @@ export default function MigrationsPage() {
 
         {/* Migrations List */}
         {migrations.length === 0 ? (
-          <Card>
+          <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
             <CardContent className="pt-12 pb-12 text-center">
               <div className="text-6xl mb-4">📊</div>
-              <p className="text-gray-600 font-medium">Aucune migration en cours</p>
-              <p className="text-sm text-gray-500 mt-2">Cliquez sur "Nouvelle Migration" pour démarrer</p>
+              <p className="font-medium text-muted-foreground">Aucune migration en cours</p>
+              <p className="mt-2 text-sm text-muted-foreground">Cliquez sur "Nouvelle Migration" pour démarrer.</p>
             </CardContent>
           </Card>
         ) : (
           <div className="grid gap-4">
             {migrations.map((migration) => (
-              <div
+              <Card
                 key={migration.id}
-                className={`border-2 rounded-lg p-6 ${statusColors[migration.status as keyof typeof statusColors]}`}
+                className={`border-white/[0.08] bg-zinc-900/65 backdrop-blur ${statusColors[migration.status as keyof typeof statusColors]}`}
               >
+                <CardContent className="p-6">
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex-1">
                     <div className="flex items-center gap-3">
@@ -364,13 +375,13 @@ export default function MigrationsPage() {
                 </div>
 
                 {migration.status === 'pending' && (
-                  <button
+                  <Button
                     onClick={() => startMigration(migration.id)}
-                    className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold flex items-center justify-center gap-2"
+                    className="w-full gap-2 bg-violet-600 text-white hover:bg-violet-500"
                   >
                     <PlayCircle className="w-4 h-4" />
                     Démarrer la Migration
-                  </button>
+                  </Button>
                 )}
 
                 {migration.status === 'running' && (
@@ -392,7 +403,8 @@ export default function MigrationsPage() {
                     Migration échouée - Veuillez réessayer
                   </div>
                 )}
-              </div>
+                </CardContent>
+              </Card>
             ))}
           </div>
         )}
