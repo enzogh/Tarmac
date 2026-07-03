@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
@@ -84,11 +85,31 @@ export class MigrationsService {
   }
 
   async update(id: string, dto: UpdateMigrationDto, actorUserId?: string) {
+    const existing = await this.prisma.migrationTask.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException('migration not found');
+    }
+
+    const updatesRouting = dto.sourceNodeId !== undefined || dto.targetNodeId !== undefined;
+    if (updatesRouting && !['pending', 'failed'].includes(existing.status)) {
+      throw new BadRequestException('only pending or failed migrations can be edited');
+    }
+
     const payload: Prisma.MigrationTaskUpdateInput = { ...dto };
     if (dto.status === 'running') payload.startedAt = new Date();
     if (dto.status === 'completed') {
       payload.completedAt = new Date();
       payload.progress = 100;
+    }
+    if (dto.status === 'failed') {
+      payload.completedAt = new Date();
+    }
+    if (dto.status === 'pending') {
+      payload.startedAt = null;
+      payload.completedAt = null;
+      if (dto.progress === undefined) {
+        payload.progress = 0;
+      }
     }
 
     const updated = await this.prisma.migrationTask.update({
@@ -173,5 +194,52 @@ export class MigrationsService {
     });
 
     return this.withMetadata(updated);
+  }
+
+  async retry(id: string, actorUserId?: string) {
+    const existing = await this.prisma.migrationTask.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException('migration not found');
+    }
+    if (existing.status !== 'failed') {
+      throw new BadRequestException('only failed migrations can be retried');
+    }
+
+    const updated = await this.prisma.migrationTask.update({
+      where: { id },
+      data: {
+        status: 'running',
+        progress: 0,
+        startedAt: new Date(),
+        completedAt: null,
+      },
+    });
+    await this.auditLogsService.log({
+      actorUserId,
+      action: 'migration.retry',
+      resourceType: 'migration',
+      resourceId: id,
+      details: { previousStatus: existing.status } as Prisma.InputJsonValue,
+    });
+    return updated;
+  }
+
+  async removePending(id: string, actorUserId?: string) {
+    const existing = await this.prisma.migrationTask.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException('migration not found');
+    }
+    if (existing.status !== 'pending') {
+      throw new BadRequestException('only pending migrations can be deleted');
+    }
+
+    await this.prisma.migrationTask.delete({ where: { id } });
+    await this.auditLogsService.log({
+      actorUserId,
+      action: 'migration.delete',
+      resourceType: 'migration',
+      resourceId: id,
+      details: { status: existing.status } as Prisma.InputJsonValue,
+    });
   }
 }

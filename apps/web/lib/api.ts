@@ -60,15 +60,16 @@ export type MigrationItem = {
   name: string;
   status: 'pending' | 'running' | 'completed' | 'failed';
   progress: number;
+  notes?: string | null;
   sourceNodeId?: string | null;
   targetNodeId?: string | null;
   sourcePath?: string | null;
   targetPath?: string | null;
   reason?: string | null;
-  notes?: string | null;
   sourceNode?: { id: string; name: string } | null;
   targetNode?: { id: string; name: string } | null;
   createdAt: string;
+  updatedAt?: string;
 };
 
 export type Forecast = {
@@ -322,7 +323,14 @@ export const api = {
         `/api/v1/migrations/directories?nodeId=${encodeURIComponent(nodeId)}&basePath=${encodeURIComponent(basePath)}`,
         token,
       ),
+    update: (
+      token: string,
+      id: string,
+      payload: { name?: string; sourceNodeId?: string; targetNodeId?: string; notes?: string; status?: 'pending' | 'running' | 'completed' | 'failed'; progress?: number },
+    ) => request<MigrationItem>(`/api/v1/migrations/${id}`, token, { method: 'PATCH', body: JSON.stringify(payload) }),
     start: (token: string, id: string) => request(`/api/v1/migrations/${id}/start`, token, { method: 'POST' }),
+    retry: (token: string, id: string) => request<MigrationItem>(`/api/v1/migrations/${id}/retry`, token, { method: 'POST' }),
+    remove: (token: string, id: string) => request<void>(`/api/v1/migrations/${id}`, token, { method: 'DELETE' }),
   },
 
   topology: {
