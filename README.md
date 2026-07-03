@@ -80,6 +80,15 @@ L'agent envoie:
 - support `command.run_rsync` réel avec remontée de progression en pourcentage
 
 ### Installer l'agent comme service systemd (Ubuntu 22.04)
+Sur OVH (image Ubuntu cloud), connectez-vous d'abord en `ubuntu`, puis passez root:
+```bash
+ssh ubuntu@<SERVER_IP>
+sudo -i
+```
+
+Sur d'autres VPS avec SSH root activé, la connexion root directe fonctionne.
+
+Commande d'installation:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/enzogh/Tarmac/main/apps/agent/scripts/install-agent-service.sh | sudo bash -s -- \
   --node-id "<NODE_ID>" \
