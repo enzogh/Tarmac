@@ -239,7 +239,7 @@ export class NodeOnboardingService {
             'set -euo pipefail',
             'export DEBIAN_FRONTEND=noninteractive',
             'apt-get update -y',
-            'apt-get install -y --no-install-recommends ca-certificates curl git golang-go nfs-common cifs-utils wireguard-tools iproute2 util-linux',
+            'apt-get install -y --no-install-recommends ca-certificates curl git golang-go rsync nfs-common cifs-utils sshpass wireguard-tools iproute2 util-linux',
           ].join('\n'),
         },
         {

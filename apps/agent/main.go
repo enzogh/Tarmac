@@ -1071,15 +1071,34 @@ func updateAgent(payload map[string]interface{}) (string, error) {
 	if !commandExists("git") {
 		return "", errors.New("git not found on agent")
 	}
-	if !commandExists("go") {
-		return "", errors.New("go not found on agent")
-	}
 	if !commandExists("systemctl") {
 		return "", errors.New("systemctl not found; restart cannot be automated")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
+
+	installedPackages := []string{}
+	dependencyPackages := []string{
+		"git",
+		"golang-go",
+		"rsync",
+		"sshpass",
+		"nfs-common",
+		"cifs-utils",
+		"wireguard-tools",
+		"iproute2",
+		"util-linux",
+	}
+	var dependencyErr error
+	installedPackages, dependencyErr = ensureAgentSystemPackages(ctx, dependencyPackages)
+	if dependencyErr != nil {
+		return "", dependencyErr
+	}
+
+	if !commandExists("go") {
+		return "", errors.New("go not found on agent after dependency install")
+	}
 
 	if _, err := os.Stat(filepath.Join(workDir, ".git")); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -1120,7 +1139,76 @@ func updateAgent(payload map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("binary updated but restart scheduling failed: %s", strings.TrimSpace(string(output)))
 	}
 
-	return fmt.Sprintf("agent updated from %s; service daemon-reload+restart scheduled", workDir), nil
+	message := fmt.Sprintf("agent updated from %s; service daemon-reload+restart scheduled", workDir)
+	if len(installedPackages) > 0 {
+		message += fmt.Sprintf("; installed packages: %s", strings.Join(installedPackages, ", "))
+	}
+	return message, nil
+}
+
+func ensureAgentSystemPackages(ctx context.Context, packages []string) ([]string, error) {
+	if len(packages) == 0 {
+		return nil, nil
+	}
+
+	missing := make([]string, 0, len(packages))
+	checks := map[string]func() bool{
+		"git":             func() bool { return commandExists("git") },
+		"golang-go":       func() bool { return commandExists("go") },
+		"rsync":           func() bool { return commandExists("rsync") },
+		"sshpass":         func() bool { return commandExists("sshpass") },
+		"nfs-common":      func() bool { return commandExists("mount.nfs") },
+		"cifs-utils":      func() bool { return commandExists("mount.cifs") },
+		"wireguard-tools": func() bool { return commandExists("wg") },
+		"iproute2":        func() bool { return commandExists("ip") },
+		"util-linux":      func() bool { return commandExists("mount") },
+	}
+
+	for _, pkg := range packages {
+		check, ok := checks[pkg]
+		if !ok || !check() {
+			missing = append(missing, pkg)
+		}
+	}
+	if len(missing) == 0 {
+		return nil, nil
+	}
+
+	if !commandExists("apt-get") {
+		return nil, fmt.Errorf(
+			"missing required packages (%s) and apt-get is unavailable; install them manually before updating",
+			strings.Join(missing, ", "),
+		)
+	}
+
+	var updateCmd *exec.Cmd
+	var installCmd *exec.Cmd
+	installArgs := append([]string{"install", "-y", "--no-install-recommends"}, missing...)
+	if os.Geteuid() == 0 {
+		updateCmd = exec.CommandContext(ctx, "apt-get", "update", "-y")
+		installCmd = exec.CommandContext(ctx, "apt-get", installArgs...)
+	} else {
+		if !commandExists("sudo") {
+			return nil, fmt.Errorf(
+				"missing required packages (%s) and sudo is unavailable; install them manually before updating",
+				strings.Join(missing, ", "),
+			)
+		}
+		updateCmd = exec.CommandContext(ctx, "sudo", "apt-get", "update", "-y")
+		installCmd = exec.CommandContext(ctx, "sudo", append([]string{"apt-get"}, installArgs...)...)
+	}
+
+	updateCmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+	installCmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+
+	if output, err := updateCmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("cannot refresh package index before agent update: %s", strings.TrimSpace(string(output)))
+	}
+	if output, err := installCmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("cannot install required packages for agent update: %s", strings.TrimSpace(string(output)))
+	}
+
+	return missing, nil
 }
 
 func parseOverlayPeers(payload map[string]interface{}) []overlayPeer {
@@ -1540,7 +1628,7 @@ func listRemoteDirectories(payload map[string]interface{}) (directoryListData, e
 	defer cancel()
 	if password != "" {
 		if !commandExists("sshpass") {
-			return directoryListData{}, errors.New("sshpass not found on agent")
+			return directoryListData{}, errors.New("sshpass not found on agent; reinstall or update the agent to enable password-based seedbox browsing")
 		}
 		cmd = exec.CommandContext(ctx, "sshpass", append([]string{"-p", password, "ssh"}, sshArgs...)...)
 	} else {
@@ -1865,7 +1953,7 @@ func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progre
 		args = append([]string{"-e", sshCommand}, args...)
 		if usePassword {
 			if !commandExists("sshpass") {
-				return "", errors.New("sshpass not found on agent")
+				return "", errors.New("sshpass not found on agent; reinstall or update the agent to enable password-based seedbox transfers")
 			}
 			args = append([]string{"-p", sourcePassword, "rsync"}, args...)
 		}
@@ -1885,7 +1973,7 @@ func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progre
 		args = append([]string{"-e", sshCommand}, args...)
 		if usePassword {
 			if !commandExists("sshpass") {
-				return "", errors.New("sshpass not found on agent")
+				return "", errors.New("sshpass not found on agent; reinstall or update the agent to enable password-based seedbox transfers")
 			}
 			args = append([]string{"-p", targetPassword, "rsync"}, args...)
 		}

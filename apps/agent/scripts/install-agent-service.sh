@@ -127,8 +127,10 @@ apt-get install -y --no-install-recommends \
   curl \
   git \
   golang-go \
+  rsync \
   nfs-common \
   cifs-utils \
+  sshpass \
   wireguard-tools \
   iproute2 \
   util-linux
