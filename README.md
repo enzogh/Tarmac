@@ -80,12 +80,23 @@ L'agent envoie:
 - support `command.run_rsync` réel avec remontée de progression en pourcentage
 
 ### Installer l'agent comme service systemd (Ubuntu 22.04)
+Sur OVH (image Ubuntu cloud), connectez-vous d'abord en `ubuntu`, puis passez root:
+```bash
+ssh ubuntu@<SERVER_IP>
+sudo -i
+```
+
+Sur d'autres VPS avec SSH root activé, la connexion root directe fonctionne.
+
+Commande d'installation:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/enzogh/Tarmac/main/apps/agent/scripts/install-agent-service.sh | sudo bash -s -- \
   --node-id "<NODE_ID>" \
   --control-plane-ws "ws://<API_HOST>:3001/agents-ws" \
-  --agent-token "<AGENT_SHARED_TOKEN>"
+  --agent-token "<AGENT_SHARED_TOKEN>" \
+  --ssh-user "ubuntu"
 ```
+`--ssh-user` est optionnel. Si omis, l'install choisit automatiquement `ubuntu` (si l'utilisateur existe), sinon `root`.
 Le script installe automatiquement les dépendances nécessaires (`golang-go`, `nfs-common`, `cifs-utils`, `util-linux`), compile l'agent, puis active `tarmac-agent.service` avec auto-restart.
 
 ## API V1 (préfixe `/api/v1`)

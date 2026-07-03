@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateMigrationDto } from './dto/create-migration.dto';
@@ -42,8 +42,19 @@ export class MigrationsController {
     return this.migrationsService.start(id, req.user?.userId);
   }
 
+  @Post(':id/retry')
+  retry(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.migrationsService.retry(id, req.user?.userId);
+  }
+
   @Post(':id/complete')
   complete(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.migrationsService.update(id, { status: 'completed' }, req.user?.userId);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async remove(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    await this.migrationsService.removePending(id, req.user?.userId);
   }
 }
