@@ -76,6 +76,8 @@ L'agent envoie:
   - source principale + sources fallback (multi NFS)
   - `targetPath` unique (ex: `/data/movies`)
   - `fsType` et `mountOptions` personnalisables
+- support `command.list_directories` pour remonter en direct les dossiers d'un nœud
+- support `command.run_rsync` réel avec remontée de progression en pourcentage
 
 ### Installer l'agent comme service systemd (Ubuntu 22.04)
 ```bash
@@ -116,6 +118,7 @@ V1 storage/orchestration:
 - `GET /storage/forecast`
 - `GET /storage/overview` (`?nodeId=<id>` optionnel pour filtrer un nœud)
 - `GET/POST/PATCH /migrations`
+- `GET /migrations/directories` (`?nodeId=<id>&basePath=/chemin`) pour lister les dossiers live d'un serveur
 - `POST /migrations/:id/start`
 - `POST /migrations/:id/complete`
 - `GET/POST/PATCH/DELETE /sync-jobs`

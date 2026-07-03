@@ -1,26 +1,78 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateMigrationDto } from './dto/create-migration.dto';
 import { UpdateMigrationDto } from './dto/update-migration.dto';
 
+type MigrationNotesMetadata = {
+  reason?: string;
+  sourcePath?: string;
+  targetPath?: string;
+  notes?: string;
+};
+
 @Injectable()
 export class MigrationsService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly agentsService: AgentsService,
     private readonly auditLogsService: AuditLogsService,
   ) {}
 
-  list() {
-    return this.prisma.migrationTask.findMany({
-      orderBy: { createdAt: 'desc' },
-      include: { sourceNode: true, targetNode: true },
+  private parseNotesMetadata(value?: string | null): MigrationNotesMetadata {
+    if (!value) return {};
+    try {
+      const parsed = JSON.parse(value) as MigrationNotesMetadata;
+      if (typeof parsed !== 'object' || parsed === null) return { notes: value };
+      return {
+        reason: typeof parsed.reason === 'string' ? parsed.reason : undefined,
+        sourcePath: typeof parsed.sourcePath === 'string' ? parsed.sourcePath : undefined,
+        targetPath: typeof parsed.targetPath === 'string' ? parsed.targetPath : undefined,
+        notes: typeof parsed.notes === 'string' ? parsed.notes : undefined,
+      };
+    } catch {
+      return { notes: value };
+    }
+  }
+
+  private serializeNotes(dto: CreateMigrationDto): string | undefined {
+    if (!dto.notes && !dto.reason && !dto.sourcePath && !dto.targetPath) return undefined;
+    return JSON.stringify({
+      notes: dto.notes ?? null,
+      reason: dto.reason ?? null,
+      sourcePath: dto.sourcePath ?? null,
+      targetPath: dto.targetPath ?? null,
     });
   }
 
+  private withMetadata<T extends { notes?: string | null }>(migration: T) {
+    return {
+      ...migration,
+      ...this.parseNotesMetadata(migration.notes),
+    };
+  }
+
+  async list() {
+    const migrations = await this.prisma.migrationTask.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: { sourceNode: true, targetNode: true },
+    });
+    return migrations.map((migration) => this.withMetadata(migration));
+  }
+
   async create(dto: CreateMigrationDto, actorUserId?: string) {
-    const created = await this.prisma.migrationTask.create({ data: dto });
+    const created = await this.prisma.migrationTask.create({
+      data: {
+        name: dto.name,
+        shareId: dto.shareId,
+        sourceNodeId: dto.sourceNodeId,
+        targetNodeId: dto.targetNodeId,
+        notes: this.serializeNotes(dto),
+      },
+      include: { sourceNode: true, targetNode: true },
+    });
     await this.auditLogsService.log({
       actorUserId,
       action: 'migration.create',
@@ -28,7 +80,7 @@ export class MigrationsService {
       resourceId: created.id,
       details: dto as unknown as Prisma.InputJsonValue,
     });
-    return created;
+    return this.withMetadata(created);
   }
 
   async update(id: string, dto: UpdateMigrationDto, actorUserId?: string) {
@@ -39,7 +91,11 @@ export class MigrationsService {
       payload.progress = 100;
     }
 
-    const updated = await this.prisma.migrationTask.update({ where: { id }, data: payload });
+    const updated = await this.prisma.migrationTask.update({
+      where: { id },
+      data: payload,
+      include: { sourceNode: true, targetNode: true },
+    });
     await this.auditLogsService.log({
       actorUserId,
       action: 'migration.update',
@@ -47,6 +103,75 @@ export class MigrationsService {
       resourceId: id,
       details: dto as unknown as Prisma.InputJsonValue,
     });
-    return updated;
+    return this.withMetadata(updated);
+  }
+
+  async listDirectories(nodeId: string, basePath = '/') {
+    return this.agentsService.requestDirectories(nodeId, basePath);
+  }
+
+  async start(id: string, actorUserId?: string) {
+    const migration = await this.prisma.migrationTask.findUniqueOrThrow({
+      where: { id },
+      include: { sourceNode: true, targetNode: true },
+    });
+    const metadata = this.parseNotesMetadata(migration.notes);
+
+    const sourcePath = metadata.sourcePath?.trim();
+    const targetPath = metadata.targetPath?.trim();
+    if (!sourcePath || !targetPath) {
+      throw new BadRequestException('Migration paths are missing');
+    }
+
+    if (!migration.targetNodeId) {
+      throw new BadRequestException('Target node is missing');
+    }
+
+    const sourceHost =
+      migration.sourceNodeId && migration.targetNodeId !== migration.sourceNodeId
+        ? migration.sourceNode?.vlanIp ?? undefined
+        : undefined;
+
+    const updated = await this.prisma.migrationTask.update({
+      where: { id },
+      data: { status: 'running', progress: 0, startedAt: new Date(), completedAt: null },
+      include: { sourceNode: true, targetNode: true },
+    });
+
+    const sent = this.agentsService.sendCommand(migration.targetNodeId, {
+      type: 'command.run_rsync',
+      payload: {
+        resourceType: 'migration',
+        resourceId: migration.id,
+        sourcePath,
+        targetPath,
+        sourceHost,
+        sourceUser: 'root',
+      },
+    });
+
+    if (!sent) {
+      const failed = await this.prisma.migrationTask.update({
+        where: { id },
+        data: { status: 'failed' },
+        include: { sourceNode: true, targetNode: true },
+      });
+      return this.withMetadata(failed);
+    }
+
+    await this.auditLogsService.log({
+      actorUserId,
+      action: 'migration.start',
+      resourceType: 'migration',
+      resourceId: migration.id,
+      details: {
+        sourcePath,
+        targetPath,
+        sourceHost: sourceHost ?? null,
+        targetNodeId: migration.targetNodeId,
+      },
+    });
+
+    return this.withMetadata(updated);
   }
 }
