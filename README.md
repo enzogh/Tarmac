@@ -21,6 +21,7 @@ Monorepo Tarmac:
 
 ### Web (`apps/web/.env.local`)
 - `NEXT_PUBLIC_API_URL=http://localhost:3001`
+- `NEXT_PUBLIC_APP_VERSION=dev-local`
 
 ### Agent
 - `CONTROL_PLANE_WS=ws://localhost:3001/agents-ws`
@@ -35,6 +36,22 @@ npm --workspace @tarmac/api run prisma:migrate:dev
 npm run seed
 npm run dev
 ```
+
+## Version affichée (toutes les pages)
+- Le web affiche `Version <valeur>` en bas à droite sur toutes les pages.
+- En Docker Compose, la version est alimentée par `GITHUB_SHA` (commit du push).  
+  Si `GITHUB_SHA` n'est pas défini, fallback: `dev-local`.
+
+Exemple local:
+```bash
+export GITHUB_SHA=$(git rev-parse --short HEAD)
+docker compose -f docker/docker-compose.yml up -d --build
+```
+
+## Persistance locale Docker
+- Données PostgreSQL persistées dans `docker/data/postgres`
+- Données Redis persistées dans `docker/data/redis`
+- Un `docker compose up --build` ou redémarrage conserve les données existantes.
 
 ## Build / lint
 ```bash
