@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Loader2,
   Pencil,
+  PauseCircle,
   PlayCircle,
   Plus,
   RefreshCcw,
@@ -286,6 +287,20 @@ export default function MigrationsPage() {
       await load();
     } catch {
       setNotice({ type: 'error', message: 'Impossible de relancer cette migration.' });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const stopMigration = async (migrationId: string) => {
+    if (!token) return;
+    setBusyId(migrationId);
+    try {
+      await api.migrations.stop(token, migrationId);
+      setNotice({ type: 'success', message: 'Migration arrêtée.' });
+      await load();
+    } catch {
+      setNotice({ type: 'error', message: 'Impossible d’arrêter cette migration.' });
     } finally {
       setBusyId(null);
     }
@@ -765,6 +780,18 @@ export default function MigrationsPage() {
                         <Button variant="secondary" onClick={() => retryMigration(migration.id)} disabled={busyId === migration.id} className="gap-2">
                           {busyId === migration.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
                           Relancer
+                        </Button>
+                      )}
+
+                      {migration.status === 'running' && (
+                        <Button
+                          variant="destructive"
+                          onClick={() => stopMigration(migration.id)}
+                          disabled={busyId === migration.id}
+                          className="gap-2"
+                        >
+                          {busyId === migration.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <PauseCircle className="h-4 w-4" />}
+                          Arrêter
                         </Button>
                       )}
 

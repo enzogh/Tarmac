@@ -53,6 +53,7 @@ export interface CommandPayload {
     | 'command.apply_mount'
     | 'command.apply_pool'
     | 'command.run_rsync'
+    | 'command.stop_rsync'
     | 'command.apply_overlay'
     | 'command.list_directories'
     | 'command.apply_ssh_authorized_keys';
@@ -65,6 +66,7 @@ export interface CommandResultPayload {
     | 'apply_mount'
     | 'apply_pool'
     | 'run_rsync'
+    | 'stop_rsync'
     | 'apply_overlay'
     | 'list_directories'
     | 'apply_ssh_authorized_keys';

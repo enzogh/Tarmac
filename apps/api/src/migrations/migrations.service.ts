@@ -228,6 +228,52 @@ export class MigrationsService {
     return this.start(id, actorUserId);
   }
 
+  async stop(id: string, actorUserId?: string) {
+    const existing = await this.prisma.migrationTask.findUnique({
+      where: { id },
+      include: { sourceNode: true, targetNode: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('migration not found');
+    }
+    if (existing.status !== 'running') {
+      throw new BadRequestException('only running migrations can be stopped');
+    }
+    if (!existing.targetNodeId) {
+      throw new BadRequestException('target node is missing');
+    }
+
+    const sent = this.agentsService.sendCommand(existing.targetNodeId, {
+      type: 'command.stop_rsync',
+      payload: {
+        resourceType: 'migration',
+        resourceId: existing.id,
+      },
+    });
+    if (!sent) {
+      throw new BadRequestException('target node is offline');
+    }
+
+    const updated = await this.prisma.migrationTask.update({
+      where: { id },
+      data: {
+        status: 'failed',
+        completedAt: new Date(),
+      },
+      include: { sourceNode: true, targetNode: true },
+    });
+
+    await this.auditLogsService.log({
+      actorUserId,
+      action: 'migration.stop',
+      resourceType: 'migration',
+      resourceId: id,
+      details: { previousStatus: existing.status } as Prisma.InputJsonValue,
+    });
+
+    return this.withMetadata(updated);
+  }
+
   async removePending(id: string, actorUserId?: string) {
     const existing = await this.prisma.migrationTask.findUnique({ where: { id } });
     if (!existing) {

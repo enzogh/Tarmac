@@ -329,6 +329,7 @@ export const api = {
       payload: { name?: string; sourceNodeId?: string; targetNodeId?: string; notes?: string; status?: 'pending' | 'running' | 'completed' | 'failed'; progress?: number },
     ) => request<MigrationItem>(`/api/v1/migrations/${id}`, token, { method: 'PATCH', body: JSON.stringify(payload) }),
     start: (token: string, id: string) => request(`/api/v1/migrations/${id}/start`, token, { method: 'POST' }),
+    stop: (token: string, id: string) => request<MigrationItem>(`/api/v1/migrations/${id}/stop`, token, { method: 'POST' }),
     retry: (token: string, id: string) => request<MigrationItem>(`/api/v1/migrations/${id}/retry`, token, { method: 'POST' }),
     remove: (token: string, id: string) => request<void>(`/api/v1/migrations/${id}`, token, { method: 'DELETE' }),
   },
