@@ -215,6 +215,10 @@ export default function NetworkPage() {
   }, [connections, vlanStatus]);
 
   const nodeById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
+  const connectionByDirection = useMemo(
+    () => new Map(connections.map((connection) => [`${connection.sourceNodeId}__${connection.targetNodeId}`, connection])),
+    [connections],
+  );
   const memberByNodeId = useMemo(
     () => new Map((vlanStatus?.vlan.members || []).map((member) => [member.nodeId, member])),
     [vlanStatus],
@@ -408,28 +412,33 @@ export default function NetworkPage() {
                 <TableHead className="text-center">Statut</TableHead>
                 <TableHead className="text-right">Latence</TableHead>
                 <TableHead className="text-right">Loss</TableHead>
-                <TableHead className="text-right">Débit</TableHead>
+                <TableHead className="text-right">Débit sortant</TableHead>
+                <TableHead className="text-right">Débit entrant</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {connections.map((conn) => (
-                <TableRow key={conn.id}>
-                  <TableCell className="max-w-[280px] truncate font-mono text-xs">
-                    <div>{conn.sourceNode?.vlanIp || '—'}</div>
-                    <div className="text-[10px] text-muted-foreground">{conn.sourceNodeId.slice(0, 8)}</div>
-                  </TableCell>
-                  <TableCell className="max-w-[280px] truncate font-mono text-xs">
-                    <div>{conn.targetNode?.vlanIp || '—'}</div>
-                    <div className="text-[10px] text-muted-foreground">{conn.targetNodeId.slice(0, 8)}</div>
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <Badge variant={getConnectionBadgeVariant(conn.status)}>{getConnectionLabel(conn.status)}</Badge>
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-xs">{formatLatency(conn.latencyMs)}</TableCell>
-                  <TableCell className="text-right font-mono text-xs">{formatLoss(conn.packetLoss)}</TableCell>
-                  <TableCell className="text-right font-mono text-xs">{formatBandwidth(conn.bandwidth)}</TableCell>
-                </TableRow>
-              ))}
+              {connections.map((conn) => {
+                const reverse = connectionByDirection.get(`${conn.targetNodeId}__${conn.sourceNodeId}`);
+                return (
+                  <TableRow key={conn.id}>
+                    <TableCell className="max-w-[280px] truncate font-mono text-xs">
+                      <div>{conn.sourceNode?.vlanIp || '—'}</div>
+                      <div className="text-[10px] text-muted-foreground">{conn.sourceNodeId.slice(0, 8)}</div>
+                    </TableCell>
+                    <TableCell className="max-w-[280px] truncate font-mono text-xs">
+                      <div>{conn.targetNode?.vlanIp || '—'}</div>
+                      <div className="text-[10px] text-muted-foreground">{conn.targetNodeId.slice(0, 8)}</div>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Badge variant={getConnectionBadgeVariant(conn.status)}>{getConnectionLabel(conn.status)}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-xs">{formatLatency(conn.latencyMs)}</TableCell>
+                    <TableCell className="text-right font-mono text-xs">{formatLoss(conn.packetLoss)}</TableCell>
+                    <TableCell className="text-right font-mono text-xs">{formatBandwidth(conn.bandwidth)}</TableCell>
+                    <TableCell className="text-right font-mono text-xs">{formatBandwidth(reverse?.bandwidth)}</TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </CardContent>
