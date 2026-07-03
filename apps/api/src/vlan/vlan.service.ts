@@ -485,6 +485,11 @@ export class VlanService implements OnModuleInit {
           where: { id: connection.id },
           data: {
             status: telemetry.status,
+            // This refresh path has no direct probe result; clear stale quality metrics.
+            // Real measured values are written by agent link-metric ingestion.
+            latencyMs: null,
+            packetLoss: null,
+            bandwidth: null,
             lastCheckedAt: now,
           },
         }),
