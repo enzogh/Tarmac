@@ -407,7 +407,7 @@ export const api = {
       ),
     listRemoteDirectories: (
       token: string,
-      payload: { nodeId: string; host: string; username: string; password?: string; port?: number; basePath?: string },
+      payload: { nodeId: string; host: string; username: string; password?: string; port?: string; basePath?: string },
     ) =>
       request<{ basePath: string; directories: string[] }>('/api/v1/migrations/directories/remote', token, {
         method: 'POST',
