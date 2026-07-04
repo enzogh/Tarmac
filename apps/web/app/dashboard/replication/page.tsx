@@ -117,6 +117,7 @@ export default function ReplicationPage() {
         <div>
           <PresetSelector
             presets={REPLICATION_PRESETS}
+            selectedId={selectedPreset?.id}
             onSelect={(preset) => {
               setSelectedPreset(preset);
               if (preset.config) {

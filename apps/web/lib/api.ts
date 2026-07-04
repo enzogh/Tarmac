@@ -5,6 +5,9 @@ export type NodeItem = {
   name: string;
   role: string;
   status: 'offline' | 'online' | 'degraded';
+  locationCity?: string | null;
+  locationCountry?: string | null;
+  locationCountryCode?: string | null;
   lastSeenAt?: string | null;
   overlayEndpoint?: string | null;
   externalIp?: string | null;
@@ -320,7 +323,17 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ deployKeyConfirmed: true }),
       }),
-    update: (token: string, id: string, payload: { name?: string; role?: string }) =>
+    update: (
+      token: string,
+      id: string,
+      payload: {
+        name?: string;
+        role?: string;
+        locationCity?: string | null;
+        locationCountry?: string | null;
+        locationCountryCode?: string | null;
+      },
+    ) =>
       request<NodeItem>(`/api/v1/nodes/${id}`, token, { method: 'PATCH', body: JSON.stringify(payload) }),
     delete: (token: string, id: string) =>
       request<NodeItem>(`/api/v1/nodes/${id}`, token, { method: 'DELETE' }),

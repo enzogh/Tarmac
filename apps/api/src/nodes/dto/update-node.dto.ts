@@ -15,4 +15,16 @@ export class UpdateNodeDto {
   @IsString()
   @IsIn(['offline', 'online', 'degraded'])
   status?: string;
+
+  @IsOptional()
+  @IsString()
+  locationCity?: string | null;
+
+  @IsOptional()
+  @IsString()
+  locationCountry?: string | null;
+
+  @IsOptional()
+  @IsString()
+  locationCountryCode?: string | null;
 }

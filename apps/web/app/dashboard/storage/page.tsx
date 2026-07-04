@@ -124,6 +124,7 @@ export default function StoragePage() {
         <div>
           <PresetSelector
             presets={POOL_PRESETS}
+            selectedId={selectedPreset?.id}
             onSelect={(preset) => {
               setSelectedPreset(preset);
               if (preset.config) {
