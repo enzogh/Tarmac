@@ -11,6 +11,7 @@ type ActivityNode = {
   role: string;
   status: NodeStatus;
   lastSeenAt: Date | null;
+  overlayEndpoint: string | null;
 };
 
 type ActivitySample = {
@@ -146,6 +147,8 @@ export class NodesService {
         role: node.role,
         status: node.status,
         lastSeenAt: node.lastSeenAt?.toISOString() ?? null,
+        overlayEndpoint: node.overlayEndpoint,
+        externalIp: this.extractExternalIp(node.overlayEndpoint),
         metrics: sample
           ? {
               cpu: sample.cpu,
@@ -187,6 +190,31 @@ export class NodesService {
         },
       };
     });
+  }
+
+  private extractExternalIp(endpoint: string | null | undefined) {
+    if (!endpoint) return null;
+    const raw = endpoint.trim();
+    if (!raw) return null;
+
+    try {
+      const withScheme = raw.includes('://') ? raw : `udp://${raw}`;
+      return new URL(withScheme).hostname || null;
+    } catch {
+      if (raw.startsWith('[')) {
+        const closeBracket = raw.indexOf(']');
+        if (closeBracket > 1) {
+          return raw.slice(1, closeBracket);
+        }
+      }
+      const slashIndex = raw.indexOf('/');
+      const hostPort = slashIndex >= 0 ? raw.slice(0, slashIndex) : raw;
+      const parts = hostPort.split(':');
+      if (parts.length === 2 && /^\d+$/.test(parts[1])) {
+        return parts[0] || null;
+      }
+      return hostPort || null;
+    }
   }
 
   metrics(id: string, range: string) {
