@@ -4,9 +4,9 @@ services:
     entrypoint: ["/bin/sh", "/docker-entrypoint-tarmac.sh"]
     command: ["postgres"]
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: tarmac
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-tarmac}
     ports:
       - "5432:5432"
     volumes:
@@ -30,7 +30,7 @@ services:
       context: ..
       dockerfile: apps/api/Dockerfile
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tarmac
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-tarmac}
       JWT_SECRET: change-me
       AGENT_SHARED_TOKEN: agent-secret
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@tarmac.local}
@@ -48,11 +48,10 @@ services:
       context: ..
       dockerfile: apps/web/Dockerfile
       args:
-        # Remplace par l'IP publique de ton serveur
-        NEXT_PUBLIC_API_URL: http://CHANGE_MOI_IP_SERVEUR:3001
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
         NEXT_PUBLIC_APP_VERSION: ${GITHUB_SHA:-dev-local}
     environment:
-      NEXT_PUBLIC_API_URL: http://CHANGE_MOI_IP_SERVEUR:3001
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
       NEXT_PUBLIC_APP_VERSION: ${GITHUB_SHA:-dev-local}
     ports:
       - "3000:3000"
