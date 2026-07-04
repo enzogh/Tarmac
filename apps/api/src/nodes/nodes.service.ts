@@ -71,10 +71,20 @@ export class NodesService {
   }
 
   async update(id: string, dto: UpdateNodeDto, actorUserId?: string) {
+    const locationCountryCode =
+      dto.locationCountryCode === undefined
+        ? undefined
+        : dto.locationCountryCode === null
+          ? null
+          : dto.locationCountryCode.trim().toUpperCase().slice(0, 2) || null;
+
     const data: Prisma.NodeUpdateInput = {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
       ...(dto.role !== undefined ? { role: dto.role } : {}),
       ...(dto.status !== undefined ? { status: dto.status as NodeStatus } : {}),
+      ...(dto.locationCity !== undefined ? { locationCity: dto.locationCity?.trim() || null } : {}),
+      ...(dto.locationCountry !== undefined ? { locationCountry: dto.locationCountry?.trim() || null } : {}),
+      ...(locationCountryCode !== undefined ? { locationCountryCode } : {}),
     };
 
     const updated = await this.prisma.node.update({ where: { id }, data });

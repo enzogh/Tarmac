@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import {
   Activity,
   AlertCircle,
@@ -19,6 +19,7 @@ import { GeoInfo, flagFromCountryCode, getGeoInfo, parseHostFromEndpoint } from 
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -73,6 +74,15 @@ type DirectedFlow = {
   bandwidth?: number | null;
   trafficScore: number;
 };
+
+type GeoOverride = {
+  city?: string;
+  country?: string;
+  countryCode?: string;
+};
+
+const MIND_MAP_WIDTH = 1000;
+const MIND_MAP_HEIGHT = 520;
 
 const TEST_OPTIONS: Array<{ value: TestType; label: string }> = [
   { value: 'ping', label: 'Ping' },
@@ -145,6 +155,14 @@ const matrixCellTone = (status?: VlanConnection['status']) => {
   return 'border-white/10 bg-zinc-900/60 text-zinc-400';
 };
 
+const clampScale = (value: number) => Math.max(0.45, Math.min(3.2, value));
+
+const normalizeCountryCode = (value?: string | null) => {
+  const trimmed = value?.trim().toUpperCase();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, 2);
+};
+
 export default function NetworkPage() {
   const token = useMemo(
     () => (typeof window !== 'undefined' ? localStorage.getItem('tarmac_token') : null),
@@ -163,11 +181,42 @@ export default function NetworkPage() {
   const [selectedPairKey, setSelectedPairKey] = useState<string | null>(null);
   const [selectedFlowKey, setSelectedFlowKey] = useState<string | null>(null);
   const [geoByIp, setGeoByIp] = useState<Record<string, GeoInfo | null>>({});
+  const [geoOverrides, setGeoOverrides] = useState<Record<string, GeoOverride>>({});
+  const [geoDirtyByNodeId, setGeoDirtyByNodeId] = useState<Record<string, boolean>>({});
+  const [geoSavingByNodeId, setGeoSavingByNodeId] = useState<Record<string, boolean>>({});
+  const [nodePositionOverrides, setNodePositionOverrides] = useState<Record<string, { x: number; y: number }>>({});
+  const [viewTransform, setViewTransform] = useState({ scale: 1, tx: 0, ty: 0 });
   const [selectedTest, setSelectedTest] = useState<{
     from?: string;
     to?: string;
     type?: TestType;
   }>({});
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const panRef = useRef<{ pointerId: number; startX: number; startY: number; startTx: number; startTy: number } | null>(null);
+  const nodeDragRef = useRef<{ pointerId: number; nodeId: string; offsetX: number; offsetY: number } | null>(null);
+
+  useEffect(() => {
+    const members = vlanStatus?.vlan.members ?? [];
+    setGeoOverrides((prev) => {
+      const next: Record<string, GeoOverride> = { ...prev };
+      const activeNodeIds = new Set<string>();
+      for (const member of members) {
+        activeNodeIds.add(member.nodeId);
+        if (geoDirtyByNodeId[member.nodeId]) continue;
+        next[member.nodeId] = {
+          city: member.node?.locationCity ?? '',
+          country: member.node?.locationCountry ?? '',
+          countryCode: normalizeCountryCode(member.node?.locationCountryCode) ?? '',
+        };
+      }
+      for (const nodeId of Object.keys(next)) {
+        if (!activeNodeIds.has(nodeId)) {
+          delete next[nodeId];
+        }
+      }
+      return next;
+    });
+  }, [vlanStatus, geoDirtyByNodeId]);
 
   useEffect(() => {
     const fetchData = async (isInitial: boolean) => {
@@ -256,8 +305,9 @@ export default function NetworkPage() {
     for (const member of membersList) {
       const endpointHost = parseHostFromEndpoint(member.node?.externalIp || member.node?.overlayEndpoint);
       const geo = endpointHost ? geoByIp[endpointHost] : null;
-      const country = geo?.country || 'Pays inconnu';
-      const city = geo?.city || 'Ville inconnue';
+      const override = geoOverrides[member.nodeId];
+      const country = override?.country?.trim() || geo?.country || 'Pays inconnu';
+      const city = override?.city?.trim() || geo?.city || 'Ville inconnue';
       if (!grouped.has(country)) grouped.set(country, new Map());
       const countryGroup = grouped.get(country)!;
       if (!countryGroup.has(city)) countryGroup.set(city, []);
@@ -302,16 +352,18 @@ export default function NetworkPage() {
         members.forEach((member, memberIndex) => {
           const endpointHost = parseHostFromEndpoint(member.node?.externalIp || member.node?.overlayEndpoint);
           const geo = endpointHost ? geoByIp[endpointHost] : null;
+          const override = geoOverrides[member.nodeId];
           const nodeAngle = (memberIndex / Math.max(members.length, 1)) * Math.PI * 2 - Math.PI / 2;
           const nodeOrbitRadius = members.length <= 1 ? 0 : 34;
+          const countryCode = normalizeCountryCode(override?.countryCode) ?? geo?.countryCode ?? null;
           nodes.push({
             id: member.nodeId,
             label: member.node?.name || member.nodeId.slice(0, 8),
             vlanIp: member.vlanIp,
             status: member.node?.status === 'online' ? 'online' : 'offline',
-            city,
-            country,
-            countryCode: geo?.countryCode ?? null,
+            city: override?.city?.trim() || city,
+            country: override?.country?.trim() || country,
+            countryCode,
             x: cityCenterX + Math.cos(nodeAngle) * nodeOrbitRadius,
             y: cityCenterY + Math.sin(nodeAngle) * nodeOrbitRadius,
           });
@@ -345,9 +397,30 @@ export default function NetworkPage() {
       cityBubbles,
       countryBubbles,
     };
-  }, [connections, geoByIp, vlanStatus]);
+  }, [connections, geoByIp, geoOverrides, vlanStatus]);
 
-  const nodeById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
+  const displayedNodes = useMemo(
+    () =>
+      graph.nodes.map((node) => ({
+        ...node,
+        ...(nodePositionOverrides[node.id] ?? {}),
+      })),
+    [graph.nodes, nodePositionOverrides],
+  );
+  const nodeById = useMemo(() => new Map(displayedNodes.map((node) => [node.id, node])), [displayedNodes]);
+  const detectedGeoByNodeId = useMemo(() => {
+    const map = new Map<string, { city: string; country: string; countryCode: string | null }>();
+    for (const member of vlanStatus?.vlan.members || []) {
+      const endpointHost = parseHostFromEndpoint(member.node?.externalIp || member.node?.overlayEndpoint);
+      const geo = endpointHost ? geoByIp[endpointHost] : null;
+      map.set(member.nodeId, {
+        city: geo?.city || 'Ville inconnue',
+        country: geo?.country || 'Pays inconnu',
+        countryCode: geo?.countryCode ?? null,
+      });
+    }
+    return map;
+  }, [geoByIp, vlanStatus]);
   const connectionByDirection = useMemo(
     () => new Map(connections.map((connection) => [`${connection.sourceNodeId}__${connection.targetNodeId}`, connection])),
     [connections],
@@ -385,6 +458,193 @@ export default function NetworkPage() {
     () => directedFlows.slice(0, 5),
     [directedFlows],
   );
+  const orderedNodes = useMemo(
+    () => [...displayedNodes].sort((a, b) => a.label.localeCompare(b.label, 'fr')),
+    [displayedNodes],
+  );
+
+  const toSvgPoint = (clientX: number, clientY: number) => {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    return {
+      x: ((clientX - rect.left) / rect.width) * MIND_MAP_WIDTH,
+      y: ((clientY - rect.top) / rect.height) * MIND_MAP_HEIGHT,
+    };
+  };
+
+  const toWorldPoint = (clientX: number, clientY: number) => {
+    const svgPoint = toSvgPoint(clientX, clientY);
+    if (!svgPoint) return null;
+    return {
+      x: (svgPoint.x - viewTransform.tx) / viewTransform.scale,
+      y: (svgPoint.y - viewTransform.ty) / viewTransform.scale,
+    };
+  };
+
+  const zoomFrom = (factor: number, focus?: { x: number; y: number }) => {
+    setViewTransform((prev) => {
+      const nextScale = clampScale(prev.scale * factor);
+      if (nextScale === prev.scale) return prev;
+      const center = focus ?? { x: MIND_MAP_WIDTH / 2, y: MIND_MAP_HEIGHT / 2 };
+      const worldX = (center.x - prev.tx) / prev.scale;
+      const worldY = (center.y - prev.ty) / prev.scale;
+      return {
+        scale: nextScale,
+        tx: center.x - worldX * nextScale,
+        ty: center.y - worldY * nextScale,
+      };
+    });
+  };
+
+  const handleMapWheel = (event: ReactWheelEvent<SVGSVGElement>) => {
+    event.preventDefault();
+    const focus = toSvgPoint(event.clientX, event.clientY);
+    if (!focus) return;
+    const factor = Math.exp(-event.deltaY * 0.0016);
+    zoomFrom(factor, focus);
+  };
+
+  const handleMapPointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (event.button !== 0) return;
+    const target = event.target as Element | null;
+    if (target?.closest('[data-node-draggable="true"]') || target?.closest('[data-link-clickable="true"]')) return;
+    const point = toSvgPoint(event.clientX, event.clientY);
+    if (!point) return;
+    panRef.current = {
+      pointerId: event.pointerId,
+      startX: point.x,
+      startY: point.y,
+      startTx: viewTransform.tx,
+      startTy: viewTransform.ty,
+    };
+    svgRef.current?.setPointerCapture(event.pointerId);
+  };
+
+  const handleMapPointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (nodeDragRef.current && nodeDragRef.current.pointerId === event.pointerId) {
+      const dragState = nodeDragRef.current;
+      const world = toWorldPoint(event.clientX, event.clientY);
+      if (!world) return;
+      setNodePositionOverrides((prev) => ({
+        ...prev,
+        [dragState.nodeId]: {
+          x: world.x - dragState.offsetX,
+          y: world.y - dragState.offsetY,
+        },
+      }));
+      return;
+    }
+
+    if (!panRef.current || panRef.current.pointerId !== event.pointerId) return;
+    const point = toSvgPoint(event.clientX, event.clientY);
+    if (!point) return;
+    setViewTransform((prev) => ({
+      ...prev,
+      tx: panRef.current!.startTx + (point.x - panRef.current!.startX),
+      ty: panRef.current!.startTy + (point.y - panRef.current!.startY),
+    }));
+  };
+
+  const endPointerInteraction = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (nodeDragRef.current?.pointerId === event.pointerId) {
+      nodeDragRef.current = null;
+    }
+    if (panRef.current?.pointerId === event.pointerId) {
+      panRef.current = null;
+    }
+    if (svgRef.current?.hasPointerCapture(event.pointerId)) {
+      svgRef.current.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const handleNodePointerDown = (event: ReactPointerEvent<SVGGElement>, nodeId: string) => {
+    if (event.button !== 0) return;
+    const node = nodeById.get(nodeId);
+    const world = toWorldPoint(event.clientX, event.clientY);
+    if (!node || !world) return;
+    event.stopPropagation();
+    nodeDragRef.current = {
+      pointerId: event.pointerId,
+      nodeId,
+      offsetX: world.x - node.x,
+      offsetY: world.y - node.y,
+    };
+    svgRef.current?.setPointerCapture(event.pointerId);
+  };
+
+  const updateNodeGeoOverride = (nodeId: string, patch: Partial<GeoOverride>) => {
+    setGeoOverrides((prev) => {
+      const current = prev[nodeId] ?? {};
+      return {
+        ...prev,
+        [nodeId]: {
+          ...current,
+          ...patch,
+          countryCode: normalizeCountryCode(patch.countryCode ?? current.countryCode) ?? '',
+        },
+      };
+    });
+    setGeoDirtyByNodeId((prev) => ({ ...prev, [nodeId]: true }));
+  };
+
+  const saveNodeGeoOverride = async (nodeId: string, forceAuto = false) => {
+    if (!token) return;
+    const current = geoOverrides[nodeId] ?? {};
+    const locationCity = forceAuto ? null : current.city?.trim() || null;
+    const locationCountry = forceAuto ? null : current.country?.trim() || null;
+    const locationCountryCode = forceAuto
+      ? null
+      : normalizeCountryCode(current.countryCode)?.trim() || null;
+
+    setGeoSavingByNodeId((prev) => ({ ...prev, [nodeId]: true }));
+    try {
+      const updatedNode = await api.nodes.update(token, nodeId, {
+        locationCity,
+        locationCountry,
+        locationCountryCode,
+      });
+      setGeoOverrides((prev) => ({
+        ...prev,
+        [nodeId]: {
+          city: updatedNode.locationCity ?? '',
+          country: updatedNode.locationCountry ?? '',
+          countryCode: normalizeCountryCode(updatedNode.locationCountryCode) ?? '',
+        },
+      }));
+      setGeoDirtyByNodeId((prev) => ({ ...prev, [nodeId]: false }));
+      setVlanStatus((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          vlan: {
+            ...prev.vlan,
+            members: (prev.vlan.members || []).map((member) =>
+              member.nodeId === nodeId
+                ? {
+                    ...member,
+                    node: member.node
+                      ? {
+                          ...member.node,
+                          locationCity: updatedNode.locationCity ?? null,
+                          locationCountry: updatedNode.locationCountry ?? null,
+                          locationCountryCode: updatedNode.locationCountryCode ?? null,
+                        }
+                      : member.node,
+                  }
+                : member,
+            ),
+          },
+        };
+      });
+    } catch (error) {
+      console.error('Failed to save location override:', error);
+      setNotice({ type: 'error', message: 'Impossible d’enregistrer la localisation manuelle.' });
+    } finally {
+      setGeoSavingByNodeId((prev) => ({ ...prev, [nodeId]: false }));
+    }
+  };
 
   const handleRunTest = async () => {
     if (!token || !vlanStatus || !selectedTest.from || !selectedTest.to || !selectedTest.type) {
@@ -508,134 +768,241 @@ export default function NetworkPage() {
 
       <div className="grid gap-4 xl:grid-cols-[1.6fr_minmax(0,1fr)]">
         <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
-          <CardHeader>
-            <CardTitle className="text-base">Vue interconnexion (mind map live)</CardTitle>
+          <CardHeader className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle className="text-base">Vue interconnexion (mind map live)</CardTitle>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => zoomFrom(1.16)}
+                >
+                  Zoom +
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => zoomFrom(1 / 1.16)}
+                >
+                  Zoom -
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setViewTransform({ scale: 1, tx: 0, ty: 0 })}
+                >
+                  Recentrer
+                </Button>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Molette pour zoomer, glisser le fond pour déplacer la vue, glisser un nœud pour le repositionner.
+            </p>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-4">
-              <svg viewBox="0 0 1000 520" className="h-[420px] w-full">
-                {graph.countryBubbles.map((bubble) => (
-                  <g key={bubble.id}>
-                    <circle
-                      cx={bubble.x}
-                      cy={bubble.y}
-                      r={bubble.r}
-                      fill="rgba(59,130,246,0.04)"
-                      stroke="rgba(59,130,246,0.18)"
-                      strokeWidth={1.5}
-                    />
-                    <text
-                      x={bubble.x}
-                      y={bubble.y - bubble.r + 18}
-                      textAnchor="middle"
-                      fill="rgba(191,219,254,0.85)"
-                      fontSize={11}
-                      fontFamily="ui-sans-serif, system-ui, sans-serif"
-                    >
-                      {bubble.label}
-                    </text>
-                  </g>
-                ))}
-                {graph.cityBubbles.map((bubble) => (
-                  <g key={bubble.id}>
-                    <circle
-                      cx={bubble.x}
-                      cy={bubble.y}
-                      r={bubble.r}
-                      fill="rgba(139,92,246,0.04)"
-                      stroke="rgba(139,92,246,0.2)"
-                      strokeWidth={1}
-                    />
-                    <text
-                      x={bubble.x}
-                      y={bubble.y - bubble.r + 14}
-                      textAnchor="middle"
-                      fill="rgba(221,214,254,0.75)"
-                      fontSize={10}
-                      fontFamily="ui-sans-serif, system-ui, sans-serif"
-                    >
-                      {bubble.label}
-                    </text>
-                  </g>
-                ))}
-                {graph.links.map((link) => {
-                  const source = nodeById.get(link.sourceNodeId);
-                  const target = nodeById.get(link.targetNodeId);
-                  if (!source || !target) return null;
-
-                  const isSelected = selectedPairKey === link.key;
-                  return (
-                    <g
-                      key={link.key}
-                      onClick={() => {
-                        setSelectedPairKey(link.key);
-                        const bestDirectional = directedFlows.find(
-                          (flow) => [flow.sourceNodeId, flow.targetNodeId].sort().join('__') === link.key,
-                        );
-                        setSelectedFlowKey(bestDirectional?.key ?? null);
-                      }}
-                      className="cursor-pointer"
-                    >
-                      <line
-                        x1={source.x}
-                        y1={source.y}
-                        x2={target.x}
-                        y2={target.y}
-                        stroke={linkStroke(link.status)}
-                        strokeWidth={isSelected ? 4 : link.status === 'offline' ? 2 : 3}
-                        strokeDasharray={link.status === 'offline' ? '6 6' : undefined}
-                        style={{ filter: linkGlow(link.status) }}
+              <svg
+                ref={svgRef}
+                viewBox={`0 0 ${MIND_MAP_WIDTH} ${MIND_MAP_HEIGHT}`}
+                className="h-[420px] w-full touch-none"
+                onWheel={handleMapWheel}
+                onPointerDown={handleMapPointerDown}
+                onPointerMove={handleMapPointerMove}
+                onPointerUp={endPointerInteraction}
+                onPointerCancel={endPointerInteraction}
+              >
+                <g transform={`translate(${viewTransform.tx} ${viewTransform.ty}) scale(${viewTransform.scale})`}>
+                  {graph.countryBubbles.map((bubble) => (
+                    <g key={bubble.id}>
+                      <circle
+                        cx={bubble.x}
+                        cy={bubble.y}
+                        r={bubble.r}
+                        fill="rgba(59,130,246,0.04)"
+                        stroke="rgba(59,130,246,0.18)"
+                        strokeWidth={1.5}
                       />
-                      {link.status !== 'offline' && (
-                        <circle r={isSelected ? 5 : 4} fill={linkStroke(link.status)}>
-                          <animateMotion dur={linkPulseDuration(link.latencyMs)} repeatCount="indefinite" rotate="auto">
-                            <mpath href={`#path-${link.key}`} />
-                          </animateMotion>
-                        </circle>
-                      )}
-                      <path
-                        id={`path-${link.key}`}
-                        d={`M ${source.x} ${source.y} L ${target.x} ${target.y}`}
-                        fill="none"
-                        stroke="none"
-                      />
-                      <title>
-                        {source.label} ↔ {target.label} · {getConnectionLabel(link.status)} ·{' '}
-                        {source.vlanIp} ↔ {target.vlanIp} ·{' '}
-                        {formatLatency(link.latencyMs)} · {formatLoss(link.packetLoss)} ·{' '}
-                        {formatBandwidth(link.bandwidth)}
-                      </title>
+                      <text
+                        x={bubble.x}
+                        y={bubble.y - bubble.r + 18}
+                        textAnchor="middle"
+                        fill="rgba(191,219,254,0.85)"
+                        fontSize={11}
+                        fontFamily="ui-sans-serif, system-ui, sans-serif"
+                      >
+                        {bubble.label}
+                      </text>
                     </g>
+                  ))}
+                  {graph.cityBubbles.map((bubble) => (
+                    <g key={bubble.id}>
+                      <circle
+                        cx={bubble.x}
+                        cy={bubble.y}
+                        r={bubble.r}
+                        fill="rgba(139,92,246,0.04)"
+                        stroke="rgba(139,92,246,0.2)"
+                        strokeWidth={1}
+                      />
+                      <text
+                        x={bubble.x}
+                        y={bubble.y - bubble.r + 14}
+                        textAnchor="middle"
+                        fill="rgba(221,214,254,0.75)"
+                        fontSize={10}
+                        fontFamily="ui-sans-serif, system-ui, sans-serif"
+                      >
+                        {bubble.label}
+                      </text>
+                    </g>
+                  ))}
+                  {graph.links.map((link) => {
+                    const source = nodeById.get(link.sourceNodeId);
+                    const target = nodeById.get(link.targetNodeId);
+                    if (!source || !target) return null;
+
+                    const isSelected = selectedPairKey === link.key;
+                    return (
+                      <g
+                        key={link.key}
+                        data-link-clickable="true"
+                        onClick={() => {
+                          setSelectedPairKey(link.key);
+                          const bestDirectional = directedFlows.find(
+                            (flow) => [flow.sourceNodeId, flow.targetNodeId].sort().join('__') === link.key,
+                          );
+                          setSelectedFlowKey(bestDirectional?.key ?? null);
+                        }}
+                        className="cursor-pointer"
+                      >
+                        <line
+                          x1={source.x}
+                          y1={source.y}
+                          x2={target.x}
+                          y2={target.y}
+                          stroke={linkStroke(link.status)}
+                          strokeWidth={isSelected ? 4 : link.status === 'offline' ? 2 : 3}
+                          strokeDasharray={link.status === 'offline' ? '6 6' : undefined}
+                          style={{ filter: linkGlow(link.status) }}
+                        />
+                        {link.status !== 'offline' && (
+                          <circle r={isSelected ? 5 : 4} fill={linkStroke(link.status)}>
+                            <animateMotion dur={linkPulseDuration(link.latencyMs)} repeatCount="indefinite" rotate="auto">
+                              <mpath href={`#path-${link.key}`} />
+                            </animateMotion>
+                          </circle>
+                        )}
+                        <path
+                          id={`path-${link.key}`}
+                          d={`M ${source.x} ${source.y} L ${target.x} ${target.y}`}
+                          fill="none"
+                          stroke="none"
+                        />
+                        <title>
+                          {source.label} ↔ {target.label} · {getConnectionLabel(link.status)} ·{' '}
+                          {source.vlanIp} ↔ {target.vlanIp} ·{' '}
+                          {formatLatency(link.latencyMs)} · {formatLoss(link.packetLoss)} ·{' '}
+                          {formatBandwidth(link.bandwidth)}
+                        </title>
+                      </g>
+                    );
+                  })}
+
+                  {displayedNodes.map((node) => (
+                    <g
+                      key={node.id}
+                      data-node-draggable="true"
+                      onPointerDown={(event) => handleNodePointerDown(event, node.id)}
+                      className="cursor-grab active:cursor-grabbing"
+                    >
+                      <circle cx={node.x} cy={node.y} r={26} fill="rgba(9,9,11,0.95)" stroke={nodeFill(node.status)} strokeWidth={2.5} />
+                      <circle cx={node.x} cy={node.y} r={10} fill={nodeFill(node.status)} />
+                      <text
+                        x={node.x}
+                        y={node.y + 48}
+                        textAnchor="middle"
+                        fill="rgba(244,244,245,0.94)"
+                        fontSize={13}
+                        fontFamily="ui-sans-serif, system-ui, sans-serif"
+                      >
+                        {flagFromCountryCode(node.countryCode)} {node.label}
+                      </text>
+                      <text
+                        x={node.x}
+                        y={node.y + 65}
+                        textAnchor="middle"
+                        fill="rgba(161,161,170,0.95)"
+                        fontSize={11}
+                        fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+                      >
+                        {node.city} · {node.vlanIp}
+                      </text>
+                    </g>
+                  ))}
+                </g>
+              </svg>
+            </div>
+            <div className="rounded-xl border border-white/[0.08] bg-zinc-950/45 p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-zinc-200">Attribution manuelle localisation</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setNodePositionOverrides({})}
+                >
+                  Reset positions nœuds
+                </Button>
+              </div>
+              <p className="mb-3 text-xs text-muted-foreground">
+                Modifiez la ville/pays si l’auto-détection IP est incorrecte. Les changements sont enregistrés côté serveur et partagés entre clients.
+              </p>
+              <div className="max-h-56 space-y-2 overflow-auto pr-1">
+                {orderedNodes.map((node) => {
+                  const override = geoOverrides[node.id] ?? {};
+                  const detected = detectedGeoByNodeId.get(node.id);
+                  return (
+                    <div key={`override-${node.id}`} className="rounded-lg border border-white/[0.08] bg-zinc-900/55 p-2">
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs font-medium text-zinc-100">{node.label}</p>
+                        <p className="text-[10px] font-mono text-zinc-400">{node.vlanIp}</p>
+                      </div>
+                      <div className="grid gap-2 md:grid-cols-[1fr_1fr_88px_auto]">
+                        <Input
+                          value={override.city ?? ''}
+                          onChange={(event) => updateNodeGeoOverride(node.id, { city: event.target.value })}
+                          onBlur={() => void saveNodeGeoOverride(node.id)}
+                          placeholder={detected?.city ?? 'Ville inconnue'}
+                        />
+                        <Input
+                          value={override.country ?? ''}
+                          onChange={(event) => updateNodeGeoOverride(node.id, { country: event.target.value })}
+                          onBlur={() => void saveNodeGeoOverride(node.id)}
+                          placeholder={detected?.country ?? 'Pays inconnu'}
+                        />
+                        <Input
+                          value={override.countryCode ?? ''}
+                          onChange={(event) => updateNodeGeoOverride(node.id, { countryCode: event.target.value })}
+                          onBlur={() => void saveNodeGeoOverride(node.id)}
+                          placeholder={detected?.countryCode ?? '--'}
+                          maxLength={2}
+                          className="uppercase"
+                        />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            updateNodeGeoOverride(node.id, { city: '', country: '', countryCode: '' });
+                            void saveNodeGeoOverride(node.id, true);
+                          }}
+                          disabled={geoSavingByNodeId[node.id]}
+                        >
+                          {geoSavingByNodeId[node.id] ? 'Saving…' : 'Auto'}
+                        </Button>
+                      </div>
+                    </div>
                   );
                 })}
-
-                {graph.nodes.map((node) => (
-                  <g key={node.id}>
-                    <circle cx={node.x} cy={node.y} r={26} fill="rgba(9,9,11,0.95)" stroke={nodeFill(node.status)} strokeWidth={2.5} />
-                    <circle cx={node.x} cy={node.y} r={10} fill={nodeFill(node.status)} />
-                    <text
-                      x={node.x}
-                      y={node.y + 48}
-                      textAnchor="middle"
-                      fill="rgba(244,244,245,0.94)"
-                      fontSize={13}
-                      fontFamily="ui-sans-serif, system-ui, sans-serif"
-                    >
-                      {flagFromCountryCode(node.countryCode)} {node.label}
-                    </text>
-                    <text
-                      x={node.x}
-                      y={node.y + 65}
-                      textAnchor="middle"
-                      fill="rgba(161,161,170,0.95)"
-                      fontSize={11}
-                      fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-                    >
-                      {node.city} · {node.vlanIp}
-                    </text>
-                  </g>
-                ))}
-              </svg>
+              </div>
             </div>
           </CardContent>
         </Card>

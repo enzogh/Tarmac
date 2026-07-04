@@ -140,6 +140,8 @@ export function PresetSelector({
           return (
             <button
               key={preset.id}
+              type="button"
+              aria-pressed={isSelected}
               onClick={() => onSelect(preset)}
               className={`rounded-xl border p-4 text-left transition-all ${
                 isSelected
@@ -177,6 +179,7 @@ export function AdvancedOptions({
   return (
     <div className="mt-6 border-t border-white/[0.08] pt-6">
       <button
+        type="button"
         onClick={() => setIsOpen(!isOpen)}
         className="flex items-center gap-2 text-sm font-semibold text-foreground transition-colors hover:text-muted-foreground"
       >
@@ -223,7 +226,7 @@ export function HelpText({ text }: { text: string }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button className="ml-1 inline-flex">
+        <button type="button" className="ml-1 inline-flex">
           <HelpCircle className="h-4 w-4 text-zinc-500 hover:text-zinc-300" />
         </button>
       </TooltipTrigger>
