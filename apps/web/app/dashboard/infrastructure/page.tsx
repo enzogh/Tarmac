@@ -6,8 +6,10 @@ import {
   ArrowDownToLine,
   ArrowUpToLine,
   Cpu,
+  Eye,
   FolderSearch,
   Gauge,
+  Globe2,
   HardDrive,
   Info,
   Layers3,
@@ -36,14 +38,6 @@ import {
   DialogFooter,
 } from '../../../components/ui/dialog';
 import { NodeOnboardingModal } from '../../../components/NodeOnboardingModal';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '../../../components/ui/table';
 import { Progress } from '../../../components/ui/progress';
 import { DirectoryBrowser } from '../../../components/ui/directory-browser';
 
@@ -57,6 +51,8 @@ const formatBytes = (value: number) => {
   const scaled = value / 1024 ** index;
   return `${scaled >= 10 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[index]}`;
 };
+
+const formatDateTime = (value?: string | null) => (value ? new Date(value).toLocaleString('fr-FR') : '-');
 
 export default function InfrastructurePage() {
   const router = useRouter();
@@ -75,6 +71,7 @@ export default function InfrastructurePage() {
   const [editRole, setEditRole] = useState('');
   const [editLoading, setEditLoading] = useState(false);
   const [nodeToDelete, setNodeToDelete] = useState<NodeActivityItem | null>(null);
+  const [inspectingNode, setInspectingNode] = useState<NodeActivityItem | null>(null);
   const [updatingNodeId, setUpdatingNodeId] = useState<string | null>(null);
   const [updateNotice, setUpdateNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
 
@@ -240,6 +237,8 @@ export default function InfrastructurePage() {
 
   const selectedExplorerNode = nodes.find((node) => node.id === selectedExplorerNodeId) ?? null;
   const scanMax = scanResults[0]?.sizeBytes ?? 1;
+
+  const getExternalIp = (node: NodeActivityItem) => node.externalIp || node.overlayEndpoint || '-';
 
   return (
     <DashboardLayout>
@@ -443,140 +442,159 @@ export default function InfrastructurePage() {
 
         <Card className="border-white/[0.08] bg-zinc-900/65">
           <CardHeader>
-            <div className="flex items-center gap-2">
-              <Server className="h-5 w-5 text-violet-400" />
-              <CardTitle>Nœuds (serveurs)</CardTitle>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Server className="h-5 w-5 text-violet-400" />
+                <CardTitle>Nœuds (serveurs)</CardTitle>
+              </div>
+              <NodeOnboardingModal onCreated={load} />
             </div>
           </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Node ID</TableHead>
-                  <TableHead>Nom</TableHead>
-                  <TableHead>Rôle</TableHead>
-                  <TableHead>Statut</TableHead>
-                  <TableHead>CPU</TableHead>
-                  <TableHead>RAM</TableHead>
-                  <TableHead>Réseau</TableHead>
-                  <TableHead>Disques</TableHead>
-                  <TableHead>Vu pour la dernière fois</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {nodes.map((node) => (
-                  <TableRow key={node.id}>
-                    <TableCell className="max-w-xs break-all font-mono text-xs text-muted-foreground">{node.id}</TableCell>
-                    <TableCell className="font-medium">{node.name}</TableCell>
-                    <TableCell className="capitalize text-muted-foreground">{node.role}</TableCell>
-                    <TableCell>
-                      <Badge
-                        label={node.status}
-                        type={node.status === 'online' ? 'success' : node.status === 'degraded' ? 'warning' : 'error'}
-                      />
-                    </TableCell>
-                    <TableCell className="min-w-36">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2">
+              {nodes.map((node) => (
+                <div key={node.id} className="rounded-2xl border border-white/[0.08] bg-zinc-950/45 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-base font-semibold text-zinc-100">{node.name}</p>
+                      <p className="mt-0.5 text-xs capitalize text-muted-foreground">{node.role}</p>
+                    </div>
+                    <Badge
+                      label={node.status}
+                      type={node.status === 'online' ? 'success' : node.status === 'degraded' ? 'warning' : 'error'}
+                    />
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+                    <div className="rounded-lg border border-white/[0.08] bg-zinc-900/50 px-2.5 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Node ID</p>
+                      <p className="mt-1 truncate font-mono text-zinc-200">{node.id}</p>
+                    </div>
+                    <div className="rounded-lg border border-white/[0.08] bg-zinc-900/50 px-2.5 py-2">
+                      <p className="flex items-center gap-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                        <Globe2 className="h-3 w-3" />
+                        IP externe
+                      </p>
+                      <p className="mt-1 truncate font-mono text-zinc-200">{getExternalIp(node)}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+                    <div className="rounded-lg border border-white/[0.08] bg-zinc-900/50 px-2.5 py-2">
+                      <div className="mb-1.5 flex items-center justify-between text-muted-foreground">
+                        <span className="flex items-center gap-1.5">
                           <Cpu className="h-3.5 w-3.5" />
-                          {Math.round(node.metrics.cpu)}%
-                        </div>
-                        <Progress value={node.metrics.cpu} className="h-1.5" />
+                          CPU
+                        </span>
+                        <span>{Math.round(node.metrics.cpu)}%</span>
                       </div>
-                    </TableCell>
-                    <TableCell className="min-w-36">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Progress value={node.metrics.cpu} className="h-1.5" />
+                    </div>
+                    <div className="rounded-lg border border-white/[0.08] bg-zinc-900/50 px-2.5 py-2">
+                      <div className="mb-1.5 flex items-center justify-between text-muted-foreground">
+                        <span className="flex items-center gap-1.5">
                           <HardDrive className="h-3.5 w-3.5" />
-                          {Math.round(node.metrics.ram)}%
-                        </div>
-                        <Progress value={node.metrics.ram} className="h-1.5" />
+                          RAM
+                        </span>
+                        <span>{Math.round(node.metrics.ram)}%</span>
                       </div>
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      <div className="flex items-center gap-2">
+                      <Progress value={node.metrics.ram} className="h-1.5" />
+                    </div>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+                    <div className="rounded-lg border border-white/[0.08] bg-zinc-900/45 px-2.5 py-2">
+                      <p className="text-[11px] uppercase tracking-wide">Réseau</p>
+                      <p className="mt-1 flex items-center gap-1.5">
                         <ArrowDownToLine className="h-3.5 w-3.5" />
                         {formatMbps(node.metrics.networkRx)}
-                      </div>
-                      <div className="mt-1 flex items-center gap-2">
+                      </p>
+                      <p className="mt-0.5 flex items-center gap-1.5">
                         <ArrowUpToLine className="h-3.5 w-3.5" />
                         {formatMbps(node.metrics.networkTx)}
-                      </div>
-                    </TableCell>
-                    <TableCell className="min-w-44">
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                          <span>
-                            {node.storage.totalUsedGb} GB / {node.storage.totalCapacityGb} GB
-                          </span>
-                          <span>{Math.round(node.storage.usageRatio * 100)}%</span>
-                        </div>
-                        <Progress value={node.storage.usageRatio * 100} className="h-1.5" />
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {node.lastSeenAt ? new Date(node.lastSeenAt).toLocaleString('fr-FR') : '-'}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => void triggerAgentUpdate(node)}
-                              disabled={node.status !== 'online' || updatingNodeId === node.id}
-                              className="h-8 w-8 text-muted-foreground hover:text-emerald-400 disabled:opacity-50"
-                            >
-                              <RefreshCcw className={`h-3.5 w-3.5 ${updatingNodeId === node.id ? 'animate-spin' : ''}`} />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            {node.status === 'online'
-                              ? 'Mettre à jour l’agent (recompile + redémarrage service)'
-                              : 'Agent hors ligne'}
-                          </TooltipContent>
-                        </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => openEditModal(node)}
-                              className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>Modifier le nom et le rôle du nœud</TooltipContent>
-                        </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => setNodeToDelete(node)}
-                              className="h-8 w-8 text-muted-foreground hover:text-rose-400"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>Supprimer définitivement ce nœud</TooltipContent>
-                        </Tooltip>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {nodes.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={10} className="py-8 text-center text-muted-foreground">
-                      Aucun nœud enregistré. Cliquez sur « Onboarder un nœud » pour commencer.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-white/[0.08] bg-zinc-900/45 px-2.5 py-2">
+                      <p className="text-[11px] uppercase tracking-wide">Stockage</p>
+                      <p className="mt-1 text-zinc-200">
+                        {node.storage.totalUsedGb} / {node.storage.totalCapacityGb} GB
+                      </p>
+                      <p className="mt-0.5">{Math.round(node.storage.usageRatio * 100)}% utilisé</p>
+                    </div>
+                    <div className="rounded-lg border border-white/[0.08] bg-zinc-900/45 px-2.5 py-2">
+                      <p className="text-[11px] uppercase tracking-wide">Dernière activité</p>
+                      <p className="mt-1 text-zinc-200">{formatDateTime(node.lastSeenAt)}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-end gap-1">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setInspectingNode(node)}
+                          className="h-8 w-8 text-muted-foreground hover:text-cyan-300"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Voir les détails du nœud</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => void triggerAgentUpdate(node)}
+                          disabled={node.status !== 'online' || updatingNodeId === node.id}
+                          className="h-8 w-8 text-muted-foreground hover:text-emerald-400 disabled:opacity-50"
+                        >
+                          <RefreshCcw className={`h-3.5 w-3.5 ${updatingNodeId === node.id ? 'animate-spin' : ''}`} />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {node.status === 'online'
+                          ? 'Mettre à jour l’agent (recompile + redémarrage service)'
+                          : 'Agent hors ligne'}
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => openEditModal(node)}
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Modifier le nom et le rôle du nœud</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setNodeToDelete(node)}
+                          className="h-8 w-8 text-muted-foreground hover:text-rose-400"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Supprimer définitivement ce nœud</TooltipContent>
+                    </Tooltip>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {nodes.length === 0 && (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                Aucun nœud enregistré. Cliquez sur « Onboarder un nœud » pour commencer.
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -600,7 +618,6 @@ export default function InfrastructurePage() {
                 <CardTitle>Pools</CardTitle>
               </div>
               <div className="flex items-center gap-2">
-                <NodeOnboardingModal onCreated={load} />
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button size="sm" onClick={() => setPoolDialogOpen(true)}>
@@ -638,6 +655,70 @@ export default function InfrastructurePage() {
             {pools.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">Aucun pool</p>}
           </CardContent>
         </Card>
+
+        <Dialog
+          open={!!inspectingNode}
+          onOpenChange={(open) => {
+            if (!open) setInspectingNode(null);
+          }}
+        >
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>Détails du nœud « {inspectingNode?.name} »</DialogTitle>
+            </DialogHeader>
+            {inspectingNode && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+                  <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Node ID</p>
+                    <p className="mt-1 break-all font-mono text-zinc-200">{inspectingNode.id}</p>
+                  </div>
+                  <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">IP externe</p>
+                    <p className="mt-1 font-mono text-zinc-200">{getExternalIp(inspectingNode)}</p>
+                  </div>
+                  <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Endpoint overlay</p>
+                    <p className="mt-1 break-all font-mono text-zinc-200">{inspectingNode.overlayEndpoint || '-'}</p>
+                  </div>
+                  <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Dernière activité</p>
+                    <p className="mt-1 text-zinc-200">{formatDateTime(inspectingNode.lastSeenAt)}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-zinc-100">Disques</p>
+                  <div className="space-y-2">
+                    {inspectingNode.storage.disks.map((disk) => (
+                      <div
+                        key={disk.id}
+                        className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3 text-xs text-muted-foreground"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-mono text-zinc-200">{disk.mountPath}</p>
+                          <p className="capitalize">{disk.type}</p>
+                        </div>
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <span>
+                            {disk.usedGb} / {disk.capacityGb} GB
+                          </span>
+                          <span>{Math.round(disk.usageRatio * 100)}%</span>
+                        </div>
+                        <Progress value={disk.usageRatio * 100} className="mt-2 h-1.5" />
+                      </div>
+                    ))}
+                    {inspectingNode.storage.disks.length === 0 && (
+                      <p className="rounded-xl border border-dashed border-white/10 bg-zinc-950/40 px-3 py-4 text-center text-xs text-muted-foreground">
+                        Aucun disque remonté par l’agent.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
 
         <Dialog
           open={!!editNode}
