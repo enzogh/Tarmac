@@ -14,6 +14,7 @@ import {
   Layers,
   Network,
   HardDrive,
+  UserCog,
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
@@ -28,6 +29,7 @@ const NAV_ITEMS = [
   { href: '/dashboard/replication', label: 'Réplication', icon: RefreshCw },
   { href: '/dashboard/migrations', label: 'Migrations', icon: ArrowRightLeft },
   { href: '/dashboard/alerts', label: 'Alertes', icon: Bell },
+  { href: '/dashboard/profile', label: 'Profil admin', icon: UserCog },
 ];
 
 export function DashboardLayout({ children }: { children: ReactNode }) {
