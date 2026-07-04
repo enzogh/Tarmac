@@ -266,6 +266,13 @@ export type VlanStatus = {
   recentFailures: VlanConnectionTest[];
 };
 
+export type AdminProfile = {
+  id: string;
+  email: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -304,6 +311,22 @@ export const api = {
       if (!r.ok) throw new Error('Login invalide');
       return r.json() as Promise<{ access_token: string }>;
     }),
+
+  profile: {
+    get: (token: string) => request<AdminProfile>('/api/v1/auth/profile', token),
+    update: (
+      token: string,
+      payload: {
+        email?: string;
+        currentPassword?: string;
+        newPassword?: string;
+      },
+    ) =>
+      request<AdminProfile>('/api/v1/auth/profile', token, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      }),
+  },
 
   nodes: {
     list: (token: string) => request<NodeItem[]>('/api/v1/nodes', token),

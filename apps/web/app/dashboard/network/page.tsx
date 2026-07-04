@@ -81,8 +81,8 @@ type GeoOverride = {
   countryCode?: string;
 };
 
-const MIND_MAP_WIDTH = 1000;
-const MIND_MAP_HEIGHT = 520;
+const MIND_MAP_WIDTH = 1320;
+const MIND_MAP_HEIGHT = 760;
 
 const TEST_OPTIONS: Array<{ value: TestType; label: string }> = [
   { value: 'ping', label: 'Ping' },
@@ -315,9 +315,14 @@ export default function NetworkPage() {
     }
 
     const countryEntries = Array.from(grouped.entries());
-    const centerX = 500;
-    const centerY = 250;
-    const countryOrbitRadius = countryEntries.length <= 2 ? 0 : 185;
+    const centerX = MIND_MAP_WIDTH / 2;
+    const centerY = MIND_MAP_HEIGHT / 2;
+    const countryOrbitRadius =
+      countryEntries.length <= 1
+        ? 0
+        : countryEntries.length === 2
+          ? 220
+          : Math.min(360, 170 + countryEntries.length * 42);
     const nodes: GraphNode[] = [];
     const countryBubbles: GraphBubble[] = [];
     const cityBubbles: GraphBubble[] = [];
@@ -333,12 +338,15 @@ export default function NetworkPage() {
         label: country,
         x: countryCenterX,
         y: countryCenterY,
-        r: 120 + Math.min(120, countrySize * 16),
+        r: 140 + Math.min(170, countrySize * 20 + cityEntries.length * 18),
       });
 
       cityEntries.forEach(([city, members], cityIndex) => {
         const cityAngle = (cityIndex / Math.max(cityEntries.length, 1)) * Math.PI * 2 - Math.PI / 2;
-        const cityOrbitRadius = cityEntries.length <= 1 ? 0 : 95;
+        const cityOrbitRadius =
+          cityEntries.length <= 1
+            ? 0
+            : Math.min(220, 90 + members.length * 22 + Math.max(0, cityEntries.length - 2) * 18);
         const cityCenterX = countryCenterX + Math.cos(cityAngle) * cityOrbitRadius;
         const cityCenterY = countryCenterY + Math.sin(cityAngle) * cityOrbitRadius;
         cityBubbles.push({
@@ -346,7 +354,7 @@ export default function NetworkPage() {
           label: city,
           x: cityCenterX,
           y: cityCenterY,
-          r: 58 + Math.min(80, members.length * 15),
+          r: 72 + Math.min(120, members.length * 20),
         });
 
         members.forEach((member, memberIndex) => {
@@ -354,7 +362,7 @@ export default function NetworkPage() {
           const geo = endpointHost ? geoByIp[endpointHost] : null;
           const override = geoOverrides[member.nodeId];
           const nodeAngle = (memberIndex / Math.max(members.length, 1)) * Math.PI * 2 - Math.PI / 2;
-          const nodeOrbitRadius = members.length <= 1 ? 0 : 34;
+          const nodeOrbitRadius = members.length <= 1 ? 0 : Math.min(220, 58 + members.length * 14);
           const countryCode = normalizeCountryCode(override?.countryCode) ?? geo?.countryCode ?? null;
           nodes.push({
             id: member.nodeId,
@@ -804,7 +812,7 @@ export default function NetworkPage() {
               <svg
                 ref={svgRef}
                 viewBox={`0 0 ${MIND_MAP_WIDTH} ${MIND_MAP_HEIGHT}`}
-                className="h-[420px] w-full touch-none"
+                className="h-[560px] w-full touch-none"
                 onWheel={handleMapWheel}
                 onPointerDown={handleMapPointerDown}
                 onPointerMove={handleMapPointerMove}
@@ -919,7 +927,7 @@ export default function NetworkPage() {
                       <circle cx={node.x} cy={node.y} r={10} fill={nodeFill(node.status)} />
                       <text
                         x={node.x}
-                        y={node.y + 48}
+                        y={node.y + 54}
                         textAnchor="middle"
                         fill="rgba(244,244,245,0.94)"
                         fontSize={13}
@@ -929,7 +937,7 @@ export default function NetworkPage() {
                       </text>
                       <text
                         x={node.x}
-                        y={node.y + 65}
+                        y={node.y + 74}
                         textAnchor="middle"
                         fill="rgba(161,161,170,0.95)"
                         fontSize={11}
