@@ -58,4 +58,15 @@ export class AlertsService {
     });
     return updated;
   }
+
+  async remove(id: string, actorUserId?: string) {
+    const deleted = await this.prisma.alert.delete({ where: { id } });
+    await this.auditLogsService.log({
+      actorUserId,
+      action: 'alert.delete',
+      resourceType: 'alert',
+      resourceId: id,
+    });
+    return deleted;
+  }
 }

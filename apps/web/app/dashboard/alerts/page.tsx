@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bell, Eye, CheckCircle2, Info, AlertCircle, AlertTriangle, Circle } from 'lucide-react';
+import { Bell, Eye, CheckCircle2, Info, AlertCircle, AlertTriangle, Circle, Trash2 } from 'lucide-react';
 import { api, AlertItem } from '../../../lib/api';
 import { DashboardLayout } from '../../../components/DashboardLayout';
 import { Badge } from '../../../components/ui';
@@ -58,6 +58,12 @@ export default function AlertsPage() {
     await load();
   };
 
+  const handleDelete = async (alertId: string) => {
+    if (!token) return;
+    await api.alerts.remove(token, alertId);
+    await load();
+  };
+
   const getSeverityColor = (severity: string): 'success' | 'warning' | 'error' | 'info' => {
     switch (severity) {
       case 'critical': return 'error';
@@ -94,8 +100,8 @@ export default function AlertsPage() {
         <div className="flex items-start gap-3 rounded-xl border border-blue-500/20 bg-blue-500/[0.07] px-4 py-3">
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-400" />
           <p className="text-sm text-blue-300/80">
-            Les alertes sont générées automatiquement par le système. Utilisez <strong className="text-blue-200">Reconnaître</strong> pour indiquer que vous avez vu l'alerte,
-            et <strong className="text-blue-200">Résoudre</strong> une fois le problème corrigé.
+            Les alertes sont générées automatiquement par le système. Utilisez <strong className="text-blue-200">Marquer comme lu</strong> pour indiquer que vous avez vu l'alerte,
+            <strong className="text-blue-200"> Résoudre</strong> une fois le problème corrigé, ou <strong className="text-blue-200">Supprimer</strong> pour nettoyer l’historique.
           </p>
         </div>
 
@@ -197,7 +203,7 @@ export default function AlertsPage() {
                               onClick={() => handleAck(alert.id)}
                             >
                               <Eye className="h-3.5 w-3.5" />
-                              Reconnaître
+                              Marquer comme lu
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent>Marquer comme vu — le problème est en cours de traitement</TooltipContent>
@@ -218,6 +224,20 @@ export default function AlertsPage() {
                           <TooltipContent>Marquer l'alerte comme résolue — le problème est corrigé</TooltipContent>
                         </Tooltip>
                       )}
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDelete(alert.id)}
+                            className="text-rose-300 hover:text-rose-200"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Supprimer
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Supprimer définitivement cette alerte</TooltipContent>
+                      </Tooltip>
                     </div>
                   </div>
                 </div>

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AlertsService } from './alerts.service';
@@ -31,5 +31,10 @@ export class AlertsController {
   @Post(':id/resolve')
   resolve(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.alertsService.resolve(id, req.user?.userId);
+  }
+
+  @Delete(':id')
+  remove(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.alertsService.remove(id, req.user?.userId);
   }
 }
