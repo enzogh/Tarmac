@@ -156,6 +156,7 @@ const matrixCellTone = (status?: VlanConnection['status']) => {
 };
 
 const clampScale = (value: number) => Math.max(0.45, Math.min(3.2, value));
+const NODE_RADIUS = 26;
 
 const normalizeCountryCode = (value?: string | null) => {
   const trimmed = value?.trim().toUpperCase();
@@ -297,7 +298,7 @@ export default function NetworkPage() {
 
   const graph = useMemo(() => {
     if (!vlanStatus?.vlan.members?.length) {
-      return { nodes: [] as GraphNode[], links: [] as GraphLink[], cityBubbles: [] as GraphBubble[], countryBubbles: [] as GraphBubble[] };
+      return { nodes: [] as GraphNode[], links: [] as GraphLink[] };
     }
 
     const membersList = vlanStatus.vlan.members ?? [];
@@ -324,23 +325,12 @@ export default function NetworkPage() {
           ? 220
           : Math.min(360, 170 + countryEntries.length * 42);
     const nodes: GraphNode[] = [];
-    const countryBubbles: GraphBubble[] = [];
-    const cityBubbles: GraphBubble[] = [];
 
     countryEntries.forEach(([country, cities], countryIndex) => {
       const countryAngle = (countryIndex / Math.max(countryEntries.length, 1)) * Math.PI * 2 - Math.PI / 2;
       const countryCenterX = centerX + Math.cos(countryAngle) * countryOrbitRadius;
       const countryCenterY = centerY + Math.sin(countryAngle) * countryOrbitRadius;
       const cityEntries = Array.from(cities.entries());
-      const countrySize = Array.from(cities.values()).reduce((acc, list) => acc + list.length, 0);
-      countryBubbles.push({
-        id: `country-${country}`,
-        label: country,
-        x: countryCenterX,
-        y: countryCenterY,
-        r: 140 + Math.min(170, countrySize * 20 + cityEntries.length * 18),
-      });
-
       cityEntries.forEach(([city, members], cityIndex) => {
         const cityAngle = (cityIndex / Math.max(cityEntries.length, 1)) * Math.PI * 2 - Math.PI / 2;
         const cityOrbitRadius =
@@ -349,14 +339,6 @@ export default function NetworkPage() {
             : Math.min(220, 90 + members.length * 22 + Math.max(0, cityEntries.length - 2) * 18);
         const cityCenterX = countryCenterX + Math.cos(cityAngle) * cityOrbitRadius;
         const cityCenterY = countryCenterY + Math.sin(cityAngle) * cityOrbitRadius;
-        cityBubbles.push({
-          id: `city-${country}-${city}`,
-          label: city,
-          x: cityCenterX,
-          y: cityCenterY,
-          r: 72 + Math.min(120, members.length * 20),
-        });
-
         members.forEach((member, memberIndex) => {
           const endpointHost = parseHostFromEndpoint(member.node?.externalIp || member.node?.overlayEndpoint);
           const geo = endpointHost ? geoByIp[endpointHost] : null;
@@ -402,8 +384,6 @@ export default function NetworkPage() {
     return {
       nodes,
       links: Array.from(bestByPair.values()),
-      cityBubbles,
-      countryBubbles,
     };
   }, [connections, geoByIp, geoOverrides, vlanStatus]);
 
@@ -415,6 +395,64 @@ export default function NetworkPage() {
       })),
     [graph.nodes, nodePositionOverrides],
   );
+  const { cityBubbles, countryBubbles } = useMemo(() => {
+    const cityGroups = new Map<string, GraphNode[]>();
+    for (const node of displayedNodes) {
+      const cityKey = `${node.country}__${node.city}`;
+      const current = cityGroups.get(cityKey) ?? [];
+      current.push(node);
+      cityGroups.set(cityKey, current);
+    }
+
+    const computedCityBubbles: GraphBubble[] = [];
+    const countryToCityBubbles = new Map<string, GraphBubble[]>();
+
+    cityGroups.forEach((nodes, key) => {
+      const [country, city] = key.split('__');
+      const centerX = nodes.reduce((acc, node) => acc + node.x, 0) / nodes.length;
+      const centerY = nodes.reduce((acc, node) => acc + node.y, 0) / nodes.length;
+      const maxNodeDistance = nodes.reduce((max, node) => {
+        const dx = node.x - centerX;
+        const dy = node.y - centerY;
+        return Math.max(max, Math.hypot(dx, dy));
+      }, 0);
+      const bubble: GraphBubble = {
+        id: `city-${country}-${city}`,
+        label: city,
+        x: centerX,
+        y: centerY,
+        r: Math.max(72, maxNodeDistance + NODE_RADIUS + 28),
+      };
+      computedCityBubbles.push(bubble);
+      const bucket = countryToCityBubbles.get(country) ?? [];
+      bucket.push(bubble);
+      countryToCityBubbles.set(country, bucket);
+    });
+
+    const computedCountryBubbles: GraphBubble[] = [];
+    countryToCityBubbles.forEach((bubbles, country) => {
+      if (bubbles.length === 0) return;
+      const centerX = bubbles.reduce((acc, bubble) => acc + bubble.x, 0) / bubbles.length;
+      const centerY = bubbles.reduce((acc, bubble) => acc + bubble.y, 0) / bubbles.length;
+      const maxBubbleDistance = bubbles.reduce((max, bubble) => {
+        const dx = bubble.x - centerX;
+        const dy = bubble.y - centerY;
+        return Math.max(max, Math.hypot(dx, dy) + bubble.r);
+      }, 0);
+      computedCountryBubbles.push({
+        id: `country-${country}`,
+        label: country,
+        x: centerX,
+        y: centerY,
+        r: Math.max(140, maxBubbleDistance + 24),
+      });
+    });
+
+    return {
+      cityBubbles: computedCityBubbles,
+      countryBubbles: computedCountryBubbles,
+    };
+  }, [displayedNodes]);
   const nodeById = useMemo(() => new Map(displayedNodes.map((node) => [node.id, node])), [displayedNodes]);
   const detectedGeoByNodeId = useMemo(() => {
     const map = new Map<string, { city: string; country: string; countryCode: string | null }>();
@@ -820,7 +858,7 @@ export default function NetworkPage() {
                 onPointerCancel={endPointerInteraction}
               >
                 <g transform={`translate(${viewTransform.tx} ${viewTransform.ty}) scale(${viewTransform.scale})`}>
-                  {graph.countryBubbles.map((bubble) => (
+                  {countryBubbles.map((bubble) => (
                     <g key={bubble.id}>
                       <circle
                         cx={bubble.x}
@@ -842,7 +880,7 @@ export default function NetworkPage() {
                       </text>
                     </g>
                   ))}
-                  {graph.cityBubbles.map((bubble) => (
+                  {cityBubbles.map((bubble) => (
                     <g key={bubble.id}>
                       <circle
                         cx={bubble.x}
