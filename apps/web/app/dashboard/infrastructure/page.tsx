@@ -13,14 +13,17 @@ import {
   HardDrive,
   Info,
   Layers3,
+  MapPin,
   Network,
   Pencil,
   Plus,
   RefreshCcw,
   Server,
+  Tags,
   Trash2,
 } from 'lucide-react';
 import { api, DirectoryScanEntry, NodeActivityItem, NodeMetricSample, PoolItem } from '../../../lib/api';
+import { GeoInfo, flagFromCountryCode, getGeoInfo, parseHostFromEndpoint } from '../../../lib/geo';
 import { DashboardLayout } from '../../../components/DashboardLayout';
 import { ServerTrendCard } from '../../../components/ServerTrendCard';
 import { Badge } from '../../../components/ui';
@@ -41,7 +44,7 @@ import { NodeOnboardingModal } from '../../../components/NodeOnboardingModal';
 import { Progress } from '../../../components/ui/progress';
 import { DirectoryBrowser } from '../../../components/ui/directory-browser';
 
-const formatMbps = (value: number) => `${((value * 8) / 1_000_000).toFixed(2)} MBPS`;
+const formatMbps = (value: number) => `${((value * 8) / 1_000_000).toFixed(2)} MB/s`;
 
 const formatBytes = (value: number) => {
   if (!Number.isFinite(value) || value <= 0) return '0 B';
@@ -53,6 +56,21 @@ const formatBytes = (value: number) => {
 };
 
 const formatDateTime = (value?: string | null) => (value ? new Date(value).toLocaleString('fr-FR') : '-');
+const LABELS_STORAGE_KEY = 'tarmac_node_labels_v1';
+
+const readNodeLabels = () => {
+  if (typeof window === 'undefined') return {} as Record<string, string[]>;
+  try {
+    return (JSON.parse(localStorage.getItem(LABELS_STORAGE_KEY) ?? '{}') ?? {}) as Record<string, string[]>;
+  } catch {
+    return {};
+  }
+};
+
+const writeNodeLabels = (value: Record<string, string[]>) => {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(LABELS_STORAGE_KEY, JSON.stringify(value));
+};
 
 export default function InfrastructurePage() {
   const router = useRouter();
@@ -69,11 +87,14 @@ export default function InfrastructurePage() {
   const [editNode, setEditNode] = useState<NodeActivityItem | null>(null);
   const [editName, setEditName] = useState('');
   const [editRole, setEditRole] = useState('');
+  const [editLabels, setEditLabels] = useState('');
   const [editLoading, setEditLoading] = useState(false);
   const [nodeToDelete, setNodeToDelete] = useState<NodeActivityItem | null>(null);
   const [inspectingNode, setInspectingNode] = useState<NodeActivityItem | null>(null);
   const [updatingNodeId, setUpdatingNodeId] = useState<string | null>(null);
   const [updateNotice, setUpdateNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
+  const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
+  const [geoByIp, setGeoByIp] = useState<Record<string, GeoInfo | null>>({});
 
   const [selectedExplorerNodeId, setSelectedExplorerNodeId] = useState<string>('');
   const [browsePath, setBrowsePath] = useState('/');
@@ -139,6 +160,10 @@ export default function InfrastructurePage() {
   };
 
   useEffect(() => {
+    setNodeLabels(readNodeLabels());
+  }, []);
+
+  useEffect(() => {
     if (!token) {
       router.push('/login');
       return;
@@ -168,6 +193,36 @@ export default function InfrastructurePage() {
     void loadNodeDirectories(selectedExplorerNodeId, '/');
   }, [selectedExplorerNodeId]);
 
+  useEffect(() => {
+    const ips = Array.from(
+      new Set(
+        nodes
+          .map((node) => parseHostFromEndpoint(node.externalIp || node.overlayEndpoint))
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+    if (ips.length === 0) return;
+
+    const missing = ips.filter((ip) => !(ip in geoByIp));
+    if (missing.length === 0) return;
+
+    let cancelled = false;
+    void Promise.all(missing.map((ip) => getGeoInfo(ip))).then((results) => {
+      if (cancelled) return;
+      setGeoByIp((prev) => {
+        const next = { ...prev };
+        missing.forEach((ip, index) => {
+          next[ip] = results[index];
+        });
+        return next;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [nodes, geoByIp]);
+
   const createPool = async (e: FormEvent) => {
     e.preventDefault();
     if (!token) return;
@@ -189,6 +244,7 @@ export default function InfrastructurePage() {
     setEditNode(node);
     setEditName(node.name);
     setEditRole(node.role);
+    setEditLabels((nodeLabels[node.id] ?? []).join(', '));
   };
 
   const saveEditNode = async (e: FormEvent) => {
@@ -197,6 +253,16 @@ export default function InfrastructurePage() {
     setEditLoading(true);
     try {
       await api.nodes.update(token, editNode.id, { name: editName, role: editRole });
+      const labels = editLabels
+        .split(',')
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+        .slice(0, 6);
+      setNodeLabels((prev) => {
+        const next = { ...prev, [editNode.id]: labels };
+        writeNodeLabels(next);
+        return next;
+      });
       await load();
       setEditNode(null);
     } finally {
@@ -238,7 +304,12 @@ export default function InfrastructurePage() {
   const selectedExplorerNode = nodes.find((node) => node.id === selectedExplorerNodeId) ?? null;
   const scanMax = scanResults[0]?.sizeBytes ?? 1;
 
-  const getExternalIp = (node: NodeActivityItem) => node.externalIp || node.overlayEndpoint || '-';
+  const getExternalIp = (node: NodeActivityItem) =>
+    parseHostFromEndpoint(node.externalIp || node.overlayEndpoint) ?? '-';
+  const getNodeGeo = (node: NodeActivityItem) => {
+    const ip = parseHostFromEndpoint(node.externalIp || node.overlayEndpoint);
+    return ip ? geoByIp[ip] : null;
+  };
 
   return (
     <DashboardLayout>
@@ -454,6 +525,33 @@ export default function InfrastructurePage() {
             <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2">
               {nodes.map((node) => (
                 <div key={node.id} className="rounded-2xl border border-white/[0.08] bg-zinc-950/45 p-4">
+                  {(() => {
+                    const geo = getNodeGeo(node);
+                    const labels = nodeLabels[node.id] ?? [];
+                    return (
+                      <>
+                        {(geo || labels.length > 0) && (
+                          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                            {geo && (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-zinc-900/70 px-2 py-0.5 text-[11px] text-zinc-200">
+                                <MapPin className="h-3 w-3" />
+                                {flagFromCountryCode(geo.countryCode)} {geo.city || geo.country || 'Location inconnue'}
+                              </span>
+                            )}
+                            {labels.map((label) => (
+                              <span
+                                key={`${node.id}-${label}`}
+                                className="inline-flex items-center gap-1 rounded-full border border-violet-400/30 bg-violet-500/15 px-2 py-0.5 text-[11px] text-violet-100"
+                              >
+                                <Tags className="h-3 w-3" />
+                                {label}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate text-base font-semibold text-zinc-100">{node.name}</p>
@@ -504,14 +602,14 @@ export default function InfrastructurePage() {
 
                   <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-muted-foreground sm:grid-cols-3">
                     <div className="rounded-lg border border-white/[0.08] bg-zinc-900/45 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide">Réseau</p>
+                      <p className="text-[11px] uppercase tracking-wide">Débit réseau</p>
                       <p className="mt-1 flex items-center gap-1.5">
                         <ArrowDownToLine className="h-3.5 w-3.5" />
-                        {formatMbps(node.metrics.networkRx)}
+                        Descendant: {formatMbps(node.metrics.networkRx)}
                       </p>
                       <p className="mt-0.5 flex items-center gap-1.5">
                         <ArrowUpToLine className="h-3.5 w-3.5" />
-                        {formatMbps(node.metrics.networkTx)}
+                        Montant: {formatMbps(node.metrics.networkTx)}
                       </p>
                     </div>
                     <div className="rounded-lg border border-white/[0.08] bg-zinc-900/45 px-2.5 py-2">
@@ -751,6 +849,16 @@ export default function InfrastructurePage() {
                     <SelectItem value="controller">Controller</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-labels">Labels (badges)</Label>
+                <Input
+                  id="edit-labels"
+                  value={editLabels}
+                  onChange={(e) => setEditLabels(e.target.value)}
+                  placeholder="paris, production, critical"
+                />
+                <p className="text-xs text-muted-foreground">Sépare les labels par des virgules (max 6).</p>
               </div>
               <DialogFooter>
                 <Button type="button" variant="secondary" onClick={() => setEditNode(null)}>

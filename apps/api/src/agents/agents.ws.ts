@@ -3,6 +3,7 @@ import { HttpAdapterHost } from '@nestjs/core';
 import { IncomingMessage } from 'http';
 import { parse } from 'url';
 import { WebSocket, WebSocketServer } from 'ws';
+import { PrismaService } from '../prisma/prisma.service';
 import { AgentsService } from './agents.service';
 import { CommandProgressPayload, CommandResultPayload, HeartbeatPayload, StateReportPayload } from './agents.types';
 
@@ -19,6 +20,7 @@ export class AgentsWsServer implements OnModuleInit {
   constructor(
     private readonly adapterHost: HttpAdapterHost,
     private readonly agentsService: AgentsService,
+    private readonly prisma: PrismaService,
   ) {}
 
   onModuleInit() {
@@ -72,6 +74,13 @@ export class AgentsWsServer implements OnModuleInit {
       } catch (error) {
         const message = error instanceof Error ? error.message : 'unknown parse error';
         this.logger.warn(`Invalid agent WS payload for node ${nodeId}: ${message}`);
+        await this.prisma.alert.create({
+          data: {
+            nodeId,
+            severity: 'medium',
+            message: `Invalid agent WS payload for node ${nodeId}: ${message}`,
+          },
+        });
       }
     });
 

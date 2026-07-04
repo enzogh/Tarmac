@@ -362,6 +362,7 @@ export const api = {
     list: (token: string) => request<AlertItem[]>('/api/v1/alerts', token),
     ack: (token: string, id: string) => request(`/api/v1/alerts/${id}/ack`, token, { method: 'POST' }),
     resolve: (token: string, id: string) => request(`/api/v1/alerts/${id}/resolve`, token, { method: 'POST' }),
+    remove: (token: string, id: string) => request(`/api/v1/alerts/${id}`, token, { method: 'DELETE' }),
   },
 
   syncJobs: {

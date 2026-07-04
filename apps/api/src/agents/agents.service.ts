@@ -28,7 +28,7 @@ type PendingDirectoryScanRequest = {
 // Node is considered offline if no heartbeat received within this time
 const NODE_HEARTBEAT_TIMEOUT_MS = 60 * 1000; // 60 seconds
 const LINK_OFFLINE_HANDSHAKE_SEC = 600;
-const LINK_DEGRADED_HANDSHAKE_SEC = 90;
+const LINK_DEGRADED_HANDSHAKE_SEC = 240;
 
 @Injectable()
 export class AgentsService implements OnModuleInit {
@@ -37,6 +37,43 @@ export class AgentsService implements OnModuleInit {
   private readonly overlaySyncAt = new Map<string, number>();
   private readonly pendingDirectoryRequests = new Map<string, PendingDirectoryRequest>();
   private readonly pendingDirectoryScanRequests = new Map<string, PendingDirectoryScanRequest>();
+
+  private normalizeFailureMessage(message?: string | null) {
+    if (!message) return 'unknown error';
+    const compact = message.replace(/\s+/g, ' ').trim();
+    return compact.length > 700 ? `${compact.slice(0, 697)}...` : compact;
+  }
+
+  private async createSystemAlert(message: string, severity: 'medium' | 'high' | 'critical' = 'high') {
+    await this.prisma.alert.create({
+      data: {
+        severity,
+        message: this.normalizeFailureMessage(message),
+      },
+    });
+  }
+
+  private async createMigrationFailureAlert(params: {
+    migrationId: string;
+    migrationName: string;
+    nodeId?: string | null;
+    sourceName?: string | null;
+    targetName?: string | null;
+    progress: number;
+    errorMessage: string;
+  }) {
+    const source = params.sourceName?.trim() || 'unknown-source';
+    const target = params.targetName?.trim() || 'unknown-target';
+    const message = `Migration "${params.migrationName}" failed at ${params.progress}% (${source} -> ${target}): ${params.errorMessage}`;
+
+    await this.prisma.alert.create({
+      data: {
+        nodeId: params.nodeId ?? null,
+        severity: 'high',
+        message,
+      },
+    });
+  }
 
   constructor(
     private readonly prisma: PrismaService,
@@ -83,7 +120,9 @@ export class AgentsService implements OnModuleInit {
         data: { status: 'offline' },
       });
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       this.logger.warn('Failed to mark nodes offline on startup:', error);
+      await this.createSystemAlert(`Agents bootstrap warning: failed to mark nodes offline (${message})`, 'medium');
     }
   }
 
@@ -115,7 +154,9 @@ export class AgentsService implements OnModuleInit {
         });
       }
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       this.logger.error('Error checking node heartbeats:', error);
+      await this.createSystemAlert(`Heartbeat monitor failed: ${message}`, 'high');
     }
   }
 
@@ -338,12 +379,32 @@ export class AgentsService implements OnModuleInit {
       if (result.command === 'stop_rsync') {
         return;
       }
-      await this.prisma.migrationTask.update({
+      const updatedMigration = await this.prisma.migrationTask.update({
         where: { id: result.resourceId },
         data: result.success
           ? { status: 'completed', progress: 100, completedAt: new Date() }
-          : { status: 'failed' },
+          : { status: 'failed', completedAt: new Date() },
+        include: {
+          sourceNode: { select: { name: true } },
+          targetNode: { select: { name: true } },
+        },
       });
+
+      if (!result.success) {
+        const errorMessage = this.normalizeFailureMessage(result.message);
+        this.logger.error(
+          `Migration ${updatedMigration.id} failed at ${updatedMigration.progress}%: ${errorMessage}`,
+        );
+        await this.createMigrationFailureAlert({
+          migrationId: updatedMigration.id,
+          migrationName: updatedMigration.name,
+          nodeId: updatedMigration.targetNodeId ?? updatedMigration.sourceNodeId ?? null,
+          sourceName: updatedMigration.sourceNode?.name,
+          targetName: updatedMigration.targetNode?.name,
+          progress: updatedMigration.progress,
+          errorMessage,
+        });
+      }
       return;
     }
 
@@ -608,7 +669,9 @@ export class AgentsService implements OnModuleInit {
         }
       }
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(`Failed to reconcile overlay for node ${nodeId}:`, error);
+      await this.createSystemAlert(`Overlay reconcile failed for node ${nodeId}: ${message}`, 'medium');
     }
   }
 
@@ -716,10 +779,10 @@ export class AgentsService implements OnModuleInit {
         (handshakeOffline && !hasTraffic && !hasUsableProbe)
           ? 'offline'
           : peerReportedOffline ||
-              handshakeUnknown ||
-              handshakeDegraded ||
-              (metric.packetLoss ?? 0) >= 2 ||
-              (metric.latencyMs ?? 0) >= 70
+              (handshakeUnknown && !hasTraffic && !hasUsableProbe) ||
+              (handshakeDegraded && !hasTraffic && !hasUsableProbe) ||
+              (metric.packetLoss ?? 0) >= 8 ||
+              (metric.latencyMs ?? 0) >= 180
             ? 'degraded'
             : 'healthy';
 
