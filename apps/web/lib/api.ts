@@ -6,6 +6,8 @@ export type NodeItem = {
   role: string;
   status: 'offline' | 'online' | 'degraded';
   lastSeenAt?: string | null;
+  overlayEndpoint?: string | null;
+  externalIp?: string | null;
 };
 
 export type NodeOnboardingStartPayload = {
