@@ -50,6 +50,7 @@ docker compose -f docker/docker-compose.yml up -d --build
 ## Persistance locale Docker
 - Données PostgreSQL persistées dans `docker/data/postgres`
 - Données Redis persistées dans `docker/data/redis`
+- PostgreSQL est publié en local uniquement par défaut (`POSTGRES_BIND=127.0.0.1`) pour éviter une exposition Internet directe.
 - Un `docker compose up --build` ou redémarrage conserve les données existantes.
 - Si vous changez `POSTGRES_PASSWORD` après la première initialisation, le volume existant garde l'ancien mot de passe.  
   Le wrapper `docker/postgres-entrypoint-tarmac.sh` réapplique désormais le mot de passe configuré au redémarrage pour éviter les erreurs Prisma (`password authentication failed for user "postgres"`).
