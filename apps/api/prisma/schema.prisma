@@ -127,6 +127,9 @@ model Node {
   name               String
   role               String
   status             NodeStatus       @default(offline)
+  locationCity       String?
+  locationCountry    String?
+  locationCountryCode String?
   lastSeenAt         DateTime?
   vlanIp             String?          @unique
   vlanMac            String?          @unique
