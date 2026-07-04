@@ -488,6 +488,7 @@ export default function MigrationsPage() {
         <div>
           <PresetSelector
             presets={MIGRATION_PRESETS}
+            selectedId={selectedPreset?.id}
             onSelect={(preset) => {
               setSelectedPreset(preset);
               if (preset.config) {
