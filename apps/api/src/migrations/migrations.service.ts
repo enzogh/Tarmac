@@ -37,6 +37,34 @@ export class MigrationsService {
     private readonly auditLogsService: AuditLogsService,
   ) {}
 
+  private normalizeFailureMessage(message?: string | null) {
+    if (!message) return 'unknown error';
+    const compact = message.replace(/\s+/g, ' ').trim();
+    return compact.length > 700 ? `${compact.slice(0, 697)}...` : compact;
+  }
+
+  private async createMigrationFailureAlert(params: {
+    migrationId: string;
+    migrationName: string;
+    nodeId?: string | null;
+    sourceName?: string | null;
+    targetName?: string | null;
+    progress: number;
+    errorMessage: string;
+  }) {
+    const source = params.sourceName?.trim() || 'unknown-source';
+    const target = params.targetName?.trim() || 'unknown-target';
+    const message = `Migration "${params.migrationName}" failed at ${params.progress}% (${source} -> ${target}): ${params.errorMessage}`;
+
+    await this.prisma.alert.create({
+      data: {
+        nodeId: params.nodeId ?? null,
+        severity: 'high',
+        message,
+      },
+    });
+  }
+
   private rethrowDirectoryRequestError(error: unknown, fallbackMessage: string): never {
     const message = error instanceof Error ? error.message.trim() : fallbackMessage;
     const normalized = message.toLowerCase();
@@ -331,8 +359,20 @@ export class MigrationsService {
     if (!sent) {
       const failed = await this.prisma.migrationTask.update({
         where: { id },
-        data: { status: 'failed' },
+        data: { status: 'failed', completedAt: new Date() },
         include: { sourceNode: true, targetNode: true },
+      });
+      const offlineMessage = this.normalizeFailureMessage(
+        `execution node "${executionNodeId}" is offline or disconnected`,
+      );
+      await this.createMigrationFailureAlert({
+        migrationId: failed.id,
+        migrationName: failed.name,
+        nodeId: executionNodeId,
+        sourceName: failed.sourceNode?.name,
+        targetName: failed.targetNode?.name,
+        progress: failed.progress,
+        errorMessage: offlineMessage,
       });
       return this.withMetadata(failed);
     }

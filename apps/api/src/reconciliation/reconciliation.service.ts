@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { AgentsService } from '../agents/agents.service';
 import { MountsService } from '../mounts/mounts.service';
 import { PoolsService } from '../pools/pools.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { SharesService } from '../shares/shares.service';
 
 @Injectable()
@@ -13,6 +14,7 @@ export class ReconciliationService implements OnModuleInit {
     private readonly mountsService: MountsService,
     private readonly poolsService: PoolsService,
     private readonly agentsService: AgentsService,
+    private readonly prisma: PrismaService,
   ) {}
 
   onModuleInit() {
@@ -76,7 +78,14 @@ export class ReconciliationService implements OnModuleInit {
       this.logger.debug(`Sent pool command for pool ${member.poolId} member ${member.nodeId}`);
     }
     } catch (error) {
-      this.logger.warn(`Reconciliation tick skipped: ${error instanceof Error ? error.message : 'unknown error'}`);
+      const message = error instanceof Error ? error.message : 'unknown error';
+      this.logger.warn(`Reconciliation tick skipped: ${message}`);
+      await this.prisma.alert.create({
+        data: {
+          severity: 'medium',
+          message: `Reconciliation tick skipped: ${message}`,
+        },
+      });
     }
   }
 }

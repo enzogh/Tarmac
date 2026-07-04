@@ -15,6 +15,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { api, VlanConnection, VlanConnectionTest, VlanStatus } from '@/lib/api';
+import { GeoInfo, flagFromCountryCode, getGeoInfo, parseHostFromEndpoint } from '@/lib/geo';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -36,8 +37,19 @@ type GraphNode = {
   label: string;
   vlanIp: string;
   status: 'online' | 'offline' | 'degraded';
+  city: string;
+  country: string;
+  countryCode: string | null;
   x: number;
   y: number;
+};
+
+type GraphBubble = {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  r: number;
 };
 
 type GraphLink = {
@@ -82,7 +94,7 @@ const formatLoss = (value?: number | null) =>
   typeof value === 'number' ? `${value} %` : '—';
 
 const formatBandwidth = (value?: number | null) =>
-  typeof value === 'number' ? `${value} MBPS` : '—';
+  typeof value === 'number' ? `${value} MB/s` : '—';
 
 const isTestType = (value: string): value is TestType =>
   value === 'ping' || value === 'connectivity' || value === 'latency';
@@ -150,6 +162,7 @@ export default function NetworkPage() {
   const [notice, setNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
   const [selectedPairKey, setSelectedPairKey] = useState<string | null>(null);
   const [selectedFlowKey, setSelectedFlowKey] = useState<string | null>(null);
+  const [geoByIp, setGeoByIp] = useState<Record<string, GeoInfo | null>>({});
   const [selectedTest, setSelectedTest] = useState<{
     from?: string;
     to?: string;
@@ -204,24 +217,106 @@ export default function NetworkPage() {
     return () => clearInterval(interval);
   }, [token]);
 
+  useEffect(() => {
+    const members = vlanStatus?.vlan.members ?? [];
+    const ips = Array.from(
+      new Set(
+        members
+          .map((member) => parseHostFromEndpoint(member.node?.externalIp || member.node?.overlayEndpoint))
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+    if (ips.length === 0) return;
+    const missing = ips.filter((ip) => !(ip in geoByIp));
+    if (missing.length === 0) return;
+
+    let cancelled = false;
+    void Promise.all(missing.map((ip) => getGeoInfo(ip))).then((results) => {
+      if (cancelled) return;
+      setGeoByIp((prev) => {
+        const next = { ...prev };
+        missing.forEach((ip, index) => {
+          next[ip] = results[index];
+        });
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [vlanStatus, geoByIp]);
+
   const graph = useMemo(() => {
     if (!vlanStatus?.vlan.members?.length) {
-      return { nodes: [] as GraphNode[], links: [] as GraphLink[] };
+      return { nodes: [] as GraphNode[], links: [] as GraphLink[], cityBubbles: [] as GraphBubble[], countryBubbles: [] as GraphBubble[] };
     }
 
-    const nodes = vlanStatus.vlan.members.map((member, index, all) => {
-      const angle = (index / Math.max(all.length, 1)) * Math.PI * 2 - Math.PI / 2;
-      const radius = all.length <= 3 ? 135 : 175;
-      const centerX = 500;
-      const centerY = 250;
-      return {
-        id: member.nodeId,
-        label: member.node?.name || member.nodeId.slice(0, 8),
-        vlanIp: member.vlanIp,
-        status: member.node?.status === 'online' ? 'online' : 'offline',
-        x: centerX + Math.cos(angle) * radius,
-        y: centerY + Math.sin(angle) * radius,
-      } satisfies GraphNode;
+    const membersList = vlanStatus.vlan.members ?? [];
+    const grouped = new Map<string, Map<string, Array<(typeof membersList)[number]>>>();
+    for (const member of membersList) {
+      const endpointHost = parseHostFromEndpoint(member.node?.externalIp || member.node?.overlayEndpoint);
+      const geo = endpointHost ? geoByIp[endpointHost] : null;
+      const country = geo?.country || 'Pays inconnu';
+      const city = geo?.city || 'Ville inconnue';
+      if (!grouped.has(country)) grouped.set(country, new Map());
+      const countryGroup = grouped.get(country)!;
+      if (!countryGroup.has(city)) countryGroup.set(city, []);
+      countryGroup.get(city)!.push(member);
+    }
+
+    const countryEntries = Array.from(grouped.entries());
+    const centerX = 500;
+    const centerY = 250;
+    const countryOrbitRadius = countryEntries.length <= 2 ? 0 : 185;
+    const nodes: GraphNode[] = [];
+    const countryBubbles: GraphBubble[] = [];
+    const cityBubbles: GraphBubble[] = [];
+
+    countryEntries.forEach(([country, cities], countryIndex) => {
+      const countryAngle = (countryIndex / Math.max(countryEntries.length, 1)) * Math.PI * 2 - Math.PI / 2;
+      const countryCenterX = centerX + Math.cos(countryAngle) * countryOrbitRadius;
+      const countryCenterY = centerY + Math.sin(countryAngle) * countryOrbitRadius;
+      const cityEntries = Array.from(cities.entries());
+      const countrySize = Array.from(cities.values()).reduce((acc, list) => acc + list.length, 0);
+      countryBubbles.push({
+        id: `country-${country}`,
+        label: country,
+        x: countryCenterX,
+        y: countryCenterY,
+        r: 120 + Math.min(120, countrySize * 16),
+      });
+
+      cityEntries.forEach(([city, members], cityIndex) => {
+        const cityAngle = (cityIndex / Math.max(cityEntries.length, 1)) * Math.PI * 2 - Math.PI / 2;
+        const cityOrbitRadius = cityEntries.length <= 1 ? 0 : 95;
+        const cityCenterX = countryCenterX + Math.cos(cityAngle) * cityOrbitRadius;
+        const cityCenterY = countryCenterY + Math.sin(cityAngle) * cityOrbitRadius;
+        cityBubbles.push({
+          id: `city-${country}-${city}`,
+          label: city,
+          x: cityCenterX,
+          y: cityCenterY,
+          r: 58 + Math.min(80, members.length * 15),
+        });
+
+        members.forEach((member, memberIndex) => {
+          const endpointHost = parseHostFromEndpoint(member.node?.externalIp || member.node?.overlayEndpoint);
+          const geo = endpointHost ? geoByIp[endpointHost] : null;
+          const nodeAngle = (memberIndex / Math.max(members.length, 1)) * Math.PI * 2 - Math.PI / 2;
+          const nodeOrbitRadius = members.length <= 1 ? 0 : 34;
+          nodes.push({
+            id: member.nodeId,
+            label: member.node?.name || member.nodeId.slice(0, 8),
+            vlanIp: member.vlanIp,
+            status: member.node?.status === 'online' ? 'online' : 'offline',
+            city,
+            country,
+            countryCode: geo?.countryCode ?? null,
+            x: cityCenterX + Math.cos(nodeAngle) * nodeOrbitRadius,
+            y: cityCenterY + Math.sin(nodeAngle) * nodeOrbitRadius,
+          });
+        });
+      });
     });
 
     const bestByPair = new Map<string, GraphLink>();
@@ -247,8 +342,10 @@ export default function NetworkPage() {
     return {
       nodes,
       links: Array.from(bestByPair.values()),
+      cityBubbles,
+      countryBubbles,
     };
-  }, [connections, vlanStatus]);
+  }, [connections, geoByIp, vlanStatus]);
 
   const nodeById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
   const connectionByDirection = useMemo(
@@ -417,6 +514,50 @@ export default function NetworkPage() {
           <CardContent>
             <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-4">
               <svg viewBox="0 0 1000 520" className="h-[420px] w-full">
+                {graph.countryBubbles.map((bubble) => (
+                  <g key={bubble.id}>
+                    <circle
+                      cx={bubble.x}
+                      cy={bubble.y}
+                      r={bubble.r}
+                      fill="rgba(59,130,246,0.04)"
+                      stroke="rgba(59,130,246,0.18)"
+                      strokeWidth={1.5}
+                    />
+                    <text
+                      x={bubble.x}
+                      y={bubble.y - bubble.r + 18}
+                      textAnchor="middle"
+                      fill="rgba(191,219,254,0.85)"
+                      fontSize={11}
+                      fontFamily="ui-sans-serif, system-ui, sans-serif"
+                    >
+                      {bubble.label}
+                    </text>
+                  </g>
+                ))}
+                {graph.cityBubbles.map((bubble) => (
+                  <g key={bubble.id}>
+                    <circle
+                      cx={bubble.x}
+                      cy={bubble.y}
+                      r={bubble.r}
+                      fill="rgba(139,92,246,0.04)"
+                      stroke="rgba(139,92,246,0.2)"
+                      strokeWidth={1}
+                    />
+                    <text
+                      x={bubble.x}
+                      y={bubble.y - bubble.r + 14}
+                      textAnchor="middle"
+                      fill="rgba(221,214,254,0.75)"
+                      fontSize={10}
+                      fontFamily="ui-sans-serif, system-ui, sans-serif"
+                    >
+                      {bubble.label}
+                    </text>
+                  </g>
+                ))}
                 {graph.links.map((link) => {
                   const source = nodeById.get(link.sourceNodeId);
                   const target = nodeById.get(link.targetNodeId);
@@ -480,7 +621,7 @@ export default function NetworkPage() {
                       fontSize={13}
                       fontFamily="ui-sans-serif, system-ui, sans-serif"
                     >
-                      {node.label}
+                      {flagFromCountryCode(node.countryCode)} {node.label}
                     </text>
                     <text
                       x={node.x}
@@ -490,7 +631,7 @@ export default function NetworkPage() {
                       fontSize={11}
                       fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
                     >
-                      {node.vlanIp}
+                      {node.city} · {node.vlanIp}
                     </text>
                   </g>
                 ))}
@@ -525,7 +666,7 @@ export default function NetworkPage() {
                       <p className="font-mono">{formatLatency(flow.latencyMs)}</p>
                     </div>
                     <div className="rounded-lg border border-white/[0.07] bg-black/25 px-2 py-1.5">
-                      <p className="text-[10px] text-muted-foreground">Loss</p>
+                      <p className="text-[10px] text-muted-foreground">Perte</p>
                       <p className="font-mono">{formatLoss(flow.packetLoss)}</p>
                     </div>
                     <div className="rounded-lg border border-white/[0.07] bg-black/25 px-2 py-1.5">
@@ -614,7 +755,7 @@ export default function NetworkPage() {
                         )}`}
                       >
                         <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                          {direct ? getConnectionLabel(direct.status) : 'No route'}
+                          {direct ? getConnectionLabel(direct.status) : 'Aucune route'}
                         </p>
                         <p className="font-mono text-[11px]">{formatLatency(direct?.latencyMs)}</p>
                         <p className="font-mono text-[10px] text-zinc-400">
