@@ -1899,9 +1899,13 @@ func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progre
 	if sourceHost != "" && targetHost != "" {
 		return "", errors.New("run_rsync supports only one remote endpoint")
 	}
-	timeoutSeconds := readInt(payload, "timeoutSeconds", 3600)
-	if timeoutSeconds <= 0 {
-		timeoutSeconds = 3600
+	timeoutSeconds := readInt(payload, "timeoutSeconds", 0)
+	if timeoutSeconds < 0 {
+		timeoutSeconds = 0
+	}
+	connectTimeoutSeconds := readInt(payload, "connectTimeoutSeconds", 30)
+	if connectTimeoutSeconds <= 0 {
+		connectTimeoutSeconds = 30
 	}
 	sshKeyPath := envOrDefault("AGENT_SSH_PRIVATE_KEY_PATH", "/var/lib/tarmac-agent/ssh/id_ed25519")
 	resourceType := readString(payload, "resourceType")
@@ -1937,11 +1941,12 @@ func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progre
 		return "", fmt.Errorf("cannot create target path: %w", err)
 	}
 
-	args := []string{"-a", "--delete", "--info=progress2", sourceArg, targetArg}
+	args := []string{"-a", "--delete", "--partial", "--append-verify", "--info=progress2", sourceArg, targetArg}
 	if sourceHost != "" {
 		sshCommand := fmt.Sprintf(
-			"ssh -p %d -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10",
+			"ssh -p %d -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=%d -o ServerAliveInterval=30 -o ServerAliveCountMax=120 -o TCPKeepAlive=yes",
 			sourceSshPort,
+			connectTimeoutSeconds,
 		)
 		usePassword := sourcePassword != ""
 		if !usePassword {
@@ -1960,8 +1965,9 @@ func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progre
 	}
 	if targetHost != "" {
 		sshCommand := fmt.Sprintf(
-			"ssh -p %d -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10",
+			"ssh -p %d -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=%d -o ServerAliveInterval=30 -o ServerAliveCountMax=120 -o TCPKeepAlive=yes",
 			targetSshPort,
+			connectTimeoutSeconds,
 		)
 		usePassword := targetPassword != ""
 		if !usePassword {
@@ -1985,7 +1991,11 @@ func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progre
 		unregisterRsyncExecution(key)
 		cancel()
 	}()
-	ctx, timeoutCancel := context.WithTimeout(baseCtx, time.Duration(timeoutSeconds)*time.Second)
+	ctx := baseCtx
+	timeoutCancel := func() {}
+	if timeoutSeconds > 0 {
+		ctx, timeoutCancel = context.WithTimeout(baseCtx, time.Duration(timeoutSeconds)*time.Second)
+	}
 	defer timeoutCancel()
 	cmdName := "rsync"
 	if len(args) > 0 && args[0] == "-p" {
@@ -2042,7 +2052,7 @@ func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progre
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return "", errors.New("rsync stopped by user")
 	}
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	if timeoutSeconds > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return "", fmt.Errorf("rsync timed out after %ds", timeoutSeconds)
 	}
 	if waitErr != nil {
