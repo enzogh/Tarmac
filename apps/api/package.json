@@ -5,7 +5,7 @@
   "scripts": {
     "build": "npm run prisma:generate && tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
-    "start:dev": "ts-node-dev --respawn --transpile-only src/main.ts",
+    "start:dev": "npm run prisma:generate && ts-node-dev --respawn --transpile-only src/main.ts",
     "lint": "tsc --noEmit -p tsconfig.json",
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
