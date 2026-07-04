@@ -1,5 +1,6 @@
 import { Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MountsService } from '../mounts/mounts.service';
 import { PoolsService } from '../pools/pools.service';
@@ -30,6 +31,10 @@ const NODE_HEARTBEAT_TIMEOUT_MS = 60 * 1000; // 60 seconds
 const LINK_OFFLINE_HANDSHAKE_SEC = 600;
 const LINK_DEGRADED_HANDSHAKE_SEC = 240;
 
+// Retry config for deadlock handling
+const MAX_DEADLOCK_RETRIES = 3;
+const INITIAL_RETRY_DELAY_MS = 100;
+
 @Injectable()
 export class AgentsService implements OnModuleInit {
   private readonly logger = new Logger(AgentsService.name);
@@ -42,6 +47,30 @@ export class AgentsService implements OnModuleInit {
     if (!message) return 'unknown error';
     const compact = message.replace(/\s+/g, ' ').trim();
     return compact.length > 700 ? `${compact.slice(0, 697)}...` : compact;
+  }
+
+  private async retryWithExponentialBackoff<T>(
+    fn: () => Promise<T>,
+    operation: string,
+  ): Promise<T> {
+    let lastError: Error | undefined;
+    for (let attempt = 0; attempt < MAX_DEADLOCK_RETRIES; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        lastError = error as Error;
+        const isDeadlock =
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2034';
+        if (!isDeadlock || attempt === MAX_DEADLOCK_RETRIES - 1) throw error;
+        const delayMs = INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt);
+        this.logger.warn(
+          `${operation} deadlock (attempt ${attempt + 1}/${MAX_DEADLOCK_RETRIES}), retrying in ${delayMs}ms`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    throw lastError;
   }
 
   private async createSystemAlert(message: string, severity: 'medium' | 'high' | 'critical' = 'high') {
@@ -800,55 +829,75 @@ export class AgentsService implements OnModuleInit {
       const measuredRxMbps = Math.max(0, rxMbps);
 
       return [
-        this.prisma.vlanConnection.upsert({
-          where: {
-            vlanId_sourceNodeId_targetNodeId: {
-              vlanId: sourceMembership.vlanId,
-              sourceNodeId,
-              targetNodeId: target.id,
-            },
-          },
-          update: {
+        {
+          sourceNodeId,
+          targetNodeId: target.id,
+          data: {
             ...commonData,
             bandwidth: measuredTxMbps,
             latencyMs: measuredLatencyMs ?? null,
             packetLoss: measuredPacketLoss ?? null,
           },
-          create: {
-            vlanId: sourceMembership.vlanId,
-            sourceNodeId,
-            targetNodeId: target.id,
-            ...commonData,
-            bandwidth: measuredTxMbps,
-            latencyMs: measuredLatencyMs ?? null,
-            packetLoss: measuredPacketLoss ?? null,
-          },
-        }),
-        this.prisma.vlanConnection.upsert({
-          where: {
-            vlanId_sourceNodeId_targetNodeId: {
-              vlanId: sourceMembership.vlanId,
-              sourceNodeId: target.id,
-              targetNodeId: sourceNodeId,
-            },
-          },
-          update: {
+        },
+        {
+          sourceNodeId: target.id,
+          targetNodeId: sourceNodeId,
+          data: {
             ...commonData,
             bandwidth: measuredRxMbps,
           },
-          create: {
-            vlanId: sourceMembership.vlanId,
-            sourceNodeId: target.id,
-            targetNodeId: sourceNodeId,
-            ...commonData,
-            bandwidth: measuredRxMbps,
-          },
-        }),
+        },
       ];
     });
 
     if (updates.length > 0) {
-      await this.prisma.$transaction(updates);
+      const dedupedUpdates = new Map<
+        string,
+        {
+          sourceNodeId: string;
+          targetNodeId: string;
+          data: {
+            status: 'healthy' | 'degraded' | 'offline';
+            lastCheckedAt: Date;
+            bandwidth: number;
+            latencyMs?: number | null;
+            packetLoss?: number | null;
+          };
+        }
+      >();
+      for (const update of updates) {
+        const key = `${update.sourceNodeId}:${update.targetNodeId}`;
+        dedupedUpdates.set(key, update);
+      }
+
+      const sortedUpdates = Array.from(dedupedUpdates.values()).sort((a, b) => {
+        const sourceComparison = a.sourceNodeId.localeCompare(b.sourceNodeId);
+        if (sourceComparison !== 0) return sourceComparison;
+        return a.targetNodeId.localeCompare(b.targetNodeId);
+      });
+
+      for (const update of sortedUpdates) {
+        await this.retryWithExponentialBackoff(
+          () =>
+            this.prisma.vlanConnection.upsert({
+              where: {
+                vlanId_sourceNodeId_targetNodeId: {
+                  vlanId: sourceMembership.vlanId,
+                  sourceNodeId: update.sourceNodeId,
+                  targetNodeId: update.targetNodeId,
+                },
+              },
+              update: update.data,
+              create: {
+                vlanId: sourceMembership.vlanId,
+                sourceNodeId: update.sourceNodeId,
+                targetNodeId: update.targetNodeId,
+                ...update.data,
+              },
+            }),
+          `upsert vlanConnection ${update.sourceNodeId}->${update.targetNodeId}`,
+        );
+      }
     }
   }
 }
