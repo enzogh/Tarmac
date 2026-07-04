@@ -13,12 +13,10 @@ import {
   Info,
   Radar,
   Server,
-  TrendingUp,
 } from 'lucide-react';
 import {
   api,
   AlertItem,
-  Forecast,
   MigrationItem,
   NodeActivityItem,
   NodeMetricSample,
@@ -30,13 +28,12 @@ import { StatCard, Badge } from '../../components/ui';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Progress } from '../../components/ui/progress';
 
-const formatMbps = (value: number) => `${((value * 8) / 1_000_000).toFixed(2)} MBPS`;
+const formatMbps = (value: number) => `${((value * 8) / 1_000_000).toFixed(2)} MB/s`;
 
 export default function OverviewPage() {
   const router = useRouter();
   const token = useMemo(() => (typeof window !== 'undefined' ? localStorage.getItem('tarmac_token') : null), []);
 
-  const [forecast, setForecast] = useState<Forecast | null>(null);
   const [activities, setActivities] = useState<NodeActivityItem[]>([]);
   const [samplesByNode, setSamplesByNode] = useState<Record<string, NodeMetricSample[]>>({});
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
@@ -46,12 +43,11 @@ export default function OverviewPage() {
   const load = async () => {
     if (!token) return;
     try {
-      const [activity, a, sj, mg, fc] = await Promise.all([
+      const [activity, a, sj, mg] = await Promise.all([
         api.nodes.activity(token),
         api.alerts.list(token),
         api.syncJobs.list(token),
         api.migrations.list(token),
-        api.storage.forecast(token),
       ]);
       const topNodes = [...activity].sort((left, right) => right.metrics.cpu - left.metrics.cpu).slice(0, 4);
       const histories = await Promise.all(
@@ -62,7 +58,6 @@ export default function OverviewPage() {
       setAlerts(a);
       setSyncJobs(sj);
       setMigrations(mg);
-      setForecast(fc);
     } catch {
       localStorage.removeItem('tarmac_token');
       router.push('/login');
@@ -104,7 +99,7 @@ export default function OverviewPage() {
           <CardContent className="flex items-start gap-3 p-4">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-violet-300" />
             <p className="text-sm text-violet-200/90">
-              Les métriques réseau sont affichées en <strong className="text-violet-100">MBPS</strong>. Les cartes serveurs
+              Les métriques réseau sont affichées en <strong className="text-violet-100">MB/s</strong>. Les cartes serveurs
               affichent les tendances CPU/RAM sur une échelle 0-100% pour une lecture immédiate.
             </p>
           </CardContent>
@@ -112,16 +107,17 @@ export default function OverviewPage() {
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           <StatCard
-            label="Utilisation du stockage"
-            value={forecast ? `${Math.round(forecast.usageRatio * 100)}%` : '-'}
-            icon={<HardDrive className="h-8 w-8" />}
-            change={forecast ? `${forecast.avgGrowthPerDayGb} GB/jour` : undefined}
-          />
-          <StatCard
             label="Nœuds en ligne"
             value={activities.length > 0 ? `${nodesOnline}/${activities.length}` : '-'}
             icon={<Server className="h-8 w-8" />}
             changeType="up"
+          />
+          <StatCard
+            label="Stockage total utilisé"
+            value={`${activities.reduce((acc, node) => acc + node.storage.totalUsedGb, 0)} GB`}
+            icon={<HardDrive className="h-8 w-8" />}
+            change={`${activities.reduce((acc, node) => acc + node.storage.totalCapacityGb, 0)} GB total`}
+            changeType="neutral"
           />
           <StatCard
             label="Alertes actives"
@@ -153,48 +149,18 @@ export default function OverviewPage() {
             changeType="neutral"
           />
           <StatCard
-            label="Réseau RX"
+            label="Débit descendant"
             value={formatMbps(totalNetworkRx)}
             icon={<ArrowDownToLine className="h-8 w-8" />}
             changeType="neutral"
           />
           <StatCard
-            label="Réseau TX"
+            label="Débit montant"
             value={formatMbps(totalNetworkTx)}
             icon={<ArrowUpToLine className="h-8 w-8" />}
             changeType="neutral"
           />
         </div>
-
-        {forecast && (
-          <Card className="border-white/[0.08] bg-zinc-900/65">
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <TrendingUp className="h-5 w-5 text-violet-400" />
-                <CardTitle>Prévision d'utilisation du stockage</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <div>
-                <div className="mb-2 flex items-center justify-between gap-3 text-sm">
-                  <span className="text-foreground">{forecast.totalUsedGb} GB utilisés</span>
-                  <span className="text-muted-foreground">{forecast.totalCapacityGb} GB total</span>
-                </div>
-                <Progress value={forecast.usageRatio * 100} className="h-2.5" />
-              </div>
-              <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
-                <div>
-                  <p className="text-muted-foreground">Croissance moyenne</p>
-                  <p className="text-lg font-semibold text-foreground">{forecast.avgGrowthPerDayGb} GB/jour</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Jours restants</p>
-                  <p className="text-lg font-semibold text-foreground">{forecast.forecast.daysToFull ?? 'N/A'} jours</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
 
         <Card className="border-white/[0.08] bg-zinc-900/65">
           <CardHeader>
