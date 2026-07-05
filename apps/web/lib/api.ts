@@ -100,8 +100,8 @@ export type MigrationItem = {
   sourcePath?: string | null;
   targetPath?: string | null;
   reason?: string | null;
-  sourceKind?: 'node' | 'seedbox' | null;
-  targetKind?: 'node' | 'seedbox' | null;
+  sourceKind?: 'node' | 'seedbox' | 'storagebox' | null;
+  targetKind?: 'node' | 'seedbox' | 'storagebox' | null;
   sourceSeedboxHost?: string | null;
   sourceSeedboxUser?: string | null;
   sourceSeedboxPort?: number | null;
@@ -422,8 +422,8 @@ export const api = {
         targetPath?: string;
         reason?: string;
         notes?: string;
-        sourceKind?: 'node' | 'seedbox';
-        targetKind?: 'node' | 'seedbox';
+        sourceKind?: 'node' | 'seedbox' | 'storagebox';
+        targetKind?: 'node' | 'seedbox' | 'storagebox';
         sourceSeedboxHost?: string;
         sourceSeedboxUser?: string;
         sourceSeedboxPassword?: string;
@@ -446,7 +446,15 @@ export const api = {
       ),
     listRemoteDirectories: (
       token: string,
-      payload: { nodeId: string; host: string; username: string; password?: string; port?: string; basePath?: string },
+      payload: {
+        nodeId: string;
+        host: string;
+        username: string;
+        password?: string;
+        port?: string;
+        basePath?: string;
+        endpointType?: 'seedbox' | 'storagebox';
+      },
     ) =>
       request<{ basePath: string; directories: string[] }>('/api/v1/migrations/directories/remote', token, {
         method: 'POST',
