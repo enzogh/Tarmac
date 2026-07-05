@@ -32,8 +32,9 @@ const LINK_OFFLINE_HANDSHAKE_SEC = 600;
 const LINK_DEGRADED_HANDSHAKE_SEC = 240;
 
 // Retry config for deadlock handling
-const MAX_DEADLOCK_RETRIES = 3;
+const MAX_DEADLOCK_RETRIES = 5;
 const INITIAL_RETRY_DELAY_MS = 100;
+const MAX_RETRY_JITTER_MS = 50;
 
 @Injectable()
 export class AgentsService implements OnModuleInit {
@@ -59,11 +60,11 @@ export class AgentsService implements OnModuleInit {
         return await fn();
       } catch (error) {
         lastError = error as Error;
-        const isDeadlock =
-          error instanceof Prisma.PrismaClientKnownRequestError &&
-          error.code === 'P2034';
+        const isDeadlock = this.isDeadlockError(error);
         if (!isDeadlock || attempt === MAX_DEADLOCK_RETRIES - 1) throw error;
-        const delayMs = INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt);
+        const delayMs =
+          INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt) +
+          Math.floor(Math.random() * MAX_RETRY_JITTER_MS);
         this.logger.warn(
           `${operation} deadlock (attempt ${attempt + 1}/${MAX_DEADLOCK_RETRIES}), retrying in ${delayMs}ms`,
         );
@@ -71,6 +72,15 @@ export class AgentsService implements OnModuleInit {
       }
     }
     throw lastError;
+  }
+
+  private isDeadlockError(error: unknown): boolean {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
+      return true;
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    return /deadlock detected/i.test(message) || /\b40P01\b/i.test(message);
   }
 
   private async createSystemAlert(message: string, severity: 'medium' | 'high' | 'critical' = 'high') {
@@ -265,7 +275,12 @@ export class AgentsService implements OnModuleInit {
     });
 
     if (linkMetrics && linkMetrics.length > 0) {
-      await this.ingestOverlayLinkMetrics(nodeId, linkMetrics);
+      try {
+        await this.ingestOverlayLinkMetrics(nodeId, linkMetrics);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(`Failed to ingest link metrics for node ${nodeId}: ${message}`, error);
+      }
     }
 
     const lastSync = this.overlaySyncAt.get(nodeId) ?? 0;
