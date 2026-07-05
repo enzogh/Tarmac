@@ -1601,6 +1601,10 @@ func normalizeRemoteEndpointType(raw string) string {
 }
 
 func listStorageboxDirectories(host, username, password, basePath string, port, timeoutMs int) ([]string, error) {
+	if !commandExists("sftp") {
+		return nil, errors.New("sftp not found on agent; install OpenSSH client to browse Storage Box endpoints")
+	}
+
 	basePath = strings.TrimSpace(basePath)
 	if basePath == "" {
 		basePath = "/home"
@@ -1609,34 +1613,38 @@ func listStorageboxDirectories(host, username, password, basePath string, port, 
 		return nil, errors.New("basePath must be absolute")
 	}
 
-	sshArgs := []string{
-		"-p", strconv.Itoa(port),
+	// Create SFTP batch script
+	batchScript := fmt.Sprintf("cd %s\nls -ahl\nquit\n", sftpDoubleQuote(basePath))
+
+	sftpArgs := []string{
+		"-P", strconv.Itoa(port),
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "ConnectTimeout=10",
 		fmt.Sprintf("%s@%s", username, host),
-		fmt.Sprintf("ls -1 %s", shellSingleQuote(basePath)),
 	}
 
-	var cmd *exec.Cmd
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
 	defer cancel()
+
+	var cmd *exec.Cmd
 	if password != "" {
 		if !commandExists("sshpass") {
 			return nil, errors.New("sshpass not found on agent; reinstall or update the agent to enable password-based storagebox browsing")
 		}
-		cmd = exec.CommandContext(ctx, "sshpass", append([]string{"-p", password, "ssh"}, sshArgs...)...)
+		cmd = exec.CommandContext(ctx, "sshpass", append([]string{"-p", password, "sftp"}, sftpArgs...)...)
 	} else {
 		sshKeyPath := envOrDefault("AGENT_SSH_PRIVATE_KEY_PATH", "/var/lib/tarmac-agent/ssh/id_ed25519")
-		sshArgs = append([]string{
+		sftpArgs = append([]string{
 			"-i", sshKeyPath,
 			"-o", "IdentitiesOnly=yes",
 			"-o", "BatchMode=yes",
 			"-o", "PasswordAuthentication=no",
 			"-o", "PreferredAuthentications=publickey",
-		}, sshArgs...)
-		cmd = exec.CommandContext(ctx, "ssh", sshArgs...)
+		}, sftpArgs...)
+		cmd = exec.CommandContext(ctx, "sftp", sftpArgs...)
 	}
+	cmd.Stdin = strings.NewReader(batchScript)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1654,12 +1662,19 @@ func listStorageboxDirectories(host, username, password, basePath string, port, 
 	directories := make([]string, 0, len(lines))
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || trimmed == "." || trimmed == ".." {
+		if trimmed == "" || strings.HasPrefix(trimmed, "sftp>") {
 			continue
 		}
-		// Add all entries as directories (Hetzner doesn't distinguish in simple ls)
-		fullPath := filepath.Join(basePath, trimmed)
-		directories = append(directories, fullPath)
+
+		fields := strings.Fields(trimmed)
+		if len(fields) < 9 || !strings.HasPrefix(fields[0], "d") {
+			continue
+		}
+		name := strings.Join(fields[8:], " ")
+		if name == "." || name == ".." {
+			continue
+		}
+		directories = append(directories, filepath.Join(basePath, name))
 	}
 
 	sort.Strings(directories)
