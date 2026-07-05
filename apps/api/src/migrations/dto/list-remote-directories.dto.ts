@@ -21,4 +21,8 @@ export class ListRemoteDirectoriesDto {
   @IsOptional()
   @IsString()
   port?: string;
+
+  @IsOptional()
+  @IsString()
+  endpointType?: 'seedbox' | 'storagebox';
 }

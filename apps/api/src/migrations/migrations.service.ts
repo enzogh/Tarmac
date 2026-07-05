@@ -12,13 +12,16 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateMigrationDto } from './dto/create-migration.dto';
 import { UpdateMigrationDto } from './dto/update-migration.dto';
 
+type MigrationEndpointKind = 'node' | 'seedbox' | 'storagebox';
+type RemoteEndpointType = 'seedbox' | 'storagebox';
+
 type MigrationNotesMetadata = {
   reason?: string;
   sourcePath?: string;
   targetPath?: string;
   notes?: string;
-  sourceKind?: 'node' | 'seedbox';
-  targetKind?: 'node' | 'seedbox';
+  sourceKind?: MigrationEndpointKind;
+  targetKind?: MigrationEndpointKind;
   sourceSeedboxHost?: string;
   sourceSeedboxUser?: string;
   sourceSeedboxPassword?: string;
@@ -78,6 +81,26 @@ export class MigrationsService {
     throw new BadRequestException(message || fallbackMessage);
   }
 
+  private normalizeEndpointKind(
+    value?: string | null,
+    fallback: MigrationEndpointKind | undefined = 'node',
+  ): MigrationEndpointKind | undefined {
+    if (value === 'seedbox' || value === 'storagebox' || value === 'node') return value;
+    return fallback;
+  }
+
+  private toRemoteEndpointType(kind: MigrationEndpointKind): RemoteEndpointType | undefined {
+    if (kind === 'seedbox' || kind === 'storagebox') return kind;
+    return undefined;
+  }
+
+  private resolveRemotePort(port: number | undefined, endpointType: RemoteEndpointType): number {
+    if (typeof port === 'number' && Number.isFinite(port) && port > 0 && port <= 65535) {
+      return port;
+    }
+    return endpointType === 'storagebox' ? 23 : 22;
+  }
+
   private parseNotesMetadata(value?: string | null, includeSecrets = false): MigrationNotesMetadata {
     if (!value) return {};
     try {
@@ -88,8 +111,8 @@ export class MigrationsService {
         sourcePath: typeof parsed.sourcePath === 'string' ? parsed.sourcePath : undefined,
         targetPath: typeof parsed.targetPath === 'string' ? parsed.targetPath : undefined,
         notes: typeof parsed.notes === 'string' ? parsed.notes : undefined,
-        sourceKind: parsed.sourceKind === 'seedbox' ? 'seedbox' : parsed.sourceKind === 'node' ? 'node' : undefined,
-        targetKind: parsed.targetKind === 'seedbox' ? 'seedbox' : parsed.targetKind === 'node' ? 'node' : undefined,
+        sourceKind: this.normalizeEndpointKind(parsed.sourceKind, undefined),
+        targetKind: this.normalizeEndpointKind(parsed.targetKind, undefined),
         sourceSeedboxHost:
           typeof parsed.sourceSeedboxHost === 'string' ? parsed.sourceSeedboxHost : undefined,
         sourceSeedboxUser:
@@ -253,15 +276,24 @@ export class MigrationsService {
 
   async listRemoteDirectories(
     nodeId: string,
-    payload: { host: string; username: string; password?: string; port?: number; basePath?: string },
+    payload: {
+      host: string;
+      username: string;
+      password?: string;
+      port?: number;
+      basePath?: string;
+      endpointType?: RemoteEndpointType;
+    },
   ) {
     try {
+      const endpointType = payload.endpointType === 'storagebox' ? 'storagebox' : 'seedbox';
       return await this.agentsService.requestRemoteDirectories(nodeId, {
         host: payload.host,
         username: payload.username,
         password: payload.password,
-        port: payload.port,
-        basePath: payload.basePath,
+        port: this.resolveRemotePort(payload.port, endpointType),
+        basePath: payload.basePath ?? (endpointType === 'storagebox' ? '/home' : '/'),
+        endpointType,
       });
     } catch (error) {
       this.rethrowDirectoryRequestError(error, 'Unable to list directories from the selected remote endpoint');
@@ -281,18 +313,21 @@ export class MigrationsService {
       throw new BadRequestException('Migration paths are missing');
     }
 
-    const sourceKind = metadata.sourceKind === 'seedbox' ? 'seedbox' : 'node';
-    const targetKind = metadata.targetKind === 'seedbox' ? 'seedbox' : 'node';
+    const sourceKind = this.normalizeEndpointKind(metadata.sourceKind, 'node') ?? 'node';
+    const targetKind = this.normalizeEndpointKind(metadata.targetKind, 'node') ?? 'node';
 
-    if (sourceKind === 'seedbox' && targetKind === 'seedbox') {
+    const sourceRemoteType = this.toRemoteEndpointType(sourceKind);
+    const targetRemoteType = this.toRemoteEndpointType(targetKind);
+
+    if (sourceRemoteType && targetRemoteType) {
       throw new BadRequestException('At least one side must be a node managed by Tarmac');
     }
 
     let executionNodeId: string | undefined;
-    if (targetKind === 'seedbox') {
+    if (targetRemoteType) {
       executionNodeId = migration.sourceNodeId ?? undefined;
       if (!executionNodeId) {
-        throw new BadRequestException('Source node is required when destination is a seedbox');
+        throw new BadRequestException('Source node is required when destination is remote');
       }
     } else {
       executionNodeId = migration.targetNodeId ?? undefined;
@@ -305,13 +340,13 @@ export class MigrationsService {
     let sourceUser: string | undefined;
     let sourcePassword: string | undefined;
     let sourceSshPort: number | undefined;
-    if (sourceKind === 'seedbox') {
+    if (sourceRemoteType) {
       sourceHost = metadata.sourceSeedboxHost?.trim();
       sourceUser = metadata.sourceSeedboxUser?.trim();
       sourcePassword = metadata.sourceSeedboxPassword;
-      sourceSshPort = metadata.sourceSeedboxPort;
+      sourceSshPort = this.resolveRemotePort(metadata.sourceSeedboxPort, sourceRemoteType);
       if (!sourceHost || !sourceUser) {
-        throw new BadRequestException('Seedbox source credentials are incomplete');
+        throw new BadRequestException('Remote source credentials are incomplete');
       }
     } else if (migration.sourceNodeId && executionNodeId !== migration.sourceNodeId) {
       sourceHost = migration.sourceNode?.vlanIp ?? undefined;
@@ -322,13 +357,13 @@ export class MigrationsService {
     let targetUser: string | undefined;
     let targetPassword: string | undefined;
     let targetSshPort: number | undefined;
-    if (targetKind === 'seedbox') {
+    if (targetRemoteType) {
       targetHost = metadata.targetSeedboxHost?.trim();
       targetUser = metadata.targetSeedboxUser?.trim();
       targetPassword = metadata.targetSeedboxPassword;
-      targetSshPort = metadata.targetSeedboxPort;
+      targetSshPort = this.resolveRemotePort(metadata.targetSeedboxPort, targetRemoteType);
       if (!targetHost || !targetUser) {
-        throw new BadRequestException('Seedbox destination credentials are incomplete');
+        throw new BadRequestException('Remote destination credentials are incomplete');
       }
     }
 

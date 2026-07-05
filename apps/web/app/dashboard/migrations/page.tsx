@@ -90,6 +90,12 @@ const MIGRATION_PRESETS: PresetOption[] = [
 ];
 
 type Notice = { type: 'error' | 'success'; message: string } | null;
+type MigrationEndpointKind = 'node' | 'seedbox' | 'storagebox';
+
+const isRemoteKind = (kind: MigrationEndpointKind | null | undefined): kind is Exclude<MigrationEndpointKind, 'node'> =>
+  kind === 'seedbox' || kind === 'storagebox';
+const isStorageboxKind = (kind: MigrationEndpointKind | null | undefined): kind is 'storagebox' => kind === 'storagebox';
+const defaultBrowsePath = (kind: MigrationEndpointKind) => (kind === 'storagebox' ? '/home' : '/');
 
 export default function MigrationsPage() {
   const router = useRouter();
@@ -104,8 +110,8 @@ export default function MigrationsPage() {
 
   const [formData, setFormData] = useState({
     name: '',
-    sourceKind: 'node' as 'node' | 'seedbox',
-    targetKind: 'node' as 'node' | 'seedbox',
+    sourceKind: 'node' as MigrationEndpointKind,
+    targetKind: 'node' as MigrationEndpointKind,
     sourceNodeId: '',
     targetNodeId: '',
     sourcePath: '',
@@ -114,11 +120,11 @@ export default function MigrationsPage() {
     sourceSeedboxHost: '',
     sourceSeedboxUser: '',
     sourceSeedboxPassword: '',
-    sourceSeedboxPort: '22',
+    sourceSeedboxPort: '',
     targetSeedboxHost: '',
     targetSeedboxUser: '',
     targetSeedboxPassword: '',
-    targetSeedboxPort: '22',
+    targetSeedboxPort: '',
   });
   const [sourceDirectories, setSourceDirectories] = useState<string[]>([]);
   const [targetDirectories, setTargetDirectories] = useState<string[]>([]);
@@ -152,7 +158,8 @@ export default function MigrationsPage() {
 
   const loadDirectories = async (kind: 'source' | 'target', basePath: string) => {
     if (!token) return;
-    const isRemote = kind === 'source' ? formData.sourceKind === 'seedbox' : formData.targetKind === 'seedbox';
+    const endpointKind = kind === 'source' ? formData.sourceKind : formData.targetKind;
+    const isRemote = isRemoteKind(endpointKind);
     const nodeId =
       kind === 'source'
         ? isRemote
@@ -171,8 +178,12 @@ export default function MigrationsPage() {
             host: kind === 'source' ? formData.sourceSeedboxHost : formData.targetSeedboxHost,
             username: kind === 'source' ? formData.sourceSeedboxUser : formData.targetSeedboxUser,
             password: kind === 'source' ? formData.sourceSeedboxPassword : formData.targetSeedboxPassword,
-            port: kind === 'source' ? formData.sourceSeedboxPort || '22' : formData.targetSeedboxPort || '22',
+            port:
+              kind === 'source'
+                ? formData.sourceSeedboxPort || (isStorageboxKind(formData.sourceKind) ? '23' : '22')
+                : formData.targetSeedboxPort || (isStorageboxKind(formData.targetKind) ? '23' : '22'),
             basePath: basePath || '/',
+            endpointType: isStorageboxKind(endpointKind) ? 'storagebox' : 'seedbox',
           })
         : await api.migrations.listDirectories(token, nodeId, basePath || '/');
       const sorted = [...payload.directories].sort((a, b) => a.localeCompare(b));
@@ -217,12 +228,13 @@ export default function MigrationsPage() {
         ? !!formData.sourceNodeId
         : !!formData.targetNodeId && !!formData.sourceSeedboxHost && !!formData.sourceSeedboxUser;
     if (!sourceReady) {
-      setSourceBrowsePath('/');
+      setSourceBrowsePath(defaultBrowsePath(formData.sourceKind));
       setSourceDirectories([]);
       return;
     }
-    setSourceBrowsePath('/');
-    void loadDirectories('source', '/');
+    const nextBasePath = defaultBrowsePath(formData.sourceKind);
+    setSourceBrowsePath(nextBasePath);
+    void loadDirectories('source', nextBasePath);
   }, [
     formData.sourceKind,
     formData.sourceNodeId,
@@ -238,12 +250,13 @@ export default function MigrationsPage() {
         ? !!formData.targetNodeId
         : !!formData.sourceNodeId && !!formData.targetSeedboxHost && !!formData.targetSeedboxUser;
     if (!targetReady) {
-      setTargetBrowsePath('/');
+      setTargetBrowsePath(defaultBrowsePath(formData.targetKind));
       setTargetDirectories([]);
       return;
     }
-    setTargetBrowsePath('/');
-    void loadDirectories('target', '/');
+    const nextBasePath = defaultBrowsePath(formData.targetKind);
+    setTargetBrowsePath(nextBasePath);
+    void loadDirectories('target', nextBasePath);
   }, [
     formData.targetKind,
     formData.targetNodeId,
@@ -282,14 +295,14 @@ export default function MigrationsPage() {
 
   const canEditMigration = (migration: MigrationItem) =>
     (migration.status === 'pending' || migration.status === 'failed') &&
-    migration.sourceKind !== 'seedbox' &&
-    migration.targetKind !== 'seedbox';
+    !isRemoteKind(migration.sourceKind ?? undefined) &&
+    !isRemoteKind(migration.targetKind ?? undefined);
   const canDeleteMigration = (migration: MigrationItem) => migration.status === 'pending';
   const formatMigrationEndpoint = (migration: MigrationItem, kind: 'source' | 'target') => {
-    if (kind === 'source' && migration.sourceKind === 'seedbox') {
+    if (kind === 'source' && isRemoteKind(migration.sourceKind ?? undefined)) {
       return `${migration.sourceSeedboxUser ?? 'user'}@${migration.sourceSeedboxHost ?? 'seedbox'}`;
     }
-    if (kind === 'target' && migration.targetKind === 'seedbox') {
+    if (kind === 'target' && isRemoteKind(migration.targetKind ?? undefined)) {
       return `${migration.targetSeedboxUser ?? 'user'}@${migration.targetSeedboxHost ?? 'seedbox'}`;
     }
     const nodeId = kind === 'source' ? migration.sourceNodeId : migration.targetNodeId;
@@ -301,7 +314,7 @@ export default function MigrationsPage() {
       setNotice({ type: 'error', message: 'Complétez le nom de la migration.' });
       return false;
     }
-    if (formData.sourceKind === 'seedbox' && formData.targetKind === 'seedbox') {
+    if (isRemoteKind(formData.sourceKind) && isRemoteKind(formData.targetKind)) {
       setNotice({ type: 'error', message: 'Au moins un côté doit être un serveur Tarmac.' });
       return false;
     }
@@ -317,12 +330,12 @@ export default function MigrationsPage() {
       setNotice({ type: 'error', message: 'La source et la destination doivent être différentes.' });
       return false;
     }
-    if (formData.sourceKind === 'seedbox' && (!formData.sourceSeedboxHost || !formData.sourceSeedboxUser || !formData.sourceSeedboxPassword)) {
-      setNotice({ type: 'error', message: 'Complétez les accès seedbox source (hôte, utilisateur, mot de passe).' });
+    if (isRemoteKind(formData.sourceKind) && (!formData.sourceSeedboxHost || !formData.sourceSeedboxUser || !formData.sourceSeedboxPassword)) {
+      setNotice({ type: 'error', message: 'Complétez les accès source distants (hôte, utilisateur, mot de passe).' });
       return false;
     }
-    if (formData.targetKind === 'seedbox' && (!formData.targetSeedboxHost || !formData.targetSeedboxUser || !formData.targetSeedboxPassword)) {
-      setNotice({ type: 'error', message: 'Complétez les accès seedbox destination (hôte, utilisateur, mot de passe).' });
+    if (isRemoteKind(formData.targetKind) && (!formData.targetSeedboxHost || !formData.targetSeedboxUser || !formData.targetSeedboxPassword)) {
+      setNotice({ type: 'error', message: 'Complétez les accès destination distants (hôte, utilisateur, mot de passe).' });
       return false;
     }
     return true;
@@ -348,14 +361,18 @@ export default function MigrationsPage() {
         reason: formData.reason || undefined,
         sourceKind: formData.sourceKind,
         targetKind: formData.targetKind,
-        sourceSeedboxHost: formData.sourceKind === 'seedbox' ? formData.sourceSeedboxHost : undefined,
-        sourceSeedboxUser: formData.sourceKind === 'seedbox' ? formData.sourceSeedboxUser : undefined,
-        sourceSeedboxPassword: formData.sourceKind === 'seedbox' ? formData.sourceSeedboxPassword : undefined,
-        sourceSeedboxPort: formData.sourceKind === 'seedbox' ? formData.sourceSeedboxPort : undefined,
-        targetSeedboxHost: formData.targetKind === 'seedbox' ? formData.targetSeedboxHost : undefined,
-        targetSeedboxUser: formData.targetKind === 'seedbox' ? formData.targetSeedboxUser : undefined,
-        targetSeedboxPassword: formData.targetKind === 'seedbox' ? formData.targetSeedboxPassword : undefined,
-        targetSeedboxPort: formData.targetKind === 'seedbox' ? formData.targetSeedboxPort : undefined,
+        sourceSeedboxHost: isRemoteKind(formData.sourceKind) ? formData.sourceSeedboxHost : undefined,
+        sourceSeedboxUser: isRemoteKind(formData.sourceKind) ? formData.sourceSeedboxUser : undefined,
+        sourceSeedboxPassword: isRemoteKind(formData.sourceKind) ? formData.sourceSeedboxPassword : undefined,
+        sourceSeedboxPort: isRemoteKind(formData.sourceKind)
+          ? (formData.sourceSeedboxPort || (isStorageboxKind(formData.sourceKind) ? '23' : '22'))
+          : undefined,
+        targetSeedboxHost: isRemoteKind(formData.targetKind) ? formData.targetSeedboxHost : undefined,
+        targetSeedboxUser: isRemoteKind(formData.targetKind) ? formData.targetSeedboxUser : undefined,
+        targetSeedboxPassword: isRemoteKind(formData.targetKind) ? formData.targetSeedboxPassword : undefined,
+        targetSeedboxPort: isRemoteKind(formData.targetKind)
+          ? (formData.targetSeedboxPort || (isStorageboxKind(formData.targetKind) ? '23' : '22'))
+          : undefined,
       });
       setWizardOpen(false);
       setFormData({
@@ -370,11 +387,11 @@ export default function MigrationsPage() {
         sourceSeedboxHost: '',
         sourceSeedboxUser: '',
         sourceSeedboxPassword: '',
-        sourceSeedboxPort: '22',
+        sourceSeedboxPort: '',
         targetSeedboxHost: '',
         targetSeedboxUser: '',
         targetSeedboxPassword: '',
-        targetSeedboxPort: '22',
+        targetSeedboxPort: '',
       });
       setSelectedPreset(null);
       setNotice({ type: 'success', message: 'Migration créée.' });
@@ -526,18 +543,20 @@ export default function MigrationsPage() {
           <div>
             <Label className="mb-2 block text-sm font-medium text-zinc-200">
               Type de source
-              <HelpText text="Serveur Tarmac ou seedbox SSH (Ultra.cc, etc.)" />
+              <HelpText text="Serveur Tarmac, seedbox SSH ou Storage Box Hetzner (SSH port 23)." />
             </Label>
             <Select
               value={formData.sourceKind}
-              onValueChange={(value: 'node' | 'seedbox') => {
-                setSourceBrowsePath('/');
+              onValueChange={(value: MigrationEndpointKind) => {
+                setSourceBrowsePath(defaultBrowsePath(value));
                 setSourceDirectories([]);
                 setFormData((prev) => ({
                   ...prev,
                   sourceKind: value,
-                  targetKind: value === 'seedbox' && prev.targetKind === 'seedbox' ? 'node' : prev.targetKind,
+                  targetKind: isRemoteKind(value) && isRemoteKind(prev.targetKind) ? 'node' : prev.targetKind,
                   sourceNodeId: value === 'node' ? prev.sourceNodeId : '',
+                  sourceSeedboxPort:
+                    value === 'storagebox' ? (prev.sourceSeedboxPort || '23') : value === 'seedbox' ? (prev.sourceSeedboxPort || '22') : '',
                   sourcePath: '',
                 }));
               }}
@@ -548,6 +567,7 @@ export default function MigrationsPage() {
               <SelectContent>
                 <SelectItem value="node">Serveur Tarmac</SelectItem>
                 <SelectItem value="seedbox">Seedbox SSH</SelectItem>
+                <SelectItem value="storagebox">Storage Box Hetzner</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -561,7 +581,7 @@ export default function MigrationsPage() {
             <Select
               value={formData.sourceNodeId}
               onValueChange={(value) => {
-                setSourceBrowsePath('/');
+                setSourceBrowsePath(defaultBrowsePath(formData.sourceKind));
                 setFormData((prev) => ({
                   ...prev,
                   sourceNodeId: value,
@@ -586,11 +606,13 @@ export default function MigrationsPage() {
           ) : (
             <div className="grid gap-3 md:grid-cols-2">
               <div>
-                <Label className="mb-2 block text-sm font-medium text-zinc-200">Host seedbox source</Label>
+                <Label className="mb-2 block text-sm font-medium text-zinc-200">
+                  {isStorageboxKind(formData.sourceKind) ? 'Host Storage Box source' : 'Host seedbox source'}
+                </Label>
                 <Input
                   value={formData.sourceSeedboxHost}
                   onChange={(e) => setFormData((prev) => ({ ...prev, sourceSeedboxHost: e.target.value, sourcePath: '' }))}
-                  placeholder="xx.ultra.cc"
+                  placeholder={isStorageboxKind(formData.sourceKind) ? 'u123456.your-storagebox.de' : 'xx.ultra.cc'}
                 />
               </div>
               <div>
@@ -615,7 +637,7 @@ export default function MigrationsPage() {
                 <Input
                   value={formData.sourceSeedboxPort}
                   onChange={(e) => setFormData((prev) => ({ ...prev, sourceSeedboxPort: e.target.value, sourcePath: '' }))}
-                  placeholder="22"
+                  placeholder={isStorageboxKind(formData.sourceKind) ? '23' : '22'}
                 />
               </div>
             </div>
@@ -624,18 +646,20 @@ export default function MigrationsPage() {
           <div>
             <Label className="mb-2 block text-sm font-medium text-zinc-200">
               Type de destination
-              <HelpText text="Serveur Tarmac ou seedbox SSH distante" />
+              <HelpText text="Serveur Tarmac, seedbox SSH distante, ou Storage Box Hetzner." />
             </Label>
             <Select
               value={formData.targetKind}
-              onValueChange={(value: 'node' | 'seedbox') => {
-                setTargetBrowsePath('/');
+              onValueChange={(value: MigrationEndpointKind) => {
+                setTargetBrowsePath(defaultBrowsePath(value));
                 setTargetDirectories([]);
                 setFormData((prev) => ({
                   ...prev,
                   targetKind: value,
-                  sourceKind: value === 'seedbox' && prev.sourceKind === 'seedbox' ? 'node' : prev.sourceKind,
+                  sourceKind: isRemoteKind(value) && isRemoteKind(prev.sourceKind) ? 'node' : prev.sourceKind,
                   targetNodeId: value === 'node' ? prev.targetNodeId : '',
+                  targetSeedboxPort:
+                    value === 'storagebox' ? (prev.targetSeedboxPort || '23') : value === 'seedbox' ? (prev.targetSeedboxPort || '22') : '',
                   targetPath: '',
                 }));
               }}
@@ -646,6 +670,7 @@ export default function MigrationsPage() {
               <SelectContent>
                 <SelectItem value="node">Serveur Tarmac</SelectItem>
                 <SelectItem value="seedbox">Seedbox SSH</SelectItem>
+                <SelectItem value="storagebox">Storage Box Hetzner</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -659,7 +684,7 @@ export default function MigrationsPage() {
             <Select
               value={formData.targetNodeId}
               onValueChange={(value) => {
-                setTargetBrowsePath('/');
+                setTargetBrowsePath(defaultBrowsePath(formData.targetKind));
                 setFormData((prev) => ({ ...prev, targetNodeId: value, targetPath: '' }));
               }}
             >
@@ -680,11 +705,13 @@ export default function MigrationsPage() {
           ) : (
             <div className="grid gap-3 md:grid-cols-2">
               <div>
-                <Label className="mb-2 block text-sm font-medium text-zinc-200">Host seedbox destination</Label>
+                <Label className="mb-2 block text-sm font-medium text-zinc-200">
+                  {isStorageboxKind(formData.targetKind) ? 'Host Storage Box destination' : 'Host seedbox destination'}
+                </Label>
                 <Input
                   value={formData.targetSeedboxHost}
                   onChange={(e) => setFormData((prev) => ({ ...prev, targetSeedboxHost: e.target.value, targetPath: '' }))}
-                  placeholder="yy.ultra.cc"
+                  placeholder={isStorageboxKind(formData.targetKind) ? 'u123456.your-storagebox.de' : 'yy.ultra.cc'}
                 />
               </div>
               <div>
@@ -709,7 +736,7 @@ export default function MigrationsPage() {
                 <Input
                   value={formData.targetSeedboxPort}
                   onChange={(e) => setFormData((prev) => ({ ...prev, targetSeedboxPort: e.target.value, targetPath: '' }))}
-                  placeholder="22"
+                  placeholder={isStorageboxKind(formData.targetKind) ? '23' : '22'}
                 />
               </div>
             </div>
@@ -723,7 +750,7 @@ export default function MigrationsPage() {
             <p className="text-xs text-muted-foreground">Résultat attendu</p>
             <div className="mt-2 flex items-center gap-2 text-sm font-medium">
               <span>
-                {formData.sourceKind === 'seedbox'
+                {isRemoteKind(formData.sourceKind)
                   ? `${formData.sourceSeedboxUser || 'user'}@${formData.sourceSeedboxHost || 'seedbox'}`
                   : formData.sourceNodeId
                     ? (nodesById[formData.sourceNodeId] ?? 'Source')
@@ -731,7 +758,7 @@ export default function MigrationsPage() {
               </span>
               <ArrowRight className="h-4 w-4 text-violet-300" />
               <span>
-                {formData.targetKind === 'seedbox'
+                {isRemoteKind(formData.targetKind)
                   ? `${formData.targetSeedboxUser || 'user'}@${formData.targetSeedboxHost || 'seedbox'}`
                   : formData.targetNodeId
                     ? (nodesById[formData.targetNodeId] ?? 'Destination')
@@ -743,8 +770,10 @@ export default function MigrationsPage() {
           <DirectoryBrowser
             title="Dossier source (live)"
             description={
-              formData.sourceKind === 'seedbox'
-                ? "Navigation en direct sur la seedbox source via un nœud Tarmac connecté."
+              isStorageboxKind(formData.sourceKind)
+                ? 'Navigation en direct sur la Storage Box source via SFTP (port SSH 23).'
+                : formData.sourceKind === 'seedbox'
+                  ? "Navigation en direct sur la seedbox source via un nœud Tarmac connecté."
                 : "Navigation en direct sur le serveur source. Un clic sur un dossier le sélectionne et l’ouvre."
             }
             currentPath={sourceBrowsePath}
@@ -763,8 +792,10 @@ export default function MigrationsPage() {
           <DirectoryBrowser
             title="Dossier destination (live)"
             description={
-              formData.targetKind === 'seedbox'
-                ? 'Navigation en direct sur la seedbox destination.'
+              isStorageboxKind(formData.targetKind)
+                ? 'Navigation en direct sur la Storage Box destination via SFTP.'
+                : formData.targetKind === 'seedbox'
+                  ? 'Navigation en direct sur la seedbox destination.'
                 : 'Navigation en direct sur le serveur de destination.'
             }
             currentPath={targetBrowsePath}
@@ -798,7 +829,7 @@ export default function MigrationsPage() {
               {
                 id: 'transfer',
                 title: 'Transfert sécurisé',
-                description: 'Migration via SSH/rsync (nœud Tarmac ou seedbox)',
+                description: 'Migration via SSH/rsync (nœud Tarmac, seedbox ou Storage Box)',
               },
               {
                 id: 'verify',
@@ -816,7 +847,7 @@ export default function MigrationsPage() {
             <div className="flex justify-between border-b pb-2">
               <span className="text-muted-foreground">Source:</span>
               <span className="font-mono">
-                {formData.sourceKind === 'seedbox'
+                {isRemoteKind(formData.sourceKind)
                   ? `${formData.sourceSeedboxUser || 'user'}@${formData.sourceSeedboxHost || 'seedbox'}`
                   : (nodesById[formData.sourceNodeId] ?? '—')}
               </span>
@@ -824,7 +855,7 @@ export default function MigrationsPage() {
             <div className="flex justify-between border-b pb-2">
               <span className="text-muted-foreground">Destination:</span>
               <span className="font-mono">
-                {formData.targetKind === 'seedbox'
+                {isRemoteKind(formData.targetKind)
                   ? `${formData.targetSeedboxUser || 'user'}@${formData.targetSeedboxHost || 'seedbox'}`
                   : (nodesById[formData.targetNodeId] ?? '—')}
               </span>
