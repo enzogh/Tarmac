@@ -28,8 +28,15 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// agentVersion is the short git commit SHA the binary was built from. It is
+// injected at build time via -ldflags "-X main.agentVersion=<sha>" by
+// install-agent-service.sh and updateAgent(), so it always reflects the
+// commit currently deployed without any manual version bump.
+var agentVersion = "dev"
+
 type heartbeat struct {
 	NodeID      string              `json:"nodeId"`
+	Version     string              `json:"version,omitempty"`
 	Metrics     metricState         `json:"metrics"`
 	Overlay     *overlayState       `json:"overlay,omitempty"`
 	LinkMetrics []overlayLinkMetric `json:"linkMetrics,omitempty"`
@@ -1116,7 +1123,15 @@ func updateAgent(payload map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("cannot pull repository: %s", strings.TrimSpace(string(output)))
 	}
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", tmpBinPath, ".")
+	commitSha := "dev"
+	revParse := exec.CommandContext(ctx, "git", "-C", workDir, "rev-parse", "--short", "HEAD")
+	if output, revErr := revParse.Output(); revErr == nil {
+		if sha := strings.TrimSpace(string(output)); sha != "" {
+			commitSha = sha
+		}
+	}
+
+	build := exec.CommandContext(ctx, "go", "build", "-ldflags", fmt.Sprintf("-X main.agentVersion=%s", commitSha), "-o", tmpBinPath, ".")
 	build.Dir = agentSourceDir
 	if output, buildErr := build.CombinedOutput(); buildErr != nil {
 		return "", fmt.Errorf("cannot build agent: %s", strings.TrimSpace(string(output)))
@@ -2414,6 +2429,7 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 			Type: "agent.heartbeat",
 			Payload: heartbeat{
 				NodeID:      nodeID,
+				Version:     agentVersion,
 				Metrics:     metrics,
 				Overlay:     overlay,
 				LinkMetrics: linkMetrics,
@@ -2453,6 +2469,7 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 				Type: "agent.heartbeat",
 				Payload: heartbeat{
 					NodeID:      nodeID,
+					Version:     agentVersion,
 					Metrics:     metrics,
 					Overlay:     overlay,
 					LinkMetrics: linkMetrics,

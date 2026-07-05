@@ -11,6 +11,10 @@ export type NodeItem = {
   lastSeenAt?: string | null;
   overlayEndpoint?: string | null;
   externalIp?: string | null;
+  agentVersion?: string | null;
+  agentVersionAt?: string | null;
+  controlVersion?: string;
+  agentUpToDate?: boolean | null;
 };
 
 export type NodeOnboardingStartPayload = {

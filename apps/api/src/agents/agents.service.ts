@@ -200,8 +200,9 @@ export class AgentsService implements OnModuleInit {
   }
 
   async onHeartbeat(payload: HeartbeatPayload) {
-    const { nodeId, metrics, overlay, linkMetrics } = payload;
+    const { nodeId, metrics, overlay, linkMetrics, version } = payload;
     const now = new Date();
+    const versionFields = version ? { agentVersion: version, agentVersionAt: now } : {};
 
     const node = await this.prisma.node
       .update({
@@ -214,6 +215,7 @@ export class AgentsService implements OnModuleInit {
           overlayListenPort: overlay?.listenPort,
           overlaySshPublicKey: overlay?.sshPublicKey,
           overlaySshUser: overlay?.sshUser,
+          ...versionFields,
         },
       })
       .catch(async () => {
@@ -230,6 +232,7 @@ export class AgentsService implements OnModuleInit {
             overlayListenPort: overlay?.listenPort,
             overlaySshPublicKey: overlay?.sshPublicKey,
             overlaySshUser: overlay?.sshUser,
+            ...versionFields,
           },
         });
         

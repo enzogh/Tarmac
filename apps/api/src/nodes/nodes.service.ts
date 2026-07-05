@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { NodeStatus, Prisma } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { getControlPlaneVersion } from '../common/build-info';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNodeDto } from './dto/create-node.dto';
 import { UpdateNodeDto } from './dto/update-node.dto';
@@ -12,6 +13,8 @@ type ActivityNode = {
   status: NodeStatus;
   lastSeenAt: Date | null;
   overlayEndpoint: string | null;
+  agentVersion: string | null;
+  agentVersionAt: Date | null;
 };
 
 type ActivitySample = {
@@ -144,6 +147,8 @@ export class NodesService {
       disksByNode.set(disk.nodeId, list);
     }
 
+    const controlVersion = getControlPlaneVersion();
+
     return nodes.map((node) => {
       const sample = sampleByNode.get(node.id);
       const nodeDisks = disksByNode.get(node.id) ?? [];
@@ -159,6 +164,10 @@ export class NodesService {
         lastSeenAt: node.lastSeenAt?.toISOString() ?? null,
         overlayEndpoint: node.overlayEndpoint,
         externalIp: this.extractExternalIp(node.overlayEndpoint),
+        agentVersion: node.agentVersion,
+        agentVersionAt: node.agentVersionAt?.toISOString() ?? null,
+        controlVersion,
+        agentUpToDate: node.agentVersion ? node.agentVersion === controlVersion : null,
         metrics: sample
           ? {
               cpu: sample.cpu,
