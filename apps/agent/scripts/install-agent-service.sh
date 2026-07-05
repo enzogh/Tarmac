@@ -152,7 +152,8 @@ if ! clone_repo "$REPO_URL"; then
 fi
 
 pushd "$INSTALL_DIR/apps/agent" >/dev/null
-go build -o "$BIN_FILE" .
+COMMIT_SHA="$(git -C "$INSTALL_DIR" rev-parse --short HEAD 2>/dev/null || echo dev)"
+go build -ldflags "-X main.agentVersion=${COMMIT_SHA}" -o "$BIN_FILE" .
 popd >/dev/null
 
 install -m 0644 "$INSTALL_DIR/apps/agent/systemd/tarmac-agent.service" "$SERVICE_FILE"

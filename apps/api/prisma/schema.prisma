@@ -138,6 +138,8 @@ model Node {
   overlayListenPort  Int?
   overlaySshPublicKey String?
   overlaySshUser     String?
+  agentVersion       String?
+  agentVersionAt     DateTime?
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
   metrics            MetricSample[]

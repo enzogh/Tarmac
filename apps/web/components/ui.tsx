@@ -51,7 +51,7 @@ export function StatCard({ label, value, icon, change, changeType }: StatCardPro
 interface BadgeProps {
   label: string;
   type?: 'success' | 'warning' | 'error' | 'info';
-  icon?: string;
+  icon?: ReactNode;
 }
 
 export function Badge({ label, type = 'info', icon }: BadgeProps) {

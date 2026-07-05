@@ -9,6 +9,7 @@ import {
   Eye,
   FolderSearch,
   Gauge,
+  GitCommitHorizontal,
   Globe2,
   HardDrive,
   Info,
@@ -301,6 +302,21 @@ export default function InfrastructurePage() {
   const avgCpu = nodes.length ? nodes.reduce((acc, node) => acc + node.metrics.cpu, 0) / nodes.length : 0;
   const avgRam = nodes.length ? nodes.reduce((acc, node) => acc + node.metrics.ram, 0) / nodes.length : 0;
 
+  const controlVersion = nodes.find((node) => node.controlVersion)?.controlVersion ?? null;
+  const upToDateNodes = nodes.filter((node) => node.agentUpToDate === true).length;
+  const outdatedNodes = nodes.filter((node) => node.agentUpToDate === false).length;
+  const fleetVersionAligned = nodes.length > 0 && outdatedNodes === 0 && upToDateNodes === nodes.length;
+
+  const versionBadge = (node: NodeActivityItem) => {
+    if (!node.agentVersion) {
+      return { type: 'info' as const, label: 'Version inconnue' };
+    }
+    if (node.agentUpToDate) {
+      return { type: 'success' as const, label: node.agentVersion };
+    }
+    return { type: 'warning' as const, label: `${node.agentVersion} obsolète` };
+  };
+
   const selectedExplorerNode = nodes.find((node) => node.id === selectedExplorerNodeId) ?? null;
   const scanMax = scanResults[0]?.sizeBytes ?? 1;
 
@@ -323,7 +339,7 @@ export default function InfrastructurePage() {
                 Pilotage des nœuds, monitoring temps réel, scan volumétrique des dossiers et opérations agent sans CLI.
               </p>
             </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
               <Card className="border-white/10 bg-zinc-950/55">
                 <CardContent className="flex items-center justify-between p-4">
                   <div>
@@ -360,6 +376,47 @@ export default function InfrastructurePage() {
                   <HardDrive className="h-5 w-5 text-cyan-300" />
                 </CardContent>
               </Card>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Card
+                    className={`cursor-default border-white/10 bg-zinc-950/55 ${
+                      outdatedNodes > 0 ? 'ring-1 ring-amber-500/30' : ''
+                    }`}
+                  >
+                    <CardContent className="flex items-center justify-between p-4">
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Version agent</p>
+                        <p
+                          className={`text-2xl font-semibold ${
+                            nodes.length === 0
+                              ? 'text-zinc-300'
+                              : fleetVersionAligned
+                                ? 'text-emerald-300'
+                                : 'text-amber-300'
+                          }`}
+                        >
+                          {upToDateNodes}/{nodes.length}
+                        </p>
+                        {controlVersion && (
+                          <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
+                            réf. {controlVersion}
+                          </p>
+                        )}
+                      </div>
+                      <GitCommitHorizontal
+                        className={`h-5 w-5 ${fleetVersionAligned ? 'text-emerald-300' : 'text-amber-300'}`}
+                      />
+                    </CardContent>
+                  </Card>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {nodes.length === 0
+                    ? 'Aucun nœud enregistré'
+                    : fleetVersionAligned
+                      ? 'Tous les agents tournent sur le même commit que le contrôleur'
+                      : `${outdatedNodes} nœud(s) à mettre à jour vers ${controlVersion ?? 'la dernière version'}`}
+                </TooltipContent>
+              </Tooltip>
             </div>
           </div>
         </section>
@@ -557,10 +614,24 @@ export default function InfrastructurePage() {
                       <p className="truncate text-base font-semibold text-zinc-100">{node.name}</p>
                       <p className="mt-0.5 text-xs capitalize text-muted-foreground">{node.role}</p>
                     </div>
-                    <Badge
-                      label={node.status}
-                      type={node.status === 'online' ? 'success' : node.status === 'degraded' ? 'warning' : 'error'}
-                    />
+                    <div className="flex shrink-0 flex-col items-end gap-1.5">
+                      <Badge
+                        label={node.status}
+                        type={node.status === 'online' ? 'success' : node.status === 'degraded' ? 'warning' : 'error'}
+                      />
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-flex cursor-default">
+                            <Badge {...versionBadge(node)} icon={<GitCommitHorizontal className="h-3 w-3" />} />
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Agent : {node.agentVersion ?? 'jamais rapporté'}</p>
+                          <p>Contrôleur : {node.controlVersion ?? '—'}</p>
+                          {node.agentVersionAt && <p>Depuis : {formatDateTime(node.agentVersionAt)}</p>}
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
                   </div>
 
                   <div className="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
