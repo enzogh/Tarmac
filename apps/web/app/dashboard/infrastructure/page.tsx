@@ -236,7 +236,15 @@ export default function InfrastructurePage() {
 
   const deleteNode = async (node: NodeActivityItem) => {
     if (!token) return;
-    await api.nodes.delete(token, node.id);
+    const result = await api.nodes.delete(token, node.id);
+    setUpdateNotice(
+      result.agentUninstallQueued
+        ? { type: 'success', message: `${node.name} supprimé, désinstallation de l’agent en cours sur le serveur.` }
+        : {
+            type: 'error',
+            message: `${node.name} supprimé, mais l’agent était hors ligne : désinstalle-le manuellement sur le serveur (uninstall-agent-service.sh).`,
+          },
+    );
     await load();
     setNodeToDelete(null);
   };

@@ -514,6 +514,24 @@ export class AgentsService implements OnModuleInit {
     return { queued: true as const, message: 'agent update command sent' };
   }
 
+  /**
+   * Best-effort: asks the still-connected agent to tear itself down
+   * (systemd unit, WireGuard interface, managed SSH keys, binaries, worktree)
+   * before its node record is deleted. If the agent is offline the command
+   * is simply dropped — deletion proceeds regardless since the DB record is
+   * the source of truth for the dashboard.
+   */
+  triggerAgentUninstall(nodeId: string) {
+    const sent = this.sendCommand(nodeId, {
+      type: 'command.uninstall_agent',
+      payload: { nodeId },
+    });
+
+    return sent
+      ? { queued: true as const, message: 'agent uninstall command sent' }
+      : { queued: false as const, message: 'node is offline' };
+  }
+
   requestDirectories(nodeId: string, basePath = '/', timeoutMs = 5000): Promise<{ basePath: string; directories: string[] }> {
     const requestId = `dirs:${nodeId}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
 

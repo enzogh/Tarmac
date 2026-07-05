@@ -60,7 +60,8 @@ export interface CommandPayload {
     | 'command.list_remote_directories'
     | 'command.scan_directory_sizes'
     | 'command.apply_ssh_authorized_keys'
-    | 'command.update_agent';
+    | 'command.update_agent'
+    | 'command.uninstall_agent';
   payload: Record<string, unknown>;
 }
 
@@ -76,7 +77,8 @@ export interface CommandResultPayload {
     | 'list_remote_directories'
     | 'scan_directory_sizes'
     | 'apply_ssh_authorized_keys'
-    | 'update_agent';
+    | 'update_agent'
+    | 'uninstall_agent';
   resourceType:
     | 'share'
     | 'mount'

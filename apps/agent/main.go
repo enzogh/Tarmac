@@ -1161,6 +1161,90 @@ func updateAgent(payload map[string]interface{}) (string, error) {
 	return message, nil
 }
 
+// removeManagedSSHKeysBlock strips the "# BEGIN/END TARMAC MANAGED KEYS" block
+// written by applySSHAuthorizedKeys from the target user's authorized_keys,
+// mirroring uninstall-agent-service.sh but without shelling out.
+func removeManagedSSHKeysBlock(targetUser string) error {
+	account, err := user.Lookup(targetUser)
+	if err != nil {
+		return nil
+	}
+	homeDir := strings.TrimSpace(account.HomeDir)
+	if homeDir == "" {
+		return nil
+	}
+	authorizedKeysPath := filepath.Join(homeDir, ".ssh", "authorized_keys")
+	existingRaw, readErr := os.ReadFile(authorizedKeysPath)
+	if readErr != nil {
+		return nil
+	}
+	existing := string(existingRaw)
+
+	const beginMarker = "# BEGIN TARMAC MANAGED KEYS"
+	const endMarker = "# END TARMAC MANAGED KEYS"
+	start := strings.Index(existing, beginMarker)
+	end := strings.Index(existing, endMarker)
+	if start < 0 || end < start {
+		return nil
+	}
+	end += len(endMarker)
+	if end < len(existing) && existing[end] == '\n' {
+		end++
+	}
+	return os.WriteFile(authorizedKeysPath, []byte(existing[:start]+existing[end:]), 0o600)
+}
+
+// uninstallAgent tears down everything install-agent-service.sh sets up
+// (systemd unit, WireGuard interface, managed SSH keys, binaries, worktree)
+// so deleting a node from the dashboard leaves nothing behind on the host.
+// Cleanup runs a moment after this returns so the success result can still
+// reach the control plane before the service is stopped.
+func uninstallAgent(payload map[string]interface{}) (string, error) {
+	serviceName := readString(payload, "serviceName")
+	if serviceName == "" {
+		serviceName = envOrDefault("AGENT_SERVICE_NAME", "tarmac-agent.service")
+	}
+	if matched, _ := regexp.MatchString(`^[a-zA-Z0-9_.@-]+$`, serviceName); !matched {
+		return "", errors.New("serviceName contains invalid characters")
+	}
+	if !commandExists("systemctl") {
+		return "", errors.New("systemctl not found; uninstall cannot be automated")
+	}
+
+	sshUser := envOrDefault("AGENT_SSH_USER", "root")
+	if err := removeManagedSSHKeysBlock(sshUser); err != nil {
+		log.Printf("failed to clean authorized_keys during uninstall: %v", err)
+	}
+
+	const wgIface = "tarmacwg0"
+	if exec.Command("ip", "link", "show", wgIface).Run() == nil {
+		_ = exec.Command("ip", "link", "set", wgIface, "down").Run()
+		_ = exec.Command("ip", "link", "delete", "dev", wgIface).Run()
+	}
+
+	binPath := envOrDefault("AGENT_BIN_PATH", "/usr/local/bin/tarmac-agent")
+	envFile := envOrDefault("AGENT_ENV_FILE", "/etc/tarmac-agent.env")
+	serviceFile := filepath.Join("/etc/systemd/system", serviceName)
+	sshKeyDir := envOrDefault("AGENT_SSH_KEY_DIR", "/var/lib/tarmac-agent/ssh")
+	wgDir := envOrDefault("AGENT_WIREGUARD_DIR", "/var/lib/tarmac-agent/wireguard")
+	workDir := envOrDefault("AGENT_WORKTREE_DIR", "/root/.apps/Tarmac")
+	const legacyInstallDir = "/opt/tarmac-agent-build"
+
+	cleanupShell := fmt.Sprintf(
+		"nohup sh -c 'sleep 1; systemctl disable --now %s >/dev/null 2>&1; ip link delete dev %s >/dev/null 2>&1; rm -rf %s %s %s %s; rm -f %s %s %s; systemctl daemon-reload >/dev/null 2>&1' >/dev/null 2>&1 &",
+		serviceName,
+		wgIface,
+		shellSingleQuote(sshKeyDir), shellSingleQuote(wgDir), shellSingleQuote(workDir), shellSingleQuote(legacyInstallDir),
+		shellSingleQuote(binPath), shellSingleQuote(envFile), shellSingleQuote(serviceFile),
+	)
+	cleanup := exec.Command("sh", "-c", cleanupShell)
+	if output, err := cleanup.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("uninstall scheduled but cleanup failed to launch: %s", strings.TrimSpace(string(output)))
+	}
+
+	return fmt.Sprintf("agent %s uninstall scheduled; service stopping and files being removed", serviceName), nil
+}
+
 func ensureAgentSystemPackages(ctx context.Context, packages []string) ([]string, error) {
 	if len(packages) == 0 {
 		return nil, nil
@@ -2343,6 +2427,20 @@ func handleCommand(cmd commandPayload, onProgress func(progress commandProgress)
 			result.ResourceID = envOrDefault("NODE_ID", "agent")
 		}
 		message, err := updateAgent(cmd.Payload)
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Message = message
+		}
+	case "command.uninstall_agent":
+		result.Command = "uninstall_agent"
+		result.ResourceType = "agent"
+		result.ResourceID = readString(cmd.Payload, "nodeId")
+		if result.ResourceID == "" {
+			result.ResourceID = envOrDefault("NODE_ID", "agent")
+		}
+		message, err := uninstallAgent(cmd.Payload)
 		if err != nil {
 			result.Success = false
 			result.Message = err.Error()

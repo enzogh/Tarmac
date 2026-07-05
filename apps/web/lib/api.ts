@@ -363,7 +363,7 @@ export const api = {
     ) =>
       request<NodeItem>(`/api/v1/nodes/${id}`, token, { method: 'PATCH', body: JSON.stringify(payload) }),
     delete: (token: string, id: string) =>
-      request<NodeItem>(`/api/v1/nodes/${id}`, token, { method: 'DELETE' }),
+      request<NodeItem & { agentUninstallQueued: boolean }>(`/api/v1/nodes/${id}`, token, { method: 'DELETE' }),
   },
 
   shares: {

@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { NodeStatus, Prisma } from '@prisma/client';
+import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { getControlPlaneVersion } from '../common/build-info';
 import { PrismaService } from '../prisma/prisma.service';
@@ -44,9 +45,12 @@ type ActivityDisk = {
 
 @Injectable()
 export class NodesService {
+  private readonly logger = new Logger(NodesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditLogsService: AuditLogsService,
+    private readonly agentsService: AgentsService,
   ) {}
 
   list() {
@@ -106,6 +110,11 @@ export class NodesService {
   async delete(id: string, actorUserId?: string) {
     const deleted = await this.prisma.node.delete({ where: { id } });
 
+    const uninstall = this.agentsService.triggerAgentUninstall(id);
+    if (!uninstall.queued) {
+      this.logger.warn(`Node ${id}: agent offline, could not send uninstall command (${uninstall.message})`);
+    }
+
     await this.auditLogsService.log({
       actorUserId,
       action: 'node.delete',
@@ -113,7 +122,7 @@ export class NodesService {
       resourceId: deleted.id,
     });
 
-    return deleted;
+    return { ...deleted, agentUninstallQueued: uninstall.queued };
   }
 
   async activity(range: string) {
