@@ -35,11 +35,11 @@ export class CreateMigrationDto {
 
   @IsOptional()
   @IsString()
-  sourceKind?: 'node' | 'seedbox';
+  sourceKind?: 'node' | 'seedbox' | 'storagebox';
 
   @IsOptional()
   @IsString()
-  targetKind?: 'node' | 'seedbox';
+  targetKind?: 'node' | 'seedbox' | 'storagebox';
 
   @IsOptional()
   @IsString()

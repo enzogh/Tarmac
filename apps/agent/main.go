@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"os/user"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -1587,6 +1588,91 @@ func shellSingleQuote(input string) string {
 	return "'" + strings.ReplaceAll(input, "'", `'"'"'`) + "'"
 }
 
+func sftpDoubleQuote(input string) string {
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(input) + `"`
+}
+
+func normalizeRemoteEndpointType(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "storagebox":
+		return "storagebox"
+	default:
+		return "seedbox"
+	}
+}
+
+func listStorageboxDirectories(host, username, password, basePath string, port, timeoutMs int) ([]string, error) {
+	if !commandExists("sftp") {
+		return nil, errors.New("sftp not found on agent; install OpenSSH client to browse Storage Box endpoints")
+	}
+
+	batchScript := fmt.Sprintf("cd %s\nls -l\n", sftpDoubleQuote(basePath))
+	sftpArgs := []string{
+		"-q",
+		"-P", strconv.Itoa(port),
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "ConnectTimeout=10",
+		fmt.Sprintf("%s@%s", username, host),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
+	defer cancel()
+
+	var cmd *exec.Cmd
+	if password != "" {
+		if !commandExists("sshpass") {
+			return nil, errors.New("sshpass not found on agent; reinstall or update the agent to enable password-based storagebox browsing")
+		}
+		cmd = exec.CommandContext(ctx, "sshpass", append([]string{"-p", password, "sftp"}, sftpArgs...)...)
+	} else {
+		sshKeyPath := envOrDefault("AGENT_SSH_PRIVATE_KEY_PATH", "/var/lib/tarmac-agent/ssh/id_ed25519")
+		sftpArgs = append([]string{
+			"-i", sshKeyPath,
+			"-o", "IdentitiesOnly=yes",
+			"-o", "BatchMode=yes",
+			"-o", "PasswordAuthentication=no",
+			"-o", "PreferredAuthentications=publickey",
+		}, sftpArgs...)
+		cmd = exec.CommandContext(ctx, "sftp", sftpArgs...)
+	}
+	cmd.Stdin = strings.NewReader(batchScript)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, errors.New("remote directory listing timeout")
+		}
+		details := strings.TrimSpace(string(output))
+		if details != "" {
+			return nil, fmt.Errorf("cannot list storagebox directories: %s", details)
+		}
+		return nil, fmt.Errorf("cannot list storagebox directories: %w", err)
+	}
+
+	lines := strings.Split(string(output), "\n")
+	directories := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "sftp>") {
+			continue
+		}
+
+		fields := strings.Fields(trimmed)
+		if len(fields) < 9 || !strings.HasPrefix(fields[0], "d") {
+			continue
+		}
+		name := strings.Join(fields[8:], " ")
+		if name == "." || name == ".." {
+			continue
+		}
+		directories = append(directories, path.Clean(path.Join(basePath, name)))
+	}
+
+	sort.Strings(directories)
+	return directories, nil
+}
+
 func listRemoteDirectories(payload map[string]interface{}) (directoryListData, error) {
 	host := readString(payload, "host")
 	username := readString(payload, "username")
@@ -1596,15 +1682,24 @@ func listRemoteDirectories(payload map[string]interface{}) (directoryListData, e
 	}
 
 	basePath := strings.TrimSpace(readString(payload, "basePath"))
+	endpointType := normalizeRemoteEndpointType(readString(payload, "endpointType"))
 	if basePath == "" {
-		basePath = "/"
+		if endpointType == "storagebox" {
+			basePath = "/home"
+		} else {
+			basePath = "/"
+		}
 	}
 	if !strings.HasPrefix(basePath, "/") {
 		return directoryListData{}, errors.New("basePath must be absolute")
 	}
-	port := readInt(payload, "port", 22)
+	defaultPort := 22
+	if endpointType == "storagebox" {
+		defaultPort = 23
+	}
+	port := readInt(payload, "port", defaultPort)
 	if port <= 0 || port > 65535 {
-		port = 22
+		port = defaultPort
 	}
 	timeoutMs := readInt(payload, "timeoutMs", 12000)
 	if timeoutMs < 1000 {
@@ -1613,56 +1708,63 @@ func listRemoteDirectories(payload map[string]interface{}) (directoryListData, e
 	if timeoutMs > 30000 {
 		timeoutMs = 30000
 	}
-
-	sshArgs := []string{
-		"-p", strconv.Itoa(port),
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-		"-o", "ConnectTimeout=10",
-		fmt.Sprintf("%s@%s", username, host),
-		fmt.Sprintf("find %s -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null", shellSingleQuote(basePath)),
-	}
-
-	var cmd *exec.Cmd
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
-	defer cancel()
-	if password != "" {
-		if !commandExists("sshpass") {
-			return directoryListData{}, errors.New("sshpass not found on agent; reinstall or update the agent to enable password-based seedbox browsing")
+	directories := []string{}
+	if endpointType == "storagebox" {
+		listed, err := listStorageboxDirectories(host, username, password, basePath, port, timeoutMs)
+		if err != nil {
+			return directoryListData{}, err
 		}
-		cmd = exec.CommandContext(ctx, "sshpass", append([]string{"-p", password, "ssh"}, sshArgs...)...)
+		directories = listed
 	} else {
-		sshKeyPath := envOrDefault("AGENT_SSH_PRIVATE_KEY_PATH", "/var/lib/tarmac-agent/ssh/id_ed25519")
-		sshArgs = append([]string{
-			"-i", sshKeyPath,
-			"-o", "IdentitiesOnly=yes",
-			"-o", "BatchMode=yes",
-			"-o", "PasswordAuthentication=no",
-			"-o", "PreferredAuthentications=publickey",
-		}, sshArgs...)
-		cmd = exec.CommandContext(ctx, "ssh", sshArgs...)
-	}
+		sshArgs := []string{
+			"-p", strconv.Itoa(port),
+			"-o", "StrictHostKeyChecking=no",
+			"-o", "UserKnownHostsFile=/dev/null",
+			"-o", "ConnectTimeout=10",
+			fmt.Sprintf("%s@%s", username, host),
+			fmt.Sprintf("find %s -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null", shellSingleQuote(basePath)),
+		}
 
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return directoryListData{}, errors.New("remote directory listing timeout")
+		var cmd *exec.Cmd
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
+		defer cancel()
+		if password != "" {
+			if !commandExists("sshpass") {
+				return directoryListData{}, errors.New("sshpass not found on agent; reinstall or update the agent to enable password-based seedbox browsing")
+			}
+			cmd = exec.CommandContext(ctx, "sshpass", append([]string{"-p", password, "ssh"}, sshArgs...)...)
+		} else {
+			sshKeyPath := envOrDefault("AGENT_SSH_PRIVATE_KEY_PATH", "/var/lib/tarmac-agent/ssh/id_ed25519")
+			sshArgs = append([]string{
+				"-i", sshKeyPath,
+				"-o", "IdentitiesOnly=yes",
+				"-o", "BatchMode=yes",
+				"-o", "PasswordAuthentication=no",
+				"-o", "PreferredAuthentications=publickey",
+			}, sshArgs...)
+			cmd = exec.CommandContext(ctx, "ssh", sshArgs...)
 		}
-		details := strings.TrimSpace(string(output))
-		if details != "" {
-			return directoryListData{}, fmt.Errorf("cannot list remote directories: %s", details)
-		}
-		return directoryListData{}, fmt.Errorf("cannot list remote directories: %w", err)
-	}
 
-	lines := strings.Split(string(output), "\n")
-	directories := make([]string, 0, len(lines))
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				return directoryListData{}, errors.New("remote directory listing timeout")
+			}
+			details := strings.TrimSpace(string(output))
+			if details != "" {
+				return directoryListData{}, fmt.Errorf("cannot list remote directories: %s", details)
+			}
+			return directoryListData{}, fmt.Errorf("cannot list remote directories: %w", err)
 		}
-		directories = append(directories, trimmed)
+
+		lines := strings.Split(string(output), "\n")
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				continue
+			}
+			directories = append(directories, trimmed)
+		}
 	}
 	sort.Strings(directories)
 	if len(directories) > 500 {

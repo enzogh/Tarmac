@@ -576,7 +576,14 @@ export class AgentsService implements OnModuleInit {
 
   requestRemoteDirectories(
     nodeId: string,
-    payload: { host: string; username: string; password?: string; port?: number; basePath?: string },
+    payload: {
+      host: string;
+      username: string;
+      password?: string;
+      port?: number;
+      basePath?: string;
+      endpointType?: 'seedbox' | 'storagebox';
+    },
     timeoutMs = 7000,
   ): Promise<{ basePath: string; directories: string[] }> {
     const requestId = `rdirs:${nodeId}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
@@ -603,6 +610,7 @@ export class AgentsService implements OnModuleInit {
           password: payload.password,
           port: payload.port,
           basePath: payload.basePath ?? '/',
+          endpointType: payload.endpointType,
         },
       });
 

@@ -54,6 +54,7 @@ export class MigrationsController {
       password: dto.password,
       port: Number.isFinite(parsedPort) ? parsedPort : undefined,
       basePath: dto.basePath,
+      endpointType: dto.endpointType,
     });
   }
 
