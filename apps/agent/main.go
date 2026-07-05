@@ -1124,11 +1124,18 @@ func updateAgent(payload map[string]interface{}) (string, error) {
 	}
 
 	commitSha := "dev"
+	revParseNote := ""
 	revParse := exec.CommandContext(ctx, "git", "-C", workDir, "rev-parse", "--short", "HEAD")
-	if output, revErr := revParse.Output(); revErr == nil {
+	if output, revErr := revParse.CombinedOutput(); revErr == nil {
 		if sha := strings.TrimSpace(string(output)); sha != "" {
 			commitSha = sha
+		} else {
+			revParseNote = "git rev-parse returned an empty SHA"
+			log.Printf("update_agent: %s in %s", revParseNote, workDir)
 		}
+	} else {
+		revParseNote = fmt.Sprintf("git rev-parse failed: %s", strings.TrimSpace(string(output)))
+		log.Printf("update_agent: %s", revParseNote)
 	}
 
 	build := exec.CommandContext(ctx, "go", "build", "-ldflags", fmt.Sprintf("-X main.agentVersion=%s", commitSha), "-o", tmpBinPath, ".")
@@ -1154,7 +1161,10 @@ func updateAgent(payload map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("binary updated but restart scheduling failed: %s", strings.TrimSpace(string(output)))
 	}
 
-	message := fmt.Sprintf("agent updated from %s; service daemon-reload+restart scheduled", workDir)
+	message := fmt.Sprintf("agent updated from %s (version %s); service daemon-reload+restart scheduled", workDir, commitSha)
+	if revParseNote != "" {
+		message += fmt.Sprintf("; version detection fell back to \"dev\": %s", revParseNote)
+	}
 	if len(installedPackages) > 0 {
 		message += fmt.Sprintf("; installed packages: %s", strings.Join(installedPackages, ", "))
 	}
