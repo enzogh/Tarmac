@@ -456,6 +456,7 @@ export class AgentsService implements OnModuleInit {
     }
 
     if (result.resourceType === 'agent') {
+      this.logger.log(`Agent ${result.command} on node ${result.resourceId}: ${result.message ?? '(no message)'}`);
       return;
     }
   }
