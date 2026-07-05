@@ -1615,7 +1615,7 @@ func listStorageboxDirectories(host, username, password, basePath string, port, 
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "ConnectTimeout=10",
 		fmt.Sprintf("%s@%s", username, host),
-		fmt.Sprintf("find %s -maxdepth 1 -type d -print 2>/dev/null | tail -n +2", shellSingleQuote(basePath)),
+		fmt.Sprintf("ls -1 %s", shellSingleQuote(basePath)),
 	}
 
 	var cmd *exec.Cmd
@@ -1654,10 +1654,12 @@ func listStorageboxDirectories(host, username, password, basePath string, port, 
 	directories := make([]string, 0, len(lines))
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
+		if trimmed == "" || trimmed == "." || trimmed == ".." {
 			continue
 		}
-		directories = append(directories, trimmed)
+		// Add all entries as directories (Hetzner doesn't distinguish in simple ls)
+		fullPath := filepath.Join(basePath, trimmed)
+		directories = append(directories, fullPath)
 	}
 
 	sort.Strings(directories)
