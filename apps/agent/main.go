@@ -1606,7 +1606,7 @@ func listStorageboxDirectories(host, username, password, basePath string, port, 
 		return nil, errors.New("sftp not found on agent; install OpenSSH client to browse Storage Box endpoints")
 	}
 
-	batchScript := fmt.Sprintf("cd %s\nls -l\n", sftpDoubleQuote(basePath))
+	batchScript := fmt.Sprintf("ls -l %s\n", sftpDoubleQuote(basePath))
 	sftpArgs := []string{
 		"-q",
 		"-P", strconv.Itoa(port),
