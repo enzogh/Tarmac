@@ -1120,7 +1120,26 @@ func updateAgent(payload map[string]interface{}) (string, error) {
 	}
 	pull := exec.CommandContext(ctx, "git", pullArgs...)
 	if output, pullErr := pull.CombinedOutput(); pullErr != nil {
-		return "", fmt.Errorf("cannot pull repository: %s", strings.TrimSpace(string(output)))
+		// Nodes onboarded with an SSH origin (git@github.com:...) can't
+		// authenticate from the agent's own service context (no deploy key
+		// available there). Fall back to the HTTPS remote, which works
+		// unauthenticated against a public repo, same as the onboarding
+		// script already does for its own clone step.
+		remoteOutput, remoteErr := exec.CommandContext(ctx, "git", "-C", workDir, "remote", "get-url", "origin").Output()
+		httpsURL := gitRemoteToHTTPS(strings.TrimSpace(string(remoteOutput)))
+		if remoteErr != nil || httpsURL == "" {
+			return "", fmt.Errorf("cannot pull repository: %s", strings.TrimSpace(string(output)))
+		}
+
+		if setErr := exec.CommandContext(ctx, "git", "-C", workDir, "remote", "set-url", "origin", httpsURL).Run(); setErr != nil {
+			return "", fmt.Errorf("cannot pull repository: %s", strings.TrimSpace(string(output)))
+		}
+		log.Printf("update_agent: SSH pull failed, retrying over HTTPS (%s)", httpsURL)
+
+		retryPull := exec.CommandContext(ctx, "git", pullArgs...)
+		if retryOutput, retryErr := retryPull.CombinedOutput(); retryErr != nil {
+			return "", fmt.Errorf("cannot pull repository over ssh or https: %s", strings.TrimSpace(string(retryOutput)))
+		}
 	}
 
 	commitSha := "dev"
@@ -1694,6 +1713,19 @@ func listDirectories(payload map[string]interface{}) (directoryListData, error) 
 
 func shellSingleQuote(input string) string {
 	return "'" + strings.ReplaceAll(input, "'", `'"'"'`) + "'"
+}
+
+// gitRemoteToHTTPS mirrors to_https_repo_url() from install-agent-service.sh:
+// converts an SSH GitHub remote to its HTTPS equivalent. Returns "" if input
+// is already HTTPS or not a recognized GitHub SSH form.
+func gitRemoteToHTTPS(remote string) string {
+	if scpLike := regexp.MustCompile(`^git@github\.com:(.+)$`).FindStringSubmatch(remote); scpLike != nil {
+		return "https://github.com/" + scpLike[1]
+	}
+	if sshURL := regexp.MustCompile(`^ssh://git@github\.com/(.+)$`).FindStringSubmatch(remote); sshURL != nil {
+		return "https://github.com/" + sshURL[1]
+	}
+	return ""
 }
 
 func sftpDoubleQuote(input string) string {
