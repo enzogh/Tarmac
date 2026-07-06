@@ -61,7 +61,8 @@ export interface CommandPayload {
     | 'command.scan_directory_sizes'
     | 'command.apply_ssh_authorized_keys'
     | 'command.update_agent'
-    | 'command.uninstall_agent';
+    | 'command.uninstall_agent'
+    | 'command.rotate_token';
   payload: Record<string, unknown>;
 }
 

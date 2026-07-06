@@ -1284,6 +1284,63 @@ func uninstallAgent(payload map[string]interface{}) (string, error) {
 	return fmt.Sprintf("agent %s uninstall scheduled; service stopping and files being removed", serviceName), nil
 }
 
+// rotateAgentToken rewrites the AGENT_TOKEN line in the systemd env file and
+// restarts the service so it reconnects with the new token. It never hot-swaps
+// the token in the running process: systemd's EnvironmentFile is the single
+// source of truth, so a clean restart is more reliable than mutating in-memory
+// state and the live WS connection.
+func rotateAgentToken(payload map[string]interface{}) (string, error) {
+	token := readString(payload, "token")
+	if token == "" {
+		return "", errors.New("token is required")
+	}
+
+	serviceName := envOrDefault("AGENT_SERVICE_NAME", "tarmac-agent.service")
+	envFile := envOrDefault("AGENT_ENV_FILE", "/etc/tarmac-agent.env")
+
+	existing, err := os.ReadFile(envFile)
+	if err != nil {
+		return "", fmt.Errorf("cannot read %s: %w", envFile, err)
+	}
+
+	lines := strings.Split(string(existing), "\n")
+	replaced := false
+	for i, line := range lines {
+		if strings.HasPrefix(line, "AGENT_TOKEN=") {
+			lines[i] = "AGENT_TOKEN=" + token
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		lines = append(lines, "AGENT_TOKEN="+token)
+	}
+
+	tmpFile := envFile + ".tmp"
+	if err := os.WriteFile(tmpFile, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+		return "", fmt.Errorf("cannot write updated env file: %w", err)
+	}
+	if err := os.Rename(tmpFile, envFile); err != nil {
+		return "", fmt.Errorf("cannot replace env file: %w", err)
+	}
+
+	if !commandExists("systemctl") {
+		return "", errors.New("systemctl not found; restart cannot be automated")
+	}
+
+	restartShell := fmt.Sprintf(
+		"nohup sh -c 'sleep 1; if [ \"$(id -u)\" -eq 0 ]; then systemctl restart %s; else sudo systemctl restart %s; fi' >/dev/null 2>&1 &",
+		serviceName,
+		serviceName,
+	)
+	restart := exec.Command("sh", "-c", restartShell)
+	if output, restartErr := restart.CombinedOutput(); restartErr != nil {
+		return "", fmt.Errorf("token updated but restart scheduling failed: %s", strings.TrimSpace(string(output)))
+	}
+
+	return "agent token rotated; service restarting to pick it up", nil
+}
+
 func ensureAgentSystemPackages(ctx context.Context, packages []string) ([]string, error) {
 	if len(packages) == 0 {
 		return nil, nil
@@ -2480,6 +2537,17 @@ func handleCommand(cmd commandPayload, onProgress func(progress commandProgress)
 			result.ResourceID = envOrDefault("NODE_ID", "agent")
 		}
 		message, err := uninstallAgent(cmd.Payload)
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Message = message
+		}
+	case "command.rotate_token":
+		result.Command = "rotate_token"
+		result.ResourceType = "agent"
+		result.ResourceID = envOrDefault("NODE_ID", "agent")
+		message, err := rotateAgentToken(cmd.Payload)
 		if err != nil {
 			result.Success = false
 			result.Message = err.Error()
