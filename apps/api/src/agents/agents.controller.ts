@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AgentTokenService } from './agent-token.service';
 import { AgentsService } from './agents.service';
 
 type AgentUninstallRequest = {
@@ -19,7 +20,10 @@ type AgentUninstallRequest = {
 
 @Controller('agents')
 export class AgentsController {
-  constructor(private readonly agentsService: AgentsService) {}
+  constructor(
+    private readonly agentsService: AgentsService,
+    private readonly agentTokenService: AgentTokenService,
+  ) {}
 
   @UseGuards(JwtAuthGuard)
   @Post(':nodeId/update')
@@ -51,8 +55,7 @@ export class AgentsController {
   @Post('uninstall')
   @HttpCode(HttpStatus.NO_CONTENT)
   async uninstall(@Body() body: AgentUninstallRequest) {
-    const expected = process.env.AGENT_SHARED_TOKEN ?? 'agent-secret';
-    if (!body.nodeId || body.token !== expected) {
+    if (!body.nodeId || !body.token || !(await this.agentTokenService.verify(body.nodeId, body.token))) {
       throw new UnauthorizedException('invalid agent uninstall token');
     }
     await this.agentsService.handleAgentUninstall(body.nodeId);

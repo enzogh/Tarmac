@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, InternalServerErrorException, NotFound
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { Client, ConnectConfig } from 'ssh2';
+import { AgentTokenService } from '../agents/agent-token.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { CreateNodeDto } from './dto/create-node.dto';
 import { StartNodeOnboardingDto } from './dto/start-node-onboarding.dto';
 import { NodesService } from './nodes.service';
@@ -23,6 +25,7 @@ type NodeOnboardingSession = {
   repoRef: string;
   controlPlaneWs: string;
   deployKeyPublic: string;
+  agentToken: string;
 };
 
 type RemoteCommandResult = {
@@ -39,6 +42,8 @@ export class NodeOnboardingService {
   constructor(
     private readonly nodesService: NodesService,
     private readonly configService: ConfigService,
+    private readonly agentTokenService: AgentTokenService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async startOnboarding(dto: StartNodeOnboardingDto, actorUserId?: string) {
@@ -52,6 +57,12 @@ export class NodeOnboardingService {
       role: dto.role,
     };
     const node = await this.nodesService.create(createNodeDto, actorUserId);
+
+    const agentToken = this.agentTokenService.generate();
+    await this.prisma.node.update({
+      where: { id: node.id },
+      data: { agentTokenHash: this.agentTokenService.hash(agentToken), agentTokenRotatedAt: new Date() },
+    });
 
     const deployKeyPublic = await this.ensureRemoteDeployKey({
       provider: dto.provider,
@@ -80,6 +91,7 @@ export class NodeOnboardingService {
       repoRef,
       controlPlaneWs,
       deployKeyPublic,
+      agentToken,
     });
 
     this.cleanupExpiredSessions();
@@ -222,15 +234,11 @@ export class NodeOnboardingService {
     try {
       const nodeIdQuoted = this.shellQuote(session.nodeId);
       const wsQuoted = this.shellQuote(session.controlPlaneWs);
-      const tokenQuoted = this.shellQuote(this.configService.get<string>('AGENT_SHARED_TOKEN') ?? '');
+      const tokenQuoted = this.shellQuote(session.agentToken);
       const repoUrlQuoted = this.shellQuote(session.repoUrl);
       const repoUrlHttpsQuoted = this.shellQuote(this.toHttpsRepoUrl(session.repoUrl));
       const repoRefQuoted = this.shellQuote(session.repoRef);
       const sshUserQuoted = this.shellQuote(session.sshUsername);
-
-      if (tokenQuoted === "''") {
-        throw new Error('AGENT_SHARED_TOKEN est manquant côté API');
-      }
 
       const commandScripts: Array<{ label: string; script: string }> = [
         {

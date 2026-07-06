@@ -140,6 +140,10 @@ model Node {
   overlaySshUser     String?
   agentVersion       String?
   agentVersionAt     DateTime?
+  agentTokenHash         String?
+  agentTokenPreviousHash String?
+  agentTokenGraceUntil   DateTime?
+  agentTokenRotatedAt    DateTime?
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
   metrics            MetricSample[]
