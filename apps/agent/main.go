@@ -1114,32 +1114,42 @@ func updateAgent(payload map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("cannot access repository dir: %w", err)
 	}
 
-	pullArgs := []string{"-C", workDir, "pull", "--ff-only"}
-	if strings.TrimSpace(ref) != "" {
-		pullArgs = append(pullArgs, "origin", ref)
+	refName := strings.TrimSpace(ref)
+	if refName == "" {
+		refName = "main"
 	}
-	pull := exec.CommandContext(ctx, "git", pullArgs...)
-	if output, pullErr := pull.CombinedOutput(); pullErr != nil {
-		// Nodes onboarded with an SSH origin (git@github.com:...) can't
-		// authenticate from the agent's own service context (no deploy key
-		// available there). Fall back to the HTTPS remote, which works
-		// unauthenticated against a public repo, same as the onboarding
-		// script already does for its own clone step.
-		remoteOutput, remoteErr := exec.CommandContext(ctx, "git", "-C", workDir, "remote", "get-url", "origin").Output()
-		httpsURL := gitRemoteToHTTPS(strings.TrimSpace(string(remoteOutput)))
-		if remoteErr != nil || httpsURL == "" {
-			return "", fmt.Errorf("cannot pull repository: %s", strings.TrimSpace(string(output)))
-		}
 
-		if setErr := exec.CommandContext(ctx, "git", "-C", workDir, "remote", "set-url", "origin", httpsURL).Run(); setErr != nil {
-			return "", fmt.Errorf("cannot pull repository: %s", strings.TrimSpace(string(output)))
+	// Nodes onboarded via the dashboard use a private repo over an SSH
+	// deploy key (see node-onboarding.service.ts), but the agent's own
+	// service context has no SSH agent/default identity, so plain git
+	// commands can't authenticate. Point git at the same deploy key the
+	// onboarding script installs, if present.
+	gitEnv := os.Environ()
+	homeDir, homeErr := os.UserHomeDir()
+	if homeErr == nil {
+		deployKeyPath := envOrDefault("AGENT_DEPLOY_KEY_PATH", filepath.Join(homeDir, ".ssh", "tarmac_deploy_ed25519"))
+		if _, statErr := os.Stat(deployKeyPath); statErr == nil {
+			gitEnv = append(gitEnv, fmt.Sprintf(
+				"GIT_SSH_COMMAND=ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new",
+				deployKeyPath,
+			))
 		}
-		log.Printf("update_agent: SSH pull failed, retrying over HTTPS (%s)", httpsURL)
+	}
 
-		retryPull := exec.CommandContext(ctx, "git", pullArgs...)
-		if retryOutput, retryErr := retryPull.CombinedOutput(); retryErr != nil {
-			return "", fmt.Errorf("cannot pull repository over ssh or https: %s", strings.TrimSpace(string(retryOutput)))
-		}
+	// fetch + reset --hard instead of pull --ff-only: nodes provisioned with
+	// a shallow clone (--depth 1) can have truncated history that git can't
+	// prove is a fast-forward even with no real divergence. Since this
+	// worktree only ever holds a clean deployment checkout, resetting to
+	// origin's tip is safe and side-steps that entirely.
+	fetch := exec.CommandContext(ctx, "git", "-C", workDir, "fetch", "--depth", "1", "origin", refName)
+	fetch.Env = gitEnv
+	if output, fetchErr := fetch.CombinedOutput(); fetchErr != nil {
+		return "", fmt.Errorf("cannot fetch repository: %s", strings.TrimSpace(string(output)))
+	}
+
+	reset := exec.CommandContext(ctx, "git", "-C", workDir, "reset", "--hard", "origin/"+refName)
+	if output, resetErr := reset.CombinedOutput(); resetErr != nil {
+		return "", fmt.Errorf("cannot reset repository to origin/%s: %s", refName, strings.TrimSpace(string(output)))
 	}
 
 	commitSha := "dev"
@@ -1713,19 +1723,6 @@ func listDirectories(payload map[string]interface{}) (directoryListData, error) 
 
 func shellSingleQuote(input string) string {
 	return "'" + strings.ReplaceAll(input, "'", `'"'"'`) + "'"
-}
-
-// gitRemoteToHTTPS mirrors to_https_repo_url() from install-agent-service.sh:
-// converts an SSH GitHub remote to its HTTPS equivalent. Returns "" if input
-// is already HTTPS or not a recognized GitHub SSH form.
-func gitRemoteToHTTPS(remote string) string {
-	if scpLike := regexp.MustCompile(`^git@github\.com:(.+)$`).FindStringSubmatch(remote); scpLike != nil {
-		return "https://github.com/" + scpLike[1]
-	}
-	if sshURL := regexp.MustCompile(`^ssh://git@github\.com/(.+)$`).FindStringSubmatch(remote); sshURL != nil {
-		return "https://github.com/" + sshURL[1]
-	}
-	return ""
 }
 
 func sftpDoubleQuote(input string) string {
