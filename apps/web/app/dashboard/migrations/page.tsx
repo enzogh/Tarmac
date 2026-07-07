@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import { api, MigrationItem, NodeItem } from '../../../lib/api';
 import { DashboardLayout } from '../../../components/DashboardLayout';
+import { PageHeader } from '../../../components/PageHeader';
+import { Callout } from '../../../components/Callout';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Progress } from '../../../components/ui/progress';
 import { Button } from '../../../components/ui/button';
@@ -774,7 +776,7 @@ export default function MigrationsPage() {
                 ? 'Navigation en direct sur la Storage Box source via SFTP (port SSH 23).'
                 : formData.sourceKind === 'seedbox'
                   ? "Navigation en direct sur la seedbox source via un nœud Tarmac connecté."
-                : "Navigation en direct sur le serveur source. Un clic sur un dossier le sélectionne et l’ouvre."
+                : "Navigation en direct sur le serveur source."
             }
             currentPath={sourceBrowsePath}
             selectedPath={formData.sourcePath}
@@ -875,7 +877,7 @@ export default function MigrationsPage() {
           </div>
 
           <InfoBox type="warning" title="Important">
-            Ne lancez pas plusieurs migrations vers la même destination en même temps.
+            Évitez de lancer simultanément plusieurs migrations vers une même destination.
           </InfoBox>
         </div>
       ),
@@ -892,23 +894,21 @@ export default function MigrationsPage() {
           </Alert>
         )}
 
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-semibold tracking-tight text-foreground">Migrations de Données</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Créez, relancez et suivez vos migrations sans ligne de commande.</p>
-          </div>
-          <Button onClick={() => setWizardOpen(true)} className="gap-2 bg-violet-600 text-white hover:bg-violet-500">
-            <Plus className="h-5 w-5" />
-            Nouvelle migration
-          </Button>
-        </div>
+        <PageHeader
+          icon={ArrowRightLeft}
+          title="Migrations"
+          description="Déplacez des volumes de stockage entre nœuds, seedboxes ou Storage Boxes, avec suivi en direct."
+          actions={
+            <Button onClick={() => setWizardOpen(true)} className="gap-2 bg-violet-600 text-white hover:bg-violet-500">
+              <Plus className="h-5 w-5" />
+              Nouvelle migration
+            </Button>
+          }
+        />
 
-        <Alert variant="info">
-          <ArrowRightLeft className="h-4 w-4" />
-          <AlertDescription>
-            Vous pouvez modifier une migration tant qu’elle est en attente, puis la relancer après un échec. Les dossiers source/destination se choisissent en navigation live, sans CLI.
-          </AlertDescription>
-        </Alert>
+        <Callout variant="info">
+          Éditable tant qu’elle est en attente, relançable après un échec. Dossiers source/destination à choisir en navigation live, sans CLI.
+        </Callout>
 
         <div className="grid gap-3 md:grid-cols-4">
           <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">

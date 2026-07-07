@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Layers, Lock, Mail, AlertCircle } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Button } from '../../components/ui/button';
@@ -45,7 +46,7 @@ export default function LoginPage() {
               Connexion administrateur
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Accédez au tableau de bord premium.
+              Connectez-vous pour piloter votre flotte de nœuds.
             </p>
           </div>
         </div>
@@ -64,7 +65,7 @@ export default function LoginPage() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="admin@tarmac.local"
-                    autoComplete="email"
+                    autoComplete="off"
                   />
                 </div>
               </div>
@@ -79,7 +80,7 @@ export default function LoginPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
-                    autoComplete="current-password"
+                    autoComplete="off"
                   />
                 </div>
               </div>
@@ -97,6 +98,12 @@ export default function LoginPage() {
             </form>
           </CardContent>
         </Card>
+
+        <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
+          <Link href="/" className="hover:text-foreground">← Accueil</Link>
+          <span className="text-zinc-700">·</span>
+          <Link href="/docs" className="hover:text-foreground">Documentation</Link>
+        </div>
       </div>
     </div>
   );
