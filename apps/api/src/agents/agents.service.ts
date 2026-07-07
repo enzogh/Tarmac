@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -138,6 +138,7 @@ export class AgentsService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly sharesService: SharesService,
+    @Inject(forwardRef(() => MountsService))
     private readonly mountsService: MountsService,
     private readonly poolsService: PoolsService,
     private readonly vlanService: VlanService,
@@ -379,6 +380,19 @@ export class AgentsService implements OnModuleInit {
           targetPath: updatedMount.targetPath,
           errorMessage,
         });
+      }
+      return;
+    }
+
+    if (result.resourceType === 'mount_cleanup') {
+      if (!result.success) {
+        const errorMessage = this.normalizeFailureMessage(result.message);
+        this.logger.error(`Mount cleanup for ${result.resourceId} failed: ${errorMessage}`);
+        await this.createSystemAlert(
+          `Nettoyage du montage ${result.resourceId} incomplet sur le nœud : ${errorMessage}. Vérifie manuellement /etc/fstab et le point de montage (les données distantes n'ont pas été touchées).`,
+        );
+      } else {
+        this.logger.log(`Mount cleanup for ${result.resourceId}: ${result.message ?? 'ok'}`);
       }
       return;
     }

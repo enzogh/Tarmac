@@ -52,6 +52,7 @@ export interface CommandPayload {
   type:
     | 'command.apply_export'
     | 'command.apply_mount'
+    | 'command.remove_mount'
     | 'command.apply_pool'
     | 'command.run_rsync'
     | 'command.stop_rsync'
@@ -70,6 +71,7 @@ export interface CommandResultPayload {
   command:
     | 'apply_export'
     | 'apply_mount'
+    | 'remove_mount'
     | 'apply_pool'
     | 'run_rsync'
     | 'stop_rsync'
@@ -83,6 +85,7 @@ export interface CommandResultPayload {
   resourceType:
     | 'share'
     | 'mount'
+    | 'mount_cleanup'
     | 'pool_member'
     | 'sync_job_run'
     | 'overlay'

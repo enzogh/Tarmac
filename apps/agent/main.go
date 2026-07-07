@@ -1638,27 +1638,41 @@ func persistExportInEtcExports(path, allowedCidr string) error {
 	}
 
 	lines := strings.Split(strings.ReplaceAll(string(content), "\r\n", "\n"), "\n")
+	kept := make([]string, 0, len(lines))
 	found := false
 	changed := false
 
-	for idx, line := range lines {
+	// Collapse to exactly one export line per path, regardless of how many
+	// duplicate/conflicting entries exist (manual edits, previous partial
+	// runs, ...). Multiple export lines for the same path confuse nfsd/mountd
+	// and can cause spurious "access denied" errors even when the client IP
+	// is within the allowed range.
+	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			kept = append(kept, line)
 			continue
 		}
 		fields := strings.Fields(trimmed)
 		if len(fields) == 0 || fields[0] != path {
+			kept = append(kept, line)
+			continue
+		}
+		if found {
+			changed = true // duplicate export for the same path, drop it
 			continue
 		}
 		found = true
 		if trimmed != entry {
-			lines[idx] = entry
+			kept = append(kept, entry)
 			changed = true
+		} else {
+			kept = append(kept, line)
 		}
 	}
 
 	if !found {
-		lines = append(lines, entry)
+		kept = append(kept, entry)
 		changed = true
 	}
 
@@ -1666,7 +1680,7 @@ func persistExportInEtcExports(path, allowedCidr string) error {
 		return nil
 	}
 
-	normalized := strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
+	normalized := strings.TrimRight(strings.Join(kept, "\n"), "\n") + "\n"
 	return os.WriteFile(exportsPath, []byte(normalized), 0o644)
 }
 
@@ -1715,6 +1729,100 @@ func persistMountInFstab(source, target, fsType, options string) error {
 	}
 
 	normalized := strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
+	if err := os.WriteFile(fstabPath, []byte(normalized), 0o644); err != nil {
+		return fmt.Errorf("cannot write %s: %w", fstabPath, err)
+	}
+
+	if commandExists("systemctl") {
+		if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
+			return fmt.Errorf("systemctl daemon-reload failed: %s", strings.TrimSpace(string(out)))
+		}
+	}
+
+	return nil
+}
+
+// removeMount undoes what applyMount did on this node: unmounts the target if
+// currently mounted, drops its /etc/fstab entry, and removes the local mount
+// point directory if (and only if) it is now empty. It never touches the
+// remote NFS/CIFS server or its data — umount only detaches the local view,
+// and the directory is removed with os.Remove (not RemoveAll), which refuses
+// to delete anything that still has content in it.
+func removeMount(payload map[string]interface{}) (string, error) {
+	target := readString(payload, "targetPath")
+	if target == "" {
+		return "", errors.New("remove_mount payload must include targetPath")
+	}
+
+	var notes []string
+
+	if _, mounted := isTargetMounted(target); mounted {
+		if out, err := exec.Command("umount", target).CombinedOutput(); err != nil {
+			if out2, err2 := exec.Command("umount", "-l", target).CombinedOutput(); err2 != nil {
+				return "", fmt.Errorf(
+					"cannot unmount %s: %s (lazy unmount also failed: %s)",
+					target, strings.TrimSpace(string(out)), strings.TrimSpace(string(out2)),
+				)
+			}
+			notes = append(notes, "lazy unmount used (target was busy)")
+		} else {
+			notes = append(notes, "unmounted")
+		}
+	} else {
+		notes = append(notes, "was not mounted")
+	}
+
+	if err := removeMountFromFstab(target); err != nil {
+		return "", fmt.Errorf("cannot remove fstab entry: %w", err)
+	}
+	notes = append(notes, "fstab entry removed")
+
+	if _, stillMounted := isTargetMounted(target); !stillMounted {
+		if err := os.Remove(target); err == nil {
+			notes = append(notes, "local mount point directory removed")
+		} else if !os.IsNotExist(err) {
+			notes = append(notes, fmt.Sprintf("kept local directory %s (%s)", target, err.Error()))
+		}
+	}
+
+	return strings.Join(notes, "; "), nil
+}
+
+func removeMountFromFstab(target string) error {
+	const fstabPath = "/etc/fstab"
+
+	content, err := os.ReadFile(fstabPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("cannot read %s: %w", fstabPath, err)
+	}
+
+	lines := strings.Split(strings.ReplaceAll(string(content), "\r\n", "\n"), "\n")
+	kept := make([]string, 0, len(lines))
+	changed := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			kept = append(kept, line)
+			continue
+		}
+
+		fields := strings.Fields(trimmed)
+		if len(fields) >= 2 && fields[1] == target {
+			changed = true
+			continue
+		}
+		kept = append(kept, line)
+	}
+
+	if !changed {
+		return nil
+	}
+
+	normalized := strings.TrimRight(strings.Join(kept, "\n"), "\n") + "\n"
 	if err := os.WriteFile(fstabPath, []byte(normalized), 0o644); err != nil {
 		return fmt.Errorf("cannot write %s: %w", fstabPath, err)
 	}
@@ -2486,6 +2594,17 @@ func handleCommand(cmd commandPayload, onProgress func(progress commandProgress)
 		result.ResourceType = "mount"
 		result.ResourceID = readString(cmd.Payload, "mountId")
 		message, err := applyMount(cmd.Payload)
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Message = message
+		}
+	case "command.remove_mount":
+		result.Command = "remove_mount"
+		result.ResourceType = "mount_cleanup"
+		result.ResourceID = readString(cmd.Payload, "mountId")
+		message, err := removeMount(cmd.Payload)
 		if err != nil {
 			result.Success = false
 			result.Message = err.Error()
