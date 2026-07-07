@@ -338,6 +338,17 @@ export class AgentsService implements OnModuleInit {
       });
     }
 
+    // Remove disks no longer reported by the agent (e.g. unmounted or
+    // no-longer-tracked NFS shares) so stale entries don't inflate storage totals.
+    if (payload.disks.length > 0) {
+      await this.prisma.disk.deleteMany({
+        where: {
+          nodeId: payload.nodeId,
+          name: { notIn: payload.disks.map((disk) => disk.name) },
+        },
+      });
+    }
+
     if (payload.smartReports.length > 0) {
       await this.prisma.smartReport.createMany({
         data: payload.smartReports.map((report) => ({
