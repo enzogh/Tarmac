@@ -2,10 +2,12 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bell, Eye, CheckCircle2, Info, AlertCircle, AlertTriangle, Circle, Trash2 } from 'lucide-react';
+import { Bell, Eye, CheckCircle2, AlertCircle, AlertTriangle, Circle, Trash2 } from 'lucide-react';
 import { api, AlertItem } from '../../../lib/api';
 import { DashboardLayout } from '../../../components/DashboardLayout';
-import { Badge } from '../../../components/ui';
+import { PageHeader } from '../../../components/PageHeader';
+import { Callout } from '../../../components/Callout';
+import { Badge, StatCard } from '../../../components/ui';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
@@ -72,6 +74,23 @@ export default function AlertsPage() {
     }
   };
 
+  const getSeverityLabel = (severity: string): string => {
+    switch (severity) {
+      case 'critical': return 'Critique';
+      case 'high': return 'Grave';
+      case 'medium': return 'Moyen';
+      default: return 'Faible';
+    }
+  };
+
+  const getStatusLabel = (status: string): string => {
+    switch (status) {
+      case 'resolved': return 'Résolu';
+      case 'acknowledged': return 'Reconnu';
+      default: return 'Ouvert';
+    }
+  };
+
   const getSeverityIcon = (severity: string) => {
     switch (severity) {
       case 'critical': return <AlertCircle className="h-5 w-5 text-rose-400" />;
@@ -91,34 +110,22 @@ export default function AlertsPage() {
   return (
     <DashboardLayout>
       <div className="space-y-8">
-        <div className="space-y-1">
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Alertes</h1>
-          <p className="text-sm text-muted-foreground">Notifications et incidents du système.</p>
-        </div>
+        <PageHeader
+          icon={Bell}
+          title="Alertes"
+          description="Notifications déclenchées par vos règles de seuil (CPU, RAM, espace disque…)."
+        />
 
-        {/* Info callout */}
-        <div className="flex items-start gap-3 rounded-xl border border-blue-500/20 bg-blue-500/[0.07] px-4 py-3">
-          <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-400" />
-          <p className="text-sm text-blue-300/80">
-            Les alertes sont générées automatiquement par le système. Utilisez <strong className="text-blue-200">Marquer comme lu</strong> pour indiquer que vous avez vu l'alerte,
-            <strong className="text-blue-200"> Résoudre</strong> une fois le problème corrigé, ou <strong className="text-blue-200">Supprimer</strong> pour nettoyer l’historique.
-          </p>
-        </div>
+        <Callout>
+          Marquez une alerte comme lue pour indiquer que vous l'avez vue, résolvez-la une fois le problème corrigé,
+          ou supprimez-la pour nettoyer l'historique.
+        </Callout>
 
         {/* Summary cards */}
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <div className="rounded-xl border border-rose-500/20 bg-rose-500/[0.07] p-4">
-            <p className="text-sm text-rose-300">Critiques actives</p>
-            <p className="mt-2 text-3xl font-bold text-rose-400">{critical}</p>
-          </div>
-          <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.07] p-4">
-            <p className="text-sm text-amber-300">Avertissements actifs</p>
-            <p className="mt-2 text-3xl font-bold text-amber-400">{warnings}</p>
-          </div>
-          <div className="rounded-xl border border-sky-500/20 bg-sky-500/[0.07] p-4">
-            <p className="text-sm text-sky-300">Total</p>
-            <p className="mt-2 text-3xl font-bold text-sky-400">{alerts.length}</p>
-          </div>
+          <StatCard label="Critiques actives" value={critical} icon={<AlertCircle className="h-8 w-8" />} changeType={critical > 0 ? 'down' : 'up'} />
+          <StatCard label="Avertissements actifs" value={warnings} icon={<AlertTriangle className="h-8 w-8" />} changeType={warnings > 0 ? 'neutral' : 'up'} />
+          <StatCard label="Total" value={alerts.length} icon={<Bell className="h-8 w-8" />} changeType="neutral" />
         </div>
 
         <Card>
@@ -181,14 +188,14 @@ export default function AlertsPage() {
                         </p>
                       </div>
                       <Badge
-                        label={alert.severity}
+                        label={getSeverityLabel(alert.severity)}
                         type={getSeverityColor(alert.severity)}
                       />
                     </div>
 
                     <div className="flex items-center gap-2 mb-3">
                       <Badge
-                        label={alert.status}
+                        label={getStatusLabel(alert.status)}
                         type={alert.status === 'resolved' ? 'success' : 'info'}
                       />
                     </div>

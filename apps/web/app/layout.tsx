@@ -3,8 +3,8 @@ import type { Metadata } from 'next';
 import { getAppVersion } from '../lib/app-version';
 
 export const metadata: Metadata = {
-  title: 'Tarmac Dashboard',
-  description: 'Premium storage operations dashboard',
+  title: 'Tarmac — Stockage NFS interconnecté',
+  description: "Tarmac orchestre une flotte de nœuds de stockage interconnectés : partages NFS, montages, réplication, migrations et supervision réseau.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

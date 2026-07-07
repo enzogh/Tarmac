@@ -91,6 +91,18 @@ export type SyncJobItem = {
   schedule: string;
   status: 'pending' | 'running' | 'success' | 'failed';
   nodeId?: string | null;
+  lastRunAt?: string | null;
+};
+
+export type SyncJobRunItem = {
+  id: string;
+  syncJobId: string;
+  status: 'pending' | 'running' | 'success' | 'failed';
+  trigger: string;
+  bytesTransferred: number;
+  log?: string | null;
+  startedAt: string;
+  finishedAt?: string | null;
 };
 
 export type MigrationItem = {
@@ -396,6 +408,15 @@ export const api = {
     list: (token: string) => request<PoolItem[]>('/api/v1/pools', token),
     create: (token: string, payload: { name: string; strategy: string }) =>
       request<PoolItem>('/api/v1/pools', token, { method: 'POST', body: JSON.stringify(payload) }),
+    delete: (token: string, id: string) => request<void>(`/api/v1/pools/${id}`, token, { method: 'DELETE' }),
+    addMember: (
+      token: string,
+      poolId: string,
+      payload: { nodeId: string; role: 'primary' | 'replica'; status: 'pending' | 'active' | 'error' },
+    ) =>
+      request(`/api/v1/pools/${poolId}/members`, token, { method: 'POST', body: JSON.stringify(payload) }),
+    removeMember: (token: string, poolId: string, nodeId: string) =>
+      request<void>(`/api/v1/pools/${poolId}/members/${nodeId}`, token, { method: 'DELETE' }),
   },
 
   alerts: {
@@ -412,6 +433,8 @@ export const api = {
       payload: { name: string; sourcePath: string; targetPath: string; schedule: string; nodeId?: string },
     ) => request<SyncJobItem>('/api/v1/sync-jobs', token, { method: 'POST', body: JSON.stringify(payload) }),
     run: (token: string, id: string) => request(`/api/v1/sync-jobs/${id}/runs`, token, { method: 'POST' }),
+    runs: (token: string, id: string) => request<SyncJobRunItem[]>(`/api/v1/sync-jobs/${id}/runs`, token),
+    delete: (token: string, id: string) => request<void>(`/api/v1/sync-jobs/${id}`, token, { method: 'DELETE' }),
   },
 
   migrations: {
