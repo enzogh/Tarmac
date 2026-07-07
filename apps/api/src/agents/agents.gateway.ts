@@ -7,23 +7,28 @@ import {
   WebSocketGateway,
 } from '@nestjs/websockets';
 import { Socket } from 'socket.io';
+import { AgentTokenService } from './agent-token.service';
 import { AgentsService } from './agents.service';
 import { CommandProgressPayload, CommandResultPayload, HeartbeatPayload, StateReportPayload } from './agents.types';
 
 @WebSocketGateway({ namespace: '/agents', cors: { origin: '*' } })
 export class AgentsGateway implements OnGatewayConnection, OnGatewayDisconnect {
-  constructor(private readonly agentsService: AgentsService) {}
+  constructor(
+    private readonly agentsService: AgentsService,
+    private readonly agentTokenService: AgentTokenService,
+  ) {}
 
-  handleConnection(client: Socket) {
+  async handleConnection(client: Socket) {
     const nodeId = String(client.handshake.query.nodeId ?? '');
     const token = String(client.handshake.query.token ?? '');
-    if (!nodeId || token !== (process.env.AGENT_SHARED_TOKEN ?? 'agent-secret')) {
+    if (!nodeId || !(await this.agentTokenService.verify(nodeId, token))) {
       client.disconnect();
       return;
     }
 
     client.data.nodeId = nodeId;
     this.agentsService.register(nodeId, (event, payload) => client.emit(event, payload));
+    void this.agentTokenService.resendPendingRotationIfNeeded(nodeId);
   }
 
   handleDisconnect(client: Socket) {
