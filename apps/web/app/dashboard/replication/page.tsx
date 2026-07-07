@@ -22,6 +22,7 @@ import { Button } from '../../../components/ui/button';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Badge } from '../../../components/ui';
 import { HelpText, InfoBox, StepConfig, WizardDialog } from '../../../components/ui/wizard';
+import { readNodeLabels } from '../../../lib/node-labels';
 
 const STATUS_BADGE: Record<string, { label: string; type: 'success' | 'warning' | 'error' | 'info' }> = {
   success: { label: 'Réussi', type: 'success' },
@@ -41,6 +42,7 @@ export default function ReplicationPage() {
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
   const [runsByJob, setRunsByJob] = useState<Record<string, SyncJobRunItem[]>>({});
+  const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
 
   const [formData, setFormData] = useState({
     name: '',
@@ -70,6 +72,10 @@ export default function ReplicationPage() {
     const id = setInterval(() => void load(), 5000);
     return () => clearInterval(id);
   }, [token]);
+
+  useEffect(() => {
+    setNodeLabels(readNodeLabels());
+  }, []);
 
   const resetForm = () => setFormData({ name: '', nodeId: '', sourcePath: '', targetPath: '' });
 
@@ -107,7 +113,7 @@ export default function ReplicationPage() {
               <option value="">-- Choisir un nœud --</option>
               {nodes.map((node) => (
                 <option key={node.id} value={node.id}>
-                  {node.name} ({node.status})
+                  {node.name} ({node.status}){(nodeLabels[node.id]?.length ?? 0) > 0 ? ` — ${nodeLabels[node.id].join(', ')}` : ''}
                 </option>
               ))}
             </select>

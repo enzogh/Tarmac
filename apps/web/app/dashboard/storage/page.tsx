@@ -22,7 +22,8 @@ import { Callout } from '../../../components/Callout';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
-import { Badge } from '../../../components/ui';
+import { Badge, NodeLabelBadges } from '../../../components/ui';
+import { readNodeLabels } from '../../../lib/node-labels';
 import {
   WizardDialog,
   PresetSelector,
@@ -79,6 +80,7 @@ export default function StoragePage() {
   const [selectedPreset, setSelectedPreset] = useState<PresetOption | null>(null);
   const [notice, setNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
   const [busyPoolId, setBusyPoolId] = useState<string | null>(null);
+  const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
 
   const [formData, setFormData] = useState({
     name: '',
@@ -107,6 +109,10 @@ export default function StoragePage() {
     const id = setInterval(() => void load(), 5000);
     return () => clearInterval(id);
   }, [token]);
+
+  useEffect(() => {
+    setNodeLabels(readNodeLabels());
+  }, []);
 
   const resetForm = () => {
     setFormData({ name: '', strategy: 'mirror', nodeIds: [] });
@@ -182,6 +188,7 @@ export default function StoragePage() {
                       <input type="checkbox" checked={checked} onChange={() => toggleNode(node.id)} className="h-4 w-4 rounded" />
                       {node.name}
                       <span className="text-xs text-muted-foreground">({node.status})</span>
+                      <NodeLabelBadges labels={nodeLabels[node.id] ?? []} className="ml-2" />
                     </span>
                     {checked && (
                       <Badge label={index === 0 ? 'primary' : 'replica'} type={index === 0 ? 'info' : 'success'} />

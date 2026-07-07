@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { api, VlanConnection, VlanConnectionTest, VlanStatus } from '@/lib/api';
 import { GeoInfo, flagFromCountryCode, getGeoInfo, parseHostFromEndpoint } from '@/lib/geo';
+import { readNodeLabels } from '../../../lib/node-labels';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { PageHeader } from '../../../components/PageHeader';
 import { Callout } from '../../../components/Callout';
@@ -194,9 +195,14 @@ export default function NetworkPage() {
     to?: string;
     type?: TestType;
   }>({});
+  const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
   const svgRef = useRef<SVGSVGElement | null>(null);
   const panRef = useRef<{ pointerId: number; startX: number; startY: number; startTx: number; startTy: number } | null>(null);
   const nodeDragRef = useRef<{ pointerId: number; nodeId: string; offsetX: number; offsetY: number } | null>(null);
+
+  useEffect(() => {
+    setNodeLabels(readNodeLabels());
+  }, []);
 
   useEffect(() => {
     const members = vlanStatus?.vlan.members ?? [];
@@ -1203,7 +1209,9 @@ export default function NetworkPage() {
                 <SelectContent>
                   {(vlanStatus.vlan.members || []).map((m) => (
                     <SelectItem key={m.id} value={m.nodeId}>
-                      {(m.node?.name || m.nodeId) + ` (${m.vlanIp})`}
+                      {(m.node?.name || m.nodeId) +
+                        ` (${m.vlanIp})` +
+                        ((nodeLabels[m.nodeId]?.length ?? 0) > 0 ? ` — ${nodeLabels[m.nodeId].join(', ')}` : '')}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1224,7 +1232,9 @@ export default function NetworkPage() {
                     .filter((m) => m.nodeId !== selectedTest.from)
                     .map((m) => (
                       <SelectItem key={m.id} value={m.nodeId}>
-                        {(m.node?.name || m.nodeId) + ` (${m.vlanIp})`}
+                        {(m.node?.name || m.nodeId) +
+                          ` (${m.vlanIp})` +
+                          ((nodeLabels[m.nodeId]?.length ?? 0) > 0 ? ` — ${nodeLabels[m.nodeId].join(', ')}` : '')}
                       </SelectItem>
                     ))}
                 </SelectContent>
