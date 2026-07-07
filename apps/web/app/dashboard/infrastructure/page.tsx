@@ -2,8 +2,10 @@
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import {
   ArrowDownToLine,
+  ArrowRight,
   ArrowUpToLine,
   Cpu,
   Eye,
@@ -12,22 +14,23 @@ import {
   GitCommitHorizontal,
   Globe2,
   HardDrive,
-  Layers3,
   MapPin,
   Network,
   Pencil,
-  Plus,
   RefreshCcw,
   Server,
   Tags,
   Trash2,
 } from 'lucide-react';
-import { api, DirectoryScanEntry, NodeActivityItem, NodeMetricSample, PoolItem } from '../../../lib/api';
+import { api, DirectoryScanEntry, NodeActivityItem, NodeMetricSample } from '../../../lib/api';
 import { GeoInfo, flagFromCountryCode, getGeoInfo, parseHostFromEndpoint } from '../../../lib/geo';
+import { readNodeLabels, writeNodeLabels } from '../../../lib/node-labels';
 import { DashboardLayout } from '../../../components/DashboardLayout';
+import { PageHeader } from '../../../components/PageHeader';
 import { Callout } from '../../../components/Callout';
 import { ServerTrendCard } from '../../../components/ServerTrendCard';
-import { Badge } from '../../../components/ui';
+import { NodeComparisonChart } from '../../../components/dashboard-charts';
+import { StatCard, Badge } from '../../../components/ui';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
@@ -45,6 +48,10 @@ import { NodeOnboardingModal } from '../../../components/NodeOnboardingModal';
 import { Progress } from '../../../components/ui/progress';
 import { DirectoryBrowser } from '../../../components/ui/directory-browser';
 
+function SectionLabel({ children }: { children: string }) {
+  return <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-400">{children}</p>;
+}
+
 const formatMbps = (value: number) => `${((value * 8) / 1_000_000).toFixed(2)} MB/s`;
 
 const formatBytes = (value: number) => {
@@ -57,21 +64,6 @@ const formatBytes = (value: number) => {
 };
 
 const formatDateTime = (value?: string | null) => (value ? new Date(value).toLocaleString('fr-FR') : '-');
-const LABELS_STORAGE_KEY = 'tarmac_node_labels_v1';
-
-const readNodeLabels = () => {
-  if (typeof window === 'undefined') return {} as Record<string, string[]>;
-  try {
-    return (JSON.parse(localStorage.getItem(LABELS_STORAGE_KEY) ?? '{}') ?? {}) as Record<string, string[]>;
-  } catch {
-    return {};
-  }
-};
-
-const writeNodeLabels = (value: Record<string, string[]>) => {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(LABELS_STORAGE_KEY, JSON.stringify(value));
-};
 
 export default function InfrastructurePage() {
   const router = useRouter();
@@ -79,11 +71,6 @@ export default function InfrastructurePage() {
 
   const [nodes, setNodes] = useState<NodeActivityItem[]>([]);
   const [samplesByNode, setSamplesByNode] = useState<Record<string, NodeMetricSample[]>>({});
-  const [pools, setPools] = useState<PoolItem[]>([]);
-
-  const [poolDialogOpen, setPoolDialogOpen] = useState(false);
-  const [poolName, setPoolName] = useState('');
-  const [poolStrategy, setPoolStrategy] = useState('mirror');
 
   const [editNode, setEditNode] = useState<NodeActivityItem | null>(null);
   const [editName, setEditName] = useState('');
@@ -109,14 +96,13 @@ export default function InfrastructurePage() {
   const load = async () => {
     if (!token) return;
     try {
-      const [n, p] = await Promise.all([api.nodes.activity(token), api.pools.list(token)]);
+      const n = await api.nodes.activity(token);
       const topNodes = [...n].sort((left, right) => right.metrics.cpu - left.metrics.cpu).slice(0, 6);
       const histories = await Promise.all(
         topNodes.map(async (node) => [node.id, await api.nodes.metrics(token, node.id, '6h')] as const),
       );
       setNodes(n);
       setSamplesByNode(Object.fromEntries(histories));
-      setPools(p);
     } catch {
       localStorage.removeItem('tarmac_token');
       router.push('/login');
@@ -224,16 +210,6 @@ export default function InfrastructurePage() {
     };
   }, [nodes, geoByIp]);
 
-  const createPool = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!token) return;
-    await api.pools.create(token, { name: poolName, strategy: poolStrategy });
-    setPoolName('');
-    setPoolStrategy('mirror');
-    await load();
-    setPoolDialogOpen(false);
-  };
-
   const deleteNode = async (node: NodeActivityItem) => {
     if (!token) return;
     const result = await api.nodes.delete(token, node.id);
@@ -327,6 +303,11 @@ export default function InfrastructurePage() {
 
   const selectedExplorerNode = nodes.find((node) => node.id === selectedExplorerNodeId) ?? null;
   const scanMax = scanResults[0]?.sizeBytes ?? 1;
+  const nodeComparisonData = nodes.map((node) => ({
+    name: node.name,
+    cpu: Math.round(node.metrics.cpu),
+    ram: Math.round(node.metrics.ram),
+  }));
 
   const getExternalIp = (node: NodeActivityItem) =>
     parseHostFromEndpoint(node.externalIp || node.overlayEndpoint) ?? '-';
@@ -338,100 +319,11 @@ export default function InfrastructurePage() {
   return (
     <DashboardLayout>
       <div className="space-y-8">
-        <section className="relative overflow-hidden rounded-3xl border border-violet-500/20 bg-radial-premium p-6 shadow-panel lg:p-8">
-          <div className="pointer-events-none absolute -right-16 -top-16 h-52 w-52 rounded-full bg-violet-500/20 blur-3xl" />
-          <div className="relative space-y-4">
-            <div className="space-y-1">
-              <h1 className="text-3xl font-semibold tracking-tight text-foreground">Infrastructure</h1>
-              <p className="max-w-3xl text-sm text-zinc-300">
-                Pilotage des nœuds, monitoring temps réel, scan volumétrique des dossiers et opérations agent sans CLI.
-              </p>
-            </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
-              <Card className="border-white/10 bg-zinc-950/55">
-                <CardContent className="flex items-center justify-between p-4">
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Nœuds online</p>
-                    <p className="text-2xl font-semibold text-emerald-300">{onlineNodes}</p>
-                  </div>
-                  <Server className="h-5 w-5 text-emerald-300" />
-                </CardContent>
-              </Card>
-              <Card className="border-white/10 bg-zinc-950/55">
-                <CardContent className="flex items-center justify-between p-4">
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Nœuds dégradés</p>
-                    <p className="text-2xl font-semibold text-amber-300">{degradedNodes}</p>
-                  </div>
-                  <Gauge className="h-5 w-5 text-amber-300" />
-                </CardContent>
-              </Card>
-              <Card className="border-white/10 bg-zinc-950/55">
-                <CardContent className="flex items-center justify-between p-4">
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">CPU moyen</p>
-                    <p className="text-2xl font-semibold text-violet-200">{Math.round(avgCpu)}%</p>
-                  </div>
-                  <Cpu className="h-5 w-5 text-violet-300" />
-                </CardContent>
-              </Card>
-              <Card className="border-white/10 bg-zinc-950/55">
-                <CardContent className="flex items-center justify-between p-4">
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">RAM moyenne</p>
-                    <p className="text-2xl font-semibold text-cyan-200">{Math.round(avgRam)}%</p>
-                  </div>
-                  <HardDrive className="h-5 w-5 text-cyan-300" />
-                </CardContent>
-              </Card>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Card
-                    className={`cursor-default border-white/10 bg-zinc-950/55 ${
-                      outdatedNodes > 0 ? 'ring-1 ring-amber-500/30' : ''
-                    }`}
-                  >
-                    <CardContent className="flex items-center justify-between p-4">
-                      <div>
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Version agent</p>
-                        <p
-                          className={`text-2xl font-semibold ${
-                            nodes.length === 0
-                              ? 'text-zinc-300'
-                              : fleetVersionAligned
-                                ? 'text-emerald-300'
-                                : 'text-amber-300'
-                          }`}
-                        >
-                          {upToDateNodes}/{nodes.length}
-                        </p>
-                        {controlVersion && (
-                          <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
-                            réf. {controlVersion}
-                          </p>
-                        )}
-                      </div>
-                      <GitCommitHorizontal
-                        className={`h-5 w-5 ${fleetVersionAligned ? 'text-emerald-300' : 'text-amber-300'}`}
-                      />
-                    </CardContent>
-                  </Card>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {nodes.length === 0
-                    ? 'Aucun nœud enregistré'
-                    : fleetVersionAligned
-                      ? 'Tous les agents tournent sur le même commit que le contrôleur'
-                      : `${outdatedNodes} nœud(s) à mettre à jour vers ${controlVersion ?? 'la dernière version'}`}
-                </TooltipContent>
-              </Tooltip>
-            </div>
-          </div>
-        </section>
-
-        <Callout>
-          Parcourez les dossiers d'un nœud puis lancez un scan volumétrique pour repérer les répertoires les plus lourds.
-        </Callout>
+        <PageHeader
+          icon={Server}
+          title="Infrastructure"
+          description="Pilotage des nœuds, monitoring temps réel, scan volumétrique des dossiers et opérations agent sans CLI."
+        />
 
         {updateNotice && (
           <div
@@ -445,25 +337,82 @@ export default function InfrastructurePage() {
           </div>
         )}
 
-        <Card className="border-white/[0.08] bg-zinc-900/65">
-          <CardHeader>
-            <CardTitle>Cartes de performance (CPU/RAM en %)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-              {[...nodes].sort((left, right) => right.metrics.cpu - left.metrics.cpu).slice(0, 6).map((node) => (
-                <ServerTrendCard key={node.id} node={node} samples={samplesByNode[node.id] ?? []} />
-              ))}
-              {nodes.length === 0 && (
-                <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
-                  Aucun nœud détecté pour le moment.
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        <section className="space-y-4">
+          <SectionLabel>Aperçu</SectionLabel>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+            <StatCard label="Nœuds online" value={onlineNodes} icon={<Server className="h-8 w-8" />} changeType="up" />
+            <StatCard
+              label="Nœuds dégradés"
+              value={degradedNodes}
+              icon={<Gauge className="h-8 w-8" />}
+              changeType={degradedNodes > 0 ? 'neutral' : 'up'}
+            />
+            <StatCard label="CPU moyen" value={`${Math.round(avgCpu)}%`} icon={<Cpu className="h-8 w-8" />} changeType="neutral" />
+            <StatCard label="RAM moyenne" value={`${Math.round(avgRam)}%`} icon={<HardDrive className="h-8 w-8" />} changeType="neutral" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div>
+                  <StatCard
+                    label="Version agent"
+                    value={`${upToDateNodes}/${nodes.length}`}
+                    change={controlVersion ? `réf. ${controlVersion}` : undefined}
+                    changeType={nodes.length === 0 ? 'neutral' : fleetVersionAligned ? 'up' : 'down'}
+                    icon={<GitCommitHorizontal className="h-8 w-8" />}
+                  />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>
+                {nodes.length === 0
+                  ? 'Aucun nœud enregistré'
+                  : fleetVersionAligned
+                    ? 'Tous les agents tournent sur le même commit que le contrôleur'
+                    : `${outdatedNodes} nœud(s) à mettre à jour vers ${controlVersion ?? 'la dernière version'}`}
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        </section>
 
-        <div className="grid gap-4 xl:grid-cols-[1.25fr_minmax(0,1fr)]">
+        <section className="space-y-4">
+          <SectionLabel>Performance</SectionLabel>
+          <Card className="border-white/[0.08] bg-zinc-900/65">
+            <CardHeader>
+              <CardTitle className="text-base">Comparaison CPU / RAM par nœud</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <NodeComparisonChart data={nodeComparisonData} />
+            </CardContent>
+          </Card>
+
+          <Card className="border-white/[0.08] bg-zinc-900/65">
+            <CardHeader>
+              <CardTitle className="text-base">Détail des serveurs les plus actifs</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                {[...nodes].sort((left, right) => right.metrics.cpu - left.metrics.cpu).slice(0, 6).map((node) => (
+                  <ServerTrendCard
+                    key={node.id}
+                    node={node}
+                    samples={samplesByNode[node.id] ?? []}
+                    labels={nodeLabels[node.id] ?? []}
+                  />
+                ))}
+                {nodes.length === 0 && (
+                  <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
+                    Aucun nœud détecté pour le moment.
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </section>
+
+        <section className="space-y-4">
+          <SectionLabel>Exploration</SectionLabel>
+          <Callout>
+            Parcourez les dossiers d'un nœud puis lancez un scan volumétrique pour repérer les répertoires les plus lourds.
+          </Callout>
+          <div className="grid gap-4 xl:grid-cols-[1.25fr_minmax(0,1fr)]">
           <Card className="border-white/[0.08] bg-zinc-900/65">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
@@ -563,9 +512,12 @@ export default function InfrastructurePage() {
               </div>
             </CardContent>
           </Card>
-        </div>
+          </div>
+        </section>
 
-        <Card className="border-white/[0.08] bg-zinc-900/65">
+        <section className="space-y-4">
+          <SectionLabel>Nœuds</SectionLabel>
+          <Card className="border-white/[0.08] bg-zinc-900/65">
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -763,58 +715,23 @@ export default function InfrastructurePage() {
             )}
           </CardContent>
         </Card>
+        </section>
 
         <Callout>
-          Un pool regroupe des nœuds selon une stratégie : <strong className="text-violet-100">Mirror</strong> (copie
-          redondante), <strong className="text-violet-100">RAID</strong> (distribution) ou{' '}
-          <strong className="text-violet-100">Single</strong> (stockage simple).
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>
+              Les pools de stockage (regroupement de nœuds selon une stratégie miroir/RAID/simple) se gèrent depuis la
+              page Stockage.
+            </span>
+            <Link
+              href="/dashboard/storage"
+              className="inline-flex shrink-0 items-center gap-1.5 text-sm font-medium text-violet-200 hover:text-violet-100"
+            >
+              Aller à Stockage
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
         </Callout>
-
-        <Card className="border-white/[0.08] bg-zinc-900/65">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Layers3 className="h-5 w-5 text-violet-400" />
-                <CardTitle>Pools</CardTitle>
-              </div>
-              <div className="flex items-center gap-2">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button size="sm" onClick={() => setPoolDialogOpen(true)}>
-                      <Plus className="h-4 w-4" />
-                      Nouveau pool
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Créer un pool de stockage</TooltipContent>
-                </Tooltip>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {pools.map((pool) => (
-              <div key={pool.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <div>
-                    <p className="font-semibold text-foreground">{pool.name}</p>
-                    <p className="text-xs capitalize text-muted-foreground">{pool.strategy}</p>
-                  </div>
-                  <Badge label={pool.status} type={pool.status === 'active' ? 'success' : 'warning'} />
-                </div>
-                <div className="space-y-1 text-xs text-muted-foreground">
-                  {pool.members.map((member) => (
-                    <div key={member.nodeId} className="flex items-center justify-between">
-                      <span>{member.nodeId}</span>
-                      <span className="capitalize">
-                        {member.role} · {member.status}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-            {pools.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">Aucun pool</p>}
-          </CardContent>
-        </Card>
 
         <Dialog
           open={!!inspectingNode}
@@ -955,39 +872,6 @@ export default function InfrastructurePage() {
                 Supprimer
               </Button>
             </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        <Dialog open={poolDialogOpen} onOpenChange={setPoolDialogOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Créer un pool</DialogTitle>
-            </DialogHeader>
-            <form onSubmit={createPool} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="pool-name">Nom du pool</Label>
-                <Input id="pool-name" value={poolName} onChange={(e) => setPoolName(e.target.value)} required />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="pool-strategy">Stratégie</Label>
-                <Select value={poolStrategy} onValueChange={setPoolStrategy}>
-                  <SelectTrigger id="pool-strategy">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="mirror">Mirror</SelectItem>
-                    <SelectItem value="raid">RAID</SelectItem>
-                    <SelectItem value="single">Single</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <DialogFooter>
-                <Button type="button" variant="secondary" onClick={() => setPoolDialogOpen(false)}>
-                  Annuler
-                </Button>
-                <Button type="submit">Créer</Button>
-              </DialogFooter>
-            </form>
           </DialogContent>
         </Dialog>
       </div>

@@ -25,6 +25,12 @@
     --ring: 263 70% 50%;
     --radius: 0.75rem;
 
+    --chart-1: 258 90% 66%;
+    --chart-2: 199 89% 64%;
+    --chart-3: 158 64% 52%;
+    --chart-4: 43 96% 56%;
+    --chart-5: 351 89% 71%;
+
     color-scheme: dark;
   }
 
