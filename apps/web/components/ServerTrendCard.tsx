@@ -4,7 +4,7 @@ import { useId, useMemo } from 'react';
 import { Cpu, Network, HardDrive } from 'lucide-react';
 import { NodeActivityItem, NodeMetricSample } from '../lib/api';
 import { cn } from '../lib/utils';
-import { Badge } from './ui';
+import { Badge, NodeLabelBadges } from './ui';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Progress } from './ui/progress';
 
@@ -101,12 +101,13 @@ export function Sparkline({
 type ServerTrendCardProps = {
   node: NodeActivityItem;
   samples: NodeMetricSample[];
+  labels?: string[];
   className?: string;
 };
 
 const formatRate = (value: number) => `${((value * 8) / 1_000_000).toFixed(2)} MBPS`;
 
-export function ServerTrendCard({ node, samples, className }: ServerTrendCardProps) {
+export function ServerTrendCard({ node, samples, labels = [], className }: ServerTrendCardProps) {
   const cpuSeries = samples.map((sample) => sample.cpu);
   const ramSeries = samples.map((sample) => sample.ram);
   const cpuDelta = cpuSeries.length > 1 ? cpuSeries[cpuSeries.length - 1] - cpuSeries[0] : 0;
@@ -123,6 +124,7 @@ export function ServerTrendCard({ node, samples, className }: ServerTrendCardPro
               {node.role}
               {node.lastSeenAt ? ` · ${new Date(node.lastSeenAt).toLocaleString('fr-FR')}` : ''}
             </p>
+            {labels.length > 0 && <NodeLabelBadges labels={labels} className="mt-2" />}
           </div>
           <Badge
             label={node.status}
