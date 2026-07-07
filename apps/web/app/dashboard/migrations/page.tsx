@@ -25,7 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui
 import { Progress } from '../../../components/ui/progress';
 import { Button } from '../../../components/ui/button';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
-import { Badge } from '../../../components/ui/badge';
+import { Badge, StatCard } from '../../../components/ui';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import {
@@ -100,6 +100,57 @@ const isRemoteKind = (kind: MigrationEndpointKind | null | undefined): kind is E
   kind === 'seedbox' || kind === 'storagebox';
 const isStorageboxKind = (kind: MigrationEndpointKind | null | undefined): kind is 'storagebox' => kind === 'storagebox';
 const defaultBrowsePath = (kind: MigrationEndpointKind) => (kind === 'storagebox' ? '/home' : '/');
+
+interface RemoteEndpointFieldsProps {
+  role: 'source' | 'destination';
+  isStoragebox: boolean;
+  hostPlaceholder: string;
+  host: string;
+  user: string;
+  password: string;
+  port: string;
+  onHostChange: (value: string) => void;
+  onUserChange: (value: string) => void;
+  onPasswordChange: (value: string) => void;
+  onPortChange: (value: string) => void;
+}
+
+function RemoteEndpointFields({
+  role,
+  isStoragebox,
+  hostPlaceholder,
+  host,
+  user,
+  password,
+  port,
+  onHostChange,
+  onUserChange,
+  onPasswordChange,
+  onPortChange,
+}: RemoteEndpointFieldsProps) {
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      <div>
+        <Label className="mb-2 block text-sm font-medium text-zinc-200">
+          {isStoragebox ? `Host Storage Box ${role}` : `Host seedbox ${role}`}
+        </Label>
+        <Input value={host} onChange={(e) => onHostChange(e.target.value)} placeholder={hostPlaceholder} />
+      </div>
+      <div>
+        <Label className="mb-2 block text-sm font-medium text-zinc-200">Utilisateur {role}</Label>
+        <Input value={user} onChange={(e) => onUserChange(e.target.value)} placeholder="username" />
+      </div>
+      <div>
+        <Label className="mb-2 block text-sm font-medium text-zinc-200">Mot de passe {role}</Label>
+        <Input type="password" value={password} onChange={(e) => onPasswordChange(e.target.value)} placeholder="••••••••" />
+      </div>
+      <div>
+        <Label className="mb-2 block text-sm font-medium text-zinc-200">Port SSH {role}</Label>
+        <Input value={port} onChange={(e) => onPortChange(e.target.value)} placeholder={isStoragebox ? '23' : '22'} />
+      </div>
+    </div>
+  );
+}
 
 export default function MigrationsPage() {
   const router = useRouter();
@@ -285,11 +336,11 @@ export default function MigrationsPage() {
     completed: 'Terminée',
     failed: 'Échouée',
   };
-  const statusBadgeVariant: Record<MigrationItem['status'], 'warning' | 'info' | 'success' | 'destructive'> = {
+  const statusBadgeVariant: Record<MigrationItem['status'], 'warning' | 'info' | 'success' | 'error'> = {
     pending: 'warning',
     running: 'info',
     completed: 'success',
-    failed: 'destructive',
+    failed: 'error',
   };
 
   const metrics = useMemo(
@@ -523,9 +574,9 @@ export default function MigrationsPage() {
             }}
           />
           {selectedPreset && (
-            <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/[0.08] p-3 text-sm text-emerald-100">
-              ✓ Sélectionné: <strong>{selectedPreset.name}</strong>
-            </div>
+            <Callout variant="success" className="mt-4">
+              Sélectionné : <strong>{selectedPreset.name}</strong>
+            </Callout>
           )}
         </div>
       ),
@@ -614,43 +665,19 @@ export default function MigrationsPage() {
             </Select>
             </div>
           ) : (
-            <div className="grid gap-3 md:grid-cols-2">
-              <div>
-                <Label className="mb-2 block text-sm font-medium text-zinc-200">
-                  {isStorageboxKind(formData.sourceKind) ? 'Host Storage Box source' : 'Host seedbox source'}
-                </Label>
-                <Input
-                  value={formData.sourceSeedboxHost}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, sourceSeedboxHost: e.target.value, sourcePath: '' }))}
-                  placeholder={isStorageboxKind(formData.sourceKind) ? 'u123456.your-storagebox.de' : 'xx.ultra.cc'}
-                />
-              </div>
-              <div>
-                <Label className="mb-2 block text-sm font-medium text-zinc-200">Utilisateur source</Label>
-                <Input
-                  value={formData.sourceSeedboxUser}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, sourceSeedboxUser: e.target.value, sourcePath: '' }))}
-                  placeholder="username"
-                />
-              </div>
-              <div>
-                <Label className="mb-2 block text-sm font-medium text-zinc-200">Mot de passe source</Label>
-                <Input
-                  type="password"
-                  value={formData.sourceSeedboxPassword}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, sourceSeedboxPassword: e.target.value, sourcePath: '' }))}
-                  placeholder="••••••••"
-                />
-              </div>
-              <div>
-                <Label className="mb-2 block text-sm font-medium text-zinc-200">Port SSH source</Label>
-                <Input
-                  value={formData.sourceSeedboxPort}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, sourceSeedboxPort: e.target.value, sourcePath: '' }))}
-                  placeholder={isStorageboxKind(formData.sourceKind) ? '23' : '22'}
-                />
-              </div>
-            </div>
+            <RemoteEndpointFields
+              role="source"
+              isStoragebox={isStorageboxKind(formData.sourceKind)}
+              hostPlaceholder={isStorageboxKind(formData.sourceKind) ? 'u123456.your-storagebox.de' : 'xx.ultra.cc'}
+              host={formData.sourceSeedboxHost}
+              user={formData.sourceSeedboxUser}
+              password={formData.sourceSeedboxPassword}
+              port={formData.sourceSeedboxPort}
+              onHostChange={(value) => setFormData((prev) => ({ ...prev, sourceSeedboxHost: value, sourcePath: '' }))}
+              onUserChange={(value) => setFormData((prev) => ({ ...prev, sourceSeedboxUser: value, sourcePath: '' }))}
+              onPasswordChange={(value) => setFormData((prev) => ({ ...prev, sourceSeedboxPassword: value, sourcePath: '' }))}
+              onPortChange={(value) => setFormData((prev) => ({ ...prev, sourceSeedboxPort: value, sourcePath: '' }))}
+            />
           )}
 
           <div>
@@ -714,50 +741,26 @@ export default function MigrationsPage() {
             </Select>
             </div>
           ) : (
-            <div className="grid gap-3 md:grid-cols-2">
-              <div>
-                <Label className="mb-2 block text-sm font-medium text-zinc-200">
-                  {isStorageboxKind(formData.targetKind) ? 'Host Storage Box destination' : 'Host seedbox destination'}
-                </Label>
-                <Input
-                  value={formData.targetSeedboxHost}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, targetSeedboxHost: e.target.value, targetPath: '' }))}
-                  placeholder={isStorageboxKind(formData.targetKind) ? 'u123456.your-storagebox.de' : 'yy.ultra.cc'}
-                />
-              </div>
-              <div>
-                <Label className="mb-2 block text-sm font-medium text-zinc-200">Utilisateur destination</Label>
-                <Input
-                  value={formData.targetSeedboxUser}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, targetSeedboxUser: e.target.value, targetPath: '' }))}
-                  placeholder="username"
-                />
-              </div>
-              <div>
-                <Label className="mb-2 block text-sm font-medium text-zinc-200">Mot de passe destination</Label>
-                <Input
-                  type="password"
-                  value={formData.targetSeedboxPassword}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, targetSeedboxPassword: e.target.value, targetPath: '' }))}
-                  placeholder="••••••••"
-                />
-              </div>
-              <div>
-                <Label className="mb-2 block text-sm font-medium text-zinc-200">Port SSH destination</Label>
-                <Input
-                  value={formData.targetSeedboxPort}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, targetSeedboxPort: e.target.value, targetPath: '' }))}
-                  placeholder={isStorageboxKind(formData.targetKind) ? '23' : '22'}
-                />
-              </div>
-            </div>
+            <RemoteEndpointFields
+              role="destination"
+              isStoragebox={isStorageboxKind(formData.targetKind)}
+              hostPlaceholder={isStorageboxKind(formData.targetKind) ? 'u123456.your-storagebox.de' : 'yy.ultra.cc'}
+              host={formData.targetSeedboxHost}
+              user={formData.targetSeedboxUser}
+              password={formData.targetSeedboxPassword}
+              port={formData.targetSeedboxPort}
+              onHostChange={(value) => setFormData((prev) => ({ ...prev, targetSeedboxHost: value, targetPath: '' }))}
+              onUserChange={(value) => setFormData((prev) => ({ ...prev, targetSeedboxUser: value, targetPath: '' }))}
+              onPasswordChange={(value) => setFormData((prev) => ({ ...prev, targetSeedboxPassword: value, targetPath: '' }))}
+              onPortChange={(value) => setFormData((prev) => ({ ...prev, targetSeedboxPort: value, targetPath: '' }))}
+            />
           )}
 
           <Alert variant="info">
             <ArrowRightLeft className="h-4 w-4" />
             <AlertDescription>Flux prévu: source → destination. Vous pourrez modifier tant que ce n’est pas lancé.</AlertDescription>
           </Alert>
-          <div className="rounded-lg border border-white/10 bg-zinc-950/60 p-3">
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
             <p className="text-xs text-muted-foreground">Résultat attendu</p>
             <div className="mt-2 flex items-center gap-2 text-sm font-medium">
               <span>
@@ -850,7 +853,7 @@ export default function MigrationsPage() {
             ]}
           />
 
-          <div className="space-y-3 rounded-lg border border-white/[0.08] bg-zinc-900/60 p-4 text-sm">
+          <div className="space-y-3 rounded-xl border border-white/[0.08] bg-zinc-900/65 p-4 text-sm">
             <div className="flex justify-between border-b pb-2">
               <span className="text-muted-foreground">Migration:</span>
               <span className="font-mono font-semibold">{formData.name || '—'}</span>
@@ -921,43 +924,16 @@ export default function MigrationsPage() {
 
         <section className="space-y-4">
           <SectionLabel>Aperçu</SectionLabel>
-          <div className="grid gap-3 md:grid-cols-4">
-            <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
-              <CardContent className="flex items-center justify-between p-4">
-                <div>
-                  <p className="text-xs text-muted-foreground">Total</p>
-                  <p className="text-xl font-semibold">{metrics.total}</p>
-                </div>
-                <ArrowRightLeft className="h-5 w-5 text-violet-300" />
-              </CardContent>
-            </Card>
-            <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
-              <CardContent className="flex items-center justify-between p-4">
-                <div>
-                  <p className="text-xs text-muted-foreground">En cours</p>
-                  <p className="text-xl font-semibold text-sky-300">{metrics.running}</p>
-                </div>
-                <Loader2 className="h-5 w-5 text-sky-300" />
-              </CardContent>
-            </Card>
-            <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
-              <CardContent className="flex items-center justify-between p-4">
-                <div>
-                  <p className="text-xs text-muted-foreground">En attente</p>
-                  <p className="text-xl font-semibold text-amber-300">{metrics.pending}</p>
-                </div>
-                <PlayCircle className="h-5 w-5 text-amber-300" />
-              </CardContent>
-            </Card>
-            <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
-              <CardContent className="flex items-center justify-between p-4">
-                <div>
-                  <p className="text-xs text-muted-foreground">Échecs</p>
-                  <p className="text-xl font-semibold text-rose-300">{metrics.failed}</p>
-                </div>
-                <AlertCircle className="h-5 w-5 text-rose-300" />
-              </CardContent>
-            </Card>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard label="Total" value={metrics.total} icon={<ArrowRightLeft className="h-8 w-8" />} changeType="neutral" />
+            <StatCard label="En cours" value={metrics.running} icon={<Loader2 className="h-8 w-8" />} changeType="neutral" />
+            <StatCard label="En attente" value={metrics.pending} icon={<PlayCircle className="h-8 w-8" />} changeType="neutral" />
+            <StatCard
+              label="Échecs"
+              value={metrics.failed}
+              icon={<AlertCircle className="h-8 w-8" />}
+              changeType={metrics.failed > 0 ? 'down' : 'up'}
+            />
           </div>
         </section>
 
@@ -982,20 +958,30 @@ export default function MigrationsPage() {
                           Créée le {new Date(migration.createdAt).toLocaleDateString('fr-FR')}
                         </p>
                       </div>
-                      <Badge variant={statusBadgeVariant[migration.status]}>{statusLabel[migration.status]}</Badge>
+                      <Badge label={statusLabel[migration.status]} type={statusBadgeVariant[migration.status]} />
                     </div>
                   </CardHeader>
-                  <CardContent className="space-y-4 p-6">
-                    <div className="grid gap-3 rounded-lg border border-white/10 bg-zinc-950/60 p-3 md:grid-cols-2">
-                      <div className="flex items-center gap-2 text-sm">
-                        <Server className="h-4 w-4 text-violet-300" />
-                        <span className="text-muted-foreground">Source:</span>
-                        <span className="font-medium">{formatMigrationEndpoint(migration, 'source')}</span>
+                  <CardContent className="space-y-3">
+                    <div className="grid gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 md:grid-cols-2">
+                      <div className="space-y-1 text-sm">
+                        <div className="flex items-center gap-2">
+                          <Server className="h-4 w-4 text-violet-300" />
+                          <span className="text-muted-foreground">Source:</span>
+                          <span className="font-medium">{formatMigrationEndpoint(migration, 'source')}</span>
+                        </div>
+                        <p className="pl-6 font-mono text-[11px] text-muted-foreground break-all">
+                          {migration.sourcePath ?? '—'}
+                        </p>
                       </div>
-                      <div className="flex items-center gap-2 text-sm">
-                        <Server className="h-4 w-4 text-sky-300" />
-                        <span className="text-muted-foreground">Destination:</span>
-                        <span className="font-medium">{formatMigrationEndpoint(migration, 'target')}</span>
+                      <div className="space-y-1 text-sm">
+                        <div className="flex items-center gap-2">
+                          <Server className="h-4 w-4 text-sky-300" />
+                          <span className="text-muted-foreground">Destination:</span>
+                          <span className="font-medium">{formatMigrationEndpoint(migration, 'target')}</span>
+                        </div>
+                        <p className="pl-6 font-mono text-[11px] text-muted-foreground break-all">
+                          {migration.targetPath ?? '—'}
+                        </p>
                       </div>
                     </div>
 
@@ -1013,17 +999,6 @@ export default function MigrationsPage() {
                         <AlertDescription>Migration en cours. Vous pouvez quitter la page.</AlertDescription>
                       </Alert>
                     )}
-
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                      <div>
-                        <span className="opacity-75">Dossier source:</span>
-                        <p className="font-mono text-[11px] break-all">{migration.sourcePath ?? '—'}</p>
-                      </div>
-                      <div>
-                        <span className="opacity-75">Dossier destination:</span>
-                        <p className="font-mono text-[11px] break-all">{migration.targetPath ?? '—'}</p>
-                      </div>
-                    </div>
 
                     {migration.status === 'failed' && (
                       <Alert variant="destructive">
@@ -1060,10 +1035,10 @@ export default function MigrationsPage() {
 
                       {migration.status === 'running' && (
                         <Button
-                          variant="destructive"
+                          variant="ghost"
                           onClick={() => stopMigration(migration.id)}
                           disabled={busyId === migration.id}
-                          className="gap-2"
+                          className="gap-2 text-rose-300 hover:text-rose-200"
                         >
                           {busyId === migration.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <PauseCircle className="h-4 w-4" />}
                           Arrêter
@@ -1071,7 +1046,12 @@ export default function MigrationsPage() {
                       )}
 
                       {canDeleteMigration(migration) && (
-                        <Button variant="destructive" onClick={() => setDeleteMigration(migration)} disabled={busyId === migration.id} className="gap-2">
+                        <Button
+                          variant="ghost"
+                          onClick={() => setDeleteMigration(migration)}
+                          disabled={busyId === migration.id}
+                          className="gap-2 text-rose-300 hover:text-rose-200"
+                        >
                           <Trash2 className="h-4 w-4" />
                           Supprimer
                         </Button>
@@ -1111,7 +1091,7 @@ export default function MigrationsPage() {
                       <TableCell>{formatMigrationEndpoint(migration, 'target')}</TableCell>
                       <TableCell>{new Date(migration.createdAt).toLocaleDateString('fr-FR')}</TableCell>
                       <TableCell className="text-right">
-                        <Badge variant="success">Terminée</Badge>
+                        <Badge label="Terminée" type="success" />
                       </TableCell>
                     </TableRow>
                   ))}
