@@ -43,7 +43,8 @@ import {
   StepConfig,
 } from '../../../components/ui/wizard';
 import { DirectoryBrowser } from '../../../components/ui/directory-browser';
-import { NodeLabelBadges } from '../../../components/ui';
+import { NodeLabelBadges, StatCard } from '../../../components/ui';
+import { SectionLabel } from '../../../components/SectionLabel';
 import { readNodeLabels } from '../../../lib/node-labels';
 
 // ─── Presets ────────────────────────────────────────────────────────────────
@@ -861,6 +862,9 @@ export default function MountsPage() {
     error: { label: 'Erreur', variant: 'destructive' as const },
   };
 
+  const activeMounts = mounts.filter((mount) => mount.status === 'active').length;
+  const errorMounts = mounts.filter((mount) => mount.status === 'error').length;
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -896,6 +900,25 @@ export default function MountsPage() {
           }
         />
 
+        <section className="space-y-4">
+          <SectionLabel>Aperçu</SectionLabel>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <StatCard label="Montages" value={mounts.length} icon={<HardDrive className="h-8 w-8" />} changeType="neutral" />
+            <StatCard
+              label="Actifs"
+              value={activeMounts}
+              icon={<CheckCircle2 className="h-8 w-8" />}
+              changeType={activeMounts === mounts.length && mounts.length > 0 ? 'up' : 'neutral'}
+            />
+            <StatCard
+              label="En erreur"
+              value={errorMounts}
+              icon={<AlertCircle className="h-8 w-8" />}
+              changeType={errorMounts > 0 ? 'down' : 'up'}
+            />
+          </div>
+        </section>
+
         {/* Info banner */}
         <Callout variant="info">
           <p>
@@ -908,6 +931,7 @@ export default function MountsPage() {
         </Callout>
 
         {/* Mount list */}
+        <SectionLabel>Montages</SectionLabel>
         {mounts.length === 0 ? (
           <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
             <CardContent className="py-16 text-center">
