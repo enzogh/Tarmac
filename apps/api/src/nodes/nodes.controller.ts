@@ -82,6 +82,16 @@ export class NodesController {
     return this.nodesService.delete(id, req.user?.userId);
   }
 
+  @Post(':id/rotate-token')
+  rotateAgentToken(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.nodesService.rotateAgentToken(id, req.user?.userId);
+  }
+
+  @Post('rotate-tokens')
+  rotateAllAgentTokens(@Req() req: AuthenticatedRequest) {
+    return this.nodesService.rotateAllAgentTokens(req.user?.userId);
+  }
+
   @Get('activity')
   activity(@Query('range') range = '1h') {
     return this.nodesService.activity(range);

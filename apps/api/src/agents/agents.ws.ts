@@ -4,6 +4,7 @@ import { IncomingMessage } from 'http';
 import { parse } from 'url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { PrismaService } from '../prisma/prisma.service';
+import { AgentTokenService } from './agent-token.service';
 import { AgentsService } from './agents.service';
 import { CommandProgressPayload, CommandResultPayload, HeartbeatPayload, StateReportPayload } from './agents.types';
 
@@ -20,6 +21,7 @@ export class AgentsWsServer implements OnModuleInit {
   constructor(
     private readonly adapterHost: HttpAdapterHost,
     private readonly agentsService: AgentsService,
+    private readonly agentTokenService: AgentTokenService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -33,14 +35,17 @@ export class AgentsWsServer implements OnModuleInit {
 
       const nodeId = String(query.nodeId ?? '');
       const token = String(query.token ?? '');
-      if (!nodeId || token !== (process.env.AGENT_SHARED_TOKEN ?? 'agent-secret')) {
-        socket.destroy();
-        return;
-      }
 
-      this.wss.handleUpgrade(req, socket, head, (ws) => {
-        this.attachClient(ws, nodeId);
-      });
+      void (async () => {
+        if (!nodeId || !(await this.agentTokenService.verify(nodeId, token))) {
+          socket.destroy();
+          return;
+        }
+
+        this.wss.handleUpgrade(req, socket, head, (ws) => {
+          this.attachClient(ws, nodeId);
+        });
+      })();
     });
   }
 
@@ -52,6 +57,8 @@ export class AgentsWsServer implements OnModuleInit {
       };
       ws.send(JSON.stringify(message));
     });
+
+    void this.agentTokenService.resendPendingRotationIfNeeded(nodeId);
 
     ws.on('message', async (raw) => {
       try {

@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { NodeStatus, Prisma } from '@prisma/client';
+import { AgentTokenService } from '../agents/agent-token.service';
 import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { getControlPlaneVersion } from '../common/build-info';
@@ -51,6 +52,7 @@ export class NodesService {
     private readonly prisma: PrismaService,
     private readonly auditLogsService: AuditLogsService,
     private readonly agentsService: AgentsService,
+    private readonly agentTokenService: AgentTokenService,
   ) {}
 
   list() {
@@ -123,6 +125,36 @@ export class NodesService {
     });
 
     return { ...deleted, agentUninstallQueued: uninstall.queued };
+  }
+
+  async rotateAgentToken(id: string, actorUserId?: string) {
+    const { rotated, delivered } = await this.agentTokenService.rotate(id);
+    if (!rotated) {
+      throw new NotFoundException('node not found');
+    }
+
+    await this.auditLogsService.log({
+      actorUserId,
+      action: 'node.rotate_agent_token',
+      resourceType: 'node',
+      resourceId: id,
+      details: { delivered },
+    });
+
+    return { delivered };
+  }
+
+  async rotateAllAgentTokens(actorUserId?: string) {
+    const results = await this.agentTokenService.rotateAll();
+
+    await this.auditLogsService.log({
+      actorUserId,
+      action: 'node.rotate_agent_token_all',
+      resourceType: 'node',
+      details: { count: results.length, delivered: results.filter((r) => r.delivered).length },
+    });
+
+    return results;
   }
 
   async activity(range: string) {
