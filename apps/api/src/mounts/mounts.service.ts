@@ -75,7 +75,7 @@ export class MountsService {
   async remount(id: string, actorUserId?: string) {
     const updated = await this.prisma.mount.update({
       where: { id },
-      data: { status: 'pending' },
+      data: { status: 'pending', lastError: null },
       include: { node: true },
     });
 
@@ -94,7 +94,10 @@ export class MountsService {
     return this.prisma.mount.findMany({ where: { status: 'pending' } });
   }
 
-  setStatus(id: string, status: 'pending' | 'active' | 'error') {
-    return this.prisma.mount.update({ where: { id }, data: { status } });
+  setStatus(id: string, status: 'pending' | 'active' | 'error', message?: string | null) {
+    return this.prisma.mount.update({
+      where: { id },
+      data: { status, lastError: status === 'error' ? message ?? null : null },
+    });
   }
 }

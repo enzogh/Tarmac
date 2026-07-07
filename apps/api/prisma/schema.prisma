@@ -196,6 +196,7 @@ model Mount {
   fsType     String      @default("nfs")
   mountOptions String?
   status     MountStatus @default(pending)
+  lastError  String?
   nodeId     String?
   node       Node?       @relation(fields: [nodeId], references: [id])
   createdAt  DateTime    @default(now())
