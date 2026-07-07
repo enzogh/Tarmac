@@ -43,6 +43,8 @@ import {
   StepConfig,
 } from '../../../components/ui/wizard';
 import { DirectoryBrowser } from '../../../components/ui/directory-browser';
+import { NodeLabelBadges } from '../../../components/ui';
+import { readNodeLabels } from '../../../lib/node-labels';
 
 // ─── Presets ────────────────────────────────────────────────────────────────
 
@@ -116,12 +118,14 @@ function NodeCard({
   selected,
   disabled,
   onClick,
+  labels = [],
 }: {
   node: NodeItem;
   vlanIp?: string;
   selected: boolean;
   disabled?: boolean;
   onClick: () => void;
+  labels?: string[];
 }) {
   return (
     <button
@@ -153,6 +157,7 @@ function NodeCard({
         ) : (
           <p className="text-xs text-zinc-500">Non connecté au VLAN</p>
         )}
+        <NodeLabelBadges labels={labels} className="mt-1" />
       </div>
       {selected && <CheckCircle2 className="h-4 w-4 shrink-0 text-violet-400" />}
     </button>
@@ -175,6 +180,11 @@ export default function MountsPage() {
   const [mounts, setMounts] = useState<MountItem[]>([]);
   const [nodes, setNodes] = useState<NodeItem[]>([]);
   const [vlanMembers, setVlanMembers] = useState<VlanMember[]>([]);
+  const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
+
+  useEffect(() => {
+    setNodeLabels(readNodeLabels());
+  }, []);
 
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardMode, setWizardMode] = useState<WizardMode>('create-share');
@@ -479,6 +489,7 @@ export default function MountsPage() {
                     vlanIp={nodeVlanIps[node.id]}
                     selected={shareForm.exportNodeId === node.id}
                     disabled={node.status === 'offline'}
+                    labels={nodeLabels[node.id] ?? []}
                     onClick={() =>
                       setShareForm((prev) => ({
                         ...prev,
@@ -534,6 +545,7 @@ export default function MountsPage() {
                     vlanIp={nodeVlanIps[node.id]}
                     selected={shareForm.mountNodeId === node.id}
                     disabled={node.status === 'offline'}
+                    labels={nodeLabels[node.id] ?? []}
                     onClick={() =>
                       setShareForm((prev) => ({
                         ...prev,

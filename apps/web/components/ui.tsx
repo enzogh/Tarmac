@@ -1,6 +1,7 @@
 'use client';
 
 import { ReactNode } from 'react';
+import { Tags } from 'lucide-react';
 import { Card as ShadCard, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Badge as ShadBadge } from './ui/badge';
 import { cn } from '../lib/utils';
@@ -67,6 +68,24 @@ export function Badge({ label, type = 'info', icon }: BadgeProps) {
       {icon && <span>{icon}</span>}
       {label}
     </ShadBadge>
+  );
+}
+
+export function NodeLabelBadges({ labels, className }: { labels: string[]; className?: string }) {
+  if (labels.length === 0) return null;
+
+  return (
+    <div className={cn('flex flex-wrap items-center gap-1.5', className)}>
+      {labels.map((label) => (
+        <span
+          key={label}
+          className="inline-flex items-center gap-1 rounded-full border border-violet-400/30 bg-violet-500/15 px-2 py-0.5 text-[11px] text-violet-100"
+        >
+          <Tags className="h-3 w-3" />
+          {label}
+        </span>
+      ))}
+    </div>
   );
 }
 

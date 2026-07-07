@@ -59,6 +59,7 @@ import {
   StepConfig,
 } from '../../../components/ui/wizard';
 import { DirectoryBrowser } from '../../../components/ui/directory-browser';
+import { readNodeLabels } from '../../../lib/node-labels';
 
 const MIGRATION_PRESETS: PresetOption[] = [
   {
@@ -105,6 +106,7 @@ export default function MigrationsPage() {
 
   const [migrations, setMigrations] = useState<MigrationItem[]>([]);
   const [nodes, setNodes] = useState<NodeItem[]>([]);
+  const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
   const [wizardOpen, setWizardOpen] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState<PresetOption | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
@@ -223,6 +225,10 @@ export default function MigrationsPage() {
     const id = setInterval(() => void load(), 5000);
     return () => clearInterval(id);
   }, [token]);
+
+  useEffect(() => {
+    setNodeLabels(readNodeLabels());
+  }, []);
 
   useEffect(() => {
     const sourceReady =
@@ -600,6 +606,7 @@ export default function MigrationsPage() {
                 {nodes.map((node) => (
                   <SelectItem key={node.id} value={node.id}>
                     {node.name} ({node.status})
+                    {(nodeLabels[node.id]?.length ?? 0) > 0 ? ` — ${nodeLabels[node.id].join(', ')}` : ''}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -699,6 +706,7 @@ export default function MigrationsPage() {
                   .map((node) => (
                     <SelectItem key={node.id} value={node.id}>
                       {node.name} ({node.status})
+                      {(nodeLabels[node.id]?.length ?? 0) > 0 ? ` — ${nodeLabels[node.id].join(', ')}` : ''}
                     </SelectItem>
                   ))}
               </SelectContent>
@@ -1149,6 +1157,7 @@ export default function MigrationsPage() {
                   {nodes.map((node) => (
                     <SelectItem key={node.id} value={node.id}>
                       {node.name}
+                      {(nodeLabels[node.id]?.length ?? 0) > 0 ? ` — ${nodeLabels[node.id].join(', ')}` : ''}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1166,6 +1175,7 @@ export default function MigrationsPage() {
                     .map((node) => (
                       <SelectItem key={node.id} value={node.id}>
                         {node.name}
+                        {(nodeLabels[node.id]?.length ?? 0) > 0 ? ` — ${nodeLabels[node.id].join(', ')}` : ''}
                       </SelectItem>
                     ))}
                 </SelectContent>
