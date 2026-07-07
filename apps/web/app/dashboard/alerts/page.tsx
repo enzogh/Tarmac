@@ -8,6 +8,7 @@ import { DashboardLayout } from '../../../components/DashboardLayout';
 import { PageHeader } from '../../../components/PageHeader';
 import { Callout } from '../../../components/Callout';
 import { Badge, StatCard } from '../../../components/ui';
+import { SectionLabel } from '../../../components/SectionLabel';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
@@ -121,13 +122,16 @@ export default function AlertsPage() {
           ou supprimez-la pour nettoyer l'historique.
         </Callout>
 
-        {/* Summary cards */}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <StatCard label="Critiques actives" value={critical} icon={<AlertCircle className="h-8 w-8" />} changeType={critical > 0 ? 'down' : 'up'} />
-          <StatCard label="Avertissements actifs" value={warnings} icon={<AlertTriangle className="h-8 w-8" />} changeType={warnings > 0 ? 'neutral' : 'up'} />
-          <StatCard label="Total" value={alerts.length} icon={<Bell className="h-8 w-8" />} changeType="neutral" />
-        </div>
+        <section className="space-y-4">
+          <SectionLabel>Aperçu</SectionLabel>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <StatCard label="Critiques actives" value={critical} icon={<AlertCircle className="h-8 w-8" />} changeType={critical > 0 ? 'down' : 'up'} />
+            <StatCard label="Avertissements actifs" value={warnings} icon={<AlertTriangle className="h-8 w-8" />} changeType={warnings > 0 ? 'neutral' : 'up'} />
+            <StatCard label="Total" value={alerts.length} icon={<Bell className="h-8 w-8" />} changeType="neutral" />
+          </div>
+        </section>
 
+        <SectionLabel>Alertes</SectionLabel>
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between gap-4 flex-wrap">

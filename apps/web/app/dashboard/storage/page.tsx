@@ -14,6 +14,8 @@ import {
   Trash2,
   Crown,
   Copy,
+  Layers,
+  Server,
 } from 'lucide-react';
 import { api, NodeItem, PoolItem } from '../../../lib/api';
 import { DashboardLayout } from '../../../components/DashboardLayout';
@@ -22,8 +24,9 @@ import { Callout } from '../../../components/Callout';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
-import { Badge, NodeLabelBadges } from '../../../components/ui';
+import { Badge, NodeLabelBadges, StatCard } from '../../../components/ui';
 import { readNodeLabels } from '../../../lib/node-labels';
+import { SectionLabel } from '../../../components/SectionLabel';
 import {
   WizardDialog,
   PresetSelector,
@@ -287,6 +290,8 @@ export default function StoragePage() {
   };
 
   const nodeName = (nodeId: string) => nodes.find((n) => n.id === nodeId)?.name ?? nodeId;
+  const activePools = pools.filter((pool) => pool.status === 'active').length;
+  const nodesInPools = new Set(pools.flatMap((pool) => pool.members.map((member) => member.nodeId))).size;
 
   return (
     <DashboardLayout>
@@ -310,41 +315,59 @@ export default function StoragePage() {
           }
         />
 
-        <Callout variant="info">
-          Un pool regroupe des nœuds sous une stratégie logique (miroir, RAID, simple). Le statut passe à «&nbsp;actif&nbsp;»
-          dès que l'agent de chaque nœud membre confirme la configuration.
-        </Callout>
+        <section className="space-y-4">
+          <SectionLabel>Aperçu</SectionLabel>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <StatCard label="Pools" value={pools.length} icon={<Layers className="h-8 w-8" />} changeType="neutral" />
+            <StatCard
+              label="Pools actifs"
+              value={activePools}
+              icon={<Grid3x3 className="h-8 w-8" />}
+              changeType={activePools === pools.length && pools.length > 0 ? 'up' : 'neutral'}
+            />
+            <StatCard label="Nœuds regroupés" value={nodesInPools} icon={<Server className="h-8 w-8" />} changeType="neutral" />
+          </div>
+        </section>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Shield className="w-5 h-5 text-red-500" />
-                Redondance
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                Miroir, RAID 5, RAID 6 : protègent contre la perte d'un ou plusieurs nœuds membres.
-              </p>
-            </CardContent>
-          </Card>
+        <section className="space-y-4">
+          <SectionLabel>Stratégies</SectionLabel>
+          <Callout variant="info">
+            Un pool regroupe des nœuds sous une stratégie logique (miroir, RAID, simple). Le statut passe à
+            «&nbsp;actif&nbsp;» dès que l'agent de chaque nœud membre confirme la configuration.
+          </Callout>
 
-          <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Zap className="w-5 h-5 text-yellow-500" />
-                Performance
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                Simple : aucun nœud de secours, capacité et débit maximaux.
-              </p>
-            </CardContent>
-          </Card>
-        </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Shield className="w-5 h-5 text-red-500" />
+                  Redondance
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Miroir, RAID 5, RAID 6 : protègent contre la perte d'un ou plusieurs nœuds membres.
+                </p>
+              </CardContent>
+            </Card>
 
+            <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Zap className="w-5 h-5 text-yellow-500" />
+                  Performance
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Simple : aucun nœud de secours, capacité et débit maximaux.
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+
+        <SectionLabel>Pools</SectionLabel>
         {pools.length === 0 ? (
           <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
             <CardContent className="pt-12 pb-12 text-center">
