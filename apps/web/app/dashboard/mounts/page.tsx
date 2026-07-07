@@ -421,6 +421,22 @@ export default function MountsPage() {
     }
   };
 
+  // ── Retry mount ───────────────────────────────────────────────────────────
+
+  const retryMount = async (mountId: string) => {
+    if (!token) return;
+    setBusyId(mountId);
+    try {
+      await api.mounts.remount(token, mountId);
+      setNotice({ type: 'success', message: 'Nouvelle tentative de montage lancée.' });
+      await load();
+    } catch {
+      setNotice({ type: 'error', message: 'Impossible de relancer ce montage.' });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   // ── Delete mount ──────────────────────────────────────────────────────────
 
   const deleteMount = async (mountId: string) => {
@@ -972,19 +988,37 @@ export default function MountsPage() {
                             <p className="font-mono text-zinc-300">{mount.targetPath}</p>
                           </div>
                         </div>
-                      </div>
-                      <button
-                        onClick={() => deleteMount(mount.id)}
-                        disabled={busyId === mount.id}
-                        className="shrink-0 rounded-lg p-2 text-zinc-500 transition-colors hover:bg-rose-500/10 hover:text-rose-400 disabled:opacity-40"
-                        title="Supprimer"
-                      >
-                        {busyId === mount.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-4 w-4" />
+                        {mount.status === 'error' && mount.lastError && (
+                          <div className="mt-3 rounded-lg border border-rose-500/20 bg-rose-500/[0.06] px-3 py-2">
+                            <p className="mb-0.5 text-xs font-medium text-rose-400">Erreur</p>
+                            <p className="font-mono text-xs text-rose-300/90 break-all">{mount.lastError}</p>
+                          </div>
                         )}
-                      </button>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        {mount.status === 'error' && (
+                          <button
+                            onClick={() => retryMount(mount.id)}
+                            disabled={busyId === mount.id}
+                            className="rounded-lg p-2 text-zinc-500 transition-colors hover:bg-violet-500/10 hover:text-violet-400 disabled:opacity-40"
+                            title="Réessayer"
+                          >
+                            {busyId === mount.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Play className="h-4 w-4" />
+                            )}
+                          </button>
+                        )}
+                        <button
+                          onClick={() => deleteMount(mount.id)}
+                          disabled={busyId === mount.id}
+                          className="rounded-lg p-2 text-zinc-500 transition-colors hover:bg-rose-500/10 hover:text-rose-400 disabled:opacity-40"
+                          title="Supprimer"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>

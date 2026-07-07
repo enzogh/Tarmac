@@ -332,7 +332,11 @@ export class AgentsService implements OnModuleInit {
   }
 
   async onCommandResult(result: CommandResultPayload) {
-    this.logger.log(`Command result ${result.command} ${result.resourceId}: ${result.success}`);
+    this.logger.log(
+      `Command result ${result.command} ${result.resourceId}: ${result.success}${
+        result.success ? '' : ` (${result.message ?? 'no message'})`
+      }`,
+    );
     const status = result.success ? 'active' : 'error';
 
     if (result.resourceType === 'share') {
@@ -341,7 +345,7 @@ export class AgentsService implements OnModuleInit {
     }
 
     if (result.resourceType === 'mount') {
-      await this.mountsService.setStatus(result.resourceId, status);
+      await this.mountsService.setStatus(result.resourceId, status, result.message);
       return;
     }
 

@@ -63,6 +63,7 @@ export type MountItem = {
   fsType: string;
   mountOptions?: string | null;
   status: 'pending' | 'active' | 'error';
+  lastError?: string | null;
   nodeId?: string | null;
 };
 
