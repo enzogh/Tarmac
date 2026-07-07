@@ -25,7 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
+import { Badge, StatCard } from '@/components/ui';
 import {
   Select,
   SelectContent,
@@ -94,6 +94,13 @@ const TEST_OPTIONS: Array<{ value: TestType; label: string }> = [
   { value: 'latency', label: 'Latence' },
 ];
 
+const testStatusLabel: Record<VlanConnectionTest['status'], string> = {
+  pending: 'En attente',
+  success: 'Réussi',
+  failed: 'Échoué',
+  timeout: 'Délai dépassé',
+};
+
 const STATUS_PRIORITY: Record<LinkStatus, number> = {
   healthy: 0,
   unknown: 1,
@@ -113,17 +120,17 @@ const formatBandwidth = (value?: number | null) =>
 const isTestType = (value: string): value is TestType =>
   value === 'ping' || value === 'connectivity' || value === 'latency';
 
-const getConnectionBadgeVariant = (status: VlanConnection['status']) => {
+const getConnectionBadgeVariant = (status: VlanConnection['status']): 'success' | 'warning' | 'error' | 'info' => {
   if (status === 'healthy') return 'success';
   if (status === 'degraded') return 'warning';
-  return 'destructive';
+  return 'error';
 };
 
 const getConnectionLabel = (status: VlanConnection['status']) => {
-  if (status === 'healthy') return 'Healthy';
-  if (status === 'degraded') return 'Degraded';
-  if (status === 'offline') return 'Offline';
-  return 'Unknown';
+  if (status === 'healthy') return 'Sain';
+  if (status === 'degraded') return 'Dégradé';
+  if (status === 'offline') return 'Hors ligne';
+  return 'Inconnu';
 };
 
 const linkStroke = (status: LinkStatus) => {
@@ -731,7 +738,7 @@ export default function NetworkPage() {
       <p className="text-muted-foreground">Chargement du réseau...</p>
     </div>
   ) : !vlanStatus ? (
-    <Card className="border-dashed border-white/10 bg-zinc-900/60 backdrop-blur">
+    <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
       <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
         <AlertTriangle className="h-8 w-8 text-violet-400" />
         <h3 className="text-xl font-semibold text-foreground">Aucun réseau VLAN trouvé</h3>
@@ -768,58 +775,29 @@ export default function NetworkPage() {
         </Callout>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <Card className="border-white/[0.08] bg-zinc-900/70">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Nœuds actifs
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex items-end justify-between">
-              <p className="text-3xl font-semibold text-foreground">{vlanStatus.memberCount}</p>
-              <Network className="h-5 w-5 text-violet-400" />
-            </CardContent>
-          </Card>
-
-          <Card className="border-white/[0.08] bg-zinc-900/70">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Liens sains
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex items-end justify-between">
-              <p className="text-3xl font-semibold text-emerald-300">
-                {vlanStatus.connectionStats.total > 0
-                  ? Math.round((vlanStatus.connectionStats.healthy / vlanStatus.connectionStats.total) * 100)
-                  : 100}
-                %
-              </p>
-              <RadioTower className="h-5 w-5 text-emerald-400" />
-            </CardContent>
-          </Card>
-
-          <Card className="border-white/[0.08] bg-zinc-900/70">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Liens dégradés
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex items-end justify-between">
-              <p className="text-3xl font-semibold text-amber-300">{vlanStatus.connectionStats.degraded}</p>
-              <Gauge className="h-5 w-5 text-amber-400" />
-            </CardContent>
-          </Card>
-
-          <Card className="border-white/[0.08] bg-zinc-900/70">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Liens offline
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex items-end justify-between">
-              <p className="text-3xl font-semibold text-rose-300">{vlanStatus.connectionStats.offline}</p>
-              <Activity className="h-5 w-5 text-rose-400" />
-            </CardContent>
-          </Card>
+          <StatCard label="Nœuds actifs" value={vlanStatus.memberCount} icon={<Network className="h-8 w-8" />} changeType="neutral" />
+          <StatCard
+            label="Liens sains"
+            value={`${
+              vlanStatus.connectionStats.total > 0
+                ? Math.round((vlanStatus.connectionStats.healthy / vlanStatus.connectionStats.total) * 100)
+                : 100
+            }%`}
+            icon={<RadioTower className="h-8 w-8" />}
+            changeType="up"
+          />
+          <StatCard
+            label="Liens dégradés"
+            value={vlanStatus.connectionStats.degraded}
+            icon={<Gauge className="h-8 w-8" />}
+            changeType={vlanStatus.connectionStats.degraded > 0 ? 'neutral' : 'up'}
+          />
+          <StatCard
+            label="Liens offline"
+            value={vlanStatus.connectionStats.offline}
+            icon={<Activity className="h-8 w-8" />}
+            changeType={vlanStatus.connectionStats.offline > 0 ? 'down' : 'up'}
+          />
         </div>
       </section>
 
@@ -1000,31 +978,31 @@ export default function NetworkPage() {
                 </g>
               </svg>
             </div>
-            <div className="rounded-xl border border-white/[0.08] bg-zinc-950/45 p-3">
+            <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
-                <p className="text-xs font-medium text-zinc-200">Attribution manuelle localisation</p>
+                <p className="text-xs font-medium text-zinc-200">Localisation manuelle des nœuds</p>
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={() => setNodePositionOverrides({})}
                 >
-                  Reset positions nœuds
+                  Réinitialiser les positions
                 </Button>
               </div>
               <p className="mb-3 text-xs text-muted-foreground">
-                Modifiez la ville/pays si l’auto-détection IP est incorrecte. Les changements sont enregistrés côté serveur et partagés entre clients.
+                Corrigez la ville/pays si la détection automatique par IP est incorrecte. Les changements sont enregistrés côté serveur et partagés entre clients.
               </p>
               <div className="max-h-56 space-y-2 overflow-auto pr-1">
                 {orderedNodes.map((node) => {
                   const override = geoOverrides[node.id] ?? {};
                   const detected = detectedGeoByNodeId.get(node.id);
                   return (
-                    <div key={`override-${node.id}`} className="rounded-lg border border-white/[0.08] bg-zinc-900/55 p-2">
+                    <div key={`override-${node.id}`} className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-2">
                       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                         <p className="text-xs font-medium text-zinc-100">{node.label}</p>
                         <p className="text-[10px] font-mono text-zinc-400">{node.vlanIp}</p>
                       </div>
-                      <div className="grid gap-2 md:grid-cols-[1fr_1fr_88px_auto]">
+                      <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-[1fr_1fr_88px_auto]">
                         <Input
                           value={override.city ?? ''}
                           onChange={(event) => updateNodeGeoOverride(node.id, { city: event.target.value })}
@@ -1054,7 +1032,7 @@ export default function NetworkPage() {
                           }}
                           disabled={geoSavingByNodeId[node.id]}
                         >
-                          {geoSavingByNodeId[node.id] ? 'Saving…' : 'Auto'}
+                          {geoSavingByNodeId[node.id] ? 'Enregistrement…' : 'Auto'}
                         </Button>
                       </div>
                     </div>
@@ -1077,24 +1055,24 @@ export default function NetworkPage() {
               return (
                 <div
                   key={`${flow.key}-card`}
-                  className="rounded-xl border border-white/[0.08] bg-zinc-950/60 p-3"
+                  className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-medium text-zinc-100">
                       {source.label} → {target.label}
                     </p>
-                    <Badge variant={getConnectionBadgeVariant(flow.status)}>{getConnectionLabel(flow.status)}</Badge>
+                    <Badge label={getConnectionLabel(flow.status)} type={getConnectionBadgeVariant(flow.status)} />
                   </div>
                   <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
-                    <div className="rounded-lg border border-white/[0.07] bg-black/25 px-2 py-1.5">
+                    <div className="rounded-lg border border-white/[0.06] bg-black/25 px-2 py-1.5">
                       <p className="text-[10px] text-muted-foreground">Latence</p>
                       <p className="font-mono">{formatLatency(flow.latencyMs)}</p>
                     </div>
-                    <div className="rounded-lg border border-white/[0.07] bg-black/25 px-2 py-1.5">
+                    <div className="rounded-lg border border-white/[0.06] bg-black/25 px-2 py-1.5">
                       <p className="text-[10px] text-muted-foreground">Perte</p>
                       <p className="font-mono">{formatLoss(flow.packetLoss)}</p>
                     </div>
-                    <div className="rounded-lg border border-white/[0.07] bg-black/25 px-2 py-1.5">
+                    <div className="rounded-lg border border-white/[0.06] bg-black/25 px-2 py-1.5">
                       <p className="text-[10px] text-muted-foreground">Débit</p>
                       <p className="font-mono">{formatBandwidth(flow.bandwidth)}</p>
                     </div>
@@ -1129,7 +1107,7 @@ export default function NetworkPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="overflow-auto rounded-xl border border-white/[0.08] bg-zinc-950/45 p-3">
+          <div className="overflow-auto rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3">
             <div
               className="grid min-w-[760px] gap-2"
               style={{ gridTemplateColumns: `220px repeat(${graph.nodes.length}, minmax(128px, 1fr))` }}
@@ -1271,12 +1249,8 @@ export default function NetworkPage() {
             </div>
           </div>
 
-          <Button
-            onClick={handleRunTest}
-            disabled={testRunning}
-            className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500"
-          >
-            <Play className="mr-2 h-4 w-4" />
+          <Button onClick={handleRunTest} disabled={testRunning} className="w-full">
+            <Play className="h-4 w-4" />
             {testRunning ? 'Test en cours...' : 'Exécuter le test'}
           </Button>
 
@@ -1285,7 +1259,7 @@ export default function NetworkPage() {
               {tests.slice(0, 5).map((test) => (
                 <div
                   key={test.id}
-                  className="flex items-start justify-between rounded-xl border border-white/[0.08] bg-white/[0.02] px-4 py-3"
+                  className="flex items-start justify-between rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3"
                 >
                   <div className="space-y-1">
                     <p className="font-mono text-xs text-foreground">
@@ -1296,10 +1270,11 @@ export default function NetworkPage() {
                       {formatLatency(test.latencyMs)} · {formatLoss(test.packetLoss)}
                     </p>
                   </div>
-                  <Badge variant={test.status === 'success' ? 'success' : 'destructive'}>
-                    <Waves className="mr-1 h-3 w-3" />
-                    {test.status}
-                  </Badge>
+                  <Badge
+                    label={testStatusLabel[test.status]}
+                    type={test.status === 'success' ? 'success' : test.status === 'pending' ? 'info' : 'error'}
+                    icon={<Waves className="h-3 w-3" />}
+                  />
                 </div>
               ))}
             </div>
