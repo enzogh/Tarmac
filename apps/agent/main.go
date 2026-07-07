@@ -734,6 +734,9 @@ func collectDisks() []diskState {
 		if isVirtualFs(fsType) {
 			continue
 		}
+		if isNFSFilesystem(fsType) {
+			continue
+		}
 		if strings.HasPrefix(device, "tmpfs") || strings.HasPrefix(device, "none") {
 			continue
 		}
