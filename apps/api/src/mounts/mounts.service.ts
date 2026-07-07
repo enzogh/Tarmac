@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { forwardRef, Inject, Injectable } from '@nestjs/common';
 import { MountStatus, Prisma } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { AgentsService } from '../agents/agents.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateMountDto } from './dto/create-mount.dto';
 import { UpdateMountDto } from './dto/update-mount.dto';
@@ -10,6 +11,8 @@ export class MountsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditLogsService: AuditLogsService,
+    @Inject(forwardRef(() => AgentsService))
+    private readonly agentsService: AgentsService,
   ) {}
 
   list() {
@@ -62,12 +65,35 @@ export class MountsService {
   }
 
   async delete(id: string, actorUserId?: string) {
+    const mount = await this.prisma.mount.findUnique({ where: { id } });
+    if (!mount) {
+      return this.prisma.mount.delete({ where: { id } });
+    }
+
+    let cleanupDispatched = false;
+    if (mount.nodeId && this.agentsService.isConnected(mount.nodeId)) {
+      this.agentsService.sendCommand(mount.nodeId, {
+        type: 'command.remove_mount',
+        payload: {
+          mountId: mount.id,
+          sourcePath: mount.sourcePath,
+          targetPath: mount.targetPath,
+        },
+      });
+      cleanupDispatched = true;
+    }
+
     const deleted = await this.prisma.mount.delete({ where: { id } });
     await this.auditLogsService.log({
       actorUserId,
       action: 'mount.delete',
       resourceType: 'mount',
       resourceId: deleted.id,
+      details: {
+        sourcePath: deleted.sourcePath,
+        targetPath: deleted.targetPath,
+        cleanupDispatched,
+      },
     });
     return deleted;
   }

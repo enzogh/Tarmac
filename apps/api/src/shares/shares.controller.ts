@@ -46,6 +46,11 @@ export class SharesController {
     return this.sharesService.delete(id, req.user?.userId);
   }
 
+  @Post(':id/reapply')
+  reapply(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.sharesService.reapply(id, req.user?.userId);
+  }
+
   @Get(':id/clients')
   listClients(@Param('id') id: string) {
     return this.sharesService.listClients(id);

@@ -112,4 +112,22 @@ export class SharesService {
   setStatus(id: string, status: 'pending' | 'active' | 'error') {
     return this.prisma.share.update({ where: { id }, data: { status } });
   }
+
+  async reapply(id: string, actorUserId?: string) {
+    const updated = await this.prisma.share.update({
+      where: { id },
+      data: { status: 'pending' },
+      include: { node: true },
+    });
+
+    await this.auditLogsService.log({
+      actorUserId,
+      action: 'share.reapply',
+      resourceType: 'share',
+      resourceId: updated.id,
+      details: { nodeId: updated.nodeId },
+    });
+
+    return updated;
+  }
 }

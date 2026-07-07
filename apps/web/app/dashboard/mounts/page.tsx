@@ -55,7 +55,11 @@ const NFS_SHARE_PRESETS: PresetOption[] = [
     name: 'Partage Média',
     description: 'Vidéos, musique, photos partagés entre serveurs',
     icon: '🎬',
-    config: { exportPath: '/exports/media', mountPath: '/mnt/media', mountOptions: 'defaults,hard,intr,noatime' },
+    config: {
+      exportPath: '/exports/media',
+      mountPath: '/mnt/media',
+      mountOptions: 'defaults,hard,intr,noatime,rsize=1048576,wsize=1048576,nconnect=4',
+    },
   },
   {
     id: 'backup',
@@ -93,7 +97,11 @@ const MOUNT_EXISTING_PRESETS: PresetOption[] = [
     name: 'Partage Média',
     description: 'Configuration optimisée pour les fichiers multimédias',
     icon: '🎬',
-    config: { fsType: 'nfs4', mountOptions: 'defaults,hard,intr,noatime', targetPath: '/mnt/media' },
+    config: {
+      fsType: 'nfs4',
+      mountOptions: 'defaults,hard,intr,noatime,rsize=1048576,wsize=1048576,nconnect=4',
+      targetPath: '/mnt/media',
+    },
   },
   {
     id: 'fast-cache',
