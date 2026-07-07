@@ -1513,7 +1513,11 @@ func applyOverlay(payload map[string]interface{}) (string, error) {
 }
 
 func isTargetMounted(target string) (string, bool) {
-	cmd := exec.Command("findmnt", "--noheadings", "--output", "SOURCE", "--target", target)
+	// --mountpoint requires an exact match on the mount target, unlike
+	// --target which also matches any path merely residing on a filesystem
+	// (e.g. a fresh, never-mounted directory on the root partition would be
+	// reported as "mounted from" the root device).
+	cmd := exec.Command("findmnt", "--noheadings", "--output", "SOURCE", "--mountpoint", target)
 	output, err := cmd.Output()
 	if err != nil {
 		return "", false
