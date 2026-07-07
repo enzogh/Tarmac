@@ -1348,15 +1348,16 @@ func ensureAgentSystemPackages(ctx context.Context, packages []string) ([]string
 
 	missing := make([]string, 0, len(packages))
 	checks := map[string]func() bool{
-		"git":             func() bool { return commandExists("git") },
-		"golang-go":       func() bool { return commandExists("go") },
-		"rsync":           func() bool { return commandExists("rsync") },
-		"sshpass":         func() bool { return commandExists("sshpass") },
-		"nfs-common":      func() bool { return commandExists("mount.nfs") },
-		"cifs-utils":      func() bool { return commandExists("mount.cifs") },
-		"wireguard-tools": func() bool { return commandExists("wg") },
-		"iproute2":        func() bool { return commandExists("ip") },
-		"util-linux":      func() bool { return commandExists("mount") },
+		"git":               func() bool { return commandExists("git") },
+		"golang-go":         func() bool { return commandExists("go") },
+		"rsync":             func() bool { return commandExists("rsync") },
+		"sshpass":           func() bool { return commandExists("sshpass") },
+		"nfs-common":        func() bool { return commandExists("mount.nfs") },
+		"nfs-kernel-server": func() bool { return commandExists("exportfs") },
+		"cifs-utils":        func() bool { return commandExists("mount.cifs") },
+		"wireguard-tools":   func() bool { return commandExists("wg") },
+		"iproute2":          func() bool { return commandExists("ip") },
+		"util-linux":        func() bool { return commandExists("mount") },
 	}
 
 	for _, pkg := range packages {
@@ -1587,6 +1588,88 @@ func joinMountOptions(options []string) string {
 	return strings.Join(options, ",")
 }
 
+func applyExport(payload map[string]interface{}) (string, error) {
+	path := readString(payload, "path")
+	if path == "" {
+		return "", errors.New("export payload must include path")
+	}
+	allowedCidr := readString(payload, "allowedCidr")
+	if allowedCidr == "" {
+		allowedCidr = "10.255.0.0/16"
+	}
+
+	if !commandExists("exportfs") {
+		installCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		_, err := ensureAgentSystemPackages(installCtx, []string{"nfs-kernel-server"})
+		cancel()
+		if err != nil {
+			return "", fmt.Errorf("exportfs not found and automatic install failed: %w", err)
+		}
+	}
+
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return "", fmt.Errorf("cannot create export path: %w", err)
+	}
+
+	if err := persistExportInEtcExports(path, allowedCidr); err != nil {
+		return "", fmt.Errorf("cannot persist NFS export: %w", err)
+	}
+
+	if out, err := exec.Command("exportfs", "-ra").CombinedOutput(); err != nil {
+		return "", fmt.Errorf("exportfs -ra failed: %s", strings.TrimSpace(string(out)))
+	}
+
+	if commandExists("systemctl") {
+		if out, err := exec.Command("systemctl", "enable", "--now", "nfs-kernel-server").CombinedOutput(); err != nil {
+			return "", fmt.Errorf("cannot enable/start nfs-kernel-server: %s", strings.TrimSpace(string(out)))
+		}
+	}
+
+	return fmt.Sprintf("exported %s to %s", path, allowedCidr), nil
+}
+
+func persistExportInEtcExports(path, allowedCidr string) error {
+	const exportsPath = "/etc/exports"
+	entry := fmt.Sprintf("%s %s(rw,sync,no_subtree_check,no_root_squash)", path, allowedCidr)
+
+	content, err := os.ReadFile(exportsPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("cannot read %s: %w", exportsPath, err)
+	}
+
+	lines := strings.Split(strings.ReplaceAll(string(content), "\r\n", "\n"), "\n")
+	found := false
+	changed := false
+
+	for idx, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) == 0 || fields[0] != path {
+			continue
+		}
+		found = true
+		if trimmed != entry {
+			lines[idx] = entry
+			changed = true
+		}
+	}
+
+	if !found {
+		lines = append(lines, entry)
+		changed = true
+	}
+
+	if !changed {
+		return nil
+	}
+
+	normalized := strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
+	return os.WriteFile(exportsPath, []byte(normalized), 0o644)
+}
+
 func persistMountInFstab(source, target, fsType, options string) error {
 	const fstabPath = "/etc/fstab"
 	entry := fmt.Sprintf("%s %s %s %s 0 0", source, target, fsType, options)
@@ -1710,10 +1793,20 @@ func applyMount(payload map[string]interface{}) (string, error) {
 	}
 
 	if isNFSFilesystem(fsType) && !commandExists("mount.nfs") {
-		return "", errors.New("mount.nfs not found (install nfs-common)")
+		installCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		if _, err := ensureAgentSystemPackages(installCtx, []string{"nfs-common"}); err != nil {
+			cancel()
+			return "", fmt.Errorf("mount.nfs not found and automatic install failed: %w", err)
+		}
+		cancel()
 	}
 	if fsType == "cifs" && !commandExists("mount.cifs") {
-		return "", errors.New("mount.cifs not found (install cifs-utils)")
+		installCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		if _, err := ensureAgentSystemPackages(installCtx, []string{"cifs-utils"}); err != nil {
+			cancel()
+			return "", fmt.Errorf("mount.cifs not found and automatic install failed: %w", err)
+		}
+		cancel()
 	}
 
 	if isNFSFilesystem(fsType) {
@@ -2381,7 +2474,13 @@ func handleCommand(cmd commandPayload, onProgress func(progress commandProgress)
 		result.Command = "apply_export"
 		result.ResourceType = "share"
 		result.ResourceID = readString(cmd.Payload, "shareId")
-		result.Message = "export apply simulated"
+		message, err := applyExport(cmd.Payload)
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Message = message
+		}
 	case "command.apply_mount":
 		result.Command = "apply_mount"
 		result.ResourceType = "mount"

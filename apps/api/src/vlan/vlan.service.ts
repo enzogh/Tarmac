@@ -15,6 +15,10 @@ export class VlanService implements OnModuleInit {
 
   constructor(private prisma: PrismaService) {}
 
+  getVlanSubnet() {
+    return this.VLAN_SUBNET;
+  }
+
   onModuleInit() {
     // No initialization needed - VLAN is created on first agent heartbeat
     this.logger.log('VlanService ready. VLAN will be created when first agent connects.');

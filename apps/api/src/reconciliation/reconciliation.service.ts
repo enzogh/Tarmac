@@ -4,10 +4,14 @@ import { MountsService } from '../mounts/mounts.service';
 import { PoolsService } from '../pools/pools.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SharesService } from '../shares/shares.service';
+import { VlanService } from '../vlan/vlan.service';
+
+const STUCK_MOUNT_ALERT_COOLDOWN_MS = 5 * 60 * 1000;
 
 @Injectable()
 export class ReconciliationService implements OnModuleInit {
   private readonly logger = new Logger(ReconciliationService.name);
+  private readonly stuckMountAlertAt = new Map<string, number>();
 
   constructor(
     private readonly sharesService: SharesService,
@@ -15,6 +19,7 @@ export class ReconciliationService implements OnModuleInit {
     private readonly poolsService: PoolsService,
     private readonly agentsService: AgentsService,
     private readonly prisma: PrismaService,
+    private readonly vlanService: VlanService,
   ) {}
 
   onModuleInit() {
@@ -43,14 +48,19 @@ export class ReconciliationService implements OnModuleInit {
           shareId: share.id,
           name: share.name,
           path: share.path,
+          allowedCidr: this.vlanService.getVlanSubnet(),
         },
       });
       this.logger.debug(`Sent export command for share ${share.id}`);
     }
 
     for (const mount of pendingMounts) {
-      if (!this.agentsService.isConnected(mount.nodeId)) continue;
-      this.agentsService.sendCommand(mount.nodeId!, {
+      if (!mount.nodeId || !this.agentsService.isConnected(mount.nodeId)) {
+        await this.reportStuckMount(mount.id, mount.name, mount.nodeId);
+        continue;
+      }
+      this.stuckMountAlertAt.delete(mount.id);
+      this.agentsService.sendCommand(mount.nodeId, {
         type: 'command.apply_mount',
         payload: {
           mountId: mount.id,
@@ -87,5 +97,24 @@ export class ReconciliationService implements OnModuleInit {
         },
       });
     }
+  }
+
+  private async reportStuckMount(mountId: string, mountName: string, nodeId: string | null) {
+    const lastAlertAt = this.stuckMountAlertAt.get(mountId) ?? 0;
+    if (Date.now() - lastAlertAt < STUCK_MOUNT_ALERT_COOLDOWN_MS) return;
+    this.stuckMountAlertAt.set(mountId, Date.now());
+
+    const reason = nodeId
+      ? `l'agent du nœud ${nodeId} n'est pas connecté`
+      : 'aucun nœud n\'est associé à ce montage';
+    const message = `Montage "${mountName}" bloqué en attente : ${reason}.`;
+    this.logger.warn(message);
+    await this.prisma.alert.create({
+      data: {
+        nodeId: nodeId ?? null,
+        severity: 'medium',
+        message,
+      },
+    });
   }
 }

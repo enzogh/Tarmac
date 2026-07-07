@@ -114,6 +114,27 @@ export class AgentsService implements OnModuleInit {
     });
   }
 
+  private async createMountFailureAlert(params: {
+    mountId: string;
+    mountName: string;
+    nodeId?: string | null;
+    nodeName?: string | null;
+    sourcePath: string;
+    targetPath: string;
+    errorMessage: string;
+  }) {
+    const node = params.nodeName?.trim() || 'unknown-node';
+    const message = `Montage "${params.mountName}" en erreur sur ${node} (${params.sourcePath} -> ${params.targetPath}): ${params.errorMessage}`;
+
+    await this.prisma.alert.create({
+      data: {
+        nodeId: params.nodeId ?? null,
+        severity: 'high',
+        message,
+      },
+    });
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly sharesService: SharesService,
@@ -345,7 +366,20 @@ export class AgentsService implements OnModuleInit {
     }
 
     if (result.resourceType === 'mount') {
-      await this.mountsService.setStatus(result.resourceId, status, result.message);
+      const updatedMount = await this.mountsService.setStatus(result.resourceId, status, result.message);
+      if (!result.success) {
+        const errorMessage = this.normalizeFailureMessage(result.message);
+        this.logger.error(`Mount ${updatedMount.id} (${updatedMount.name}) failed: ${errorMessage}`);
+        await this.createMountFailureAlert({
+          mountId: updatedMount.id,
+          mountName: updatedMount.name,
+          nodeId: updatedMount.nodeId,
+          nodeName: updatedMount.node?.name,
+          sourcePath: updatedMount.sourcePath,
+          targetPath: updatedMount.targetPath,
+          errorMessage,
+        });
+      }
       return;
     }
 
