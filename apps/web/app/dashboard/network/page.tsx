@@ -17,6 +17,8 @@ import {
 import { api, VlanConnection, VlanConnectionTest, VlanStatus } from '@/lib/api';
 import { GeoInfo, flagFromCountryCode, getGeoInfo, parseHostFromEndpoint } from '@/lib/geo';
 import { DashboardLayout } from '@/components/DashboardLayout';
+import { PageHeader } from '../../../components/PageHeader';
+import { Callout } from '../../../components/Callout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -727,7 +729,7 @@ export default function NetworkPage() {
         <AlertTriangle className="h-8 w-8 text-violet-400" />
         <h3 className="text-xl font-semibold text-foreground">Aucun réseau VLAN trouvé</h3>
         <p className="max-w-md text-sm text-muted-foreground">
-          Déployez des agents pour initialiser le VLAN. Les liens et télémétries apparaîtront automatiquement.
+          Déployez des agents pour initialiser le VLAN. Les liens et métriques apparaîtront automatiquement.
         </p>
       </CardContent>
     </Card>
@@ -740,22 +742,21 @@ export default function NetworkPage() {
         </Alert>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-500/20 bg-violet-500/[0.07] px-4 py-3">
-        <p className="text-sm text-violet-200/90">
-          Monitoring asynchrone : mise à jour silencieuse toutes les 5 secondes, sans réactualiser la page.
-        </p>
-        <div className="flex items-center gap-2 text-xs text-violet-200/80">
-          <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-          {lastRefreshAt
-            ? `Dernière sync ${lastRefreshAt.toLocaleTimeString('fr-FR')}`
-            : 'Sync en attente'}
+      <Callout>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p>
+            Cette page se met à jour automatiquement toutes les 5 secondes. Les nœuds communiquent via un tunnel
+            réseau privé chiffré (WireGuard) ; si un agent ne remonte pas encore ses données, une estimation
+            côté serveur est utilisée à la place.
+          </p>
+          <div className="flex items-center gap-2 text-xs text-violet-200/80">
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            {lastRefreshAt
+              ? `Dernière sync ${lastRefreshAt.toLocaleTimeString('fr-FR')}`
+              : 'Sync en attente'}
+          </div>
         </div>
-      </div>
-
-      <div className="rounded-xl border border-white/[0.08] bg-zinc-900/55 px-4 py-3 text-xs text-muted-foreground">
-        Les métriques de lien sont remontées par les agents via WireGuard (handshake + trafic) avec sondes
-        ping pair-à-pair. Un fallback estimatif côté API reste actif si un agent ne publie pas encore ces données.
-      </div>
+      </Callout>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Card className="border-white/[0.08] bg-zinc-900/70">
@@ -1148,7 +1149,7 @@ export default function NetworkPage() {
                           key={`cell-${row.id}-${col.id}`}
                           className="rounded-lg border border-dashed border-white/10 bg-zinc-900/40 px-3 py-2 text-center text-[10px] text-zinc-500"
                         >
-                          same node
+                          même nœud
                         </div>
                       );
                     }
@@ -1295,12 +1296,11 @@ export default function NetworkPage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div className="space-y-1">
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Réseau VLAN</h1>
-          <p className="text-sm text-muted-foreground">
-            Supervision premium des liens inter-nœuds : statut, latence, perte et débit en temps réel.
-          </p>
-        </div>
+        <PageHeader
+          icon={Network}
+          title="Réseau"
+          description="Visualisez le VLAN privé qui relie vos nœuds et testez la connectivité entre eux."
+        />
 
         {content}
       </div>

@@ -17,6 +17,8 @@ import {
 } from 'lucide-react';
 import { api, MountItem, NodeItem, VlanMember } from '../../../lib/api';
 import { DashboardLayout } from '../../../components/DashboardLayout';
+import { PageHeader } from '../../../components/PageHeader';
+import { Callout } from '../../../components/Callout';
 import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
@@ -832,7 +834,7 @@ export default function MountsPage() {
             ))}
           </div>
           <InfoBox type="info" title="Prêt à continuer ?">
-            Le montage est persisté automatiquement dans <code>/etc/fstab</code> avec reprise auto au redémarrage.
+            Ce montage sera automatiquement restauré au redémarrage du serveur, sans intervention manuelle.
           </InfoBox>
         </div>
       ),
@@ -864,34 +866,34 @@ export default function MountsPage() {
         )}
 
         {/* Header */}
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-semibold tracking-tight text-foreground">Montages Réseau</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Gérez les partages NFS et les montages réseau entre vos serveurs VLAN.
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button variant="outline" onClick={() => openWizard('mount-existing')} className="gap-2">
-              <HardDrive className="h-4 w-4" />
-              Monter un partage
-            </Button>
-            <Button onClick={() => openWizard('create-share')} className="gap-2 bg-violet-600 text-white hover:bg-violet-500">
-              <Network className="h-4 w-4" />
-              Nouveau partage NFS
-            </Button>
-          </div>
-        </div>
+        <PageHeader
+          icon={HardDrive}
+          title="Montages"
+          description="Montez des sources NFS, avec repli en cas de panne, sur un nœud."
+          actions={
+            <>
+              <Button variant="outline" onClick={() => openWizard('mount-existing')} className="gap-2">
+                <HardDrive className="h-4 w-4" />
+                Monter un partage
+              </Button>
+              <Button onClick={() => openWizard('create-share')} className="gap-2 bg-violet-600 text-white hover:bg-violet-500">
+                <Network className="h-4 w-4" />
+                Nouveau partage NFS
+              </Button>
+            </>
+          }
+        />
 
         {/* Info banner */}
-        <div className="flex items-start gap-3 rounded-xl border border-violet-500/20 bg-violet-500/[0.06] px-4 py-3">
-          <Network className="mt-0.5 h-4 w-4 shrink-0 text-violet-400" />
-          <p className="text-sm text-zinc-300">
-            <span className="font-medium text-violet-300">Nouveau partage NFS</span> crée et monte un dossier partagé entre deux serveurs via le réseau VLAN en un seul clic.
-            <span className="text-zinc-400"> Monter un partage</span> permet de connecter un partage NFS existant.
-            <span className="text-violet-200"> Tous les montages NFS sont rendus persistants automatiquement.</span>
+        <Callout variant="info">
+          <p>
+            <strong className="font-medium text-violet-300">Nouveau partage NFS</strong> crée et monte un dossier
+            partagé entre deux serveurs via le réseau VLAN en un seul clic.{' '}
+            <strong className="font-medium text-violet-300">Monter un partage</strong> connecte un partage NFS déjà
+            existant.
           </p>
-        </div>
+          <p className="mt-1">Tous les montages sont rendus persistants automatiquement.</p>
+        </Callout>
 
         {/* Mount list */}
         {mounts.length === 0 ? (
