@@ -12,7 +12,6 @@ import {
   GitCommitHorizontal,
   Globe2,
   HardDrive,
-  Info,
   Layers3,
   MapPin,
   Network,
@@ -26,6 +25,7 @@ import {
 import { api, DirectoryScanEntry, NodeActivityItem, NodeMetricSample, PoolItem } from '../../../lib/api';
 import { GeoInfo, flagFromCountryCode, getGeoInfo, parseHostFromEndpoint } from '../../../lib/geo';
 import { DashboardLayout } from '../../../components/DashboardLayout';
+import { Callout } from '../../../components/Callout';
 import { ServerTrendCard } from '../../../components/ServerTrendCard';
 import { Badge } from '../../../components/ui';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
@@ -242,7 +242,7 @@ export default function InfrastructurePage() {
         ? { type: 'success', message: `${node.name} supprimé, désinstallation de l’agent en cours sur le serveur.` }
         : {
             type: 'error',
-            message: `${node.name} supprimé, mais l’agent était hors ligne : désinstalle-le manuellement sur le serveur (uninstall-agent-service.sh).`,
+            message: `${node.name} supprimé, mais l’agent était hors ligne : désinstallez-le manuellement sur le serveur.`,
           },
     );
     await load();
@@ -429,20 +429,9 @@ export default function InfrastructurePage() {
           </div>
         </section>
 
-        <Card className="border-blue-500/20 bg-blue-500/[0.07]">
-          <CardContent className="flex items-start gap-3 p-4">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-300" />
-            <div className="space-y-1 text-sm text-blue-100/90">
-              <p>
-                <strong className="text-blue-100">Documentation rapide :</strong> utilisez le navigateur de dossiers pour
-                explorer un nœud puis lancez un scan volumétrique afin d’identifier rapidement les répertoires les plus lourds.
-              </p>
-              <p className="text-xs text-blue-200/80">
-                Le scan est optimisé pour rester réactif (top dossiers, fenêtre de temps courte) et ne bloque pas la page.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+        <Callout>
+          Parcourez les dossiers d'un nœud puis lancez un scan volumétrique pour repérer les répertoires les plus lourds.
+        </Callout>
 
         {updateNotice && (
           <div
@@ -775,17 +764,11 @@ export default function InfrastructurePage() {
           </CardContent>
         </Card>
 
-        <Card className="border-blue-500/20 bg-blue-500/[0.07]">
-          <CardContent className="flex items-start gap-3 p-4">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-400" />
-            <p className="text-sm text-blue-300/80">
-              <strong className="text-blue-200">Pools :</strong> groupes de disques avec stratégie.
-              <strong className="text-blue-200"> Mirror</strong> = copie redondante,
-              <strong className="text-blue-200"> RAID</strong> = distribution,
-              <strong className="text-blue-200"> Single</strong> = stockage simple.
-            </p>
-          </CardContent>
-        </Card>
+        <Callout>
+          Un pool regroupe des nœuds selon une stratégie : <strong className="text-violet-100">Mirror</strong> (copie
+          redondante), <strong className="text-violet-100">RAID</strong> (distribution) ou{' '}
+          <strong className="text-violet-100">Single</strong> (stockage simple).
+        </Callout>
 
         <Card className="border-white/[0.08] bg-zinc-900/65">
           <CardHeader>

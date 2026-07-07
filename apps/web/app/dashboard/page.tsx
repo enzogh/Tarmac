@@ -10,7 +10,7 @@ import {
   CheckCircle2,
   Cpu,
   HardDrive,
-  Info,
+  LayoutDashboard,
   Radar,
   Server,
 } from 'lucide-react';
@@ -23,6 +23,8 @@ import {
   SyncJobItem,
 } from '../../lib/api';
 import { DashboardLayout } from '../../components/DashboardLayout';
+import { PageHeader } from '../../components/PageHeader';
+import { Callout } from '../../components/Callout';
 import { ServerTrendCard } from '../../components/ServerTrendCard';
 import { StatCard, Badge } from '../../components/ui';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -95,15 +97,16 @@ export default function OverviewPage() {
   return (
     <DashboardLayout>
       <div className="space-y-8">
-        <Card className="border-violet-500/20 bg-violet-500/[0.07]">
-          <CardContent className="flex items-start gap-3 p-4">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-violet-300" />
-            <p className="text-sm text-violet-200/90">
-              Les métriques réseau sont affichées en <strong className="text-violet-100">MB/s</strong>. Les cartes serveurs
-              affichent les tendances CPU/RAM sur une échelle 0-100% pour une lecture immédiate.
-            </p>
-          </CardContent>
-        </Card>
+        <PageHeader
+          icon={LayoutDashboard}
+          title="Vue d'ensemble"
+          description="État en direct de votre flotte de nœuds : capacité, charge, alertes et travaux en cours."
+        />
+
+        <Callout>
+          Les débits réseau sont affichés en <strong className="text-violet-100">MB/s</strong>, les tendances CPU/RAM
+          sur une échelle de 0 à 100 %.
+        </Callout>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           <StatCard

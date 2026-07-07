@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { AlertCircle, CheckCircle2, Lock, Mail, UserCog } from 'lucide-react';
 import { AdminProfile, api } from '@/lib/api';
 import { DashboardLayout } from '@/components/DashboardLayout';
+import { PageHeader } from '../../../components/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -111,14 +112,11 @@ export default function ProfilePage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <Card className="border-violet-500/20 bg-violet-500/[0.07]">
-          <CardContent className="flex items-start gap-3 p-4">
-            <UserCog className="mt-0.5 h-4 w-4 shrink-0 text-violet-300" />
-            <p className="text-sm text-violet-200/90">
-              Modifiez l’email et le mot de passe du compte administrateur.
-            </p>
-          </CardContent>
-        </Card>
+        <PageHeader
+          icon={UserCog}
+          title="Profil admin"
+          description="Modifiez l’email et le mot de passe du compte administrateur."
+        />
 
         <Card className="max-w-2xl border-white/[0.08] bg-zinc-900/65">
           <CardHeader>
