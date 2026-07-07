@@ -98,6 +98,7 @@ export class MountsService {
     return this.prisma.mount.update({
       where: { id },
       data: { status, lastError: status === 'error' ? message ?? null : null },
+      include: { node: true },
     });
   }
 }
