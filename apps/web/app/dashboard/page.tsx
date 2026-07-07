@@ -30,12 +30,9 @@ import { StatCard, Badge } from '../../components/ui';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Progress } from '../../components/ui/progress';
 import { readNodeLabels } from '../../lib/node-labels';
+import { SectionLabel } from '../../components/SectionLabel';
 
 const formatTime = (iso: string) => new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-
-function SectionLabel({ children }: { children: string }) {
-  return <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-400">{children}</p>;
-}
 
 export default function OverviewPage() {
   const router = useRouter();

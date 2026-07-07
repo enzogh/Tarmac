@@ -47,10 +47,7 @@ import {
 import { NodeOnboardingModal } from '../../../components/NodeOnboardingModal';
 import { Progress } from '../../../components/ui/progress';
 import { DirectoryBrowser } from '../../../components/ui/directory-browser';
-
-function SectionLabel({ children }: { children: string }) {
-  return <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-400">{children}</p>;
-}
+import { SectionLabel } from '../../../components/SectionLabel';
 
 const formatMbps = (value: number) => `${((value * 8) / 1_000_000).toFixed(2)} MB/s`;
 

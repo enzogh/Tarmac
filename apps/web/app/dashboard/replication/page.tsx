@@ -20,7 +20,8 @@ import { Callout } from '../../../components/Callout';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
-import { Badge } from '../../../components/ui';
+import { Badge, StatCard } from '../../../components/ui';
+import { SectionLabel } from '../../../components/SectionLabel';
 import { HelpText, InfoBox, StepConfig, WizardDialog } from '../../../components/ui/wizard';
 import { readNodeLabels } from '../../../lib/node-labels';
 
@@ -248,6 +249,8 @@ export default function ReplicationPage() {
   };
 
   const nodeName = (nodeId?: string | null) => (nodeId ? nodes.find((n) => n.id === nodeId)?.name ?? nodeId : '—');
+  const successfulJobs = jobs.filter((job) => job.status === 'success').length;
+  const failedJobs = jobs.filter((job) => job.status === 'failed').length;
 
   return (
     <DashboardLayout>
@@ -271,11 +274,26 @@ export default function ReplicationPage() {
           }
         />
 
+        <section className="space-y-4">
+          <SectionLabel>Aperçu</SectionLabel>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <StatCard label="Tâches" value={jobs.length} icon={<Copy className="h-8 w-8" />} changeType="neutral" />
+            <StatCard label="Réussies" value={successfulJobs} icon={<CheckCircle2 className="h-8 w-8" />} changeType="up" />
+            <StatCard
+              label="Échouées"
+              value={failedJobs}
+              icon={<AlertCircle className="h-8 w-8" />}
+              changeType={failedJobs > 0 ? 'down' : 'up'}
+            />
+          </div>
+        </section>
+
         <Callout variant="info">
           Chaque tâche copie un dossier source vers une destination via l'agent du nœud choisi. Combinez-la avec un
           montage NFS (page Montages) pour répliquer réellement vers un autre nœud.
         </Callout>
 
+        <SectionLabel>Tâches de réplication</SectionLabel>
         {jobs.length === 0 ? (
           <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
             <CardContent className="pt-12 pb-12 text-center">

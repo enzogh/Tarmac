@@ -19,6 +19,7 @@ import { GeoInfo, flagFromCountryCode, getGeoInfo, parseHostFromEndpoint } from 
 import { readNodeLabels } from '../../../lib/node-labels';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { PageHeader } from '../../../components/PageHeader';
+import { SectionLabel } from '../../../components/SectionLabel';
 import { Callout } from '../../../components/Callout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -748,77 +749,81 @@ export default function NetworkPage() {
         </Alert>
       )}
 
-      <Callout>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p>
-            Cette page se met à jour automatiquement toutes les 5 secondes. Les nœuds communiquent via un tunnel
-            réseau privé chiffré (WireGuard) ; si un agent ne remonte pas encore ses données, une estimation
-            côté serveur est utilisée à la place.
-          </p>
-          <div className="flex items-center gap-2 text-xs text-violet-200/80">
-            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-            {lastRefreshAt
-              ? `Dernière sync ${lastRefreshAt.toLocaleTimeString('fr-FR')}`
-              : 'Sync en attente'}
-          </div>
-        </div>
-      </Callout>
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <Card className="border-white/[0.08] bg-zinc-900/70">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Nœuds actifs
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-end justify-between">
-            <p className="text-3xl font-semibold text-foreground">{vlanStatus.memberCount}</p>
-            <Network className="h-5 w-5 text-violet-400" />
-          </CardContent>
-        </Card>
-
-        <Card className="border-white/[0.08] bg-zinc-900/70">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Liens sains
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-end justify-between">
-            <p className="text-3xl font-semibold text-emerald-300">
-              {vlanStatus.connectionStats.total > 0
-                ? Math.round((vlanStatus.connectionStats.healthy / vlanStatus.connectionStats.total) * 100)
-                : 100}
-              %
+      <section className="space-y-4">
+        <SectionLabel>Aperçu</SectionLabel>
+        <Callout>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p>
+              Cette page se met à jour automatiquement toutes les 5 secondes. Les nœuds communiquent via un tunnel
+              réseau privé chiffré (WireGuard) ; si un agent ne remonte pas encore ses données, une estimation
+              côté serveur est utilisée à la place.
             </p>
-            <RadioTower className="h-5 w-5 text-emerald-400" />
-          </CardContent>
-        </Card>
+            <div className="flex items-center gap-2 text-xs text-violet-200/80">
+              <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+              {lastRefreshAt
+                ? `Dernière sync ${lastRefreshAt.toLocaleTimeString('fr-FR')}`
+                : 'Sync en attente'}
+            </div>
+          </div>
+        </Callout>
 
-        <Card className="border-white/[0.08] bg-zinc-900/70">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Liens dégradés
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-end justify-between">
-            <p className="text-3xl font-semibold text-amber-300">{vlanStatus.connectionStats.degraded}</p>
-            <Gauge className="h-5 w-5 text-amber-400" />
-          </CardContent>
-        </Card>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <Card className="border-white/[0.08] bg-zinc-900/70">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Nœuds actifs
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex items-end justify-between">
+              <p className="text-3xl font-semibold text-foreground">{vlanStatus.memberCount}</p>
+              <Network className="h-5 w-5 text-violet-400" />
+            </CardContent>
+          </Card>
 
-        <Card className="border-white/[0.08] bg-zinc-900/70">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Liens offline
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-end justify-between">
-            <p className="text-3xl font-semibold text-rose-300">{vlanStatus.connectionStats.offline}</p>
-            <Activity className="h-5 w-5 text-rose-400" />
-          </CardContent>
-        </Card>
-      </div>
+          <Card className="border-white/[0.08] bg-zinc-900/70">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Liens sains
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex items-end justify-between">
+              <p className="text-3xl font-semibold text-emerald-300">
+                {vlanStatus.connectionStats.total > 0
+                  ? Math.round((vlanStatus.connectionStats.healthy / vlanStatus.connectionStats.total) * 100)
+                  : 100}
+                %
+              </p>
+              <RadioTower className="h-5 w-5 text-emerald-400" />
+            </CardContent>
+          </Card>
 
+          <Card className="border-white/[0.08] bg-zinc-900/70">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Liens dégradés
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex items-end justify-between">
+              <p className="text-3xl font-semibold text-amber-300">{vlanStatus.connectionStats.degraded}</p>
+              <Gauge className="h-5 w-5 text-amber-400" />
+            </CardContent>
+          </Card>
+
+          <Card className="border-white/[0.08] bg-zinc-900/70">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Liens offline
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex items-end justify-between">
+              <p className="text-3xl font-semibold text-rose-300">{vlanStatus.connectionStats.offline}</p>
+              <Activity className="h-5 w-5 text-rose-400" />
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+
+      <SectionLabel>Topologie</SectionLabel>
       <div className="grid gap-4 xl:grid-cols-[1.6fr_minmax(0,1fr)]">
         <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
           <CardHeader className="space-y-3">
@@ -1191,6 +1196,7 @@ export default function NetworkPage() {
         </CardContent>
       </Card>
 
+      <SectionLabel>Diagnostics</SectionLabel>
       <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
         <CardHeader>
           <CardTitle className="text-base">Tests de connectivité</CardTitle>

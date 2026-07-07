@@ -19,6 +19,7 @@ import {
 import { api, MigrationItem, NodeItem } from '../../../lib/api';
 import { DashboardLayout } from '../../../components/DashboardLayout';
 import { PageHeader } from '../../../components/PageHeader';
+import { SectionLabel } from '../../../components/SectionLabel';
 import { Callout } from '../../../components/Callout';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Progress } from '../../../components/ui/progress';
@@ -918,47 +919,50 @@ export default function MigrationsPage() {
           Éditable tant qu’elle est en attente, relançable après un échec. Dossiers source/destination à choisir en navigation live, sans CLI.
         </Callout>
 
-        <div className="grid gap-3 md:grid-cols-4">
-          <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
-            <CardContent className="flex items-center justify-between p-4">
-              <div>
-                <p className="text-xs text-muted-foreground">Total</p>
-                <p className="text-xl font-semibold">{metrics.total}</p>
-              </div>
-              <ArrowRightLeft className="h-5 w-5 text-violet-300" />
-            </CardContent>
-          </Card>
-          <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
-            <CardContent className="flex items-center justify-between p-4">
-              <div>
-                <p className="text-xs text-muted-foreground">En cours</p>
-                <p className="text-xl font-semibold text-sky-300">{metrics.running}</p>
-              </div>
-              <Loader2 className="h-5 w-5 text-sky-300" />
-            </CardContent>
-          </Card>
-          <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
-            <CardContent className="flex items-center justify-between p-4">
-              <div>
-                <p className="text-xs text-muted-foreground">En attente</p>
-                <p className="text-xl font-semibold text-amber-300">{metrics.pending}</p>
-              </div>
-              <PlayCircle className="h-5 w-5 text-amber-300" />
-            </CardContent>
-          </Card>
-          <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
-            <CardContent className="flex items-center justify-between p-4">
-              <div>
-                <p className="text-xs text-muted-foreground">Échecs</p>
-                <p className="text-xl font-semibold text-rose-300">{metrics.failed}</p>
-              </div>
-              <AlertCircle className="h-5 w-5 text-rose-300" />
-            </CardContent>
-          </Card>
-        </div>
+        <section className="space-y-4">
+          <SectionLabel>Aperçu</SectionLabel>
+          <div className="grid gap-3 md:grid-cols-4">
+            <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+              <CardContent className="flex items-center justify-between p-4">
+                <div>
+                  <p className="text-xs text-muted-foreground">Total</p>
+                  <p className="text-xl font-semibold">{metrics.total}</p>
+                </div>
+                <ArrowRightLeft className="h-5 w-5 text-violet-300" />
+              </CardContent>
+            </Card>
+            <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+              <CardContent className="flex items-center justify-between p-4">
+                <div>
+                  <p className="text-xs text-muted-foreground">En cours</p>
+                  <p className="text-xl font-semibold text-sky-300">{metrics.running}</p>
+                </div>
+                <Loader2 className="h-5 w-5 text-sky-300" />
+              </CardContent>
+            </Card>
+            <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+              <CardContent className="flex items-center justify-between p-4">
+                <div>
+                  <p className="text-xs text-muted-foreground">En attente</p>
+                  <p className="text-xl font-semibold text-amber-300">{metrics.pending}</p>
+                </div>
+                <PlayCircle className="h-5 w-5 text-amber-300" />
+              </CardContent>
+            </Card>
+            <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+              <CardContent className="flex items-center justify-between p-4">
+                <div>
+                  <p className="text-xs text-muted-foreground">Échecs</p>
+                  <p className="text-xl font-semibold text-rose-300">{metrics.failed}</p>
+                </div>
+                <AlertCircle className="h-5 w-5 text-rose-300" />
+              </CardContent>
+            </Card>
+          </div>
+        </section>
 
         <div className="space-y-4">
-          <h2 className="text-lg font-semibold">Migrations actives</h2>
+          <SectionLabel>Migrations actives</SectionLabel>
           {activeMigrations.length === 0 ? (
             <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
               <CardContent className="py-12 text-center">
@@ -1080,9 +1084,10 @@ export default function MigrationsPage() {
           )}
         </div>
 
+        <SectionLabel>Archives</SectionLabel>
         <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
           <CardHeader>
-            <CardTitle className="text-lg">Archives des migrations terminées</CardTitle>
+            <CardTitle className="text-lg">Migrations terminées</CardTitle>
           </CardHeader>
           <CardContent>
             {archivedMigrations.length === 0 ? (
