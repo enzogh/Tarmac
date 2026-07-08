@@ -450,6 +450,20 @@ export const api = {
         sourceSshPort?: number;
       },
     ) => request<SyncJobItem>('/api/v1/sync-jobs', token, { method: 'POST', body: JSON.stringify(payload) }),
+    update: (
+      token: string,
+      id: string,
+      payload: {
+        name?: string;
+        sourcePath?: string;
+        targetPath?: string;
+        schedule?: string;
+        nodeId?: string;
+        sourceHost?: string;
+        sourceUser?: string;
+        sourceSshPort?: number;
+      },
+    ) => request<SyncJobItem>(`/api/v1/sync-jobs/${id}`, token, { method: 'PATCH', body: JSON.stringify(payload) }),
     run: (token: string, id: string) => request(`/api/v1/sync-jobs/${id}/runs`, token, { method: 'POST' }),
     runs: (token: string, id: string) => request<SyncJobRunItem[]>(`/api/v1/sync-jobs/${id}/runs`, token),
     delete: (token: string, id: string) => request<void>(`/api/v1/sync-jobs/${id}`, token, { method: 'DELETE' }),
