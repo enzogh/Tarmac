@@ -2157,12 +2157,18 @@ func rcloneConfigPath() string {
 // via the dashboard; no seedbox password is ever stored or passed here.
 //
 // The mount is supervised by a dedicated systemd unit per mount
-// (tarmac-rclone-<mountId>.service) using Type=notify + Restart=always -
-// rclone mount natively sends the systemd readiness notification once the
-// FUSE mount is up, so `systemctl enable --now` blocks until it's actually
-// mounted (or fails). This is deliberately NOT rclone's own --daemon mode:
-// that forks and detaches, which defeats systemd's ability to supervise and
-// restart it on crash like the rest of the Tarmac-managed services.
+// (tarmac-rclone-<mountId>.service) using Type=simple + Restart=always, so a
+// crash gets restarted automatically like the rest of the Tarmac-managed
+// services. This is deliberately NOT rclone's own --daemon mode: that forks
+// and detaches, which defeats systemd's ability to supervise and restart it.
+//
+// Type=notify (rclone's documented readiness-notification integration) was
+// tried first but proved unreliable in practice - some environments fail the
+// sd_notify handshake even though the mount itself succeeds, which systemd
+// then reports as "control process exited with error code". Type=simple
+// sidesteps that: systemd only cares that the process is running, so this
+// function polls isTargetMounted itself after starting the unit instead of
+// relying on systemd to block until ready.
 func applyRcloneSftpMount(payload map[string]interface{}, source, target string) (string, error) {
 	mountID, err := sanitizeMountID(readString(payload, "mountId"))
 	if err != nil {
@@ -2241,7 +2247,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=notify
+Type=simple
 ExecStart=%s
 ExecStop=/bin/fusermount -uz %s
 Restart=always
@@ -2265,8 +2271,22 @@ WantedBy=multi-user.target
 		return "", fmt.Errorf("cannot enable/start %s: %s", unitName, strings.TrimSpace(string(out)))
 	}
 
-	if _, mounted := isTargetMounted(target); !mounted {
-		return "", fmt.Errorf("%s reported ready but %s is not mounted; check `systemctl status %s`", unitName, target, unitName)
+	// Type=simple: systemd returns as soon as the process is spawned, not
+	// once it's actually mounted, so poll briefly instead of checking once.
+	mounted := false
+	for i := 0; i < 20; i++ {
+		if _, ok := isTargetMounted(target); ok {
+			mounted = true
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if !mounted {
+		statusOut, _ := exec.Command("systemctl", "status", unitName, "--no-pager").CombinedOutput()
+		return "", fmt.Errorf(
+			"%s started but %s is not mounted after 10s; systemctl status: %s",
+			unitName, target, strings.TrimSpace(string(statusOut)),
+		)
 	}
 
 	return fmt.Sprintf("mounted %s:%s on %s via rclone (%s)", remoteName, source, target, unitName), nil
