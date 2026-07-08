@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
@@ -66,9 +66,18 @@ export class SyncJobsController {
    * such as a qBittorrent "run external program on completion" script.
    * Authenticated instead by the per-job X-Trigger-Token header, same
    * pattern as AgentsController's uninstall route.
+   *
+   * relativePath is optional: pass qBittorrent's %N (torrent name) to scope
+   * the run to just that item instead of re-mirroring the whole source
+   * folder - avoids re-pulling files already moved out of targetPath by a
+   * downstream tool like Radarr.
    */
   @Post(':id/trigger')
-  trigger(@Param('id') id: string, @Headers('x-trigger-token') triggerToken?: string) {
-    return this.syncJobsService.triggerViaToken(id, triggerToken);
+  trigger(
+    @Param('id') id: string,
+    @Headers('x-trigger-token') triggerToken?: string,
+    @Query('relativePath') relativePath?: string,
+  ) {
+    return this.syncJobsService.triggerViaToken(id, triggerToken, relativePath);
   }
 }

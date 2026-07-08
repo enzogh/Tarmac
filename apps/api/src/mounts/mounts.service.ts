@@ -27,6 +27,9 @@ export class MountsService {
       targetPath: dto.targetPath,
       fsType: dto.fsType ?? 'nfs',
       mountOptions: dto.mountOptions,
+      remoteHost: dto.remoteHost,
+      remoteUser: dto.remoteUser,
+      remoteSshPort: dto.remoteSshPort,
       ...(dto.nodeId ? { node: { connect: { id: dto.nodeId } } } : {}),
     };
 
@@ -51,6 +54,9 @@ export class MountsService {
       ...(dto.mountOptions !== undefined ? { mountOptions: dto.mountOptions } : {}),
       ...(dto.status !== undefined ? { status: dto.status as MountStatus } : {}),
       ...(dto.nodeId !== undefined ? { node: { connect: { id: dto.nodeId } } } : {}),
+      ...(dto.remoteHost !== undefined ? { remoteHost: dto.remoteHost } : {}),
+      ...(dto.remoteUser !== undefined ? { remoteUser: dto.remoteUser } : {}),
+      ...(dto.remoteSshPort !== undefined ? { remoteSshPort: dto.remoteSshPort } : {}),
     };
 
     const updated = await this.prisma.mount.update({ where: { id }, data });

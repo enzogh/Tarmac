@@ -1,4 +1,4 @@
-import { IsArray, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsArray, IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
 
 export class CreateMountDto {
   @IsString()
@@ -30,4 +30,20 @@ export class CreateMountDto {
   @IsOptional()
   @IsString()
   nodeId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  remoteHost?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  remoteUser?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  remoteSshPort?: number;
 }

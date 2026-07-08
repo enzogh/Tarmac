@@ -1,4 +1,4 @@
-import { IsArray, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsArray, IsIn, IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
 
 export class UpdateMountDto {
   @IsOptional()
@@ -38,4 +38,20 @@ export class UpdateMountDto {
   @IsString()
   @IsIn(['pending', 'active', 'error'])
   status?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  remoteHost?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  remoteUser?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  remoteSshPort?: number;
 }
