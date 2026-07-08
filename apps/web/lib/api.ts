@@ -415,6 +415,19 @@ export const api = {
         remoteSshPort?: number;
       },
     ) => request<MountItem>('/api/v1/mounts', token, { method: 'POST', body: JSON.stringify(payload) }),
+    update: (
+      token: string,
+      id: string,
+      payload: {
+        name?: string;
+        sourcePath?: string;
+        targetPath?: string;
+        mountOptions?: string;
+        remoteHost?: string;
+        remoteUser?: string;
+        remoteSshPort?: number;
+      },
+    ) => request<MountItem>(`/api/v1/mounts/${id}`, token, { method: 'PATCH', body: JSON.stringify(payload) }),
     delete: (token: string, id: string) =>
       request<void>(`/api/v1/mounts/${id}`, token, { method: 'DELETE' }),
     remount: (token: string, id: string) =>
