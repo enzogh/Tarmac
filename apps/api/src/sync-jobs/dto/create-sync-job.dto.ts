@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MinLength } from 'class-validator';
+import { IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
 
 export class CreateSyncJobDto {
   @IsString()
@@ -20,4 +20,20 @@ export class CreateSyncJobDto {
   @IsOptional()
   @IsString()
   nodeId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  sourceHost?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  sourceUser?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  sourceSshPort?: number;
 }

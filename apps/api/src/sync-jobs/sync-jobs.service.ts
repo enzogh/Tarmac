@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { Prisma, SyncJobStatus } from '@prisma/client';
 import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { UpdateSyncJobDto } from './dto/update-sync-job.dto';
+import { SyncJobTriggerService } from './sync-job-trigger.service';
 
 @Injectable()
 export class SyncJobsService {
@@ -12,6 +13,7 @@ export class SyncJobsService {
     private readonly prisma: PrismaService,
     private readonly agentsService: AgentsService,
     private readonly auditLogsService: AuditLogsService,
+    private readonly syncJobTriggerService: SyncJobTriggerService,
   ) {}
 
   list() {
@@ -34,7 +36,10 @@ export class SyncJobsService {
   }
 
   async create(dto: CreateSyncJobDto, actorUserId?: string) {
-    const created = await this.prisma.syncJob.create({ data: dto });
+    const triggerToken = this.syncJobTriggerService.generate();
+    const created = await this.prisma.syncJob.create({
+      data: { ...dto, triggerTokenHash: this.syncJobTriggerService.hash(triggerToken), triggerTokenRotatedAt: new Date() },
+    });
     await this.auditLogsService.log({
       actorUserId,
       action: 'sync_job.create',
@@ -42,7 +47,8 @@ export class SyncJobsService {
       resourceId: created.id,
       details: dto as unknown as Prisma.InputJsonValue,
     });
-    return created;
+    // Only ever returned in plaintext at creation/rotation time; never persisted or logged.
+    return { ...created, triggerToken };
   }
 
   async update(id: string, dto: UpdateSyncJobDto, actorUserId?: string) {
@@ -68,13 +74,13 @@ export class SyncJobsService {
     return deleted;
   }
 
-  async run(id: string, actorUserId?: string) {
+  async run(id: string, actorUserId?: string, trigger: 'manual' | 'webhook' = 'manual') {
     const job = await this.prisma.syncJob.findUniqueOrThrow({ where: { id } });
     const run = await this.prisma.syncJobRun.create({
       data: {
         syncJobId: id,
         status: 'running',
-        trigger: 'manual',
+        trigger,
       },
     });
 
@@ -88,6 +94,13 @@ export class SyncJobsService {
           runId: run.id,
           sourcePath: job.sourcePath,
           targetPath: job.targetPath,
+          ...(job.sourceHost
+            ? {
+                sourceHost: job.sourceHost,
+                ...(job.sourceUser ? { sourceUser: job.sourceUser } : {}),
+                ...(job.sourceSshPort ? { sourceSshPort: job.sourceSshPort } : {}),
+              }
+            : {}),
         },
       });
     } else {
@@ -99,10 +112,38 @@ export class SyncJobsService {
       action: 'sync_job.run',
       resourceType: 'sync_job_run',
       resourceId: run.id,
-      details: { syncJobId: id },
+      details: { syncJobId: id, trigger },
     });
 
     return this.prisma.syncJobRun.findUniqueOrThrow({ where: { id: run.id } });
+  }
+
+  /**
+   * Entry point for POST /sync-jobs/:id/trigger - starts a run without a JWT
+   * session, authenticated instead by the job's own trigger token (e.g. from
+   * a qBittorrent "run on completion" script). Reuses run() so behavior
+   * (command dispatch, audit log) stays identical to a manual run except for
+   * the trigger label and the absence of an actorUserId.
+   */
+  async triggerViaToken(id: string, presentedToken: string | undefined) {
+    if (!(await this.syncJobTriggerService.verify(id, presentedToken))) {
+      throw new UnauthorizedException('invalid trigger token');
+    }
+    return this.run(id, undefined, 'webhook');
+  }
+
+  async rotateTriggerToken(id: string, actorUserId?: string) {
+    await this.prisma.syncJob.findUniqueOrThrow({ where: { id } });
+    const triggerToken = await this.syncJobTriggerService.rotate(id);
+
+    await this.auditLogsService.log({
+      actorUserId,
+      action: 'sync_job.rotate_trigger_token',
+      resourceType: 'sync_job',
+      resourceId: id,
+    });
+
+    return { triggerToken };
   }
 
   async completeRun(id: string, success: boolean, bytesTransferred = 0, log?: string) {

@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
 
 export class UpdateSyncJobDto {
   @IsOptional()
@@ -29,4 +29,20 @@ export class UpdateSyncJobDto {
   @IsString()
   @IsIn(['pending', 'running', 'success', 'failed'])
   status?: 'pending' | 'running' | 'success' | 'failed';
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  sourceHost?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  sourceUser?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  sourceSshPort?: number;
 }
