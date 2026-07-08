@@ -14,6 +14,9 @@ import {
   Trash2,
   Wifi,
   Play,
+  Copy,
+  Check,
+  KeyRound,
 } from 'lucide-react';
 import { api, MountItem, NodeItem, VlanMember } from '../../../lib/api';
 import { DashboardLayout } from '../../../components/DashboardLayout';
@@ -209,7 +212,22 @@ export default function MountsPage() {
     fsType: 'nfs4',
     mountOptions: 'defaults,hard,intr',
     nodeId: '',
+    mountType: 'nfs' as 'nfs' | 'cifs' | 'rclone-sftp',
+    remoteHost: '',
+    remoteUser: '',
+    remoteSshPort: '',
   });
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const copyToClipboard = async (text: string, key: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedKey(key);
+      window.setTimeout(() => setCopiedKey((current) => (current === key ? null : current)), 1600);
+    } catch {
+      setNotice({ type: 'error', message: 'Impossible de copier dans le presse-papiers.' });
+    }
+  };
 
   // Form — "create + mount NFS share via VLAN"
   const [shareForm, setShareForm] = useState({
@@ -405,23 +423,49 @@ export default function MountsPage() {
 
   // ── Mount existing NFS path ───────────────────────────────────────────────
 
+  const resetMountForm = () =>
+    setMountForm({
+      name: '',
+      sourcePath: '',
+      targetPath: '/mnt',
+      fsType: 'nfs4',
+      mountOptions: 'defaults,hard,intr',
+      nodeId: '',
+      mountType: 'nfs',
+      remoteHost: '',
+      remoteUser: '',
+      remoteSshPort: '',
+    });
+
   const createMount = async () => {
     if (!token) return;
     if (!mountForm.name.trim() || !mountForm.sourcePath.trim() || !mountForm.targetPath.trim()) {
       setNotice({ type: 'error', message: 'Complétez le nom, la source et la destination.' });
       return;
     }
+    if (mountForm.mountType === 'rclone-sftp' && !mountForm.remoteHost.trim()) {
+      setNotice({ type: 'error', message: "L'hôte distant est obligatoire pour un montage SSH distant." });
+      return;
+    }
     try {
+      const isRclone = mountForm.mountType === 'rclone-sftp';
       await api.mounts.create(token, {
         name: mountForm.name.trim(),
         sourcePath: mountForm.sourcePath.trim(),
         targetPath: mountForm.targetPath.trim(),
-        fsType: mountForm.fsType,
-        mountOptions: mountForm.mountOptions,
+        fsType: isRclone ? 'rclone-sftp' : mountForm.mountType === 'cifs' ? 'cifs' : mountForm.fsType,
+        mountOptions: isRclone ? undefined : mountForm.mountOptions,
         nodeId: mountForm.nodeId || undefined,
+        ...(isRclone
+          ? {
+              remoteHost: mountForm.remoteHost.trim(),
+              ...(mountForm.remoteUser.trim() ? { remoteUser: mountForm.remoteUser.trim() } : {}),
+              ...(mountForm.remoteSshPort.trim() ? { remoteSshPort: Number(mountForm.remoteSshPort.trim()) } : {}),
+            }
+          : {}),
       });
       closeWizard();
-      setMountForm({ name: '', sourcePath: '', targetPath: '/mnt', fsType: 'nfs4', mountOptions: 'defaults,hard,intr', nodeId: '' });
+      resetMountForm();
       setNotice({ type: 'success', message: 'Montage créé.' });
       await load();
     } catch {
@@ -755,13 +799,47 @@ export default function MountsPage() {
 
           <div>
             <Label className="mb-2 block text-sm font-medium text-zinc-200">
-              Chemin source NFS
-              <HelpText text="Format : <ip>:<chemin> — ex: 192.168.10.1:/data/backup" />
+              Type de montage
+              <HelpText text="NFS/CIFS pour un partage réseau classique. SSH distant pour un hôte externe sans agent Tarmac (ex: seedbox)." />
+            </Label>
+            <Select
+              value={mountForm.mountType}
+              onValueChange={(v) =>
+                setMountForm((prev) => ({
+                  ...prev,
+                  mountType: v as 'nfs' | 'cifs' | 'rclone-sftp',
+                  fsType: v === 'nfs' ? 'nfs4' : v === 'cifs' ? 'cifs' : prev.fsType,
+                }))
+              }
+            >
+              <SelectTrigger className="h-10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="nfs">NFS</SelectItem>
+                <SelectItem value="cifs">CIFS / SMB</SelectItem>
+                <SelectItem value="rclone-sftp">Distant SSH (rclone)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div>
+            <Label className="mb-2 block text-sm font-medium text-zinc-200">
+              {mountForm.mountType === 'rclone-sftp' ? 'Chemin sur l\'hôte distant' : 'Chemin source'}
+              <HelpText
+                text={
+                  mountForm.mountType === 'rclone-sftp'
+                    ? "Chemin absolu sur l'hôte distant, ex: /home/user/files/downloads/films"
+                    : mountForm.mountType === 'cifs'
+                      ? 'Format : //<hôte>/<partage> — ex: //192.168.10.1/backup'
+                      : 'Format : <ip>:<chemin> — ex: 192.168.10.1:/data/backup'
+                }
+              />
             </Label>
             <Input
               value={mountForm.sourcePath}
               onChange={(e) => setMountForm((prev) => ({ ...prev, sourcePath: e.target.value }))}
-              placeholder="192.168.10.1:/data/backup"
+              placeholder={mountForm.mountType === 'rclone-sftp' ? '/home/user/files/downloads/films' : '192.168.10.1:/data/backup'}
               className="font-mono"
             />
           </div>
@@ -808,38 +886,126 @@ export default function MountsPage() {
             </Select>
           </div>
 
-          <AdvancedOptions label="Options NFS avancées">
-            <div>
-              <Label className="mb-2 block text-sm font-medium text-zinc-200">
-                Type de système de fichiers
-                <HelpText text="NFS4 est recommandé." />
-              </Label>
-              <Select
-                value={mountForm.fsType}
-                onValueChange={(v) => setMountForm((prev) => ({ ...prev, fsType: v }))}
-              >
-                <SelectTrigger className="h-10">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="nfs4">NFS 4 (Recommandé)</SelectItem>
-                  <SelectItem value="nfs3">NFS 3</SelectItem>
-                  <SelectItem value="nfs">NFS (Auto)</SelectItem>
-                </SelectContent>
-              </Select>
+          {mountForm.mountType === 'rclone-sftp' && (
+            <div className="space-y-4 rounded-lg border border-white/[0.08] bg-white/[0.02] p-4">
+              <div>
+                <p className="text-sm font-medium text-zinc-200">Source distante (SSH)</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Le fichier reste sur l&apos;hôte distant, jamais supprimé ni modifié — seul un accès en lecture via
+                  FUSE est monté localement.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div>
+                  <Label className="mb-1.5 block text-xs font-medium text-zinc-400">Hôte</Label>
+                  <Input
+                    value={mountForm.remoteHost}
+                    onChange={(e) => setMountForm((prev) => ({ ...prev, remoteHost: e.target.value }))}
+                    placeholder="monuser.ultra.cc"
+                    className="font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <Label className="mb-1.5 block text-xs font-medium text-zinc-400">Utilisateur SSH</Label>
+                  <Input
+                    value={mountForm.remoteUser}
+                    onChange={(e) => setMountForm((prev) => ({ ...prev, remoteUser: e.target.value }))}
+                    placeholder="root"
+                    className="font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <Label className="mb-1.5 block text-xs font-medium text-zinc-400">Port SSH</Label>
+                  <Input
+                    type="number"
+                    value={mountForm.remoteSshPort}
+                    onChange={(e) => setMountForm((prev) => ({ ...prev, remoteSshPort: e.target.value }))}
+                    placeholder="22"
+                    className="font-mono text-xs"
+                  />
+                </div>
+              </div>
+
+              {mountForm.nodeId &&
+                (() => {
+                  const selectedNode = nodes.find((n) => n.id === mountForm.nodeId);
+                  const pubKey = selectedNode?.overlaySshPublicKey;
+                  return pubKey ? (
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="flex items-center gap-1.5 text-xs">
+                          <KeyRound className="h-3.5 w-3.5" />
+                          Clé publique de l&apos;agent {selectedNode?.name} (à ajouter à{' '}
+                          <code>~/.ssh/authorized_keys</code> sur l&apos;hôte distant)
+                        </p>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => copyToClipboard(pubKey, 'mount-pubkey')}
+                        >
+                          {copiedKey === 'mount-pubkey' ? (
+                            <Check className="h-3.5 w-3.5" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                      </div>
+                      <p className="truncate rounded border border-white/[0.06] bg-zinc-950/70 px-2 py-1.5 font-mono text-[11px] text-foreground/80">
+                        {pubKey}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-amber-300/90">
+                      Clé SSH de l&apos;agent {selectedNode?.name} pas encore reçue — attends un heartbeat, ou
+                      choisis un autre serveur de montage.
+                    </p>
+                  );
+                })()}
+
+              <InfoBox type="info" title="Authentification par clé, sans mot de passe stocké">
+                Aucun mot de passe n&apos;est enregistré. C&apos;est la clé de l&apos;agent ci-dessus qui authentifie
+                le montage auprès de l&apos;hôte distant.
+              </InfoBox>
             </div>
-            <div>
-              <Label className="mb-2 block text-sm font-medium text-zinc-200">
-                Options de montage
-                <HelpText text="Conservez la valeur par défaut si vous n'êtes pas sûr." />
-              </Label>
-              <Input
-                value={mountForm.mountOptions}
-                onChange={(e) => setMountForm((prev) => ({ ...prev, mountOptions: e.target.value }))}
-                className="font-mono text-sm"
-              />
-            </div>
-          </AdvancedOptions>
+          )}
+
+          {mountForm.mountType !== 'rclone-sftp' && (
+            <AdvancedOptions label={mountForm.mountType === 'nfs' ? 'Options NFS avancées' : 'Options de montage'}>
+              {mountForm.mountType === 'nfs' && (
+                <div>
+                  <Label className="mb-2 block text-sm font-medium text-zinc-200">
+                    Type de système de fichiers
+                    <HelpText text="NFS4 est recommandé." />
+                  </Label>
+                  <Select
+                    value={mountForm.fsType}
+                    onValueChange={(v) => setMountForm((prev) => ({ ...prev, fsType: v }))}
+                  >
+                    <SelectTrigger className="h-10">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="nfs4">NFS 4 (Recommandé)</SelectItem>
+                      <SelectItem value="nfs3">NFS 3</SelectItem>
+                      <SelectItem value="nfs">NFS (Auto)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              <div>
+                <Label className="mb-2 block text-sm font-medium text-zinc-200">
+                  Options de montage
+                  <HelpText text="Conservez la valeur par défaut si vous n'êtes pas sûr." />
+                </Label>
+                <Input
+                  value={mountForm.mountOptions}
+                  onChange={(e) => setMountForm((prev) => ({ ...prev, mountOptions: e.target.value }))}
+                  className="font-mono text-sm"
+                />
+              </div>
+            </AdvancedOptions>
+          )}
         </div>
       ),
     },
@@ -859,10 +1025,18 @@ export default function MountsPage() {
           <div className="space-y-2 rounded-xl border border-white/[0.08] bg-zinc-900/60 p-4 text-sm">
             {[
               ['Nom', mountForm.name || '—'],
+              ['Type', mountForm.mountType === 'rclone-sftp' ? 'Distant SSH (rclone)' : mountForm.mountType === 'cifs' ? 'CIFS / SMB' : 'NFS'],
               ['Source', mountForm.sourcePath || '—'],
               ['Destination', mountForm.targetPath || '—'],
               ['Serveur', nodes.find((n) => n.id === mountForm.nodeId)?.name ?? '—'],
-              ['Type FS', mountForm.fsType],
+              ...(mountForm.mountType === 'rclone-sftp'
+                ? [[
+                    'Hôte SSH distant',
+                    mountForm.remoteHost
+                      ? `${mountForm.remoteUser || 'root'}@${mountForm.remoteHost}:${mountForm.remoteSshPort || '22'}`
+                      : '—',
+                  ]]
+                : [['Type FS', mountForm.fsType]]),
             ].map(([label, value]) => (
               <div key={label} className="flex justify-between gap-4 border-b border-white/[0.05] pb-2 last:border-0 last:pb-0">
                 <span className="text-muted-foreground">{label}</span>
@@ -996,6 +1170,38 @@ export default function MountsPage() {
                             <p className="font-mono text-zinc-300">{mount.targetPath}</p>
                           </div>
                         </div>
+                        {mount.remoteHost && (
+                          <div className="mt-3 space-y-2 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
+                            <p className="flex items-center gap-1.5 text-xs text-foreground/90">
+                              Source SSH distante :{' '}
+                              <span className="font-mono">
+                                {mount.remoteUser || 'root'}@{mount.remoteHost}:{mount.remoteSshPort || 22}
+                              </span>
+                            </p>
+                            {mount.node?.overlaySshPublicKey ? (
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="flex items-center gap-1.5 text-xs">
+                                  <KeyRound className="h-3.5 w-3.5" />
+                                  Clé publique de l&apos;agent (pour <code>~/.ssh/authorized_keys</code>)
+                                </p>
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={() => copyToClipboard(mount.node!.overlaySshPublicKey!, `mount-key-${mount.id}`)}
+                                >
+                                  {copiedKey === `mount-key-${mount.id}` ? (
+                                    <Check className="h-3.5 w-3.5" />
+                                  ) : (
+                                    <Copy className="h-3.5 w-3.5" />
+                                  )}
+                                </Button>
+                              </div>
+                            ) : (
+                              <p className="text-xs text-amber-300/90">Clé SSH de l&apos;agent pas encore reçue.</p>
+                            )}
+                          </div>
+                        )}
                         {mount.status === 'error' && mount.lastError && (
                           <div className="mt-3 rounded-lg border border-rose-500/20 bg-rose-500/[0.06] px-3 py-2">
                             <p className="mb-0.5 text-xs font-medium text-rose-400">Erreur</p>

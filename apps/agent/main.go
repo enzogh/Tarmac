@@ -1410,6 +1410,80 @@ func ensureAgentSystemPackages(ctx context.Context, packages []string) ([]string
 	return missing, nil
 }
 
+// rclone isn't in ensureAgentSystemPackages' apt-driven checks map on purpose:
+// the apt-packaged version lags far enough behind upstream that `rclone mount`
+// features we rely on (systemd notify readiness, --vfs-cache-mode) can be
+// missing or buggy. ensureRclone installs/upgrades via the official script
+// instead, on demand, the first time a rclone-sftp mount is applied.
+const rcloneMinMajor = 1
+const rcloneMinMinor = 60
+
+func ensureRclone(ctx context.Context) error {
+	if commandExists("rclone") && rcloneVersionSupported() {
+		return nil
+	}
+	return installRcloneFromOfficialScript(ctx)
+}
+
+func rcloneVersionSupported() bool {
+	output, err := exec.Command("rclone", "version").Output()
+	if err != nil {
+		return false
+	}
+	firstLine := strings.SplitN(string(output), "\n", 2)[0]
+	fields := strings.Fields(firstLine)
+	if len(fields) < 2 {
+		return false
+	}
+	major, minor, ok := parseRcloneVersion(fields[1])
+	if !ok {
+		return false
+	}
+	if major != rcloneMinMajor {
+		return major > rcloneMinMajor
+	}
+	return minor >= rcloneMinMinor
+}
+
+func parseRcloneVersion(raw string) (int, int, bool) {
+	trimmed := strings.TrimPrefix(strings.TrimSpace(raw), "v")
+	parts := strings.SplitN(trimmed, ".", 3)
+	if len(parts) < 2 {
+		return 0, 0, false
+	}
+	major, majorErr := strconv.Atoi(parts[0])
+	minor, minorErr := strconv.Atoi(parts[1])
+	if majorErr != nil || minorErr != nil {
+		return 0, 0, false
+	}
+	return major, minor, true
+}
+
+func installRcloneFromOfficialScript(ctx context.Context) error {
+	if !commandExists("curl") {
+		return errors.New("curl not found on agent; cannot install rclone")
+	}
+
+	var cmd *exec.Cmd
+	if os.Geteuid() == 0 {
+		cmd = exec.CommandContext(ctx, "sh", "-c", "curl -fsSL https://rclone.org/install.sh | bash")
+	} else {
+		if !commandExists("sudo") {
+			return errors.New("rclone is missing/outdated and sudo is unavailable to install it")
+		}
+		cmd = exec.CommandContext(ctx, "sh", "-c", "curl -fsSL https://rclone.org/install.sh | sudo bash")
+	}
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("cannot install rclone via official script: %s", strings.TrimSpace(string(output)))
+	}
+	if !commandExists("rclone") {
+		return errors.New("rclone install script completed but rclone binary still not found in PATH")
+	}
+	return nil
+}
+
 func parseOverlayPeers(payload map[string]interface{}) []overlayPeer {
 	rawPeers, ok := payload["peers"]
 	if !ok {
@@ -1757,6 +1831,16 @@ func removeMount(payload map[string]interface{}) (string, error) {
 		return "", errors.New("remove_mount payload must include targetPath")
 	}
 
+	// remove_mount's payload doesn't carry fsType (mounts.service.ts sends
+	// just mountId/sourcePath/targetPath), so detect an rclone-managed mount
+	// by the presence of its dedicated systemd unit rather than trusting a
+	// caller-supplied type.
+	if mountID, err := sanitizeMountID(readString(payload, "mountId")); err == nil {
+		if _, statErr := os.Stat(filepath.Join("/etc/systemd/system", rcloneServiceName(mountID))); statErr == nil {
+			return removeRcloneSftpMount(mountID, target)
+		}
+	}
+
 	var notes []string
 
 	if _, mounted := isTargetMounted(target); mounted {
@@ -1779,6 +1863,72 @@ func removeMount(payload map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("cannot remove fstab entry: %w", err)
 	}
 	notes = append(notes, "fstab entry removed")
+
+	if _, stillMounted := isTargetMounted(target); !stillMounted {
+		if err := os.Remove(target); err == nil {
+			notes = append(notes, "local mount point directory removed")
+		} else if !os.IsNotExist(err) {
+			notes = append(notes, fmt.Sprintf("kept local directory %s (%s)", target, err.Error()))
+		}
+	}
+
+	return strings.Join(notes, "; "), nil
+}
+
+// removeRcloneSftpMount undoes applyRcloneSftpMount: stops and deletes the
+// dedicated systemd unit, unmounts the FUSE mount (fusermount first, lazy
+// umount as a fallback for a wedged mount, mirroring removeMount's own
+// fallback), drops the rclone remote config, and removes the local mount
+// point directory if it's now empty. Like removeMount, this never touches
+// the remote host or its data - fusermount/umount only detach the local
+// FUSE view.
+func removeRcloneSftpMount(mountID, target string) (string, error) {
+	var notes []string
+	unitName := rcloneServiceName(mountID)
+	unitPath := filepath.Join("/etc/systemd/system", unitName)
+
+	if commandExists("systemctl") {
+		_ = exec.Command("systemctl", "disable", "--now", unitName).Run()
+		notes = append(notes, fmt.Sprintf("%s stopped/disabled", unitName))
+	}
+
+	if err := os.Remove(unitPath); err == nil {
+		notes = append(notes, "systemd unit removed")
+	} else if !os.IsNotExist(err) {
+		notes = append(notes, fmt.Sprintf("kept unit file %s (%s)", unitPath, err.Error()))
+	}
+	if commandExists("systemctl") {
+		_ = exec.Command("systemctl", "daemon-reload").Run()
+	}
+
+	if _, mounted := isTargetMounted(target); mounted {
+		unmounted := false
+		if commandExists("fusermount") {
+			if out, err := exec.Command("fusermount", "-uz", target).CombinedOutput(); err != nil {
+				notes = append(notes, fmt.Sprintf("fusermount failed (%s), trying lazy umount", strings.TrimSpace(string(out))))
+			} else {
+				notes = append(notes, "unmounted (fusermount)")
+				unmounted = true
+			}
+		}
+		if !unmounted {
+			if out, err := exec.Command("umount", "-l", target).CombinedOutput(); err != nil {
+				return "", fmt.Errorf("cannot unmount %s: %s", target, strings.TrimSpace(string(out)))
+			}
+			notes = append(notes, "lazy unmount used")
+		}
+	} else {
+		notes = append(notes, "was not mounted")
+	}
+
+	remoteName := rcloneRemoteName(mountID)
+	if commandExists("rclone") {
+		if out, err := exec.Command("rclone", "config", "delete", remoteName).CombinedOutput(); err != nil {
+			notes = append(notes, fmt.Sprintf("could not remove rclone remote %s (%s)", remoteName, strings.TrimSpace(string(out))))
+		} else {
+			notes = append(notes, "rclone remote removed")
+		}
+	}
 
 	if _, stillMounted := isTargetMounted(target); !stillMounted {
 		if err := os.Remove(target); err == nil {
@@ -1850,6 +2000,11 @@ func applyMount(payload map[string]interface{}) (string, error) {
 	if fsType == "" {
 		fsType = "nfs"
 	}
+
+	if fsType == "rclone-sftp" {
+		return applyRcloneSftpMount(payload, source, target)
+	}
+
 	options := readString(payload, "mountOptions")
 	runtimeOptionsSlice := parseMountOptions(options)
 	runtimeOptions := joinMountOptions(runtimeOptionsSlice)
@@ -1960,6 +2115,143 @@ func applyMount(payload map[string]interface{}) (string, error) {
 	}
 
 	return "", fmt.Errorf("mount failed: %s", strings.Join(attempts, " | "))
+}
+
+var mountIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+// sanitizeMountID guards against a mountId being used to build a systemd
+// unit file path or rclone remote name: both are constructed by simple
+// string concatenation (not shell-interpreted), but a stray "/" or ".."
+// could still escape the intended /etc/systemd/system/ directory.
+func sanitizeMountID(id string) (string, error) {
+	id = strings.TrimSpace(id)
+	if id == "" || !mountIDPattern.MatchString(id) {
+		return "", fmt.Errorf("invalid mountId %q", id)
+	}
+	return id, nil
+}
+
+func rcloneRemoteName(mountID string) string {
+	return "tarmac-mount-" + mountID
+}
+
+func rcloneServiceName(mountID string) string {
+	return "tarmac-rclone-" + mountID + ".service"
+}
+
+// applyRcloneSftpMount mounts a remote SFTP-only host (e.g. an external
+// seedbox with no root access, not a Tarmac node) as a local FUSE mount via
+// rclone. Auth reuses the agent's own SSH identity (ensureSSHIdentity) - the
+// operator copies its public key into the remote host's authorized_keys once,
+// via the dashboard; no seedbox password is ever stored or passed here.
+//
+// The mount is supervised by a dedicated systemd unit per mount
+// (tarmac-rclone-<mountId>.service) using Type=notify + Restart=always -
+// rclone mount natively sends the systemd readiness notification once the
+// FUSE mount is up, so `systemctl enable --now` blocks until it's actually
+// mounted (or fails). This is deliberately NOT rclone's own --daemon mode:
+// that forks and detaches, which defeats systemd's ability to supervise and
+// restart it on crash like the rest of the Tarmac-managed services.
+func applyRcloneSftpMount(payload map[string]interface{}, source, target string) (string, error) {
+	mountID, err := sanitizeMountID(readString(payload, "mountId"))
+	if err != nil {
+		return "", fmt.Errorf("rclone-sftp mount: %w", err)
+	}
+	remoteHost := strings.TrimSpace(readString(payload, "remoteHost"))
+	if remoteHost == "" {
+		return "", errors.New("rclone-sftp mount payload must include remoteHost")
+	}
+	remoteUser := strings.TrimSpace(readString(payload, "remoteUser"))
+	if remoteUser == "" {
+		remoteUser = "root"
+	}
+	remoteSshPort := readInt(payload, "remoteSshPort", 22)
+
+	if currentSource, mounted := isTargetMounted(target); mounted {
+		return fmt.Sprintf("already mounted (%s -> %s)", currentSource, target), nil
+	}
+
+	installCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	rcloneErr := ensureRclone(installCtx)
+	cancel()
+	if rcloneErr != nil {
+		return "", fmt.Errorf("rclone not available and automatic install failed: %w", rcloneErr)
+	}
+
+	if _, err := ensureSSHIdentity(); err != nil {
+		return "", fmt.Errorf("cannot prepare ssh identity for rclone: %w", err)
+	}
+	privateKeyPath := envOrDefault("AGENT_SSH_PRIVATE_KEY_PATH", "/var/lib/tarmac-agent/ssh/id_ed25519")
+
+	remoteName := rcloneRemoteName(mountID)
+	configArgs := []string{
+		"config", "create", remoteName, "sftp",
+		"host", remoteHost,
+		"user", remoteUser,
+		"port", strconv.Itoa(remoteSshPort),
+		"key_file", privateKeyPath,
+	}
+	if out, err := exec.Command("rclone", configArgs...).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("cannot configure rclone remote %s: %s", remoteName, strings.TrimSpace(string(out)))
+	}
+
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		return "", fmt.Errorf("cannot create target path: %w", err)
+	}
+
+	rcloneBinary, err := exec.LookPath("rclone")
+	if err != nil {
+		return "", errors.New("rclone binary not found in PATH after install")
+	}
+
+	unitName := rcloneServiceName(mountID)
+	unitPath := filepath.Join("/etc/systemd/system", unitName)
+	execStartArgs := []string{
+		rcloneBinary, "mount",
+		fmt.Sprintf("%s:%s", remoteName, source),
+		target,
+		"--allow-other",
+		"--vfs-cache-mode=minimal",
+	}
+	quotedExecStart := make([]string, len(execStartArgs))
+	for i, arg := range execStartArgs {
+		quotedExecStart[i] = sftpDoubleQuote(arg)
+	}
+	unitContent := fmt.Sprintf(`[Unit]
+Description=Tarmac rclone mount %s
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=%s
+ExecStop=/bin/fusermount -uz %s
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+`, mountID, strings.Join(quotedExecStart, " "), sftpDoubleQuote(target))
+
+	if err := os.WriteFile(unitPath, []byte(unitContent), 0o644); err != nil {
+		return "", fmt.Errorf("cannot write systemd unit for rclone mount: %w", err)
+	}
+
+	if !commandExists("systemctl") {
+		return "", errors.New("systemctl not found; cannot manage rclone mount service")
+	}
+	if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
+		return "", fmt.Errorf("systemctl daemon-reload failed: %s", strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("systemctl", "enable", "--now", unitName).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("cannot enable/start %s: %s", unitName, strings.TrimSpace(string(out)))
+	}
+
+	if _, mounted := isTargetMounted(target); !mounted {
+		return "", fmt.Errorf("%s reported ready but %s is not mounted; check `systemctl status %s`", unitName, target, unitName)
+	}
+
+	return fmt.Sprintf("mounted %s:%s on %s via rclone (%s)", remoteName, source, target, unitName), nil
 }
 
 func listDirectories(payload map[string]interface{}) (directoryListData, error) {

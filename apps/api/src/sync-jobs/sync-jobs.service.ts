@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { Prisma, SyncJobStatus } from '@prisma/client';
 import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
@@ -20,6 +20,27 @@ export class SyncJobsService {
     if (!message) return 'unknown error';
     const compact = message.replace(/\s+/g, ' ').trim();
     return compact.length > 700 ? `${compact.slice(0, 697)}...` : compact;
+  }
+
+  /**
+   * Validates the optional per-trigger relative path (e.g. qBittorrent's
+   * %N torrent name) used to scope a run to a single already-completed
+   * item instead of the job's whole source folder. Rejects anything that
+   * could escape the configured sourcePath or get interpreted as an rsync
+   * flag on the remote end.
+   */
+  private resolveRelativePath(relativePath?: string): string | undefined {
+    if (relativePath === undefined) return undefined;
+    const trimmed = relativePath.trim();
+    if (!trimmed) return undefined;
+    if (trimmed.startsWith('-') || trimmed.startsWith('/') || trimmed.includes('..') || trimmed.includes('\0')) {
+      throw new BadRequestException('invalid relativePath');
+    }
+    return trimmed;
+  }
+
+  private joinPath(base: string, sub: string): string {
+    return `${base.replace(/\/+$/, '')}/${sub.replace(/^\/+/, '')}`;
   }
 
   private async createSyncJobFailureAlert(params: {
@@ -97,8 +118,26 @@ export class SyncJobsService {
     return deleted;
   }
 
-  async run(id: string, actorUserId?: string, trigger: 'manual' | 'webhook' = 'manual') {
+  /**
+   * relativePath (e.g. qBittorrent's %N torrent name) scopes this run to a
+   * single item under the job's sourcePath/targetPath instead of the whole
+   * folder - so a run triggered by torrent B completing doesn't re-pull
+   * torrent A just because Radarr already moved it out of targetPath.
+   * rsync's --delete only prunes within the directory it actually recurses
+   * into, so scoping source/target to that one item keeps --delete from
+   * touching anything else already staged.
+   */
+  async run(
+    id: string,
+    actorUserId?: string,
+    trigger: 'manual' | 'webhook' = 'manual',
+    relativePath?: string,
+  ) {
     const job = await this.prisma.syncJob.findUniqueOrThrow({ where: { id } });
+    const safeRelativePath = this.resolveRelativePath(relativePath);
+    const sourcePath = safeRelativePath ? this.joinPath(job.sourcePath, safeRelativePath) : job.sourcePath;
+    const targetPath = safeRelativePath ? this.joinPath(job.targetPath, safeRelativePath) : job.targetPath;
+
     const run = await this.prisma.syncJobRun.create({
       data: {
         syncJobId: id,
@@ -115,8 +154,8 @@ export class SyncJobsService {
         payload: {
           syncJobId: job.id,
           runId: run.id,
-          sourcePath: job.sourcePath,
-          targetPath: job.targetPath,
+          sourcePath,
+          targetPath,
           ...(job.sourceHost
             ? {
                 sourceHost: job.sourceHost,
@@ -142,7 +181,7 @@ export class SyncJobsService {
       action: 'sync_job.run',
       resourceType: 'sync_job_run',
       resourceId: run.id,
-      details: { syncJobId: id, trigger },
+      details: { syncJobId: id, trigger, relativePath: safeRelativePath },
     });
 
     return this.prisma.syncJobRun.findUniqueOrThrow({ where: { id: run.id } });
@@ -155,11 +194,11 @@ export class SyncJobsService {
    * (command dispatch, audit log) stays identical to a manual run except for
    * the trigger label and the absence of an actorUserId.
    */
-  async triggerViaToken(id: string, presentedToken: string | undefined) {
+  async triggerViaToken(id: string, presentedToken: string | undefined, relativePath?: string) {
     if (!(await this.syncJobTriggerService.verify(id, presentedToken))) {
       throw new UnauthorizedException('invalid trigger token');
     }
-    return this.run(id, undefined, 'webhook');
+    return this.run(id, undefined, 'webhook', relativePath);
   }
 
   async rotateTriggerToken(id: string, actorUserId?: string) {
