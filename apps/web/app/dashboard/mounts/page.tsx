@@ -17,6 +17,7 @@ import {
   Copy,
   Check,
   KeyRound,
+  Settings2,
 } from 'lucide-react';
 import { api, MountItem, NodeItem, VlanMember } from '../../../lib/api';
 import { DashboardLayout } from '../../../components/DashboardLayout';
@@ -45,6 +46,14 @@ import {
   PresetOption,
   StepConfig,
 } from '../../../components/ui/wizard';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '../../../components/ui/dialog';
 import { DirectoryBrowser } from '../../../components/ui/directory-browser';
 import { NodeLabelBadges, StatCard } from '../../../components/ui';
 import { SectionLabel } from '../../../components/SectionLabel';
@@ -218,6 +227,9 @@ export default function MountsPage() {
     remoteSshPort: '',
   });
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [sshEditMount, setSshEditMount] = useState<MountItem | null>(null);
+  const [sshEditForm, setSshEditForm] = useState({ remoteHost: '', remoteUser: '', remoteSshPort: '' });
+  const [savingSshEdit, setSavingSshEdit] = useState(false);
 
   const copyToClipboard = async (text: string, key: string) => {
     try {
@@ -486,6 +498,47 @@ export default function MountsPage() {
       setNotice({ type: 'error', message: 'Impossible de relancer ce montage.' });
     } finally {
       setBusyId(null);
+    }
+  };
+
+  // ── Edit remote SSH source ────────────────────────────────────────────────
+
+  const openSshEdit = (mount: MountItem) => {
+    setSshEditForm({
+      remoteHost: mount.remoteHost ?? '',
+      remoteUser: mount.remoteUser ?? '',
+      remoteSshPort: mount.remoteSshPort ? String(mount.remoteSshPort) : '',
+    });
+    setSshEditMount(mount);
+  };
+
+  const saveSshEdit = async () => {
+    if (!token || !sshEditMount) return;
+    const remoteHost = sshEditForm.remoteHost.trim();
+    if (!remoteHost) {
+      setNotice({ type: 'error', message: "L'hôte distant est obligatoire." });
+      return;
+    }
+    const remoteUser = sshEditForm.remoteUser.trim();
+    const remoteSshPort = sshEditForm.remoteSshPort.trim();
+    setSavingSshEdit(true);
+    try {
+      await api.mounts.update(token, sshEditMount.id, {
+        remoteHost,
+        ...(remoteUser ? { remoteUser } : {}),
+        ...(remoteSshPort ? { remoteSshPort: Number(remoteSshPort) } : {}),
+      });
+      // The fix is pointless without retrying the (currently failed/pending)
+      // mount, so fold both into a single action instead of making the user
+      // remember to hit "Réessayer" separately afterwards.
+      await api.mounts.remount(token, sshEditMount.id);
+      setNotice({ type: 'success', message: 'Source SSH mise à jour, nouvelle tentative lancée.' });
+      setSshEditMount(null);
+      await load();
+    } catch {
+      setNotice({ type: 'error', message: 'Erreur lors de la mise à jour de la source SSH.' });
+    } finally {
+      setSavingSshEdit(false);
     }
   };
 
@@ -1224,6 +1277,16 @@ export default function MountsPage() {
                             )}
                           </button>
                         )}
+                        {mount.remoteHost && (
+                          <button
+                            onClick={() => openSshEdit(mount)}
+                            disabled={busyId === mount.id}
+                            className="rounded-lg p-2 text-zinc-500 transition-colors hover:bg-violet-500/10 hover:text-violet-400 disabled:opacity-40"
+                            title="Modifier la source SSH"
+                          >
+                            <Settings2 className="h-4 w-4" />
+                          </button>
+                        )}
                         <button
                           onClick={() => deleteMount(mount.id)}
                           disabled={busyId === mount.id}
@@ -1265,6 +1328,58 @@ export default function MountsPage() {
           completeButtonLabel="Créer le montage"
         />
       )}
+
+      <Dialog open={!!sshEditMount} onOpenChange={(open) => !open && setSshEditMount(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Source SSH distante — « {sshEditMount?.name} »</DialogTitle>
+            <DialogDescription>
+              Corrige l&apos;hôte, l&apos;utilisateur ou le port SSH sans recréer le montage. Enregistrer relance
+              automatiquement une tentative de montage.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label className="mb-1.5 block text-xs font-medium text-zinc-400">Hôte</Label>
+              <Input
+                value={sshEditForm.remoteHost}
+                onChange={(e) => setSshEditForm({ ...sshEditForm, remoteHost: e.target.value })}
+                placeholder="monuser.ultra.cc"
+                className="font-mono text-xs"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="mb-1.5 block text-xs font-medium text-zinc-400">Utilisateur SSH</Label>
+                <Input
+                  value={sshEditForm.remoteUser}
+                  onChange={(e) => setSshEditForm({ ...sshEditForm, remoteUser: e.target.value })}
+                  placeholder="root"
+                  className="font-mono text-xs"
+                />
+              </div>
+              <div>
+                <Label className="mb-1.5 block text-xs font-medium text-zinc-400">Port SSH</Label>
+                <Input
+                  type="number"
+                  value={sshEditForm.remoteSshPort}
+                  onChange={(e) => setSshEditForm({ ...sshEditForm, remoteSshPort: e.target.value })}
+                  placeholder="22"
+                  className="font-mono text-xs"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => setSshEditMount(null)}>
+              Annuler
+            </Button>
+            <Button type="button" onClick={saveSshEdit} disabled={savingSshEdit}>
+              {savingSshEdit ? 'Enregistrement…' : 'Enregistrer et réessayer'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }
