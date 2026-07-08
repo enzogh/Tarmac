@@ -1923,7 +1923,7 @@ func removeRcloneSftpMount(mountID, target string) (string, error) {
 
 	remoteName := rcloneRemoteName(mountID)
 	if commandExists("rclone") {
-		if out, err := exec.Command("rclone", "config", "delete", remoteName).CombinedOutput(); err != nil {
+		if out, err := exec.Command("rclone", "--config", rcloneConfigPath(), "config", "delete", remoteName).CombinedOutput(); err != nil {
 			notes = append(notes, fmt.Sprintf("could not remove rclone remote %s (%s)", remoteName, strings.TrimSpace(string(out))))
 		} else {
 			notes = append(notes, "rclone remote removed")
@@ -2139,6 +2139,17 @@ func rcloneServiceName(mountID string) string {
 	return "tarmac-rclone-" + mountID + ".service"
 }
 
+// rcloneConfigPath is passed explicitly (--config) to every rclone
+// invocation, both when creating the remote (run by the agent process) and
+// in the mount unit's ExecStart (run fresh by systemd). Without an explicit
+// path, rclone resolves its config file relative to the calling process's
+// user/HOME, which isn't guaranteed to match between those two contexts -
+// the remote created by one would then be invisible to the other and the
+// mount would fail immediately on start.
+func rcloneConfigPath() string {
+	return envOrDefault("AGENT_RCLONE_CONFIG_PATH", "/var/lib/tarmac-agent/rclone/rclone.conf")
+}
+
 // applyRcloneSftpMount mounts a remote SFTP-only host (e.g. an external
 // seedbox with no root access, not a Tarmac node) as a local FUSE mount via
 // rclone. Auth reuses the agent's own SSH identity (ensureSSHIdentity) - the
@@ -2183,8 +2194,14 @@ func applyRcloneSftpMount(payload map[string]interface{}, source, target string)
 	}
 	privateKeyPath := envOrDefault("AGENT_SSH_PRIVATE_KEY_PATH", "/var/lib/tarmac-agent/ssh/id_ed25519")
 
+	configPath := rcloneConfigPath()
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		return "", fmt.Errorf("cannot create rclone config directory: %w", err)
+	}
+
 	remoteName := rcloneRemoteName(mountID)
 	configArgs := []string{
+		"--config", configPath,
 		"config", "create", remoteName, "sftp",
 		"host", remoteHost,
 		"user", remoteUser,
@@ -2210,6 +2227,7 @@ func applyRcloneSftpMount(payload map[string]interface{}, source, target string)
 		rcloneBinary, "mount",
 		fmt.Sprintf("%s:%s", remoteName, source),
 		target,
+		"--config", configPath,
 		"--allow-other",
 		"--vfs-cache-mode=minimal",
 	}
