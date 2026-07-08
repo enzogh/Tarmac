@@ -11,6 +11,7 @@ export type NodeItem = {
   lastSeenAt?: string | null;
   overlayEndpoint?: string | null;
   overlaySshPublicKey?: string | null;
+  overlaySshUser?: string | null;
   externalIp?: string | null;
   agentVersion?: string | null;
   agentVersionAt?: string | null;
@@ -66,6 +67,10 @@ export type MountItem = {
   status: 'pending' | 'active' | 'error';
   lastError?: string | null;
   nodeId?: string | null;
+  remoteHost?: string | null;
+  remoteUser?: string | null;
+  remoteSshPort?: number | null;
+  node?: { id: string; name: string; overlaySshPublicKey?: string | null; overlaySshUser?: string | null } | null;
 };
 
 export type PoolItem = {
@@ -405,6 +410,9 @@ export const api = {
         fsType?: string;
         mountOptions?: string;
         nodeId?: string;
+        remoteHost?: string;
+        remoteUser?: string;
+        remoteSshPort?: number;
       },
     ) => request<MountItem>('/api/v1/mounts', token, { method: 'POST', body: JSON.stringify(payload) }),
     delete: (token: string, id: string) =>

@@ -69,6 +69,13 @@ export class ReconciliationService implements OnModuleInit {
           targetPath: mount.targetPath,
           fsType: mount.fsType,
           mountOptions: mount.mountOptions,
+          ...(mount.remoteHost
+            ? {
+                remoteHost: mount.remoteHost,
+                ...(mount.remoteUser ? { remoteUser: mount.remoteUser } : {}),
+                ...(mount.remoteSshPort ? { remoteSshPort: mount.remoteSshPort } : {}),
+              }
+            : {}),
         },
       });
       this.logger.debug(`Sent mount command for mount ${mount.id}`);

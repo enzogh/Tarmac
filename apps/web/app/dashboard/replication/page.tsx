@@ -13,6 +13,7 @@ import {
   KeyRound,
   Link2,
   Settings2,
+  Pencil,
   Play,
   Trash2,
   History,
@@ -62,6 +63,9 @@ export default function ReplicationPage() {
   const [sshEditJob, setSshEditJob] = useState<SyncJobItem | null>(null);
   const [sshForm, setSshForm] = useState({ sourceHost: '', sourceUser: '', sourceSshPort: '' });
   const [savingSsh, setSavingSsh] = useState(false);
+  const [generalEditJob, setGeneralEditJob] = useState<SyncJobItem | null>(null);
+  const [generalForm, setGeneralForm] = useState({ name: '', targetPath: '' });
+  const [savingGeneral, setSavingGeneral] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -354,6 +358,32 @@ export default function ReplicationPage() {
     }
   };
 
+  const openGeneralEdit = (job: SyncJobItem) => {
+    setGeneralForm({ name: job.name, targetPath: job.targetPath });
+    setGeneralEditJob(job);
+  };
+
+  const saveGeneralEdit = async () => {
+    if (!token || !generalEditJob) return;
+    const name = generalForm.name.trim();
+    const targetPath = generalForm.targetPath.trim();
+    if (!name || !targetPath) {
+      setNotice({ type: 'error', message: 'Nom et dossier destination sont obligatoires.' });
+      return;
+    }
+    setSavingGeneral(true);
+    try {
+      await api.syncJobs.update(token, generalEditJob.id, { name, targetPath });
+      setNotice({ type: 'success', message: 'Tâche mise à jour.' });
+      setGeneralEditJob(null);
+      await load();
+    } catch {
+      setNotice({ type: 'error', message: 'Erreur lors de la mise à jour de la tâche.' });
+    } finally {
+      setSavingGeneral(false);
+    }
+  };
+
   const runJob = async (job: SyncJobItem) => {
     if (!token) return;
     setBusyJobId(job.id);
@@ -476,6 +506,10 @@ export default function ReplicationPage() {
                         <Button variant="ghost" size="sm" onClick={() => toggleHistory(job)}>
                           <History className="h-3.5 w-3.5" />
                           Historique
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => openGeneralEdit(job)}>
+                          <Pencil className="h-3.5 w-3.5" />
+                          Modifier
                         </Button>
                         <Button variant="ghost" size="sm" onClick={() => openSshEdit(job)}>
                           <Settings2 className="h-3.5 w-3.5" />
@@ -649,13 +683,15 @@ export default function ReplicationPage() {
 
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
-                  <label className="text-xs font-medium text-zinc-400">Commande qBittorrent (curl)</label>
+                  <label className="text-xs font-medium text-zinc-400">
+                    Commande qBittorrent (curl) — ne resynchronise que le torrent terminé
+                  </label>
                   <Button
                     variant="secondary"
                     size="sm"
                     onClick={() =>
                       copyToClipboard(
-                        `curl -sS -X POST -H "X-Trigger-Token: ${revealSecret.token}" "${API_BASE}/api/v1/sync-jobs/${revealSecret.job.id}/trigger"`,
+                        `curl -sS -X POST -H "X-Trigger-Token: ${revealSecret.token}" -G --data-urlencode "relativePath=%N" "${API_BASE}/api/v1/sync-jobs/${revealSecret.job.id}/trigger"`,
                         'trigger-curl',
                       )
                     }
@@ -665,9 +701,18 @@ export default function ReplicationPage() {
                   </Button>
                 </div>
                 <p className="break-all rounded-lg border border-white/[0.08] bg-zinc-950/70 px-3 py-2 font-mono text-xs text-foreground/90">
-                  curl -sS -X POST -H &quot;X-Trigger-Token: {revealSecret.token}&quot; &quot;{API_BASE}/api/v1/sync-jobs/{revealSecret.job.id}/trigger&quot;
+                  curl -sS -X POST -H &quot;X-Trigger-Token: {revealSecret.token}&quot; -G --data-urlencode
+                  &quot;relativePath=%N&quot; &quot;{API_BASE}/api/v1/sync-jobs/{revealSecret.job.id}/trigger&quot;
                 </p>
               </div>
+
+              <InfoBox type="info" title="%N = nom du torrent, laisse tel quel">
+                qBittorrent remplace <code>%N</code> par le nom du torrent avant d&apos;exécuter la commande. Ça permet
+                de ne rapatrier que ce torrent précis plutôt que de resynchroniser tout le dossier — donc un fichier
+                déjà déplacé ailleurs (par Radarr par exemple) après un précédent passage n&apos;est jamais retransféré.
+                Vérifie que l&apos;option qBittorrent « Garder le dossier de premier niveau » (Keep top-level folder)
+                est activée pour cette catégorie, sinon <code>%N</code> ne correspondra à rien côté seedbox.
+              </InfoBox>
 
               <InfoBox type="warning" title="À conserver précieusement">
                 Ce token ne sera plus jamais affiché. Si tu le perds, régénère-le depuis le bouton « Lien externe » —
@@ -727,6 +772,50 @@ export default function ReplicationPage() {
             </Button>
             <Button type="button" onClick={saveSshSource} disabled={savingSsh}>
               {savingSsh ? 'Enregistrement…' : 'Enregistrer'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!generalEditJob} onOpenChange={(open) => !open && setGeneralEditJob(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Modifier la tâche — « {generalEditJob?.name} »</DialogTitle>
+            <DialogDescription>
+              Change le nom ou le dossier destination sans recréer la tâche (historique et lien externe conservés).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-zinc-400">Nom</label>
+              <input
+                type="text"
+                value={generalForm.name}
+                onChange={(e) => setGeneralForm({ ...generalForm, name: e.target.value })}
+                className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-zinc-400">Dossier destination</label>
+              <input
+                type="text"
+                value={generalForm.targetPath}
+                onChange={(e) => setGeneralForm({ ...generalForm, targetPath: e.target.value })}
+                placeholder="/data/incoming/radarr"
+                className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
+              />
+            </div>
+          </div>
+          <InfoBox type="warning" title="Pense au dossier déjà en place">
+            Si des fichiers traînent déjà dans l&apos;ancien dossier destination, ils n&apos;y seront pas déplacés
+            automatiquement — et pense à mettre à jour le root folder correspondant dans Radarr/Sonarr.
+          </InfoBox>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => setGeneralEditJob(null)}>
+              Annuler
+            </Button>
+            <Button type="button" onClick={saveGeneralEdit} disabled={savingGeneral}>
+              {savingGeneral ? 'Enregistrement…' : 'Enregistrer'}
             </Button>
           </DialogFooter>
         </DialogContent>

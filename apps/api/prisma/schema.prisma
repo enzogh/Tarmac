@@ -195,6 +195,13 @@ model Mount {
   targetPath String
   fsType     String      @default("nfs")
   mountOptions String?
+  // Optional remote SSH source for fsType "rclone-sftp" (e.g. an external
+  // seedbox with no root access, not a Tarmac node). Auth is by SSH key only
+  // - the executing node's own agent key (Node.overlaySshPublicKey) must be
+  // added to the remote host's authorized_keys. No password is ever stored.
+  remoteHost    String?
+  remoteUser    String?
+  remoteSshPort Int?      @default(22)
   status     MountStatus @default(pending)
   lastError  String?
   nodeId     String?
