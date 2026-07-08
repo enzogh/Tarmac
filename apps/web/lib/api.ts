@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
 export type NodeItem = {
   id: string;
@@ -10,6 +10,7 @@ export type NodeItem = {
   locationCountryCode?: string | null;
   lastSeenAt?: string | null;
   overlayEndpoint?: string | null;
+  overlaySshPublicKey?: string | null;
   externalIp?: string | null;
   agentVersion?: string | null;
   agentVersionAt?: string | null;
@@ -93,6 +94,13 @@ export type SyncJobItem = {
   status: 'pending' | 'running' | 'success' | 'failed';
   nodeId?: string | null;
   lastRunAt?: string | null;
+  sourceHost?: string | null;
+  sourceUser?: string | null;
+  sourceSshPort?: number | null;
+  node?: { id: string; name: string; overlaySshPublicKey?: string | null } | null;
+  // Only present in the response right after create/rotate — the plaintext
+  // is never persisted, so it can't be fetched again afterwards.
+  triggerToken?: string;
 };
 
 export type SyncJobRunItem = {
@@ -431,11 +439,22 @@ export const api = {
     list: (token: string) => request<SyncJobItem[]>('/api/v1/sync-jobs', token),
     create: (
       token: string,
-      payload: { name: string; sourcePath: string; targetPath: string; schedule: string; nodeId?: string },
+      payload: {
+        name: string;
+        sourcePath: string;
+        targetPath: string;
+        schedule: string;
+        nodeId?: string;
+        sourceHost?: string;
+        sourceUser?: string;
+        sourceSshPort?: number;
+      },
     ) => request<SyncJobItem>('/api/v1/sync-jobs', token, { method: 'POST', body: JSON.stringify(payload) }),
     run: (token: string, id: string) => request(`/api/v1/sync-jobs/${id}/runs`, token, { method: 'POST' }),
     runs: (token: string, id: string) => request<SyncJobRunItem[]>(`/api/v1/sync-jobs/${id}/runs`, token),
     delete: (token: string, id: string) => request<void>(`/api/v1/sync-jobs/${id}`, token, { method: 'DELETE' }),
+    rotateTriggerToken: (token: string, id: string) =>
+      request<{ triggerToken: string }>(`/api/v1/sync-jobs/${id}/trigger-token/rotate`, token, { method: 'POST' }),
   },
 
   migrations: {

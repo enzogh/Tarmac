@@ -328,6 +328,21 @@ model SyncJob {
   schedule   String
   status     SyncJobStatus  @default(pending)
   nodeId     String?
+  // Optional remote SSH source (e.g. an external seedbox outside the Tarmac
+  // node fleet). When set, the agent pulls sourcePath from this host instead
+  // of treating it as a local path. Auth is by SSH key only - the agent's own
+  // key (public key surfaced via Node.overlaySshPublicKey) must be added to
+  // the remote host's authorized_keys. No password is ever stored at rest.
+  sourceHost    String?
+  sourceUser    String?
+  sourceSshPort Int?      @default(22)
+  // Hash of the per-job secret used by POST /sync-jobs/:id/trigger to start a
+  // run without an interactive JWT session (e.g. from a qBittorrent
+  // "run on completion" script). Same sha256-at-rest pattern as
+  // Node.agentTokenHash - the plaintext is only ever returned once, at
+  // creation or rotation time.
+  triggerTokenHash      String?
+  triggerTokenRotatedAt DateTime?
   lastRunAt  DateTime?
   createdAt  DateTime       @default(now())
   updatedAt  DateTime       @updatedAt
