@@ -16,6 +16,29 @@ export class SyncJobsService {
     private readonly syncJobTriggerService: SyncJobTriggerService,
   ) {}
 
+  private normalizeFailureMessage(message?: string | null) {
+    if (!message) return 'unknown error';
+    const compact = message.replace(/\s+/g, ' ').trim();
+    return compact.length > 700 ? `${compact.slice(0, 697)}...` : compact;
+  }
+
+  private async createSyncJobFailureAlert(params: {
+    syncJobId: string;
+    syncJobName: string;
+    nodeId?: string | null;
+    errorMessage: string;
+  }) {
+    const message = `Réplication "${params.syncJobName}" en échec : ${params.errorMessage}`;
+
+    await this.prisma.alert.create({
+      data: {
+        nodeId: params.nodeId ?? null,
+        severity: 'high',
+        message,
+      },
+    });
+  }
+
   list() {
     return this.prisma.syncJob.findMany({
       orderBy: { createdAt: 'desc' },
@@ -104,7 +127,14 @@ export class SyncJobsService {
         },
       });
     } else {
-      await this.completeRun(run.id, false, 0, 'Agent offline - run simulated as failed');
+      const offlineMessage = this.normalizeFailureMessage('Agent offline - run simulated as failed');
+      await this.completeRun(run.id, false, 0, offlineMessage);
+      await this.createSyncJobFailureAlert({
+        syncJobId: job.id,
+        syncJobName: job.name,
+        nodeId: job.nodeId,
+        errorMessage: offlineMessage,
+      });
     }
 
     await this.auditLogsService.log({

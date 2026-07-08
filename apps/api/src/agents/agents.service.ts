@@ -114,6 +114,23 @@ export class AgentsService implements OnModuleInit {
     });
   }
 
+  private async createSyncJobFailureAlert(params: {
+    syncJobId: string;
+    syncJobName: string;
+    nodeId?: string | null;
+    errorMessage: string;
+  }) {
+    const message = `Réplication "${params.syncJobName}" en échec : ${params.errorMessage}`;
+
+    await this.prisma.alert.create({
+      data: {
+        nodeId: params.nodeId ?? null,
+        severity: 'high',
+        message,
+      },
+    });
+  }
+
   private async createMountFailureAlert(params: {
     mountId: string;
     mountName: string;
@@ -417,22 +434,31 @@ export class AgentsService implements OnModuleInit {
     }
 
     if (result.resourceType === 'sync_job_run') {
-      await this.prisma.syncJobRun
-        .update({
-          where: { id: result.resourceId },
-          data: {
-            status: result.success ? 'success' : 'failed',
-            finishedAt: new Date(),
-            bytesTransferred: result.success ? 500000000 : 0,
-            log: result.message,
-          },
-        })
-        .then(async (run) => {
-          await this.prisma.syncJob.update({
-            where: { id: run.syncJobId },
-            data: { status: result.success ? 'success' : 'failed', lastRunAt: new Date() },
-          });
+      const run = await this.prisma.syncJobRun.update({
+        where: { id: result.resourceId },
+        data: {
+          status: result.success ? 'success' : 'failed',
+          finishedAt: new Date(),
+          bytesTransferred: result.success ? 500000000 : 0,
+          log: result.message,
+        },
+        include: { syncJob: true },
+      });
+      await this.prisma.syncJob.update({
+        where: { id: run.syncJobId },
+        data: { status: result.success ? 'success' : 'failed', lastRunAt: new Date() },
+      });
+
+      if (!result.success) {
+        const errorMessage = this.normalizeFailureMessage(result.message);
+        this.logger.error(`Sync job run ${run.id} (${run.syncJob.name}) failed: ${errorMessage}`);
+        await this.createSyncJobFailureAlert({
+          syncJobId: run.syncJobId,
+          syncJobName: run.syncJob.name,
+          nodeId: run.syncJob.nodeId,
+          errorMessage,
         });
+      }
       return;
     }
 

@@ -12,6 +12,7 @@ import {
   RotateCw,
   KeyRound,
   Link2,
+  Settings2,
   Play,
   Trash2,
   History,
@@ -27,7 +28,14 @@ import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Badge, StatCard } from '../../../components/ui';
 import { SectionLabel } from '../../../components/SectionLabel';
 import { HelpText, InfoBox, StepConfig, WizardDialog } from '../../../components/ui/wizard';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../../components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '../../../components/ui/dialog';
 import { readNodeLabels } from '../../../lib/node-labels';
 
 const STATUS_BADGE: Record<string, { label: string; type: 'success' | 'warning' | 'error' | 'info' }> = {
@@ -51,6 +59,9 @@ export default function ReplicationPage() {
   const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
   const [revealSecret, setRevealSecret] = useState<{ job: SyncJobItem; token: string } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [sshEditJob, setSshEditJob] = useState<SyncJobItem | null>(null);
+  const [sshForm, setSshForm] = useState({ sourceHost: '', sourceUser: '', sourceSshPort: '' });
+  const [savingSsh, setSavingSsh] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -308,6 +319,41 @@ export default function ReplicationPage() {
     }
   };
 
+  const openSshEdit = (job: SyncJobItem) => {
+    setSshForm({
+      sourceHost: job.sourceHost ?? '',
+      sourceUser: job.sourceUser ?? '',
+      sourceSshPort: job.sourceSshPort ? String(job.sourceSshPort) : '',
+    });
+    setSshEditJob(job);
+  };
+
+  const saveSshSource = async () => {
+    if (!token || !sshEditJob) return;
+    const sourceHost = sshForm.sourceHost.trim();
+    if (!sourceHost) {
+      setNotice({ type: 'error', message: "L'hôte distant est obligatoire." });
+      return;
+    }
+    const sourceUser = sshForm.sourceUser.trim();
+    const sourceSshPort = sshForm.sourceSshPort.trim();
+    setSavingSsh(true);
+    try {
+      await api.syncJobs.update(token, sshEditJob.id, {
+        sourceHost,
+        ...(sourceUser ? { sourceUser } : {}),
+        ...(sourceSshPort ? { sourceSshPort: Number(sourceSshPort) } : {}),
+      });
+      setNotice({ type: 'success', message: 'Source SSH mise à jour.' });
+      setSshEditJob(null);
+      await load();
+    } catch {
+      setNotice({ type: 'error', message: 'Erreur lors de la mise à jour de la source SSH.' });
+    } finally {
+      setSavingSsh(false);
+    }
+  };
+
   const runJob = async (job: SyncJobItem) => {
     if (!token) return;
     setBusyJobId(job.id);
@@ -430,6 +476,10 @@ export default function ReplicationPage() {
                         <Button variant="ghost" size="sm" onClick={() => toggleHistory(job)}>
                           <History className="h-3.5 w-3.5" />
                           Historique
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => openSshEdit(job)}>
+                          <Settings2 className="h-3.5 w-3.5" />
+                          Source SSH
                         </Button>
                         <Button
                           variant="ghost"
@@ -625,6 +675,60 @@ export default function ReplicationPage() {
               </InfoBox>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!sshEditJob} onOpenChange={(open) => !open && setSshEditJob(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Source SSH distante — « {sshEditJob?.name} »</DialogTitle>
+            <DialogDescription>
+              Modifie l&apos;hôte, l&apos;utilisateur ou le port SSH sans recréer la tâche. Le dossier source
+              (chemin sur cet hôte) reste inchangé.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-zinc-400">Hôte</label>
+              <input
+                type="text"
+                value={sshForm.sourceHost}
+                onChange={(e) => setSshForm({ ...sshForm, sourceHost: e.target.value })}
+                placeholder="monuser.ultra.cc"
+                className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-zinc-400">Utilisateur SSH</label>
+                <input
+                  type="text"
+                  value={sshForm.sourceUser}
+                  onChange={(e) => setSshForm({ ...sshForm, sourceUser: e.target.value })}
+                  placeholder="root"
+                  className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-zinc-400">Port SSH</label>
+                <input
+                  type="number"
+                  value={sshForm.sourceSshPort}
+                  onChange={(e) => setSshForm({ ...sshForm, sourceSshPort: e.target.value })}
+                  placeholder="22"
+                  className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => setSshEditJob(null)}>
+              Annuler
+            </Button>
+            <Button type="button" onClick={saveSshSource} disabled={savingSsh}>
+              {savingSsh ? 'Enregistrement…' : 'Enregistrer'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </DashboardLayout>
