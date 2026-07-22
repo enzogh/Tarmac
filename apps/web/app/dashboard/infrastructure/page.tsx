@@ -22,6 +22,7 @@ import {
   RefreshCcw,
   Server,
   Tags,
+  Thermometer,
   Trash2,
 } from 'lucide-react';
 import { api, DirectoryScanEntry, NodeActivityItem, NodeMetricSample, SmartHistoryPoint } from '../../../lib/api';
@@ -40,6 +41,7 @@ import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -78,6 +80,7 @@ export default function InfrastructurePage() {
   const [editLoading, setEditLoading] = useState(false);
   const [nodeToDelete, setNodeToDelete] = useState<NodeActivityItem | null>(null);
   const [inspectingNode, setInspectingNode] = useState<NodeActivityItem | null>(null);
+  const [smartNode, setSmartNode] = useState<NodeActivityItem | null>(null);
   const [expandedSmartDiskId, setExpandedSmartDiskId] = useState<string | null>(null);
   const [smartHistoryByDisk, setSmartHistoryByDisk] = useState<Record<string, SmartHistoryPoint[]>>({});
   const [smartHistoryLoading, setSmartHistoryLoading] = useState<string | null>(null);
@@ -99,6 +102,25 @@ export default function InfrastructurePage() {
       setSmartHistoryLoading(null);
     }
   };
+
+  useEffect(() => {
+    if (!smartNode) return;
+    const disksToFetch = smartNode.storage.disks.filter((disk) => disk.smartDiskName && !smartHistoryByDisk[disk.id]);
+    if (disksToFetch.length === 0) return;
+    void (async () => {
+      const entries = await Promise.all(
+        disksToFetch.map(async (disk) => {
+          try {
+            return [disk.id, await api.nodes.smartHistory(smartNode.id, disk.smartDiskName!)] as const;
+          } catch {
+            return [disk.id, [] as SmartHistoryPoint[]] as const;
+          }
+        }),
+      );
+      setSmartHistoryByDisk((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [smartNode]);
   const [updatingNodeId, setUpdatingNodeId] = useState<string | null>(null);
   const [updateNotice, setUpdateNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
   const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
@@ -415,8 +437,14 @@ export default function InfrastructurePage() {
           </div>
         </section>
 
-        <section className="space-y-4">
-          <SectionLabel>Performance</SectionLabel>
+        <Tabs defaultValue="nodes" className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="nodes">Nœuds</TabsTrigger>
+            <TabsTrigger value="performance">Performance</TabsTrigger>
+            <TabsTrigger value="exploration">Exploration</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="performance">
           <Card className="border-white/[0.08] bg-zinc-900/65">
             <CardHeader>
               <CardTitle className="text-base">Comparaison CPU / RAM par nœud</CardTitle>
@@ -448,10 +476,9 @@ export default function InfrastructurePage() {
               </div>
             </CardContent>
           </Card>
-        </section>
+          </TabsContent>
 
-        <section className="space-y-4">
-          <SectionLabel>Exploration</SectionLabel>
+          <TabsContent value="exploration">
           <Callout>
             Parcourez les dossiers d'un nœud puis lancez un scan volumétrique pour repérer les répertoires les plus lourds.
           </Callout>
@@ -556,10 +583,9 @@ export default function InfrastructurePage() {
             </CardContent>
           </Card>
           </div>
-        </section>
+          </TabsContent>
 
-        <section className="space-y-4">
-          <SectionLabel>Nœuds</SectionLabel>
+          <TabsContent value="nodes">
           <Card className="border-white/[0.08] bg-zinc-900/65">
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
@@ -707,6 +733,23 @@ export default function InfrastructurePage() {
                         <Button
                           variant="ghost"
                           size="icon"
+                          onClick={() => setSmartNode(node)}
+                          className={`h-8 w-8 ${
+                            node.storage.disks.some((disk) => disk.smart && disk.smart.overall !== 'healthy')
+                              ? 'text-rose-400 hover:text-rose-300'
+                              : 'text-muted-foreground hover:text-cyan-300'
+                          }`}
+                        >
+                          <Thermometer className="h-3.5 w-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Santé SMART détaillée des disques</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           onClick={() => void triggerAgentUpdate(node)}
                           disabled={node.status !== 'online' || updatingNodeId === node.id}
                           className="h-8 w-8 text-muted-foreground hover:text-emerald-400 disabled:opacity-50"
@@ -775,7 +818,6 @@ export default function InfrastructurePage() {
             )}
           </CardContent>
         </Card>
-        </section>
 
         <Callout>
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -792,6 +834,8 @@ export default function InfrastructurePage() {
             </Link>
           </div>
         </Callout>
+          </TabsContent>
+        </Tabs>
 
         <Dialog
           open={!!inspectingNode}
@@ -908,6 +952,90 @@ export default function InfrastructurePage() {
                     )}
                   </div>
                 </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={!!smartNode}
+          onOpenChange={(open) => {
+            if (!open) setSmartNode(null);
+          }}
+        >
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>Santé SMART « {smartNode?.name} »</DialogTitle>
+            </DialogHeader>
+            {smartNode && (
+              <div className="space-y-3">
+                {smartNode.storage.disks.length === 0 && (
+                  <p className="rounded-xl border border-dashed border-white/10 bg-zinc-950/40 px-3 py-4 text-center text-xs text-muted-foreground">
+                    Aucun disque remonté par l’agent.
+                  </p>
+                )}
+                {smartNode.storage.disks.map((disk) => (
+                  <div key={disk.id} className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-mono text-sm text-zinc-200">{disk.mountPath}</p>
+                      <p className="text-xs capitalize text-muted-foreground">{disk.type}</p>
+                    </div>
+                    {disk.smart ? (
+                      <>
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                          <Badge
+                            label={
+                              disk.smart.overall === 'healthy'
+                                ? 'SMART OK'
+                                : disk.smart.overall === 'warning'
+                                  ? 'SMART dégradé'
+                                  : disk.smart.overall === 'critical'
+                                    ? 'SMART critique'
+                                    : 'SMART inconnu'
+                            }
+                            type={
+                              disk.smart.overall === 'healthy'
+                                ? 'success'
+                                : disk.smart.overall === 'warning'
+                                  ? 'warning'
+                                  : disk.smart.overall === 'critical'
+                                    ? 'error'
+                                    : 'info'
+                            }
+                          />
+                          <span>{disk.smart.temperatureC}°C</span>
+                          <span>{disk.smart.reallocatedSectors} secteurs réalloués</span>
+                          <span>{disk.smart.pendingSectors} en attente</span>
+                          <span>{Math.round(disk.smart.powerOnHours / 24)} j. d’activité</span>
+                          <span>Relevé {formatDateTime(disk.smart.collectedAt)}</span>
+                        </div>
+                        <div className="mt-3 rounded-lg border border-white/[0.06] bg-zinc-950/60 p-2">
+                          {smartHistoryByDisk[disk.id] ? (
+                            <SmartTrendChart
+                              data={smartHistoryByDisk[disk.id].map((point) => ({
+                                label: new Date(point.collectedAt).toLocaleString('fr-FR', {
+                                  day: '2-digit',
+                                  month: '2-digit',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                }),
+                                temperatureC: point.temperatureC,
+                                reallocatedSectors: point.reallocatedSectors,
+                                pendingSectors: point.pendingSectors,
+                              }))}
+                            />
+                          ) : (
+                            <p className="py-6 text-center text-xs text-muted-foreground">Chargement…</p>
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Pas de données SMART pour ce disque (agent hors ligne, disque réseau, ou smartctl indisponible).
+                      </p>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </DialogContent>

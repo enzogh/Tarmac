@@ -34,6 +34,26 @@ import { SectionLabel } from '../../components/SectionLabel';
 
 const formatTime = (iso: string) => new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
+// Network I/O is naturally bursty sample-to-sample; a trailing moving average
+// smooths the chart into a readable trend instead of a jagged spike train,
+// without looking ahead at future samples.
+function smoothSeries<T extends Record<string, number | string>>(
+  points: T[],
+  keys: Array<keyof T>,
+  window = 5,
+): T[] {
+  return points.map((point, index) => {
+    const start = Math.max(0, index - window + 1);
+    const slice = points.slice(start, index + 1);
+    const smoothed = { ...point };
+    for (const key of keys) {
+      const sum = slice.reduce((acc, p) => acc + (p[key] as number), 0);
+      smoothed[key] = (sum / slice.length) as T[typeof key];
+    }
+    return smoothed;
+  });
+}
+
 export default function OverviewPage() {
   const router = useRouter();
 
@@ -103,15 +123,18 @@ export default function OverviewPage() {
     return { label: samples[0] ? formatTime(samples[0].createdAt) : '', cpu, ram };
   });
 
-  const networkSeries = alignedSamples.map((samples) => {
-    const rx = samples.length > 0 ? samples.reduce((sum, s) => sum + s.networkRx, 0) / samples.length : 0;
-    const tx = samples.length > 0 ? samples.reduce((sum, s) => sum + s.networkTx, 0) / samples.length : 0;
-    return {
-      label: samples[0] ? formatTime(samples[0].createdAt) : '',
-      rx: (rx * 8) / 1_000_000,
-      tx: (tx * 8) / 1_000_000,
-    };
-  });
+  const networkSeries = smoothSeries(
+    alignedSamples.map((samples) => {
+      const rx = samples.length > 0 ? samples.reduce((sum, s) => sum + s.networkRx, 0) / samples.length : 0;
+      const tx = samples.length > 0 ? samples.reduce((sum, s) => sum + s.networkTx, 0) / samples.length : 0;
+      return {
+        label: samples[0] ? formatTime(samples[0].createdAt) : '',
+        rx: (rx * 8) / 1_000_000,
+        tx: (tx * 8) / 1_000_000,
+      };
+    }),
+    ['rx', 'tx'],
+  );
 
   const storageSlices = activities
     .filter((node) => node.storage.totalUsedGb > 0)

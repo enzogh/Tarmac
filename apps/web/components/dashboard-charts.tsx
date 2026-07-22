@@ -70,8 +70,22 @@ export function NetworkThroughputChart({ data }: { data: NetworkPoint[] }) {
         <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
         <YAxis tickLine={false} axisLine={false} tickMargin={8} width={44} />
         <ChartTooltip content={<ChartTooltipContent valueFormatter={(v) => `${v.toFixed(2)} MB/s`} />} />
-        <Area dataKey="rx" type="monotone" stroke="var(--color-rx)" fill="url(#fill-rx)" strokeWidth={2} />
-        <Area dataKey="tx" type="monotone" stroke="var(--color-tx)" fill="url(#fill-tx)" strokeWidth={2} />
+        <Area
+          dataKey="rx"
+          type="monotone"
+          stroke="var(--color-rx)"
+          fill="url(#fill-rx)"
+          strokeWidth={2}
+          isAnimationActive={false}
+        />
+        <Area
+          dataKey="tx"
+          type="monotone"
+          stroke="var(--color-tx)"
+          fill="url(#fill-tx)"
+          strokeWidth={2}
+          isAnimationActive={false}
+        />
       </AreaChart>
     </ChartContainer>
   );
@@ -106,14 +120,16 @@ export function StorageBreakdownChart({ data }: { data: StorageSlice[] }) {
       <div className="flex-1 space-y-1.5">
         {data.map((slice, index) => (
           <div key={slice.name} className="flex items-center justify-between gap-3 text-xs">
-            <span className="flex items-center gap-2 text-muted-foreground">
+            <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
               <span
                 className="h-2 w-2 shrink-0 rounded-full"
                 style={{ backgroundColor: `hsl(var(--${PIE_COLORS[index % PIE_COLORS.length]}))` }}
               />
-              {slice.name}
+              <span className="truncate" title={slice.name}>
+                {slice.name}
+              </span>
             </span>
-            <span className="font-mono text-foreground/90">{slice.value} GB</span>
+            <span className="shrink-0 font-mono text-foreground/90">{slice.value} GB</span>
           </div>
         ))}
       </div>
