@@ -1,3 +1,18 @@
+import {
+  Lock,
+  Server,
+  Share2,
+  HardDrive,
+  RefreshCw,
+  ArrowRightLeft,
+  Repeat,
+  Network,
+  Database,
+  Bell,
+  History,
+  Cpu,
+  type LucideIcon,
+} from 'lucide-react';
 import { PageHeader } from '../../../components/PageHeader';
 import { Callout } from '../../../components/Callout';
 import { Badge } from '../../../components/ui/badge';
@@ -9,14 +24,16 @@ type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 type Endpoint = {
   method: Method;
   path: string;
-  auth?: 'public' | 'agent';
+  auth?: 'public' | 'token';
   body?: string;
   description: string;
+  isNew?: boolean;
 };
 
 type Module = {
   name: string;
   base: string;
+  icon: LucideIcon;
   description: string;
   endpoints: Endpoint[];
 };
@@ -32,39 +49,97 @@ const MODULES: Module[] = [
   {
     name: 'Authentification',
     base: '/auth',
-    description: "Connexion et gestion du profil de l'administrateur connecté.",
+    icon: Lock,
+    description: "Connexion, session et profil de l'administrateur.",
     endpoints: [
-      { method: 'POST', path: '/auth/login', auth: 'public', body: 'email, password', description: 'Vérifie les identifiants et renvoie un jeton JWT.' },
+      {
+        method: 'POST',
+        path: '/auth/login',
+        auth: 'public',
+        body: 'email, password',
+        description:
+          'Vérifie les identifiants et pose un cookie de session httpOnly (aucun jeton renvoyé dans la réponse). Limité à 5 tentatives/min par IP.',
+      },
+      {
+        method: 'POST',
+        path: '/auth/logout',
+        body: 'aucun',
+        description: 'Efface le cookie de session côté serveur.',
+        isNew: true,
+      },
       { method: 'GET', path: '/auth/profile', description: "Profil de l'utilisateur authentifié." },
-      { method: 'PATCH', path: '/auth/profile', body: 'email?, currentPassword?, newPassword?', description: "Met à jour l'e-mail et/ou le mot de passe (l'ancien mot de passe est requis pour en changer)." },
+      {
+        method: 'PATCH',
+        path: '/auth/profile',
+        body: 'email?, currentPassword?, newPassword?',
+        description: "Met à jour l'e-mail et/ou le mot de passe (l'ancien mot de passe est requis pour en changer).",
+      },
     ],
   },
   {
     name: 'Nœuds',
     base: '/nodes',
+    icon: Server,
     description: 'Enregistrement, onboarding et supervision des serveurs de la flotte.',
     endpoints: [
       { method: 'GET', path: '/nodes', description: 'Liste tous les nœuds.' },
       { method: 'POST', path: '/nodes', body: 'name, role, status?', description: 'Enregistre un nœud manuellement (sans onboarding SSH).' },
       { method: 'POST', path: '/nodes/onboarding/start', body: 'name, role, provider, hostIp, sshUsername, sshPassword, repoUrl?, repoRef?', description: "Démarre l'onboarding guidé : connexion SSH et préparation de la clé de déploiement." },
       { method: 'POST', path: '/nodes/onboarding/:id/install', body: 'deployKeyConfirmed', description: "Finalise l'onboarding une fois la clé de déploiement confirmée." },
-      { method: 'PATCH', path: '/nodes/:id', body: 'name?, role?, status?, locationCity?, locationCountry?, locationCountryCode?', description: "Met à jour un nœud (statut, rôle, localisation)." },
+      { method: 'PATCH', path: '/nodes/:id', body: 'name?, role?, status?, locationCity?, locationCountry?, locationCountryCode?', description: 'Met à jour un nœud (statut, rôle, localisation).' },
       { method: 'DELETE', path: '/nodes/:id', description: 'Supprime un nœud.' },
       { method: 'POST', path: '/nodes/:id/rotate-token', description: "Régénère le jeton d'authentification de l'agent pour ce nœud." },
       { method: 'POST', path: '/nodes/rotate-tokens', description: "Régénère les jetons d'agent pour tous les nœuds." },
-      { method: 'GET', path: '/nodes/activity?range=', description: "Flux d'activité de la flotte (défaut: 1h)." },
+      {
+        method: 'POST',
+        path: '/nodes/:id/mute',
+        body: 'minutes',
+        description: 'Met les alertes automatiques (règles de seuil, SMART) en silence pour ce nœud le temps indiqué (fenêtre de maintenance).',
+        isNew: true,
+      },
+      { method: 'POST', path: '/nodes/:id/unmute', description: 'Réactive les alertes avant la fin de la fenêtre de silence.', isNew: true },
+      { method: 'GET', path: '/nodes/activity?range=', description: "Flux d'activité de la flotte, avec état SMART par disque (défaut: 1h)." },
       { method: 'GET', path: '/nodes/:id/metrics?range=', description: "Historique de métriques d'un nœud (défaut: 1h)." },
+      {
+        method: 'GET',
+        path: '/nodes/:id/disks/:diskName/smart-history',
+        description: 'Historique des relevés SMART (température, secteurs réalloués/en attente) pour un disque physique donné.',
+        isNew: true,
+      },
+    ],
+  },
+  {
+    name: 'Agents',
+    base: '/agents',
+    icon: Cpu,
+    description: "Contrôle à distance de l'agent installé sur chaque nœud.",
+    endpoints: [
+      {
+        method: 'POST',
+        path: '/agents/:nodeId/update',
+        body: 'ref?, repoUrl?, serviceName?',
+        description: "Recompile l'agent depuis le dépôt et redémarre le service sur le nœud (utilisé aussi par « Mettre à jour tous les agents », qui appelle cette route en parallèle sur chaque nœud en ligne).",
+      },
+      {
+        method: 'POST',
+        path: '/agents/uninstall',
+        auth: 'token',
+        body: 'nodeId, token',
+        description: "Route interne appelée par l'agent lui-même lors de sa désinstallation, authentifiée par un jeton dédié (pas le cookie de session).",
+      },
     ],
   },
   {
     name: 'Partages NFS',
     base: '/shares',
+    icon: Share2,
     description: 'Partages exposés par un nœud et contrôle des accès clients.',
     endpoints: [
       { method: 'GET', path: '/shares', description: 'Liste les partages.' },
       { method: 'POST', path: '/shares', body: 'name, path, nodeId?', description: 'Crée un partage NFS.' },
       { method: 'PATCH', path: '/shares/:id', body: 'name?, path?, nodeId?, status?', description: 'Met à jour un partage.' },
       { method: 'DELETE', path: '/shares/:id', description: 'Supprime un partage.' },
+      { method: 'POST', path: '/shares/:id/reapply', description: "Réapplique la configuration du partage sur l'agent du nœud (après une erreur, par exemple)." },
       { method: 'GET', path: '/shares/:id/clients', description: "Liste les accès clients d'un partage." },
       { method: 'POST', path: '/shares/:id/clients', body: 'clientId, access', description: 'Ajoute ou met à jour un accès client (ro, rw, deny).' },
       { method: 'PATCH', path: '/shares/:id/clients/:clientId', body: 'access', description: "Change le niveau d'accès d'un client." },
@@ -74,10 +149,11 @@ const MODULES: Module[] = [
   {
     name: 'Montages',
     base: '/mounts',
-    description: 'Montage de sources NFS (avec sources de secours) sur un nœud.',
+    icon: HardDrive,
+    description: 'Montage de sources NFS, CIFS ou SFTP (rclone) sur un nœud.',
     endpoints: [
       { method: 'GET', path: '/mounts', description: 'Liste les montages.' },
-      { method: 'POST', path: '/mounts', body: 'name, sourcePath, additionalSources?, targetPath, fsType?, mountOptions?, nodeId?', description: 'Crée un montage.' },
+      { method: 'POST', path: '/mounts', body: 'name, sourcePath, additionalSources?, targetPath, fsType?, mountOptions?, nodeId?, remoteHost?, remoteUser?, remoteSshPort?', description: 'Crée un montage (NFS, CIFS, ou rclone-sftp pour un hôte distant).' },
       { method: 'PATCH', path: '/mounts/:id', body: '(idem create) + status?', description: 'Met à jour un montage.' },
       { method: 'POST', path: '/mounts/:id/remount', description: 'Déclenche un remontage sur le nœud cible.' },
       { method: 'DELETE', path: '/mounts/:id', description: 'Supprime un montage.' },
@@ -86,7 +162,8 @@ const MODULES: Module[] = [
   {
     name: 'Pools & réplication',
     base: '/pools',
-    description: 'Regroupement de nœuds autour d\'une stratégie de stockage partagée.',
+    icon: RefreshCw,
+    description: "Regroupement de nœuds autour d'une stratégie de stockage partagée.",
     endpoints: [
       { method: 'GET', path: '/pools', description: 'Liste les pools.' },
       { method: 'POST', path: '/pools', body: 'name, strategy, status?', description: 'Crée un pool.' },
@@ -100,15 +177,16 @@ const MODULES: Module[] = [
   {
     name: 'Migrations',
     base: '/migrations',
-    description: 'Déplacement de volumes entre nœuds, seedbox ou Storage Box.',
+    icon: ArrowRightLeft,
+    description: 'Déplacement de volumes entre nœuds, seedbox ou Storage Box — y compris les migrations de sécurisation suggérées automatiquement.',
     endpoints: [
-      { method: 'GET', path: '/migrations', description: 'Liste les migrations.' },
+      { method: 'GET', path: '/migrations', description: 'Liste les migrations, y compris celles suggérées automatiquement (préfixe [Auto]) suite à un disque SMART critique.' },
       { method: 'GET', path: '/migrations/directories?nodeId=&basePath=', description: "Liste les dossiers d'un nœud (via l'agent)." },
       { method: 'GET', path: '/migrations/directories/scan?nodeId=&basePath=&maxEntries=', description: 'Scanne les dossiers avec une limite de résultats.' },
       { method: 'POST', path: '/migrations/directories/remote', body: 'nodeId, host, username, password?, basePath?, port?, endpointType?', description: 'Liste les dossiers sur un endpoint distant (seedbox / Storage Box) via un nœud relais.' },
       { method: 'POST', path: '/migrations', body: 'name, source*, target*, sourceKind?, targetKind?, ...', description: 'Crée une migration.' },
       { method: 'PATCH', path: '/migrations/:id', body: 'name?, notes?, status?, progress?', description: 'Met à jour une migration.' },
-      { method: 'POST', path: '/migrations/:id/start', description: 'Démarre le transfert.' },
+      { method: 'POST', path: '/migrations/:id/start', description: 'Démarre le transfert. Les migrations suggérées automatiquement restent en attente tant que ce n’est pas appelé — rien ne se lance tout seul.' },
       { method: 'POST', path: '/migrations/:id/retry', description: 'Relance une migration en échec.' },
       { method: 'POST', path: '/migrations/:id/stop', description: 'Arrête une migration en cours.' },
       { method: 'POST', path: '/migrations/:id/complete', description: 'Marque la migration comme terminée.' },
@@ -118,20 +196,29 @@ const MODULES: Module[] = [
   {
     name: 'Tâches de synchronisation',
     base: '/sync-jobs',
-    description: 'Tâches planifiées de type rsync entre deux chemins.',
+    icon: Repeat,
+    description: 'Tâches planifiées de type rsync entre deux chemins, déclenchables aussi depuis un outil externe.',
     endpoints: [
       { method: 'GET', path: '/sync-jobs', description: 'Liste les tâches de synchronisation.' },
-      { method: 'POST', path: '/sync-jobs', body: 'name, sourcePath, targetPath, schedule, nodeId?', description: 'Crée une tâche planifiée.' },
+      { method: 'POST', path: '/sync-jobs', body: 'name, sourcePath, targetPath, schedule, nodeId?, sourceHost?, sourceUser?, sourceSshPort?', description: 'Crée une tâche planifiée.' },
       { method: 'PATCH', path: '/sync-jobs/:id', body: 'name?, sourcePath?, targetPath?, schedule?, nodeId?, status?', description: 'Met à jour une tâche.' },
       { method: 'DELETE', path: '/sync-jobs/:id', description: 'Supprime une tâche.' },
       { method: 'GET', path: '/sync-jobs/runs', description: "Historique d'exécution, toutes tâches confondues." },
       { method: 'GET', path: '/sync-jobs/:id/runs', description: "Historique d'exécution d'une tâche." },
       { method: 'POST', path: '/sync-jobs/:id/runs', description: 'Déclenche une exécution immédiate.' },
+      { method: 'POST', path: '/sync-jobs/:id/trigger-token/rotate', description: 'Régénère le jeton externe de la tâche (affiché une seule fois ; l’ancien est immédiatement invalidé).' },
+      {
+        method: 'POST',
+        path: '/sync-jobs/:id/trigger?relativePath=',
+        auth: 'token',
+        description: "Déclenche la tâche depuis un outil externe (ex: script « on completion » de qBittorrent). Authentifié par l'en-tête X-Trigger-Token, pas par cookie de session. relativePath limite la synchro à un sous-dossier.",
+      },
     ],
   },
   {
     name: 'Réseau (VLAN)',
     base: '/vlan',
+    icon: Network,
     description: 'Réseau privé entre nœuds et tests de connectivité.',
     endpoints: [
       { method: 'GET', path: '/vlan', description: 'Récupère (ou crée) le VLAN par défaut de la flotte.' },
@@ -147,6 +234,7 @@ const MODULES: Module[] = [
   {
     name: 'Stockage',
     base: '/storage',
+    icon: Database,
     description: "Vue d'ensemble et prévisions de capacité.",
     endpoints: [
       { method: 'GET', path: '/storage/forecast?nodeId=', description: "Prévision de remplissage disque (ratio d'usage, date estimée de saturation)." },
@@ -156,16 +244,21 @@ const MODULES: Module[] = [
   {
     name: 'Alertes',
     base: '/alerts, /alert-rules, /notification-channels',
-    description: 'Règles de seuils, alertes déclenchées et canaux de notification.',
+    icon: Bell,
+    description: 'Règles de seuils évaluées automatiquement, alertes déclenchées et canaux de notification.',
     endpoints: [
-      { method: 'GET', path: '/alert-rules', description: 'Liste les règles.' },
+      {
+        method: 'GET',
+        path: '/alert-rules',
+        description: 'Liste les règles. Chaque règle activée est évaluée chaque minute contre la dernière métrique (cpu, ram, disk) du ou des nœuds ciblés.',
+      },
       { method: 'POST', path: '/alert-rules', body: 'name, metric, comparator, threshold, severity, enabled?, nodeId?, notificationChannelId?', description: 'Crée une règle de seuil.' },
       { method: 'PATCH', path: '/alert-rules/:id', description: 'Met à jour une règle.' },
       { method: 'DELETE', path: '/alert-rules/:id', description: 'Supprime une règle.' },
-      { method: 'GET', path: '/alerts', description: 'Liste les alertes.' },
-      { method: 'POST', path: '/alerts', body: 'ruleId?, nodeId?, message, severity', description: 'Déclenche une alerte.' },
+      { method: 'GET', path: '/alerts', description: 'Liste les alertes (déclenchées par une règle, un disque SMART dégradé, ou manuellement).' },
+      { method: 'POST', path: '/alerts', body: 'ruleId?, nodeId?, message, severity', description: 'Déclenche une alerte manuellement.' },
       { method: 'POST', path: '/alerts/:id/ack', description: "Accuse réception d'une alerte." },
-      { method: 'POST', path: '/alerts/:id/resolve', description: 'Résout une alerte.' },
+      { method: 'POST', path: '/alerts/:id/resolve', description: 'Résout une alerte. Les alertes de règle se résolvent aussi automatiquement dès que la métrique repasse sous le seuil.' },
       { method: 'DELETE', path: '/alerts/:id', description: 'Supprime une alerte.' },
       { method: 'GET', path: '/notification-channels', description: 'Liste les canaux (e-mail, webhook, Slack).' },
       { method: 'POST', path: '/notification-channels', body: 'name, type, target, enabled?', description: 'Crée un canal de notification.' },
@@ -177,7 +270,8 @@ const MODULES: Module[] = [
   {
     name: 'Topologie & audit',
     base: '/topology, /audit-logs',
-    description: 'Vue graphe de la flotte et historique des actions.',
+    icon: History,
+    description: 'Vue graphe de la flotte et historique des actions administrateur.',
     endpoints: [
       { method: 'GET', path: '/topology', description: 'Graphe nœuds / pools / partages / montages.' },
       { method: 'GET', path: '/audit-logs?limit=', description: "Historique d'actions récentes (défaut: 200)." },
@@ -204,8 +298,9 @@ export default function ApiReferencePage() {
           <CardContent className="pt-6 text-sm">
             <p className="font-medium text-foreground">Authentification</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Bearer JWT, obtenu via <code>POST /auth/login</code>. Toutes les routes ci-dessous l'exigent, sauf
-              mention « publique ».
+              Cookie de session httpOnly posé par <code>POST /auth/login</code> (5 tentatives/min max), envoyé
+              automatiquement par le navigateur. Aucun jeton à gérer côté client — toutes les routes ci-dessous
+              l'exigent, sauf mention « publique » ou « jeton dédié ».
             </p>
           </CardContent>
         </Card>
@@ -221,19 +316,25 @@ export default function ApiReferencePage() {
 
       <Callout>
         Les agents installés sur chaque nœud communiquent via un canal temps réel dédié (WebSocket, chemin{' '}
-        <code>/agents-ws</code>) plutôt que par ces routes REST — ils remontent l'état matériel et reçoivent des
-        commandes (montage, migration, mise à jour). Ce canal utilise un jeton d'agent, pas le JWT utilisateur.
+        <code>/agents-ws</code>) plutôt que par ces routes REST — ils remontent l'état matériel (disques, SMART) et
+        reçoivent des commandes (montage, migration, mise à jour). Ce canal utilise un jeton d'agent, pas le cookie
+        de session utilisateur.
       </Callout>
 
       <div className="space-y-6">
         {MODULES.map((module) => (
-          <Card key={module.name}>
+          <Card key={module.name} className="overflow-hidden transition-colors hover:border-white/[0.14]">
             <CardHeader>
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <CardTitle>{module.name}</CardTitle>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-600/15 text-violet-300">
+                    <module.icon className="h-4 w-4" />
+                  </div>
+                  <CardTitle>{module.name}</CardTitle>
+                </div>
                 <code className="text-xs text-muted-foreground">{module.base}</code>
               </div>
-              <CardDescription>{module.description}</CardDescription>
+              <CardDescription className="pl-12">{module.description}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-1.5">
               {module.endpoints.map((endpoint) => (
@@ -248,6 +349,23 @@ export default function ApiReferencePage() {
                     <code className="truncate text-xs text-foreground/90">{endpoint.path}</code>
                   </div>
                   <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {endpoint.isNew && (
+                        <Badge variant="success" className="px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wide">
+                          Nouveau
+                        </Badge>
+                      )}
+                      {endpoint.auth === 'public' && (
+                        <Badge variant="outline" className="px-1.5 py-0 text-[10px] uppercase tracking-wide text-zinc-400">
+                          Publique
+                        </Badge>
+                      )}
+                      {endpoint.auth === 'token' && (
+                        <Badge variant="outline" className="px-1.5 py-0 text-[10px] uppercase tracking-wide text-zinc-400">
+                          Jeton dédié
+                        </Badge>
+                      )}
+                    </div>
                     <p className="text-sm text-muted-foreground">{endpoint.description}</p>
                     {endpoint.body && (
                       <p className="mt-0.5 truncate text-xs text-zinc-500">
