@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Bell, Eye, CheckCircle2, AlertCircle, AlertTriangle, Circle, Trash2 } from 'lucide-react';
 import { api, AlertItem } from '../../../lib/api';
@@ -20,50 +20,40 @@ type StatusFilter = 'all' | 'open' | 'acknowledged' | 'resolved';
 
 export default function AlertsPage() {
   const router = useRouter();
-  const token = useMemo(() => (typeof window !== 'undefined' ? localStorage.getItem('tarmac_token') : null), []);
 
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
   const load = async () => {
-    if (!token) return;
     try {
-      const a = await api.alerts.list(token);
+      const a = await api.alerts.list();
       setAlerts(a);
     } catch {
-      localStorage.removeItem('tarmac_token');
       router.push('/login');
     }
   };
 
   useEffect(() => {
-    if (!token) {
-      router.push('/login');
-      return;
-    }
     void load();
     const id = setInterval(() => {
       void load();
     }, 5000);
     return () => clearInterval(id);
-  }, [token]);
+  }, []);
 
   const handleAck = async (alertId: string) => {
-    if (!token) return;
-    await api.alerts.ack(token, alertId);
+    await api.alerts.ack(alertId);
     await load();
   };
 
   const handleResolve = async (alertId: string) => {
-    if (!token) return;
-    await api.alerts.resolve(token, alertId);
+    await api.alerts.resolve(alertId);
     await load();
   };
 
   const handleDelete = async (alertId: string) => {
-    if (!token) return;
-    await api.alerts.remove(token, alertId);
+    await api.alerts.remove(alertId);
     await load();
   };
 

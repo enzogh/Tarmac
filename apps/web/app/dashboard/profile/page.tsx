@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AlertCircle, CheckCircle2, Lock, Mail, UserCog } from 'lucide-react';
 import { AdminProfile, api } from '@/lib/api';
@@ -14,10 +14,6 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 
 export default function ProfilePage() {
   const router = useRouter();
-  const token = useMemo(
-    () => (typeof window !== 'undefined' ? localStorage.getItem('tarmac_token') : null),
-    [],
-  );
 
   const [profile, setProfile] = useState<AdminProfile | null>(null);
   const [email, setEmail] = useState('');
@@ -29,18 +25,12 @@ export default function ProfilePage() {
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   useEffect(() => {
-    if (!token) {
-      router.push('/login');
-      return;
-    }
-
     const loadProfile = async () => {
       try {
-        const profileData = await api.profile.get(token);
+        const profileData = await api.profile.get();
         setProfile(profileData);
         setEmail(profileData.email);
       } catch {
-        localStorage.removeItem('tarmac_token');
         router.push('/login');
       } finally {
         setLoading(false);
@@ -48,13 +38,13 @@ export default function ProfilePage() {
     };
 
     void loadProfile();
-  }, [router, token]);
+  }, [router]);
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setNotice(null);
 
-    if (!token || !profile) {
+    if (!profile) {
       setNotice({ type: 'error', message: 'Session expirée, reconnectez-vous.' });
       return;
     }
@@ -92,7 +82,7 @@ export default function ProfilePage() {
 
     try {
       setSaving(true);
-      const updated = await api.profile.update(token, payload);
+      const updated = await api.profile.update(payload);
       setProfile(updated);
       setEmail(updated.email);
       setCurrentPassword('');

@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AgentsModule } from './agents/agents.module';
 import { AlertRulesModule } from './alert-rules/alert-rules.module';
 import { AlertsModule } from './alerts/alerts.module';
@@ -21,6 +23,9 @@ import { VlanModule } from './vlan/vlan.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ThrottlerModule.forRoot({
+      throttlers: [{ ttl: 60_000, limit: 100 }],
+    }),
     PrismaModule,
     AuthModule,
     NodesModule,
@@ -39,5 +44,6 @@ import { VlanModule } from './vlan/vlan.module';
     ReconciliationModule,
     VlanModule,
   ],
+  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}

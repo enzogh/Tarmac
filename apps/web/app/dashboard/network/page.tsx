@@ -176,11 +176,6 @@ const normalizeCountryCode = (value?: string | null) => {
 };
 
 export default function NetworkPage() {
-  const token = useMemo(
-    () => (typeof window !== 'undefined' ? localStorage.getItem('tarmac_token') : null),
-    [],
-  );
-
   const [vlanStatus, setVlanStatus] = useState<VlanStatus | null>(null);
   const [connections, setConnections] = useState<VlanConnection[]>([]);
   const [tests, setTests] = useState<VlanConnectionTest[]>([]);
@@ -237,7 +232,7 @@ export default function NetworkPage() {
 
   useEffect(() => {
     const fetchData = async (isInitial: boolean) => {
-      if (!token || inFlightRef.current) return;
+      if (inFlightRef.current) return;
       inFlightRef.current = true;
       if (isInitial) {
         setInitialLoading(true);
@@ -246,13 +241,13 @@ export default function NetworkPage() {
       }
 
       try {
-        const vlans = await api.vlan.getAll(token);
+        const vlans = await api.vlan.getAll();
         if (vlans.vlans.length > 0) {
           const vlanId = vlans.vlans[0].id;
           const [status, conns, testsList] = await Promise.all([
-            api.vlan.getStatus(token, vlanId),
-            api.vlan.getConnections(token, vlanId),
-            api.vlan.getTests(token, vlanId),
+            api.vlan.getStatus(vlanId),
+            api.vlan.getConnections(vlanId),
+            api.vlan.getTests(vlanId),
           ]);
           setVlanStatus(status);
           setConnections(conns.connections);
@@ -281,7 +276,7 @@ export default function NetworkPage() {
       void fetchData(false);
     }, 5000);
     return () => clearInterval(interval);
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     const members = vlanStatus?.vlan.members ?? [];
@@ -652,7 +647,6 @@ export default function NetworkPage() {
   };
 
   const saveNodeGeoOverride = async (nodeId: string, forceAuto = false) => {
-    if (!token) return;
     const current = geoOverrides[nodeId] ?? {};
     const locationCity = forceAuto ? null : current.city?.trim() || null;
     const locationCountry = forceAuto ? null : current.country?.trim() || null;
@@ -662,7 +656,7 @@ export default function NetworkPage() {
 
     setGeoSavingByNodeId((prev) => ({ ...prev, [nodeId]: true }));
     try {
-      const updatedNode = await api.nodes.update(token, nodeId, {
+      const updatedNode = await api.nodes.update(nodeId, {
         locationCity,
         locationCountry,
         locationCountryCode,
@@ -709,7 +703,7 @@ export default function NetworkPage() {
   };
 
   const handleRunTest = async () => {
-    if (!token || !vlanStatus || !selectedTest.from || !selectedTest.to || !selectedTest.type) {
+    if (!vlanStatus || !selectedTest.from || !selectedTest.to || !selectedTest.type) {
       setNotice({ type: 'error', message: 'Veuillez sélectionner les paramètres du test.' });
       return;
     }
@@ -717,7 +711,6 @@ export default function NetworkPage() {
     try {
       setTestRunning(true);
       const result = await api.vlan.runTest(
-        token,
         vlanStatus.vlan.id,
         selectedTest.from,
         selectedTest.to,

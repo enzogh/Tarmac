@@ -737,6 +737,9 @@ func collectDisks() []diskState {
 		if isNFSFilesystem(fsType) {
 			continue
 		}
+		if isRcloneFuseMount(fsType) {
+			continue
+		}
 		if strings.HasPrefix(device, "tmpfs") || strings.HasPrefix(device, "none") {
 			continue
 		}
@@ -1602,6 +1605,15 @@ func isTargetMounted(target string) (string, bool) {
 	}
 	source := strings.TrimSpace(string(output))
 	return source, source != ""
+}
+
+// isRcloneFuseMount matches the "fuse.rclone" fstype that `rclone mount`
+// registers in /proc/mounts for Tarmac's remote SFTP mounts (see
+// applyRcloneSftpMount). These are remote-backed, not local disks, so they
+// must be excluded from collectDisks the same way NFS mounts are.
+func isRcloneFuseMount(fsType string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(fsType))
+	return normalized == "fuse.rclone" || strings.HasPrefix(normalized, "fuse.rclone-")
 }
 
 func isNFSFilesystem(fsType string) bool {

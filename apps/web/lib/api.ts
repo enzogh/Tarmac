@@ -303,12 +303,12 @@ export type AdminProfile = {
   updatedAt: string;
 };
 
-async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
       ...(init?.headers ?? {}),
     },
   });
@@ -335,49 +335,54 @@ export const api = {
   login: (email: string, password: string) =>
     fetch(`${API_BASE}/api/v1/auth/login`, {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     }).then(async (r) => {
       if (!r.ok) throw new Error('Login invalide');
-      return r.json() as Promise<{ access_token: string }>;
+      return r.json() as Promise<{ success: boolean }>;
+    }),
+
+  logout: () =>
+    fetch(`${API_BASE}/api/v1/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
     }),
 
   profile: {
-    get: (token: string) => request<AdminProfile>('/api/v1/auth/profile', token),
+    get: () => request<AdminProfile>('/api/v1/auth/profile'),
     update: (
-      token: string,
       payload: {
         email?: string;
         currentPassword?: string;
         newPassword?: string;
       },
     ) =>
-      request<AdminProfile>('/api/v1/auth/profile', token, {
+      request<AdminProfile>('/api/v1/auth/profile', {
         method: 'PATCH',
         body: JSON.stringify(payload),
       }),
   },
 
   nodes: {
-    list: (token: string) => request<NodeItem[]>('/api/v1/nodes', token),
-    activity: (token: string, range: '1h' | '6h' | '24h' = '1h') =>
-      request<NodeActivityItem[]>(`/api/v1/nodes/activity?range=${range}`, token),
-    metrics: (token: string, id: string, range: '1h' | '6h' | '24h' = '1h') =>
-      request<NodeMetricSample[]>(`/api/v1/nodes/${id}/metrics?range=${range}`, token),
-    create: (token: string, payload: { name: string; role: string }) =>
-      request<NodeItem>('/api/v1/nodes', token, { method: 'POST', body: JSON.stringify(payload) }),
-    onboardingStart: (token: string, payload: NodeOnboardingStartPayload) =>
-      request<NodeOnboardingStartResult>('/api/v1/nodes/onboarding/start', token, {
+    list: () => request<NodeItem[]>('/api/v1/nodes'),
+    activity: (range: '1h' | '6h' | '24h' = '1h') =>
+      request<NodeActivityItem[]>(`/api/v1/nodes/activity?range=${range}`),
+    metrics: (id: string, range: '1h' | '6h' | '24h' = '1h') =>
+      request<NodeMetricSample[]>(`/api/v1/nodes/${id}/metrics?range=${range}`),
+    create: (payload: { name: string; role: string }) =>
+      request<NodeItem>('/api/v1/nodes', { method: 'POST', body: JSON.stringify(payload) }),
+    onboardingStart: (payload: NodeOnboardingStartPayload) =>
+      request<NodeOnboardingStartResult>('/api/v1/nodes/onboarding/start', {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
-    onboardingInstall: (token: string, onboardingId: string) =>
-      request<NodeOnboardingInstallResult>(`/api/v1/nodes/onboarding/${encodeURIComponent(onboardingId)}/install`, token, {
+    onboardingInstall: (onboardingId: string) =>
+      request<NodeOnboardingInstallResult>(`/api/v1/nodes/onboarding/${encodeURIComponent(onboardingId)}/install`, {
         method: 'POST',
         body: JSON.stringify({ deployKeyConfirmed: true }),
       }),
     update: (
-      token: string,
       id: string,
       payload: {
         name?: string;
@@ -387,21 +392,20 @@ export const api = {
         locationCountryCode?: string | null;
       },
     ) =>
-      request<NodeItem>(`/api/v1/nodes/${id}`, token, { method: 'PATCH', body: JSON.stringify(payload) }),
-    delete: (token: string, id: string) =>
-      request<NodeItem & { agentUninstallQueued: boolean }>(`/api/v1/nodes/${id}`, token, { method: 'DELETE' }),
+      request<NodeItem>(`/api/v1/nodes/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+    delete: (id: string) =>
+      request<NodeItem & { agentUninstallQueued: boolean }>(`/api/v1/nodes/${id}`, { method: 'DELETE' }),
   },
 
   shares: {
-    list: (token: string) => request<ShareItem[]>('/api/v1/shares', token),
-    create: (token: string, payload: { name: string; path: string; nodeId?: string }) =>
-      request<ShareItem>('/api/v1/shares', token, { method: 'POST', body: JSON.stringify(payload) }),
+    list: () => request<ShareItem[]>('/api/v1/shares'),
+    create: (payload: { name: string; path: string; nodeId?: string }) =>
+      request<ShareItem>('/api/v1/shares', { method: 'POST', body: JSON.stringify(payload) }),
   },
 
   mounts: {
-    list: (token: string) => request<MountItem[]>('/api/v1/mounts', token),
+    list: () => request<MountItem[]>('/api/v1/mounts'),
     create: (
-      token: string,
       payload: {
         name: string;
         sourcePath: string;
@@ -414,9 +418,8 @@ export const api = {
         remoteUser?: string;
         remoteSshPort?: number;
       },
-    ) => request<MountItem>('/api/v1/mounts', token, { method: 'POST', body: JSON.stringify(payload) }),
+    ) => request<MountItem>('/api/v1/mounts', { method: 'POST', body: JSON.stringify(payload) }),
     update: (
-      token: string,
       id: string,
       payload: {
         name?: string;
@@ -427,39 +430,37 @@ export const api = {
         remoteUser?: string;
         remoteSshPort?: number;
       },
-    ) => request<MountItem>(`/api/v1/mounts/${id}`, token, { method: 'PATCH', body: JSON.stringify(payload) }),
-    delete: (token: string, id: string) =>
-      request<void>(`/api/v1/mounts/${id}`, token, { method: 'DELETE' }),
-    remount: (token: string, id: string) =>
-      request<MountItem>(`/api/v1/mounts/${id}/remount`, token, { method: 'POST' }),
+    ) => request<MountItem>(`/api/v1/mounts/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+    delete: (id: string) =>
+      request<void>(`/api/v1/mounts/${id}`, { method: 'DELETE' }),
+    remount: (id: string) =>
+      request<MountItem>(`/api/v1/mounts/${id}/remount`, { method: 'POST' }),
   },
 
   pools: {
-    list: (token: string) => request<PoolItem[]>('/api/v1/pools', token),
-    create: (token: string, payload: { name: string; strategy: string }) =>
-      request<PoolItem>('/api/v1/pools', token, { method: 'POST', body: JSON.stringify(payload) }),
-    delete: (token: string, id: string) => request<void>(`/api/v1/pools/${id}`, token, { method: 'DELETE' }),
+    list: () => request<PoolItem[]>('/api/v1/pools'),
+    create: (payload: { name: string; strategy: string }) =>
+      request<PoolItem>('/api/v1/pools', { method: 'POST', body: JSON.stringify(payload) }),
+    delete: (id: string) => request<void>(`/api/v1/pools/${id}`, { method: 'DELETE' }),
     addMember: (
-      token: string,
       poolId: string,
       payload: { nodeId: string; role: 'primary' | 'replica'; status: 'pending' | 'active' | 'error' },
     ) =>
-      request(`/api/v1/pools/${poolId}/members`, token, { method: 'POST', body: JSON.stringify(payload) }),
-    removeMember: (token: string, poolId: string, nodeId: string) =>
-      request<void>(`/api/v1/pools/${poolId}/members/${nodeId}`, token, { method: 'DELETE' }),
+      request(`/api/v1/pools/${poolId}/members`, { method: 'POST', body: JSON.stringify(payload) }),
+    removeMember: (poolId: string, nodeId: string) =>
+      request<void>(`/api/v1/pools/${poolId}/members/${nodeId}`, { method: 'DELETE' }),
   },
 
   alerts: {
-    list: (token: string) => request<AlertItem[]>('/api/v1/alerts', token),
-    ack: (token: string, id: string) => request(`/api/v1/alerts/${id}/ack`, token, { method: 'POST' }),
-    resolve: (token: string, id: string) => request(`/api/v1/alerts/${id}/resolve`, token, { method: 'POST' }),
-    remove: (token: string, id: string) => request(`/api/v1/alerts/${id}`, token, { method: 'DELETE' }),
+    list: () => request<AlertItem[]>('/api/v1/alerts'),
+    ack: (id: string) => request(`/api/v1/alerts/${id}/ack`, { method: 'POST' }),
+    resolve: (id: string) => request(`/api/v1/alerts/${id}/resolve`, { method: 'POST' }),
+    remove: (id: string) => request(`/api/v1/alerts/${id}`, { method: 'DELETE' }),
   },
 
   syncJobs: {
-    list: (token: string) => request<SyncJobItem[]>('/api/v1/sync-jobs', token),
+    list: () => request<SyncJobItem[]>('/api/v1/sync-jobs'),
     create: (
-      token: string,
       payload: {
         name: string;
         sourcePath: string;
@@ -470,9 +471,8 @@ export const api = {
         sourceUser?: string;
         sourceSshPort?: number;
       },
-    ) => request<SyncJobItem>('/api/v1/sync-jobs', token, { method: 'POST', body: JSON.stringify(payload) }),
+    ) => request<SyncJobItem>('/api/v1/sync-jobs', { method: 'POST', body: JSON.stringify(payload) }),
     update: (
-      token: string,
       id: string,
       payload: {
         name?: string;
@@ -484,18 +484,17 @@ export const api = {
         sourceUser?: string;
         sourceSshPort?: number;
       },
-    ) => request<SyncJobItem>(`/api/v1/sync-jobs/${id}`, token, { method: 'PATCH', body: JSON.stringify(payload) }),
-    run: (token: string, id: string) => request(`/api/v1/sync-jobs/${id}/runs`, token, { method: 'POST' }),
-    runs: (token: string, id: string) => request<SyncJobRunItem[]>(`/api/v1/sync-jobs/${id}/runs`, token),
-    delete: (token: string, id: string) => request<void>(`/api/v1/sync-jobs/${id}`, token, { method: 'DELETE' }),
-    rotateTriggerToken: (token: string, id: string) =>
-      request<{ triggerToken: string }>(`/api/v1/sync-jobs/${id}/trigger-token/rotate`, token, { method: 'POST' }),
+    ) => request<SyncJobItem>(`/api/v1/sync-jobs/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+    run: (id: string) => request(`/api/v1/sync-jobs/${id}/runs`, { method: 'POST' }),
+    runs: (id: string) => request<SyncJobRunItem[]>(`/api/v1/sync-jobs/${id}/runs`),
+    delete: (id: string) => request<void>(`/api/v1/sync-jobs/${id}`, { method: 'DELETE' }),
+    rotateTriggerToken: (id: string) =>
+      request<{ triggerToken: string }>(`/api/v1/sync-jobs/${id}/trigger-token/rotate`, { method: 'POST' }),
   },
 
   migrations: {
-    list: (token: string) => request<MigrationItem[]>('/api/v1/migrations', token),
+    list: () => request<MigrationItem[]>('/api/v1/migrations'),
     create: (
-      token: string,
       payload: {
         name: string;
         sourceNodeId?: string;
@@ -515,19 +514,16 @@ export const api = {
         targetSeedboxPassword?: string;
         targetSeedboxPort?: string;
       },
-    ) => request<MigrationItem>('/api/v1/migrations', token, { method: 'POST', body: JSON.stringify(payload) }),
-    listDirectories: (token: string, nodeId: string, basePath = '/') =>
+    ) => request<MigrationItem>('/api/v1/migrations', { method: 'POST', body: JSON.stringify(payload) }),
+    listDirectories: (nodeId: string, basePath = '/') =>
       request<{ basePath: string; directories: string[] }>(
         `/api/v1/migrations/directories?nodeId=${encodeURIComponent(nodeId)}&basePath=${encodeURIComponent(basePath)}`,
-        token,
       ),
-    scanDirectories: (token: string, nodeId: string, basePath = '/', maxEntries = 20) =>
+    scanDirectories: (nodeId: string, basePath = '/', maxEntries = 20) =>
       request<{ basePath: string; entries: DirectoryScanEntry[]; truncated: boolean }>(
         `/api/v1/migrations/directories/scan?nodeId=${encodeURIComponent(nodeId)}&basePath=${encodeURIComponent(basePath)}&maxEntries=${encodeURIComponent(String(maxEntries))}`,
-        token,
       ),
     listRemoteDirectories: (
-      token: string,
       payload: {
         nodeId: string;
         host: string;
@@ -538,34 +534,31 @@ export const api = {
         endpointType?: 'seedbox' | 'storagebox';
       },
     ) =>
-      request<{ basePath: string; directories: string[] }>('/api/v1/migrations/directories/remote', token, {
+      request<{ basePath: string; directories: string[] }>('/api/v1/migrations/directories/remote', {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
     update: (
-      token: string,
       id: string,
       payload: { name?: string; sourceNodeId?: string; targetNodeId?: string; notes?: string; status?: 'pending' | 'running' | 'completed' | 'failed'; progress?: number },
-    ) => request<MigrationItem>(`/api/v1/migrations/${id}`, token, { method: 'PATCH', body: JSON.stringify(payload) }),
-    start: (token: string, id: string) => request(`/api/v1/migrations/${id}/start`, token, { method: 'POST' }),
-    stop: (token: string, id: string) => request<MigrationItem>(`/api/v1/migrations/${id}/stop`, token, { method: 'POST' }),
-    retry: (token: string, id: string) => request<MigrationItem>(`/api/v1/migrations/${id}/retry`, token, { method: 'POST' }),
-    remove: (token: string, id: string) => request<void>(`/api/v1/migrations/${id}`, token, { method: 'DELETE' }),
+    ) => request<MigrationItem>(`/api/v1/migrations/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+    start: (id: string) => request(`/api/v1/migrations/${id}/start`, { method: 'POST' }),
+    stop: (id: string) => request<MigrationItem>(`/api/v1/migrations/${id}/stop`, { method: 'POST' }),
+    retry: (id: string) => request<MigrationItem>(`/api/v1/migrations/${id}/retry`, { method: 'POST' }),
+    remove: (id: string) => request<void>(`/api/v1/migrations/${id}`, { method: 'DELETE' }),
   },
 
   topology: {
-    get: (token: string) => request<Record<string, unknown>>('/api/v1/topology', token),
+    get: () => request<Record<string, unknown>>('/api/v1/topology'),
   },
 
   agents: {
     update: (
-      token: string,
       nodeId: string,
       payload?: { ref?: string; repoUrl?: string; serviceName?: string },
     ) =>
       request<{ queued: boolean; message: string }>(
         `/api/v1/agents/${encodeURIComponent(nodeId)}/update`,
-        token,
         {
           method: 'POST',
           body: JSON.stringify(payload ?? {}),
@@ -574,35 +567,35 @@ export const api = {
   },
 
   storage: {
-    forecast: (token: string, nodeId?: string) =>
-      request<Forecast>(`/api/v1/storage/forecast${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`, token),
-    overview: (token: string, nodeId?: string) =>
-      request<StorageOverview>(`/api/v1/storage/overview${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`, token),
+    forecast: (nodeId?: string) =>
+      request<Forecast>(`/api/v1/storage/forecast${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`),
+    overview: (nodeId?: string) =>
+      request<StorageOverview>(`/api/v1/storage/overview${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`),
   },
 
   vlan: {
-    getAll: (token: string) =>
-      request<{ vlans: Vlan[] }>('/api/v1/vlan', token),
-    join: (token: string, nodeId: string, vlanName?: string) =>
-      request<{ success: boolean; membership: VlanMember }>('/api/v1/vlan/join', token, {
+    getAll: () =>
+      request<{ vlans: Vlan[] }>('/api/v1/vlan'),
+    join: (nodeId: string, vlanName?: string) =>
+      request<{ success: boolean; membership: VlanMember }>('/api/v1/vlan/join', {
         method: 'POST',
         body: JSON.stringify({ nodeId, vlanName }),
       }),
-    getMembers: (token: string, vlanId: string) =>
-      request<{ members: VlanMember[] }>(`/api/v1/vlan/${vlanId}/members`, token),
-    getConnections: (token: string, vlanId: string) =>
-      request<{ connections: VlanConnection[] }>(`/api/v1/vlan/${vlanId}/connections`, token),
-    getStatus: (token: string, vlanId: string) =>
-      request<VlanStatus>(`/api/v1/vlan/${vlanId}/status`, token),
-    getTests: (token: string, vlanId: string) =>
-      request<{ tests: VlanConnectionTest[] }>(`/api/v1/vlan/${vlanId}/tests`, token),
-    runTest: (token: string, vlanId: string, initiatorNodeId: string, targetNodeId: string, testType: 'ping' | 'connectivity' | 'latency') =>
-      request<{ success: boolean; test: VlanConnectionTest }>(`/api/v1/vlan/${vlanId}/test`, token, {
+    getMembers: (vlanId: string) =>
+      request<{ members: VlanMember[] }>(`/api/v1/vlan/${vlanId}/members`),
+    getConnections: (vlanId: string) =>
+      request<{ connections: VlanConnection[] }>(`/api/v1/vlan/${vlanId}/connections`),
+    getStatus: (vlanId: string) =>
+      request<VlanStatus>(`/api/v1/vlan/${vlanId}/status`),
+    getTests: (vlanId: string) =>
+      request<{ tests: VlanConnectionTest[] }>(`/api/v1/vlan/${vlanId}/tests`),
+    runTest: (vlanId: string, initiatorNodeId: string, targetNodeId: string, testType: 'ping' | 'connectivity' | 'latency') =>
+      request<{ success: boolean; test: VlanConnectionTest }>(`/api/v1/vlan/${vlanId}/test`, {
         method: 'POST',
         body: JSON.stringify({ initiatorNodeId, targetNodeId, testType }),
       }),
-    heartbeat: (token: string, nodeId: string, vlanId?: string) =>
-      request<{ success: boolean; membership: VlanMember | null }>('/api/v1/vlan/heartbeat', token, {
+    heartbeat: (nodeId: string, vlanId?: string) =>
+      request<{ success: boolean; membership: VlanMember | null }>('/api/v1/vlan/heartbeat', {
         method: 'POST',
         body: JSON.stringify({ nodeId, vlanId }),
       }),

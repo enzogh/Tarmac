@@ -64,7 +64,6 @@ const formatDateTime = (value?: string | null) => (value ? new Date(value).toLoc
 
 export default function InfrastructurePage() {
   const router = useRouter();
-  const token = useMemo(() => (typeof window !== 'undefined' ? localStorage.getItem('tarmac_token') : null), []);
 
   const [nodes, setNodes] = useState<NodeActivityItem[]>([]);
   const [samplesByNode, setSamplesByNode] = useState<Record<string, NodeMetricSample[]>>({});
@@ -91,26 +90,24 @@ export default function InfrastructurePage() {
   const [scanTruncated, setScanTruncated] = useState(false);
 
   const load = async () => {
-    if (!token) return;
     try {
-      const n = await api.nodes.activity(token);
+      const n = await api.nodes.activity();
       const topNodes = [...n].sort((left, right) => right.metrics.cpu - left.metrics.cpu).slice(0, 6);
       const histories = await Promise.all(
-        topNodes.map(async (node) => [node.id, await api.nodes.metrics(token, node.id, '6h')] as const),
+        topNodes.map(async (node) => [node.id, await api.nodes.metrics(node.id, '6h')] as const),
       );
       setNodes(n);
       setSamplesByNode(Object.fromEntries(histories));
     } catch {
-      localStorage.removeItem('tarmac_token');
       router.push('/login');
     }
   };
 
   const loadNodeDirectories = async (nodeId: string, basePath: string) => {
-    if (!token || !nodeId) return;
+    if (!nodeId) return;
     setDirectoryLoading(true);
     try {
-      const payload = await api.migrations.listDirectories(token, nodeId, basePath || '/');
+      const payload = await api.migrations.listDirectories(nodeId, basePath || '/');
       setBrowsePath(payload.basePath);
       setDirectories([...payload.directories].sort((a, b) => a.localeCompare(b)));
     } catch {
@@ -125,10 +122,10 @@ export default function InfrastructurePage() {
   };
 
   const runDirectoryScan = async () => {
-    if (!token || !selectedExplorerNodeId) return;
+    if (!selectedExplorerNodeId) return;
     setScanLoading(true);
     try {
-      const payload = await api.migrations.scanDirectories(token, selectedExplorerNodeId, selectedPath || browsePath, 20);
+      const payload = await api.migrations.scanDirectories(selectedExplorerNodeId, selectedPath || browsePath, 20);
       setScanResults(payload.entries);
       setScanTruncated(payload.truncated);
     } catch {
@@ -148,16 +145,12 @@ export default function InfrastructurePage() {
   }, []);
 
   useEffect(() => {
-    if (!token) {
-      router.push('/login');
-      return;
-    }
     void load();
     const id = setInterval(() => {
       void load();
     }, 5000);
     return () => clearInterval(id);
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     if (nodes.length === 0) return;
@@ -208,8 +201,7 @@ export default function InfrastructurePage() {
   }, [nodes, geoByIp]);
 
   const deleteNode = async (node: NodeActivityItem) => {
-    if (!token) return;
-    const result = await api.nodes.delete(token, node.id);
+    const result = await api.nodes.delete(node.id);
     setUpdateNotice(
       result.agentUninstallQueued
         ? { type: 'success', message: `${node.name} supprimé, désinstallation de l’agent en cours sur le serveur.` }
@@ -231,10 +223,10 @@ export default function InfrastructurePage() {
 
   const saveEditNode = async (e: FormEvent) => {
     e.preventDefault();
-    if (!token || !editNode) return;
+    if (!editNode) return;
     setEditLoading(true);
     try {
-      await api.nodes.update(token, editNode.id, { name: editName, role: editRole });
+      await api.nodes.update(editNode.id, { name: editName, role: editRole });
       const labels = editLabels
         .split(',')
         .map((value) => value.trim())
@@ -253,10 +245,9 @@ export default function InfrastructurePage() {
   };
 
   const triggerAgentUpdate = async (node: NodeActivityItem) => {
-    if (!token) return;
     setUpdatingNodeId(node.id);
     try {
-      const result = await api.agents.update(token, node.id);
+      const result = await api.agents.update(node.id);
       if (!result.queued) {
         setUpdateNotice({
           type: 'error',

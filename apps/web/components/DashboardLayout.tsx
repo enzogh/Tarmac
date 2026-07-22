@@ -18,6 +18,7 @@ import {
   BookOpen,
   type LucideIcon,
 } from 'lucide-react';
+import { api } from '../lib/api';
 import { Button } from './ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import { cn } from '../lib/utils';
@@ -62,9 +63,12 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
 
-  const handleLogout = () => {
-    localStorage.removeItem('tarmac_token');
-    router.push('/login');
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+    } finally {
+      router.push('/login');
+    }
   };
 
   return (

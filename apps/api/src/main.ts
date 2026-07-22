@@ -2,7 +2,10 @@ import 'reflect-metadata';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { PrismaClient } from '@prisma/client';
+import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
+
+const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:3000', 'https://tarmac.casterot.com'];
 
 const crashAlertPrisma = new PrismaClient();
 
@@ -33,7 +36,9 @@ process.on('uncaughtException', (error) => {
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.enableCors({ origin: true, credentials: true });
+  const allowedOrigins = (process.env.CORS_ORIGINS?.split(',').map((o) => o.trim()).filter(Boolean)) ?? DEFAULT_ALLOWED_ORIGINS;
+  app.enableCors({ origin: allowedOrigins, credentials: true });
+  app.use(cookieParser());
   app.setGlobalPrefix('api/v1');
   app.useGlobalPipes(
     new ValidationPipe({

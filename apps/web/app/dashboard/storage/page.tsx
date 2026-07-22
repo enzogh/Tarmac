@@ -75,7 +75,6 @@ const STATUS_BADGE: Record<string, { label: string; type: 'success' | 'warning' 
 
 export default function StoragePage() {
   const router = useRouter();
-  const token = useMemo(() => (typeof window !== 'undefined' ? localStorage.getItem('tarmac_token') : null), []);
 
   const [nodes, setNodes] = useState<NodeItem[]>([]);
   const [pools, setPools] = useState<PoolItem[]>([]);
@@ -92,26 +91,20 @@ export default function StoragePage() {
   });
 
   const load = async () => {
-    if (!token) return;
     try {
-      const [n, p] = await Promise.all([api.nodes.list(token), api.pools.list(token)]);
+      const [n, p] = await Promise.all([api.nodes.list(), api.pools.list()]);
       setNodes(n);
       setPools(p);
     } catch {
-      localStorage.removeItem('tarmac_token');
       router.push('/login');
     }
   };
 
   useEffect(() => {
-    if (!token) {
-      router.push('/login');
-      return;
-    }
     void load();
     const id = setInterval(() => void load(), 5000);
     return () => clearInterval(id);
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     setNodeLabels(readNodeLabels());
@@ -238,15 +231,15 @@ export default function StoragePage() {
   ];
 
   const createPool = async () => {
-    if (!token || !formData.name.trim()) {
+    if (!formData.name.trim()) {
       setNotice({ type: 'error', message: 'Le nom du pool est obligatoire.' });
       return;
     }
     try {
-      const pool = await api.pools.create(token, { name: formData.name.trim(), strategy: formData.strategy });
+      const pool = await api.pools.create({ name: formData.name.trim(), strategy: formData.strategy });
       await Promise.all(
         formData.nodeIds.map((nodeId, index) =>
-          api.pools.addMember(token, pool.id, {
+          api.pools.addMember(pool.id, {
             nodeId,
             role: index === 0 ? 'primary' : 'replica',
             status: 'pending',
@@ -263,11 +256,10 @@ export default function StoragePage() {
   };
 
   const deletePool = async (pool: PoolItem) => {
-    if (!token) return;
     if (!window.confirm(`Supprimer le pool « ${pool.name} » ? Cette action est définitive.`)) return;
     setBusyPoolId(pool.id);
     try {
-      await api.pools.delete(token, pool.id);
+      await api.pools.delete(pool.id);
       await load();
     } catch {
       setNotice({ type: 'error', message: 'Erreur lors de la suppression du pool.' });
@@ -277,10 +269,9 @@ export default function StoragePage() {
   };
 
   const removeMember = async (poolId: string, nodeId: string) => {
-    if (!token) return;
     setBusyPoolId(poolId);
     try {
-      await api.pools.removeMember(token, poolId, nodeId);
+      await api.pools.removeMember(poolId, nodeId);
       await load();
     } catch {
       setNotice({ type: 'error', message: "Erreur lors du retrait du nœud." });

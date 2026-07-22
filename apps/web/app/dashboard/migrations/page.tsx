@@ -154,7 +154,6 @@ function RemoteEndpointFields({
 
 export default function MigrationsPage() {
   const router = useRouter();
-  const token = useMemo(() => (typeof window !== 'undefined' ? localStorage.getItem('tarmac_token') : null), []);
 
   const [migrations, setMigrations] = useState<MigrationItem[]>([]);
   const [nodes, setNodes] = useState<NodeItem[]>([]);
@@ -201,19 +200,16 @@ export default function MigrationsPage() {
   const [deleteMigration, setDeleteMigration] = useState<MigrationItem | null>(null);
 
   const load = async () => {
-    if (!token) return;
     try {
-      const [mg, n] = await Promise.all([api.migrations.list(token), api.nodes.list(token)]);
+      const [mg, n] = await Promise.all([api.migrations.list(), api.nodes.list()]);
       setMigrations(mg);
       setNodes(n);
     } catch {
-      localStorage.removeItem('tarmac_token');
       router.push('/login');
     }
   };
 
   const loadDirectories = async (kind: 'source' | 'target', basePath: string) => {
-    if (!token) return;
     const endpointKind = kind === 'source' ? formData.sourceKind : formData.targetKind;
     const isRemote = isRemoteKind(endpointKind);
     const nodeId =
@@ -229,7 +225,7 @@ export default function MigrationsPage() {
     setDirectoriesLoading((prev) => ({ ...prev, [kind]: true }));
     try {
       const payload = isRemote
-        ? await api.migrations.listRemoteDirectories(token, {
+        ? await api.migrations.listRemoteDirectories({
             nodeId,
             host: kind === 'source' ? formData.sourceSeedboxHost : formData.targetSeedboxHost,
             username: kind === 'source' ? formData.sourceSeedboxUser : formData.targetSeedboxUser,
@@ -241,7 +237,7 @@ export default function MigrationsPage() {
             basePath: basePath || '/',
             endpointType: isStorageboxKind(endpointKind) ? 'storagebox' : 'seedbox',
           })
-        : await api.migrations.listDirectories(token, nodeId, basePath || '/');
+        : await api.migrations.listDirectories(nodeId, basePath || '/');
       const sorted = [...payload.directories].sort((a, b) => a.localeCompare(b));
       if (kind === 'source') {
         setSourceBrowsePath(payload.basePath);
@@ -269,14 +265,10 @@ export default function MigrationsPage() {
   };
 
   useEffect(() => {
-    if (!token) {
-      router.push('/login');
-      return;
-    }
     void load();
     const id = setInterval(() => void load(), 5000);
     return () => clearInterval(id);
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     setNodeLabels(readNodeLabels());
@@ -402,7 +394,6 @@ export default function MigrationsPage() {
   };
 
   const createMigration = async () => {
-    if (!token) return;
     if (!validateMigrationInput()) return;
     if (!formData.sourcePath || !formData.targetPath) {
       setNotice({
@@ -412,7 +403,7 @@ export default function MigrationsPage() {
       return;
     }
     try {
-      await api.migrations.create(token, {
+      await api.migrations.create({
         name: formData.name.trim(),
         sourceNodeId: formData.sourceNodeId || undefined,
         targetNodeId: formData.targetNodeId || undefined,
@@ -462,10 +453,9 @@ export default function MigrationsPage() {
   };
 
   const startMigration = async (migrationId: string) => {
-    if (!token) return;
     setBusyId(migrationId);
     try {
-      await api.migrations.start(token, migrationId);
+      await api.migrations.start(migrationId);
       setNotice({ type: 'success', message: 'Migration démarrée.' });
       await load();
     } catch {
@@ -476,10 +466,9 @@ export default function MigrationsPage() {
   };
 
   const retryMigration = async (migrationId: string) => {
-    if (!token) return;
     setBusyId(migrationId);
     try {
-      await api.migrations.retry(token, migrationId);
+      await api.migrations.retry(migrationId);
       setNotice({ type: 'success', message: 'Migration relancée.' });
       await load();
     } catch {
@@ -490,10 +479,9 @@ export default function MigrationsPage() {
   };
 
   const stopMigration = async (migrationId: string) => {
-    if (!token) return;
     setBusyId(migrationId);
     try {
-      await api.migrations.stop(token, migrationId);
+      await api.migrations.stop(migrationId);
       setNotice({ type: 'success', message: 'Migration arrêtée.' });
       await load();
     } catch {
@@ -514,7 +502,7 @@ export default function MigrationsPage() {
   };
 
   const saveEdit = async () => {
-    if (!token || !editMigration) return;
+    if (!editMigration) return;
     if (!editForm.name.trim() || !editForm.sourceNodeId || !editForm.targetNodeId) {
       setNotice({ type: 'error', message: 'Complétez le nom, la source et la destination.' });
       return;
@@ -525,7 +513,7 @@ export default function MigrationsPage() {
     }
     setBusyId(editMigration.id);
     try {
-      await api.migrations.update(token, editMigration.id, {
+      await api.migrations.update(editMigration.id, {
         name: editForm.name.trim(),
         sourceNodeId: editForm.sourceNodeId,
         targetNodeId: editForm.targetNodeId,
@@ -542,10 +530,10 @@ export default function MigrationsPage() {
   };
 
   const confirmDelete = async () => {
-    if (!token || !deleteMigration) return;
+    if (!deleteMigration) return;
     setBusyId(deleteMigration.id);
     try {
-      await api.migrations.remove(token, deleteMigration.id);
+      await api.migrations.remove(deleteMigration.id);
       setDeleteMigration(null);
       setNotice({ type: 'success', message: 'Migration supprimée.' });
       await load();

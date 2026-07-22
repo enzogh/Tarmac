@@ -48,7 +48,6 @@ const STATUS_BADGE: Record<string, { label: string; type: 'success' | 'warning' 
 
 export default function ReplicationPage() {
   const router = useRouter();
-  const token = useMemo(() => (typeof window !== 'undefined' ? localStorage.getItem('tarmac_token') : null), []);
 
   const [nodes, setNodes] = useState<NodeItem[]>([]);
   const [jobs, setJobs] = useState<SyncJobItem[]>([]);
@@ -78,26 +77,20 @@ export default function ReplicationPage() {
   });
 
   const load = async () => {
-    if (!token) return;
     try {
-      const [n, j] = await Promise.all([api.nodes.list(token), api.syncJobs.list(token)]);
+      const [n, j] = await Promise.all([api.nodes.list(), api.syncJobs.list()]);
       setNodes(n);
       setJobs(j);
     } catch {
-      localStorage.removeItem('tarmac_token');
       router.push('/login');
     }
   };
 
   useEffect(() => {
-    if (!token) {
-      router.push('/login');
-      return;
-    }
     void load();
     const id = setInterval(() => void load(), 5000);
     return () => clearInterval(id);
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     setNodeLabels(readNodeLabels());
@@ -279,7 +272,6 @@ export default function ReplicationPage() {
   ];
 
   const createJob = async () => {
-    if (!token) return;
     if (!formData.name.trim() || !formData.sourcePath.trim() || !formData.targetPath.trim()) {
       setNotice({ type: 'error', message: 'Nom, dossier source et dossier destination sont obligatoires.' });
       return;
@@ -288,7 +280,7 @@ export default function ReplicationPage() {
     const sourceUser = formData.sourceUser.trim();
     const sourceSshPort = formData.sourceSshPort.trim();
     try {
-      const created = await api.syncJobs.create(token, {
+      const created = await api.syncJobs.create({
         name: formData.name.trim(),
         sourcePath: formData.sourcePath.trim(),
         targetPath: formData.targetPath.trim(),
@@ -311,10 +303,9 @@ export default function ReplicationPage() {
   };
 
   const rotateTriggerToken = async (job: SyncJobItem) => {
-    if (!token) return;
     setBusyJobId(job.id);
     try {
-      const { triggerToken } = await api.syncJobs.rotateTriggerToken(token, job.id);
+      const { triggerToken } = await api.syncJobs.rotateTriggerToken(job.id);
       setRevealSecret({ job, token: triggerToken });
     } catch {
       setNotice({ type: 'error', message: 'Erreur lors de la régénération du lien externe.' });
@@ -333,7 +324,7 @@ export default function ReplicationPage() {
   };
 
   const saveSshSource = async () => {
-    if (!token || !sshEditJob) return;
+    if (!sshEditJob) return;
     const sourceHost = sshForm.sourceHost.trim();
     if (!sourceHost) {
       setNotice({ type: 'error', message: "L'hôte distant est obligatoire." });
@@ -343,7 +334,7 @@ export default function ReplicationPage() {
     const sourceSshPort = sshForm.sourceSshPort.trim();
     setSavingSsh(true);
     try {
-      await api.syncJobs.update(token, sshEditJob.id, {
+      await api.syncJobs.update(sshEditJob.id, {
         sourceHost,
         ...(sourceUser ? { sourceUser } : {}),
         ...(sourceSshPort ? { sourceSshPort: Number(sourceSshPort) } : {}),
@@ -364,7 +355,7 @@ export default function ReplicationPage() {
   };
 
   const saveGeneralEdit = async () => {
-    if (!token || !generalEditJob) return;
+    if (!generalEditJob) return;
     const name = generalForm.name.trim();
     const targetPath = generalForm.targetPath.trim();
     if (!name || !targetPath) {
@@ -373,7 +364,7 @@ export default function ReplicationPage() {
     }
     setSavingGeneral(true);
     try {
-      await api.syncJobs.update(token, generalEditJob.id, { name, targetPath });
+      await api.syncJobs.update(generalEditJob.id, { name, targetPath });
       setNotice({ type: 'success', message: 'Tâche mise à jour.' });
       setGeneralEditJob(null);
       await load();
@@ -385,10 +376,9 @@ export default function ReplicationPage() {
   };
 
   const runJob = async (job: SyncJobItem) => {
-    if (!token) return;
     setBusyJobId(job.id);
     try {
-      await api.syncJobs.run(token, job.id);
+      await api.syncJobs.run(job.id);
       setNotice({ type: 'success', message: `Réplication « ${job.name} » lancée.` });
       await load();
     } catch {
@@ -399,11 +389,10 @@ export default function ReplicationPage() {
   };
 
   const deleteJob = async (job: SyncJobItem) => {
-    if (!token) return;
     if (!window.confirm(`Supprimer la tâche « ${job.name} » ? Cette action est définitive.`)) return;
     setBusyJobId(job.id);
     try {
-      await api.syncJobs.delete(token, job.id);
+      await api.syncJobs.delete(job.id);
       await load();
     } catch {
       setNotice({ type: 'error', message: 'Erreur lors de la suppression de la tâche.' });
@@ -413,14 +402,13 @@ export default function ReplicationPage() {
   };
 
   const toggleHistory = async (job: SyncJobItem) => {
-    if (!token) return;
     if (expandedJobId === job.id) {
       setExpandedJobId(null);
       return;
     }
     setExpandedJobId(job.id);
     if (!runsByJob[job.id]) {
-      const runs = await api.syncJobs.runs(token, job.id);
+      const runs = await api.syncJobs.runs(job.id);
       setRunsByJob((prev) => ({ ...prev, [job.id]: runs }));
     }
   };

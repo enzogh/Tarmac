@@ -193,10 +193,6 @@ type Notice = { type: 'error' | 'success' | 'warning'; message: string } | null;
 
 export default function MountsPage() {
   const router = useRouter();
-  const token = useMemo(
-    () => (typeof window !== 'undefined' ? localStorage.getItem('tarmac_token') : null),
-    [],
-  );
 
   const [mounts, setMounts] = useState<MountItem[]>([]);
   const [nodes, setNodes] = useState<NodeItem[]>([]);
@@ -280,12 +276,11 @@ export default function MountsPage() {
   }, [notice]);
 
   const load = async () => {
-    if (!token) return;
     try {
       const [m, n, vlanData] = await Promise.all([
-        api.mounts.list(token),
-        api.nodes.list(token),
-        api.vlan.getAll(token).catch(() => ({ vlans: [] })),
+        api.mounts.list(),
+        api.nodes.list(),
+        api.vlan.getAll().catch(() => ({ vlans: [] })),
       ]);
       setMounts(m);
       setNodes(n);
@@ -301,37 +296,32 @@ export default function MountsPage() {
       if (members.length === 0 && vlanData.vlans.length > 0) {
         const arrays = await Promise.all(
           vlanData.vlans.map((v) =>
-            api.vlan.getMembers(token, v.id).then((r) => r.members).catch(() => [] as VlanMember[]),
+            api.vlan.getMembers(v.id).then((r) => r.members).catch(() => [] as VlanMember[]),
           ),
         );
         arrays.forEach((arr) => members.push(...arr));
       }
       setVlanMembers(members);
     } catch {
-      localStorage.removeItem('tarmac_token');
       router.push('/login');
     }
   };
 
   useEffect(() => {
-    if (!token) {
-      router.push('/login');
-      return;
-    }
     void load();
     const id = setInterval(() => void load(), 5000);
     return () => clearInterval(id);
-  }, [token]);
+  }, []);
 
   const loadLiveDirectories = async (
     kind: 'export' | 'client' | 'existing',
     nodeId: string,
     basePath: string,
   ) => {
-    if (!token || !nodeId) return;
+    if (!nodeId) return;
     setDirectoryLoading((prev) => ({ ...prev, [kind]: true }));
     try {
-      const payload = await api.migrations.listDirectories(token, nodeId, basePath || '/');
+      const payload = await api.migrations.listDirectories(nodeId, basePath || '/');
       const sorted = [...payload.directories].sort((a, b) => a.localeCompare(b));
       if (kind === 'export') {
         setExportBrowsePath(payload.basePath);
@@ -400,7 +390,6 @@ export default function MountsPage() {
   // ── Create NFS share (new feature) ──────────────────────────────────────
 
   const createNfsShare = async () => {
-    if (!token) return;
     const vlanIp = nodeVlanIps[shareForm.exportNodeId];
     if (!vlanIp) {
       setNotice({ type: 'error', message: "Le serveur exportateur n'est pas connecté au VLAN." });
@@ -411,12 +400,12 @@ export default function MountsPage() {
       return;
     }
     try {
-      await api.shares.create(token, {
+      await api.shares.create({
         name: shareForm.name.trim(),
         path: shareForm.exportPath,
         nodeId: shareForm.exportNodeId,
       });
-      await api.mounts.create(token, {
+      await api.mounts.create({
         name: shareForm.name.trim(),
         sourcePath: `${vlanIp}:${shareForm.exportPath}`,
         targetPath: shareForm.mountPath,
@@ -450,7 +439,6 @@ export default function MountsPage() {
     });
 
   const createMount = async () => {
-    if (!token) return;
     if (!mountForm.name.trim() || !mountForm.sourcePath.trim() || !mountForm.targetPath.trim()) {
       setNotice({ type: 'error', message: 'Complétez le nom, la source et la destination.' });
       return;
@@ -461,7 +449,7 @@ export default function MountsPage() {
     }
     try {
       const isRclone = mountForm.mountType === 'rclone-sftp';
-      await api.mounts.create(token, {
+      await api.mounts.create({
         name: mountForm.name.trim(),
         sourcePath: mountForm.sourcePath.trim(),
         targetPath: mountForm.targetPath.trim(),
@@ -488,10 +476,9 @@ export default function MountsPage() {
   // ── Retry mount ───────────────────────────────────────────────────────────
 
   const retryMount = async (mountId: string) => {
-    if (!token) return;
     setBusyId(mountId);
     try {
-      await api.mounts.remount(token, mountId);
+      await api.mounts.remount(mountId);
       setNotice({ type: 'success', message: 'Nouvelle tentative de montage lancée.' });
       await load();
     } catch {
@@ -513,7 +500,7 @@ export default function MountsPage() {
   };
 
   const saveSshEdit = async () => {
-    if (!token || !sshEditMount) return;
+    if (!sshEditMount) return;
     const remoteHost = sshEditForm.remoteHost.trim();
     if (!remoteHost) {
       setNotice({ type: 'error', message: "L'hôte distant est obligatoire." });
@@ -523,7 +510,7 @@ export default function MountsPage() {
     const remoteSshPort = sshEditForm.remoteSshPort.trim();
     setSavingSshEdit(true);
     try {
-      await api.mounts.update(token, sshEditMount.id, {
+      await api.mounts.update(sshEditMount.id, {
         remoteHost,
         ...(remoteUser ? { remoteUser } : {}),
         ...(remoteSshPort ? { remoteSshPort: Number(remoteSshPort) } : {}),
@@ -531,7 +518,7 @@ export default function MountsPage() {
       // The fix is pointless without retrying the (currently failed/pending)
       // mount, so fold both into a single action instead of making the user
       // remember to hit "Réessayer" separately afterwards.
-      await api.mounts.remount(token, sshEditMount.id);
+      await api.mounts.remount(sshEditMount.id);
       setNotice({ type: 'success', message: 'Source SSH mise à jour, nouvelle tentative lancée.' });
       setSshEditMount(null);
       await load();
@@ -545,10 +532,9 @@ export default function MountsPage() {
   // ── Delete mount ──────────────────────────────────────────────────────────
 
   const deleteMount = async (mountId: string) => {
-    if (!token) return;
     setBusyId(mountId);
     try {
-      await api.mounts.delete(token, mountId);
+      await api.mounts.delete(mountId);
       setNotice({ type: 'success', message: 'Montage supprimé.' });
       await load();
     } catch {

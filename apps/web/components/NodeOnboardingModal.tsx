@@ -27,7 +27,6 @@ interface NodeOnboardingModalProps {
 export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<Step>('form');
-  const [token, setToken] = useState('');
 
   const [name, setName] = useState('storage-1');
   const [role, setRole] = useState<NodeRole>('worker');
@@ -43,10 +42,6 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
   const [onboarding, setOnboarding] = useState<NodeOnboardingStartResult | null>(null);
   const [installResult, setInstallResult] = useState<NodeOnboardingInstallResult | null>(null);
-
-  useEffect(() => {
-    setToken(localStorage.getItem('tarmac_token') ?? '');
-  }, []);
 
   useEffect(() => {
     if (copyState !== 'copied') return;
@@ -95,14 +90,10 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
 
   const handleStart = async (event: FormEvent) => {
     event.preventDefault();
-    if (!token) {
-      setError('Token manquant, reconnectez-vous.');
-      return;
-    }
     setLoading(true);
     setError('');
     try {
-      const result = await api.nodes.onboardingStart(token, {
+      const result = await api.nodes.onboardingStart({
         name: name.trim(),
         role,
         provider,
@@ -123,12 +114,12 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
   };
 
   const handleInstall = async () => {
-    if (!token || !onboarding) return;
+    if (!onboarding) return;
     setLoading(true);
     setError('');
     setStep('installing');
     try {
-      const result = await api.nodes.onboardingInstall(token, onboarding.onboardingId);
+      const result = await api.nodes.onboardingInstall(onboarding.onboardingId);
       setInstallResult(result);
       setStep('done');
       onCreated?.();

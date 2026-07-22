@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ArrowRightLeft,
@@ -36,7 +36,6 @@ const formatTime = (iso: string) => new Date(iso).toLocaleTimeString('fr-FR', { 
 
 export default function OverviewPage() {
   const router = useRouter();
-  const token = useMemo(() => (typeof window !== 'undefined' ? localStorage.getItem('tarmac_token') : null), []);
 
   const [activities, setActivities] = useState<NodeActivityItem[]>([]);
   const [samplesByNode, setSamplesByNode] = useState<Record<string, NodeMetricSample[]>>({});
@@ -50,17 +49,16 @@ export default function OverviewPage() {
   }, []);
 
   const load = async () => {
-    if (!token) return;
     try {
       const [activity, a, sj, mg] = await Promise.all([
-        api.nodes.activity(token),
-        api.alerts.list(token),
-        api.syncJobs.list(token),
-        api.migrations.list(token),
+        api.nodes.activity(),
+        api.alerts.list(),
+        api.syncJobs.list(),
+        api.migrations.list(),
       ]);
       const topNodes = [...activity].sort((left, right) => right.metrics.cpu - left.metrics.cpu).slice(0, 4);
       const histories = await Promise.all(
-        topNodes.map(async (node) => [node.id, await api.nodes.metrics(token, node.id, '6h')] as const),
+        topNodes.map(async (node) => [node.id, await api.nodes.metrics(node.id, '6h')] as const),
       );
       setActivities(activity);
       setSamplesByNode(Object.fromEntries(histories));
@@ -68,22 +66,17 @@ export default function OverviewPage() {
       setSyncJobs(sj);
       setMigrations(mg);
     } catch {
-      localStorage.removeItem('tarmac_token');
       router.push('/login');
     }
   };
 
   useEffect(() => {
-    if (!token) {
-      router.push('/login');
-      return;
-    }
     void load();
     const id = setInterval(() => {
       void load();
     }, 5000);
     return () => clearInterval(id);
-  }, [token]);
+  }, []);
 
   const nodesOnline = activities.filter((node) => node.status === 'online').length;
   const alertsCritical = alerts.filter((a) => a.severity === 'critical').length;

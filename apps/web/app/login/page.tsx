@@ -12,8 +12,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../..
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState('admin@tarmac.local');
-  const [password, setPassword] = useState('admin123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -22,8 +22,7 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
     try {
-      const result = await api.login(email, password);
-      localStorage.setItem('tarmac_token', result.access_token);
+      await api.login(email, password);
       router.push('/dashboard');
     } catch {
       setError('Connexion impossible. Vérifiez vos identifiants.');
