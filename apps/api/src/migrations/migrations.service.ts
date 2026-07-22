@@ -1,6 +1,8 @@
 import {
   BadRequestException,
+  forwardRef,
   GatewayTimeoutException,
+  Inject,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
@@ -11,6 +13,8 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateMigrationDto } from './dto/create-migration.dto';
 import { UpdateMigrationDto } from './dto/update-migration.dto';
+
+const AUTO_REMEDIATION_PREFIX = '[Auto]';
 
 type MigrationEndpointKind = 'node' | 'seedbox' | 'storagebox';
 type RemoteEndpointType = 'seedbox' | 'storagebox';
@@ -36,6 +40,7 @@ type MigrationNotesMetadata = {
 export class MigrationsService {
   constructor(
     private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => AgentsService))
     private readonly agentsService: AgentsService,
     private readonly auditLogsService: AuditLogsService,
   ) {}
@@ -213,6 +218,50 @@ export class MigrationsService {
       details: dto as unknown as Prisma.InputJsonValue,
     });
     return this.withMetadata(created);
+  }
+
+  // Called when a disk goes SMART-critical: proposes (never auto-starts) a
+  // migration off the affected node so an admin can secure the data before
+  // the disk fails outright. The task is created 'pending' — someone still
+  // has to hit "Démarrer" for any data to actually move.
+  async suggestMigrationForCriticalDisk(params: { nodeId: string; diskName: string; mountPath: string }) {
+    const existing = await this.prisma.migrationTask.findFirst({
+      where: {
+        sourceNodeId: params.nodeId,
+        status: { in: ['pending', 'running'] },
+        name: { startsWith: AUTO_REMEDIATION_PREFIX },
+      },
+    });
+    if (existing) return null;
+
+    const [sourceNode, candidateNodes, disks] = await Promise.all([
+      this.prisma.node.findUnique({ where: { id: params.nodeId } }),
+      this.prisma.node.findMany({ where: { status: 'online', id: { not: params.nodeId } } }),
+      this.prisma.disk.findMany(),
+    ]);
+    if (!sourceNode || candidateNodes.length === 0) return null;
+
+    const freeGbByNode = new Map<string, number>();
+    for (const disk of disks) {
+      const free = disk.capacityGb - disk.usedGb;
+      freeGbByNode.set(disk.nodeId, (freeGbByNode.get(disk.nodeId) ?? 0) + free);
+    }
+
+    const targetNode = candidateNodes
+      .map((node) => ({ node, freeGb: freeGbByNode.get(node.id) ?? 0 }))
+      .sort((a, b) => b.freeGb - a.freeGb)[0]?.node;
+    if (!targetNode) return null;
+
+    return this.create({
+      name: `${AUTO_REMEDIATION_PREFIX} sécurisation disque "${params.diskName}" (${sourceNode.name})`,
+      sourceNodeId: params.nodeId,
+      targetNodeId: targetNode.id,
+      sourcePath: params.mountPath,
+      targetPath: params.mountPath,
+      reason: 'Disque en échec SMART critique : sécurisation préventive des données avant perte.',
+      sourceKind: 'node',
+      targetKind: 'node',
+    });
   }
 
   async update(id: string, dto: UpdateMigrationDto, actorUserId?: string) {

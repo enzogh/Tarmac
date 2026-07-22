@@ -15,6 +15,7 @@ import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CompleteNodeOnboardingDto } from './dto/complete-node-onboarding.dto';
 import { CreateNodeDto } from './dto/create-node.dto';
+import { MuteNodeDto } from './dto/mute-node.dto';
 import { StartNodeOnboardingDto } from './dto/start-node-onboarding.dto';
 import { NodeOnboardingService } from './node-onboarding.service';
 import { UpdateNodeDto } from './dto/update-node.dto';
@@ -92,6 +93,16 @@ export class NodesController {
     return this.nodesService.rotateAllAgentTokens(req.user?.userId);
   }
 
+  @Post(':id/mute')
+  mute(@Param('id') id: string, @Body() dto: MuteNodeDto, @Req() req: AuthenticatedRequest) {
+    return this.nodesService.mute(id, dto.minutes, req.user?.userId);
+  }
+
+  @Post(':id/unmute')
+  unmute(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.nodesService.unmute(id, req.user?.userId);
+  }
+
   @Get('activity')
   activity(@Query('range') range = '1h') {
     return this.nodesService.activity(range);
@@ -100,5 +111,10 @@ export class NodesController {
   @Get(':id/metrics')
   metrics(@Param('id') id: string, @Query('range') range = '1h') {
     return this.nodesService.metrics(id, range);
+  }
+
+  @Get(':id/disks/:diskName/smart-history')
+  smartHistory(@Param('id') id: string, @Param('diskName') diskName: string) {
+    return this.nodesService.smartHistory(id, diskName);
   }
 }

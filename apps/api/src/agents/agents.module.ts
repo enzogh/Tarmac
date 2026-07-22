@@ -1,5 +1,6 @@
 import { forwardRef, Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
+import { MigrationsModule } from '../migrations/migrations.module';
 import { MountsModule } from '../mounts/mounts.module';
 import { PoolsModule } from '../pools/pools.module';
 import { SharesModule } from '../shares/shares.module';
@@ -11,7 +12,14 @@ import { AgentsService } from './agents.service';
 import { AgentsWsServer } from './agents.ws';
 
 @Module({
-  imports: [ScheduleModule.forRoot(), SharesModule, forwardRef(() => MountsModule), PoolsModule, VlanModule],
+  imports: [
+    ScheduleModule.forRoot(),
+    SharesModule,
+    forwardRef(() => MountsModule),
+    forwardRef(() => MigrationsModule),
+    PoolsModule,
+    VlanModule,
+  ],
   controllers: [AgentsController],
   providers: [AgentsGateway, AgentsService, AgentsWsServer, AgentTokenService],
   exports: [AgentsService, AgentTokenService],

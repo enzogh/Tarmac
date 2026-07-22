@@ -17,6 +17,7 @@ type ActivityNode = {
   overlayEndpoint: string | null;
   agentVersion: string | null;
   agentVersionAt: Date | null;
+  mutedUntil: Date | null;
 };
 
 type ActivitySample = {
@@ -42,6 +43,17 @@ type ActivityDisk = {
   usedGb: number;
   updatedAt: Date;
   node?: { name: string } | null;
+};
+
+type ActivitySmartReport = {
+  nodeId: string;
+  diskName: string;
+  temperatureC: number;
+  reallocatedSectors: number;
+  pendingSectors: number;
+  powerOnHours: number;
+  overall: string;
+  collectedAt: Date;
 };
 
 @Injectable()
@@ -127,6 +139,34 @@ export class NodesService {
     return { ...deleted, agentUninstallQueued: uninstall.queued };
   }
 
+  async mute(id: string, minutes: number, actorUserId?: string) {
+    const mutedUntil = new Date(Date.now() + minutes * 60_000);
+    const updated = await this.prisma.node.update({ where: { id }, data: { mutedUntil } });
+
+    await this.auditLogsService.log({
+      actorUserId,
+      action: 'node.mute',
+      resourceType: 'node',
+      resourceId: id,
+      details: { minutes, mutedUntil: mutedUntil.toISOString() },
+    });
+
+    return updated;
+  }
+
+  async unmute(id: string, actorUserId?: string) {
+    const updated = await this.prisma.node.update({ where: { id }, data: { mutedUntil: null } });
+
+    await this.auditLogsService.log({
+      actorUserId,
+      action: 'node.unmute',
+      resourceType: 'node',
+      resourceId: id,
+    });
+
+    return updated;
+  }
+
   async rotateAgentToken(id: string, actorUserId?: string) {
     const { rotated, delivered } = await this.agentTokenService.rotate(id);
     if (!rotated) {
@@ -166,7 +206,7 @@ export class NodesService {
     };
     const ms = ranges[range] ?? ranges['1h'];
 
-    const [nodes, latestSamples, disks] = (await Promise.all([
+    const [nodes, latestSamples, disks, smartReports] = (await Promise.all([
       this.prisma.node.findMany({ orderBy: { createdAt: 'desc' } }),
       this.prisma.metricSample.findMany({
         where: { createdAt: { gte: new Date(now - ms) } },
@@ -177,7 +217,11 @@ export class NodesService {
         include: { node: true },
         orderBy: [{ nodeId: 'asc' }, { mountPath: 'asc' }],
       }),
-    ])) as [ActivityNode[], ActivitySample[], ActivityDisk[]];
+      this.prisma.smartReport.findMany({
+        orderBy: [{ nodeId: 'asc' }, { diskName: 'asc' }, { collectedAt: 'desc' }],
+        distinct: ['nodeId', 'diskName'],
+      }),
+    ])) as [ActivityNode[], ActivitySample[], ActivityDisk[], ActivitySmartReport[]];
 
     const sampleByNode = new Map(latestSamples.map((sample) => [sample.nodeId, sample]));
     const disksByNode = new Map<string, Array<(typeof disks)[number]>>();
@@ -186,6 +230,16 @@ export class NodesService {
       const list = disksByNode.get(disk.nodeId) ?? [];
       list.push(disk);
       disksByNode.set(disk.nodeId, list);
+    }
+
+    // SmartReport.diskName is the physical block device (e.g. "sda", "nvme0n1")
+    // while Disk.name is the mounted partition (e.g. "sda1") — join by prefix,
+    // not exact match, since a partition name always starts with its disk name.
+    const smartReportsByNode = new Map<string, ActivitySmartReport[]>();
+    for (const report of smartReports) {
+      const list = smartReportsByNode.get(report.nodeId) ?? [];
+      list.push(report);
+      smartReportsByNode.set(report.nodeId, list);
     }
 
     const controlVersion = getControlPlaneVersion();
@@ -207,6 +261,7 @@ export class NodesService {
         externalIp: this.extractExternalIp(node.overlayEndpoint),
         agentVersion: node.agentVersion,
         agentVersionAt: node.agentVersionAt?.toISOString() ?? null,
+        mutedUntil: node.mutedUntil?.toISOString() ?? null,
         controlVersion,
         agentUpToDate: node.agentVersion ? node.agentVersion === controlVersion : null,
         metrics: sample
@@ -235,21 +290,56 @@ export class NodesService {
           totalUsedGb,
           usageRatio,
           diskCount: nodeDisks.length,
-          disks: nodeDisks.map((disk) => ({
-            id: disk.id,
-            name: disk.name,
-            mountPath: disk.mountPath,
-            type: disk.type,
-            health: disk.health,
-            capacityGb: disk.capacityGb,
-            usedGb: disk.usedGb,
-            usageRatio: disk.capacityGb > 0 ? disk.usedGb / disk.capacityGb : 0,
-            updatedAt: disk.updatedAt.toISOString(),
-            nodeName: disk.node?.name ?? disk.nodeId,
-          })),
+          disks: nodeDisks.map((disk) => {
+            const smart = (smartReportsByNode.get(disk.nodeId) ?? []).find((report) =>
+              disk.name.startsWith(report.diskName),
+            );
+            return {
+              id: disk.id,
+              name: disk.name,
+              mountPath: disk.mountPath,
+              type: disk.type,
+              health: disk.health,
+              capacityGb: disk.capacityGb,
+              usedGb: disk.usedGb,
+              usageRatio: disk.capacityGb > 0 ? disk.usedGb / disk.capacityGb : 0,
+              updatedAt: disk.updatedAt.toISOString(),
+              nodeName: disk.node?.name ?? disk.nodeId,
+              smartDiskName: smart?.diskName ?? null,
+              smart: smart
+                ? {
+                    temperatureC: smart.temperatureC,
+                    reallocatedSectors: smart.reallocatedSectors,
+                    pendingSectors: smart.pendingSectors,
+                    powerOnHours: smart.powerOnHours,
+                    overall: smart.overall,
+                    collectedAt: smart.collectedAt.toISOString(),
+                  }
+                : null,
+            };
+          }),
         },
       };
     });
+  }
+
+  async smartHistory(nodeId: string, diskName: string) {
+    const reports = await this.prisma.smartReport.findMany({
+      where: { nodeId, diskName },
+      orderBy: { collectedAt: 'desc' },
+      take: 200,
+    });
+
+    return reports
+      .map((report) => ({
+        collectedAt: report.collectedAt.toISOString(),
+        temperatureC: report.temperatureC,
+        reallocatedSectors: report.reallocatedSectors,
+        pendingSectors: report.pendingSectors,
+        powerOnHours: report.powerOnHours,
+        overall: report.overall,
+      }))
+      .reverse();
   }
 
   private extractExternalIp(endpoint: string | null | undefined) {

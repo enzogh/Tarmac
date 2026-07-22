@@ -7,6 +7,8 @@ import {
   ArrowDownToLine,
   ArrowRight,
   ArrowUpToLine,
+  Bell,
+  BellOff,
   Cpu,
   Eye,
   FolderSearch,
@@ -22,12 +24,13 @@ import {
   Tags,
   Trash2,
 } from 'lucide-react';
-import { api, DirectoryScanEntry, NodeActivityItem, NodeMetricSample } from '../../../lib/api';
+import { api, DirectoryScanEntry, NodeActivityItem, NodeMetricSample, SmartHistoryPoint } from '../../../lib/api';
 import { GeoInfo, flagFromCountryCode, getGeoInfo, parseHostFromEndpoint } from '../../../lib/geo';
 import { readNodeLabels, writeNodeLabels } from '../../../lib/node-labels';
 import { DashboardLayout } from '../../../components/DashboardLayout';
 import { PageHeader } from '../../../components/PageHeader';
 import { Callout } from '../../../components/Callout';
+import { SmartTrendChart } from '../../../components/dashboard-charts';
 import { ServerTrendCard } from '../../../components/ServerTrendCard';
 import { NodeComparisonChart } from '../../../components/dashboard-charts';
 import { StatCard, Badge } from '../../../components/ui';
@@ -75,6 +78,27 @@ export default function InfrastructurePage() {
   const [editLoading, setEditLoading] = useState(false);
   const [nodeToDelete, setNodeToDelete] = useState<NodeActivityItem | null>(null);
   const [inspectingNode, setInspectingNode] = useState<NodeActivityItem | null>(null);
+  const [expandedSmartDiskId, setExpandedSmartDiskId] = useState<string | null>(null);
+  const [smartHistoryByDisk, setSmartHistoryByDisk] = useState<Record<string, SmartHistoryPoint[]>>({});
+  const [smartHistoryLoading, setSmartHistoryLoading] = useState<string | null>(null);
+
+  const toggleSmartHistory = async (nodeId: string, disk: NodeActivityItem['storage']['disks'][number]) => {
+    if (expandedSmartDiskId === disk.id) {
+      setExpandedSmartDiskId(null);
+      return;
+    }
+    setExpandedSmartDiskId(disk.id);
+    if (!disk.smartDiskName || smartHistoryByDisk[disk.id]) return;
+    setSmartHistoryLoading(disk.id);
+    try {
+      const history = await api.nodes.smartHistory(nodeId, disk.smartDiskName);
+      setSmartHistoryByDisk((prev) => ({ ...prev, [disk.id]: history }));
+    } catch {
+      setSmartHistoryByDisk((prev) => ({ ...prev, [disk.id]: [] }));
+    } finally {
+      setSmartHistoryLoading(null);
+    }
+  };
   const [updatingNodeId, setUpdatingNodeId] = useState<string | null>(null);
   const [updateNotice, setUpdateNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
   const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
@@ -269,6 +293,26 @@ export default function InfrastructurePage() {
     }
   };
 
+  const isMuted = (node: NodeActivityItem) => !!node.mutedUntil && new Date(node.mutedUntil).getTime() > Date.now();
+
+  const toggleMute = async (node: NodeActivityItem) => {
+    try {
+      if (isMuted(node)) {
+        await api.nodes.unmute(node.id);
+        setUpdateNotice({ type: 'success', message: `Alertes réactivées pour ${node.name}.` });
+      } else {
+        await api.nodes.mute(node.id, 60);
+        setUpdateNotice({
+          type: 'success',
+          message: `Alertes mises en silence pour ${node.name} pendant 1h (maintenance).`,
+        });
+      }
+      await load();
+    } catch {
+      setUpdateNotice({ type: 'error', message: `Impossible de changer l’état de silence pour ${node.name}.` });
+    }
+  };
+
   const onlineNodes = nodes.filter((node) => node.status === 'online').length;
   const degradedNodes = nodes.filter((node) => node.status === 'degraded').length;
   const avgCpu = nodes.length ? nodes.reduce((acc, node) => acc + node.metrics.cpu, 0) / nodes.length : 0;
@@ -278,6 +322,11 @@ export default function InfrastructurePage() {
   const upToDateNodes = nodes.filter((node) => node.agentUpToDate === true).length;
   const outdatedNodes = nodes.filter((node) => node.agentUpToDate === false).length;
   const fleetVersionAligned = nodes.length > 0 && outdatedNodes === 0 && upToDateNodes === nodes.length;
+  const disksWithSmartIssues = nodes.reduce(
+    (acc, node) =>
+      acc + node.storage.disks.filter((disk) => disk.smart && disk.smart.overall !== 'healthy').length,
+    0,
+  );
 
   const versionBadge = (node: NodeActivityItem) => {
     if (!node.agentVersion) {
@@ -327,7 +376,7 @@ export default function InfrastructurePage() {
 
         <section className="space-y-4">
           <SectionLabel>Aperçu</SectionLabel>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
             <StatCard label="Nœuds online" value={onlineNodes} icon={<Server className="h-8 w-8" />} changeType="up" />
             <StatCard
               label="Nœuds dégradés"
@@ -337,6 +386,12 @@ export default function InfrastructurePage() {
             />
             <StatCard label="CPU moyen" value={`${Math.round(avgCpu)}%`} icon={<Cpu className="h-8 w-8" />} changeType="neutral" />
             <StatCard label="RAM moyenne" value={`${Math.round(avgRam)}%`} icon={<HardDrive className="h-8 w-8" />} changeType="neutral" />
+            <StatCard
+              label="Disques en alerte SMART"
+              value={disksWithSmartIssues}
+              icon={<HardDrive className="h-8 w-8" />}
+              changeType={disksWithSmartIssues > 0 ? 'down' : 'up'}
+            />
             <Tooltip>
               <TooltipTrigger asChild>
                 <div>
@@ -670,6 +725,23 @@ export default function InfrastructurePage() {
                         <Button
                           variant="ghost"
                           size="icon"
+                          onClick={() => void toggleMute(node)}
+                          className={`h-8 w-8 ${isMuted(node) ? 'text-amber-400 hover:text-amber-300' : 'text-muted-foreground hover:text-foreground'}`}
+                        >
+                          {isMuted(node) ? <BellOff className="h-3.5 w-3.5" /> : <Bell className="h-3.5 w-3.5" />}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {isMuted(node)
+                          ? `Alertes en silence jusqu’à ${formatDateTime(node.mutedUntil)}, cliquer pour réactiver`
+                          : 'Mettre les alertes en silence 1h (maintenance)'}
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           onClick={() => openEditModal(node)}
                           className="h-8 w-8 text-muted-foreground hover:text-foreground"
                         >
@@ -771,6 +843,62 @@ export default function InfrastructurePage() {
                           <span>{Math.round(disk.usageRatio * 100)}%</span>
                         </div>
                         <Progress value={disk.usageRatio * 100} className="mt-2 h-1.5" />
+                        {disk.smart && (
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <Badge
+                              label={
+                                disk.smart.overall === 'healthy'
+                                  ? 'SMART OK'
+                                  : disk.smart.overall === 'warning'
+                                    ? 'SMART dégradé'
+                                    : disk.smart.overall === 'critical'
+                                      ? 'SMART critique'
+                                      : 'SMART inconnu'
+                              }
+                              type={
+                                disk.smart.overall === 'healthy'
+                                  ? 'success'
+                                  : disk.smart.overall === 'warning'
+                                    ? 'warning'
+                                    : disk.smart.overall === 'critical'
+                                      ? 'error'
+                                      : 'info'
+                              }
+                            />
+                            <span>{disk.smart.temperatureC}°C</span>
+                            <span>{disk.smart.reallocatedSectors} secteurs réalloués</span>
+                            <span>{disk.smart.pendingSectors} en attente</span>
+                            <span>{Math.round(disk.smart.powerOnHours / 24)} j. d’activité</span>
+                            <button
+                              type="button"
+                              onClick={() => toggleSmartHistory(inspectingNode.id, disk)}
+                              className="ml-auto text-xs font-medium text-violet-300 hover:text-violet-200"
+                            >
+                              {expandedSmartDiskId === disk.id ? 'Masquer l’historique' : 'Historique SMART'}
+                            </button>
+                          </div>
+                        )}
+                        {expandedSmartDiskId === disk.id && (
+                          <div className="mt-3 rounded-lg border border-white/[0.06] bg-zinc-950/60 p-2">
+                            {smartHistoryLoading === disk.id ? (
+                              <p className="py-6 text-center text-xs text-muted-foreground">Chargement…</p>
+                            ) : (
+                              <SmartTrendChart
+                                data={(smartHistoryByDisk[disk.id] ?? []).map((point) => ({
+                                  label: new Date(point.collectedAt).toLocaleString('fr-FR', {
+                                    day: '2-digit',
+                                    month: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  }),
+                                  temperatureC: point.temperatureC,
+                                  reallocatedSectors: point.reallocatedSectors,
+                                  pendingSectors: point.pendingSectors,
+                                }))}
+                              />
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))}
                     {inspectingNode.storage.disks.length === 0 && (

@@ -17,6 +17,16 @@ export type NodeItem = {
   agentVersionAt?: string | null;
   controlVersion?: string;
   agentUpToDate?: boolean | null;
+  mutedUntil?: string | null;
+};
+
+export type SmartHistoryPoint = {
+  collectedAt: string;
+  temperatureC: number;
+  reallocatedSectors: number;
+  pendingSectors: number;
+  powerOnHours: number;
+  overall: 'healthy' | 'warning' | 'critical' | 'unknown';
 };
 
 export type NodeOnboardingStartPayload = {
@@ -202,6 +212,15 @@ export type NodeActivityItem = NodeItem & {
       usageRatio: number;
       updatedAt: string;
       nodeName: string;
+      smartDiskName: string | null;
+      smart: {
+        temperatureC: number;
+        reallocatedSectors: number;
+        pendingSectors: number;
+        powerOnHours: number;
+        overall: 'healthy' | 'warning' | 'critical' | 'unknown';
+        collectedAt: string;
+      } | null;
     }>;
   };
 };
@@ -395,6 +414,11 @@ export const api = {
       request<NodeItem>(`/api/v1/nodes/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
     delete: (id: string) =>
       request<NodeItem & { agentUninstallQueued: boolean }>(`/api/v1/nodes/${id}`, { method: 'DELETE' }),
+    smartHistory: (id: string, diskName: string) =>
+      request<SmartHistoryPoint[]>(`/api/v1/nodes/${id}/disks/${encodeURIComponent(diskName)}/smart-history`),
+    mute: (id: string, minutes: number) =>
+      request<NodeItem>(`/api/v1/nodes/${id}/mute`, { method: 'POST', body: JSON.stringify({ minutes }) }),
+    unmute: (id: string) => request<NodeItem>(`/api/v1/nodes/${id}/unmute`, { method: 'POST' }),
   },
 
   shares: {

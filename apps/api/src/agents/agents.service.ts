@@ -2,6 +2,7 @@ import { forwardRef, Inject, Injectable, Logger, NotFoundException, OnModuleInit
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { MigrationsService } from '../migrations/migrations.service';
 import { MountsService } from '../mounts/mounts.service';
 import { PoolsService } from '../pools/pools.service';
 import { SharesService } from '../shares/shares.service';
@@ -36,6 +37,11 @@ const MAX_DEADLOCK_RETRIES = 5;
 const INITIAL_RETRY_DELAY_MS = 100;
 const MAX_RETRY_JITTER_MS = 50;
 
+// SMART attributes only refresh every few minutes on the agent side, so
+// re-alerting on every 20s state report while a disk stays degraded would
+// just be noise for the same underlying condition.
+const SMART_ALERT_COOLDOWN_MS = 60 * 60 * 1000;
+
 @Injectable()
 export class AgentsService implements OnModuleInit {
   private readonly logger = new Logger(AgentsService.name);
@@ -43,6 +49,7 @@ export class AgentsService implements OnModuleInit {
   private readonly overlaySyncAt = new Map<string, number>();
   private readonly pendingDirectoryRequests = new Map<string, PendingDirectoryRequest>();
   private readonly pendingDirectoryScanRequests = new Map<string, PendingDirectoryScanRequest>();
+  private readonly smartAlertAt = new Map<string, number>();
 
   private normalizeFailureMessage(message?: string | null) {
     if (!message) return 'unknown error';
@@ -152,8 +159,63 @@ export class AgentsService implements OnModuleInit {
     });
   }
 
+  private async createSmartHealthAlert(params: {
+    nodeId: string;
+    diskName: string;
+    overall: 'warning' | 'critical';
+    temperatureC: number;
+    reallocatedSectors: number;
+    pendingSectors: number;
+  }) {
+    const cooldownKey = `${params.nodeId}:${params.diskName}:${params.overall}`;
+    const lastAlertAt = this.smartAlertAt.get(cooldownKey) ?? 0;
+    if (Date.now() - lastAlertAt < SMART_ALERT_COOLDOWN_MS) return;
+    this.smartAlertAt.set(cooldownKey, Date.now());
+
+    const node = await this.prisma.node.findUnique({
+      where: { id: params.nodeId },
+      select: { name: true, mutedUntil: true },
+    });
+    if (node?.mutedUntil && node.mutedUntil.getTime() > Date.now()) return;
+    const nodeName = node?.name ?? params.nodeId;
+    const severity = params.overall === 'critical' ? 'critical' : 'medium';
+    const label = params.overall === 'critical' ? 'en échec' : 'dégradé';
+    const message = `SMART : disque "${params.diskName}" sur ${nodeName} ${label} (secteurs réalloués: ${params.reallocatedSectors}, en attente: ${params.pendingSectors}, température: ${params.temperatureC}°C)`;
+
+    await this.prisma.alert.create({
+      data: {
+        nodeId: params.nodeId,
+        severity,
+        message,
+      },
+    });
+
+    if (params.overall === 'critical') {
+      const disk = await this.prisma.disk.findFirst({
+        where: { nodeId: params.nodeId, name: { startsWith: params.diskName } },
+      });
+      if (disk) {
+        try {
+          await this.migrationsService.suggestMigrationForCriticalDisk({
+            nodeId: params.nodeId,
+            diskName: params.diskName,
+            mountPath: disk.mountPath,
+          });
+        } catch (error) {
+          this.logger.warn(
+            `Failed to suggest remediation migration for disk ${params.diskName} on node ${params.nodeId}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
+    }
+  }
+
   constructor(
     private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => MigrationsService))
+    private readonly migrationsService: MigrationsService,
     private readonly sharesService: SharesService,
     @Inject(forwardRef(() => MountsService))
     private readonly mountsService: MountsService,
@@ -378,6 +440,18 @@ export class AgentsService implements OnModuleInit {
           overall: report.overall,
         })),
       });
+
+      for (const report of payload.smartReports) {
+        if (report.overall !== 'warning' && report.overall !== 'critical') continue;
+        await this.createSmartHealthAlert({
+          nodeId: payload.nodeId,
+          diskName: report.diskName,
+          overall: report.overall,
+          temperatureC: report.temperatureC,
+          reallocatedSectors: report.reallocatedSectors,
+          pendingSectors: report.pendingSectors,
+        });
+      }
     }
   }
 

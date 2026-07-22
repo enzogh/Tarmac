@@ -3,61 +3,13 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { ReactNode } from 'react';
-import {
-  LayoutDashboard,
-  Server,
-  Database,
-  RefreshCw,
-  ArrowRightLeft,
-  Bell,
-  LogOut,
-  Layers,
-  Network,
-  HardDrive,
-  UserCog,
-  BookOpen,
-  type LucideIcon,
-} from 'lucide-react';
+import { LogOut, Layers, BookOpen, Search } from 'lucide-react';
 import { api } from '../lib/api';
+import { NAV_GROUPS, NAV_ITEMS } from '../lib/nav-items';
+import { CommandPalette } from './CommandPalette';
 import { Button } from './ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import { cn } from '../lib/utils';
-
-type NavItem = { href: string; label: string; icon: LucideIcon; exact?: boolean };
-type NavGroup = { label: string | null; items: NavItem[] };
-
-const NAV_GROUPS: NavGroup[] = [
-  {
-    label: null,
-    items: [{ href: '/dashboard', label: "Vue d'ensemble", icon: LayoutDashboard, exact: true }],
-  },
-  {
-    label: 'Infrastructure',
-    items: [
-      { href: '/dashboard/infrastructure', label: 'Nœuds', icon: Server },
-      { href: '/dashboard/network', label: 'Réseau', icon: Network },
-    ],
-  },
-  {
-    label: 'Stockage',
-    items: [
-      { href: '/dashboard/storage', label: 'Stockage', icon: Database },
-      { href: '/dashboard/mounts', label: 'Montages', icon: HardDrive },
-      { href: '/dashboard/replication', label: 'Réplication', icon: RefreshCw },
-      { href: '/dashboard/migrations', label: 'Migrations', icon: ArrowRightLeft },
-    ],
-  },
-  {
-    label: 'Supervision',
-    items: [{ href: '/dashboard/alerts', label: 'Alertes', icon: Bell }],
-  },
-  {
-    label: 'Compte',
-    items: [{ href: '/dashboard/profile', label: 'Profil admin', icon: UserCog }],
-  },
-];
-
-const NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap((group) => group.items);
 
 export function DashboardLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -73,6 +25,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
 
   return (
     <TooltipProvider delayDuration={300}>
+      <CommandPalette />
       <div className="relative flex min-h-screen overflow-hidden">
         {/* Sidebar */}
         <aside className="relative z-10 flex w-64 flex-col border-r border-white/[0.06] bg-zinc-950/80 backdrop-blur-2xl">
@@ -172,13 +125,20 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
                 )?.label ?? 'Dashboard'}
               </span>
             </div>
-            <div className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-xs text-muted-foreground">
-              {new Date().toLocaleDateString('fr-FR', {
-                weekday: 'short',
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric',
-              })}
+            <div className="flex items-center gap-2">
+              <div className="hidden items-center gap-1.5 rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-xs text-muted-foreground sm:flex">
+                <Search className="h-3 w-3" />
+                <span>Rechercher</span>
+                <kbd className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 font-mono text-[10px]">⌘K</kbd>
+              </div>
+              <div className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-xs text-muted-foreground">
+                {new Date().toLocaleDateString('fr-FR', {
+                  weekday: 'short',
+                  year: 'numeric',
+                  month: 'short',
+                  day: 'numeric',
+                })}
+              </div>
             </div>
           </header>
 

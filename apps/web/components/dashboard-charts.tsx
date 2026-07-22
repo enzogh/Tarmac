@@ -1,6 +1,6 @@
 'use client';
 
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, Pie, PieChart, XAxis, YAxis } from 'recharts';
 import { ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from './ui/chart';
 
 const PIE_COLORS = ['chart-1', 'chart-2', 'chart-3', 'chart-4', 'chart-5'] as const;
@@ -143,6 +143,63 @@ export function NodeComparisonChart({ data }: { data: NodeComparisonPoint[] }) {
         <Bar dataKey="cpu" fill="var(--color-cpu)" radius={[4, 4, 0, 0]} />
         <Bar dataKey="ram" fill="var(--color-ram)" radius={[4, 4, 0, 0]} />
       </BarChart>
+    </ChartContainer>
+  );
+}
+
+export type SmartTrendPoint = { label: string; temperatureC: number; reallocatedSectors: number; pendingSectors: number };
+
+const SMART_TREND_CONFIG: ChartConfig = {
+  temperatureC: { label: 'Température', color: 'hsl(var(--chart-1))' },
+  reallocatedSectors: { label: 'Secteurs réalloués', color: 'hsl(var(--chart-4))' },
+  pendingSectors: { label: 'Secteurs en attente', color: 'hsl(var(--chart-5))' },
+};
+
+export function SmartTrendChart({ data }: { data: SmartTrendPoint[] }) {
+  if (data.length === 0) {
+    return <ChartEmptyState label="Pas encore d’historique SMART pour ce disque." className="h-56" />;
+  }
+
+  return (
+    <ChartContainer config={SMART_TREND_CONFIG} className="h-56">
+      <AreaChart data={data} margin={{ left: -16, right: 8, top: 8, bottom: 0 }}>
+        <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeDasharray="4 8" />
+        <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
+        <YAxis yAxisId="temp" tickLine={false} axisLine={false} tickMargin={8} width={36} />
+        <YAxis yAxisId="sectors" orientation="right" tickLine={false} axisLine={false} tickMargin={8} width={36} />
+        <ChartTooltip
+          content={
+            <ChartTooltipContent
+              valueFormatter={(v, key) => (key === 'temperatureC' ? `${v}°C` : `${v} secteurs`)}
+            />
+          }
+        />
+        <Area
+          yAxisId="temp"
+          dataKey="temperatureC"
+          type="monotone"
+          stroke="var(--color-temperatureC)"
+          fill="var(--color-temperatureC)"
+          fillOpacity={0.12}
+          strokeWidth={2}
+        />
+        <Line
+          yAxisId="sectors"
+          dataKey="reallocatedSectors"
+          type="monotone"
+          stroke="var(--color-reallocatedSectors)"
+          strokeWidth={2}
+          dot={false}
+        />
+        <Line
+          yAxisId="sectors"
+          dataKey="pendingSectors"
+          type="monotone"
+          stroke="var(--color-pendingSectors)"
+          strokeWidth={2}
+          dot={false}
+        />
+      </AreaChart>
     </ChartContainer>
   );
 }

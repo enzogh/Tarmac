@@ -782,8 +782,158 @@ func buildStateReport(nodeID string) stateReport {
 	return stateReport{
 		NodeID:       nodeID,
 		Disks:        collectDisks(),
-		SmartReports: []smartState{},
+		SmartReports: collectSmartReports(),
 	}
+}
+
+// smartctlOutput captures only the fields we care about from `smartctl -a -j`.
+// ATA and NVMe drives populate different sub-objects, so both are optional.
+type smartctlOutput struct {
+	SmartStatus struct {
+		Passed bool `json:"passed"`
+	} `json:"smart_status"`
+	Temperature struct {
+		Current int `json:"current"`
+	} `json:"temperature"`
+	PowerOnTime struct {
+		Hours int `json:"hours"`
+	} `json:"power_on_time"`
+	AtaSmartAttributes struct {
+		Table []struct {
+			ID  int    `json:"id"`
+			Raw struct {
+				Value int64 `json:"value"`
+			} `json:"raw"`
+		} `json:"table"`
+	} `json:"ata_smart_attributes"`
+	NvmeLog struct {
+		Temperature     int   `json:"temperature"`
+		PowerOnHours    int   `json:"power_on_hours"`
+		MediaErrors     int64 `json:"media_errors"`
+		PercentageUsed  int   `json:"percentage_used"`
+		CriticalWarning int   `json:"critical_warning"`
+	} `json:"nvme_smart_health_information_log"`
+}
+
+const (
+	ataAttrReallocatedSectorCt  = 5
+	ataAttrCurrentPendingSector = 197
+)
+
+func listPhysicalDisks() []string {
+	entries, err := os.ReadDir("/sys/block")
+	if err != nil {
+		return nil
+	}
+	disks := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, "loop") || strings.HasPrefix(name, "ram") ||
+			strings.HasPrefix(name, "dm-") || strings.HasPrefix(name, "md") ||
+			strings.HasPrefix(name, "sr") || strings.HasPrefix(name, "zram") {
+			continue
+		}
+		disks = append(disks, name)
+	}
+	return disks
+}
+
+// runSmartctl intentionally ignores the exit code: smartctl encodes SMART
+// warnings/failures as exit-status bits rather than a "command failed"
+// signal, so any stdout at all is treated as a usable (if degraded) result.
+func runSmartctl(device string) []byte {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, _ := exec.CommandContext(ctx, "smartctl", "-a", "-j", "/dev/"+device).Output()
+	return out
+}
+
+func buildSmartState(diskName string, parsed smartctlOutput) smartState {
+	temperatureC := parsed.Temperature.Current
+	if temperatureC == 0 {
+		temperatureC = parsed.NvmeLog.Temperature
+	}
+	powerOnHours := parsed.PowerOnTime.Hours
+	if powerOnHours == 0 {
+		powerOnHours = parsed.NvmeLog.PowerOnHours
+	}
+
+	reallocatedSectors := int64(0)
+	pendingSectors := int64(0)
+	for _, attr := range parsed.AtaSmartAttributes.Table {
+		switch attr.ID {
+		case ataAttrReallocatedSectorCt:
+			reallocatedSectors = attr.Raw.Value
+		case ataAttrCurrentPendingSector:
+			pendingSectors = attr.Raw.Value
+		}
+	}
+	if len(parsed.AtaSmartAttributes.Table) == 0 {
+		// NVMe has no reallocated/pending sector concept; media errors are
+		// the closest equivalent signal of physical media degradation.
+		reallocatedSectors = parsed.NvmeLog.MediaErrors
+	}
+
+	overall := "healthy"
+	if !parsed.SmartStatus.Passed {
+		overall = "critical"
+	} else if parsed.NvmeLog.CriticalWarning != 0 {
+		overall = "critical"
+	} else if reallocatedSectors > 0 || pendingSectors > 0 {
+		overall = "warning"
+	} else if parsed.NvmeLog.PercentageUsed >= 90 {
+		overall = "warning"
+	}
+
+	return smartState{
+		DiskName:           diskName,
+		TemperatureC:       temperatureC,
+		ReallocatedSectors: int(reallocatedSectors),
+		PendingSectors:     int(pendingSectors),
+		PowerOnHours:       powerOnHours,
+		Overall:            overall,
+	}
+}
+
+func gatherSmartReports() []smartState {
+	if !commandExists("smartctl") {
+		return nil
+	}
+	reports := make([]smartState, 0)
+	for _, name := range listPhysicalDisks() {
+		out := runSmartctl(name)
+		if len(out) == 0 {
+			continue
+		}
+		var parsed smartctlOutput
+		if err := json.Unmarshal(out, &parsed); err != nil {
+			continue
+		}
+		reports = append(reports, buildSmartState(name, parsed))
+	}
+	return reports
+}
+
+// SMART attributes change slowly and `smartctl -a` costs a real disk I/O
+// round-trip, so results are cached and refreshed on a much slower cadence
+// than the 20s state-report ticker that calls collectSmartReports.
+const smartRefreshInterval = 5 * time.Minute
+
+var smartCache = struct {
+	mu          sync.Mutex
+	reports     []smartState
+	collectedAt time.Time
+}{}
+
+func collectSmartReports() []smartState {
+	smartCache.mu.Lock()
+	defer smartCache.mu.Unlock()
+	if smartCache.reports != nil && time.Since(smartCache.collectedAt) < smartRefreshInterval {
+		return smartCache.reports
+	}
+	smartCache.reports = gatherSmartReports()
+	smartCache.collectedAt = time.Now()
+	return smartCache.reports
 }
 
 func readString(payload map[string]interface{}, key string) string {
@@ -1364,6 +1514,7 @@ func ensureAgentSystemPackages(ctx context.Context, packages []string) ([]string
 		"wireguard-tools":   func() bool { return commandExists("wg") },
 		"iproute2":          func() bool { return commandExists("ip") },
 		"util-linux":        func() bool { return commandExists("mount") },
+		"smartmontools":     func() bool { return commandExists("smartctl") },
 	}
 
 	for _, pkg := range packages {
@@ -3253,6 +3404,14 @@ func main() {
 	q.Set("token", token)
 	q.Set("nodeId", nodeID)
 	u.RawQuery = q.Encode()
+
+	if !commandExists("smartctl") {
+		installCtx, installCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		if _, err := ensureAgentSystemPackages(installCtx, []string{"smartmontools"}); err != nil {
+			log.Printf("smartmontools unavailable, SMART disk health monitoring disabled: %v", err)
+		}
+		installCancel()
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
