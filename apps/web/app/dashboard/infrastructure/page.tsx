@@ -121,7 +121,8 @@ export default function InfrastructurePage() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [smartNode]);
-  const [updatingNodeId, setUpdatingNodeId] = useState<string | null>(null);
+  const [updatingNodeIds, setUpdatingNodeIds] = useState<Set<string>>(new Set());
+  const [bulkUpdating, setBulkUpdating] = useState(false);
   const [updateNotice, setUpdateNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
   const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
   const [geoByIp, setGeoByIp] = useState<Record<string, GeoInfo | null>>({});
@@ -290,28 +291,51 @@ export default function InfrastructurePage() {
     }
   };
 
-  const triggerAgentUpdate = async (node: NodeActivityItem) => {
-    setUpdatingNodeId(node.id);
+  const updateSingleAgent = async (node: NodeActivityItem): Promise<boolean> => {
+    setUpdatingNodeIds((prev) => new Set(prev).add(node.id));
     try {
       const result = await api.agents.update(node.id);
-      if (!result.queued) {
-        setUpdateNotice({
-          type: 'error',
-          message: `Impossible de mettre à jour ${node.name}: agent hors ligne.`,
-        });
-        return;
-      }
-      setUpdateNotice({
-        type: 'success',
-        message: `Mise à jour de ${node.name} lancée (recompile + restart du service).`,
-      });
+      return result.queued;
     } catch {
+      return false;
+    } finally {
+      setUpdatingNodeIds((prev) => {
+        const next = new Set(prev);
+        next.delete(node.id);
+        return next;
+      });
+    }
+  };
+
+  const triggerAgentUpdate = async (node: NodeActivityItem) => {
+    const success = await updateSingleAgent(node);
+    setUpdateNotice(
+      success
+        ? { type: 'success', message: `Mise à jour de ${node.name} lancée (recompile + restart du service).` }
+        : { type: 'error', message: `Impossible de mettre à jour ${node.name}: agent hors ligne.` },
+    );
+  };
+
+  const triggerAgentUpdateAll = async () => {
+    const targets = nodes.filter((node) => node.status === 'online' && node.agentUpToDate !== true);
+    if (targets.length === 0) {
+      setUpdateNotice({ type: 'success', message: 'Tous les agents en ligne sont déjà à jour.' });
+      return;
+    }
+    setBulkUpdating(true);
+    try {
+      const results = await Promise.all(targets.map((node) => updateSingleAgent(node)));
+      const succeeded = results.filter(Boolean).length;
+      const failed = results.length - succeeded;
       setUpdateNotice({
-        type: 'error',
-        message: `Échec du lancement de la mise à jour pour ${node.name}.`,
+        type: failed === 0 ? 'success' : 'error',
+        message:
+          failed === 0
+            ? `Mise à jour lancée sur ${succeeded} agent(s).`
+            : `Mise à jour lancée sur ${succeeded} agent(s), échec sur ${failed} (agent hors ligne entre-temps).`,
       });
     } finally {
-      setUpdatingNodeId(null);
+      setBulkUpdating(false);
     }
   };
 
@@ -593,7 +617,28 @@ export default function InfrastructurePage() {
                 <Server className="h-5 w-5 text-violet-400" />
                 <CardTitle>Nœuds (serveurs)</CardTitle>
               </div>
-              <NodeOnboardingModal onCreated={load} />
+              <div className="flex items-center gap-2">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button
+                        variant="secondary"
+                        onClick={() => void triggerAgentUpdateAll()}
+                        disabled={bulkUpdating || nodes.every((n) => n.status !== 'online' || n.agentUpToDate === true)}
+                        className="gap-2"
+                      >
+                        <RefreshCcw className={`h-4 w-4 ${bulkUpdating ? 'animate-spin' : ''}`} />
+                        {bulkUpdating ? 'Mise à jour en cours…' : 'Mettre à jour tous les agents'}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Recompile + redémarre l’agent sur chaque nœud en ligne dont la version diffère du contrôleur
+                    ({controlVersion ?? 'réf. inconnue'})
+                  </TooltipContent>
+                </Tooltip>
+                <NodeOnboardingModal onCreated={load} />
+              </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -751,10 +796,10 @@ export default function InfrastructurePage() {
                           variant="ghost"
                           size="icon"
                           onClick={() => void triggerAgentUpdate(node)}
-                          disabled={node.status !== 'online' || updatingNodeId === node.id}
+                          disabled={node.status !== 'online' || updatingNodeIds.has(node.id)}
                           className="h-8 w-8 text-muted-foreground hover:text-emerald-400 disabled:opacity-50"
                         >
-                          <RefreshCcw className={`h-3.5 w-3.5 ${updatingNodeId === node.id ? 'animate-spin' : ''}`} />
+                          <RefreshCcw className={`h-3.5 w-3.5 ${updatingNodeIds.has(node.id) ? 'animate-spin' : ''}`} />
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>

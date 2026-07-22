@@ -37,6 +37,7 @@ export interface StateReportPayload {
     health: 'healthy' | 'warning' | 'critical' | 'unknown';
     capacityGb: number;
     usedGb: number;
+    physicalDisks?: string[];
   }>;
   smartReports: Array<{
     diskName: string;

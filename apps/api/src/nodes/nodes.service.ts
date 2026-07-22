@@ -42,6 +42,7 @@ type ActivityDisk = {
   capacityGb: number;
   usedGb: number;
   updatedAt: Date;
+  physicalDisks: string[];
   node?: { name: string } | null;
 };
 
@@ -233,8 +234,11 @@ export class NodesService {
     }
 
     // SmartReport.diskName is the physical block device (e.g. "sda", "nvme0n1")
-    // while Disk.name is the mounted partition (e.g. "sda1") — join by prefix,
-    // not exact match, since a partition name always starts with its disk name.
+    // while Disk.name is the mounted partition or, for software RAID (mdadm),
+    // the "mdX" array name — neither of which textually relates to the
+    // physical disk. Disk.physicalDisks (populated by the agent by resolving
+    // partitions and RAID members down to their real block device) is the
+    // join key; see the fallback below for pre-physicalDisks agent reports.
     const smartReportsByNode = new Map<string, ActivitySmartReport[]>();
     for (const report of smartReports) {
       const list = smartReportsByNode.get(report.nodeId) ?? [];
@@ -291,9 +295,13 @@ export class NodesService {
           usageRatio,
           diskCount: nodeDisks.length,
           disks: nodeDisks.map((disk) => {
-            const smart = (smartReportsByNode.get(disk.nodeId) ?? []).find((report) =>
-              disk.name.startsWith(report.diskName),
-            );
+            const nodeSmartReports = smartReportsByNode.get(disk.nodeId) ?? [];
+            const smart =
+              disk.physicalDisks.length > 0
+                ? nodeSmartReports.find((report) => disk.physicalDisks.includes(report.diskName))
+                : // Fallback for disks reported by an agent build before physicalDisks
+                  // existed: approximate the old (RAID-unaware) prefix match.
+                  nodeSmartReports.find((report) => disk.name.startsWith(report.diskName));
             return {
               id: disk.id,
               name: disk.name,

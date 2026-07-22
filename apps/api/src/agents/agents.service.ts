@@ -192,7 +192,7 @@ export class AgentsService implements OnModuleInit {
 
     if (params.overall === 'critical') {
       const disk = await this.prisma.disk.findFirst({
-        where: { nodeId: params.nodeId, name: { startsWith: params.diskName } },
+        where: { nodeId: params.nodeId, physicalDisks: { has: params.diskName } },
       });
       if (disk) {
         try {
@@ -404,6 +404,7 @@ export class AgentsService implements OnModuleInit {
           health: disk.health,
           capacityGb: disk.capacityGb,
           usedGb: disk.usedGb,
+          physicalDisks: disk.physicalDisks ?? [],
         },
         create: {
           nodeId: payload.nodeId,
@@ -413,6 +414,7 @@ export class AgentsService implements OnModuleInit {
           health: disk.health,
           capacityGb: disk.capacityGb,
           usedGb: disk.usedGb,
+          physicalDisks: disk.physicalDisks ?? [],
         },
       });
     }

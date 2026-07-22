@@ -71,12 +71,13 @@ type metricState struct {
 }
 
 type diskState struct {
-	Name       string `json:"name"`
-	MountPath  string `json:"mountPath"`
-	Type       string `json:"type"`
-	Health     string `json:"health"`
-	CapacityGb int    `json:"capacityGb"`
-	UsedGb     int    `json:"usedGb"`
+	Name          string   `json:"name"`
+	MountPath     string   `json:"mountPath"`
+	Type          string   `json:"type"`
+	Health        string   `json:"health"`
+	CapacityGb    int      `json:"capacityGb"`
+	UsedGb        int      `json:"usedGb"`
+	PhysicalDisks []string `json:"physicalDisks"`
 }
 
 type smartState struct {
@@ -693,10 +694,15 @@ func isVirtualFs(fsType string) bool {
 	return ok
 }
 
-func inferDiskType(device string) string {
-	base := filepath.Base(device)
+func baseBlockDevice(name string) string {
+	base := filepath.Base(name)
 	base = strings.TrimRight(base, "0123456789")
 	base = strings.TrimSuffix(base, "p")
+	return base
+}
+
+func inferDiskType(device string) string {
+	base := baseBlockDevice(device)
 	if strings.HasPrefix(base, "nvme") {
 		return "nvme"
 	}
@@ -712,6 +718,38 @@ func inferDiskType(device string) string {
 		}
 	}
 	return "hdd"
+}
+
+// resolvePhysicalDisks returns the physical disk name(s) backing a mounted
+// device. A plain partition (e.g. "sda1", "nvme0n1p3") resolves to its own
+// base disk. A Linux software RAID device (e.g. "md2") has no SMART data of
+// its own, so its /sys/block/mdX/slaves entries are read to find the
+// underlying member partitions, each resolved down to its physical disk.
+func resolvePhysicalDisks(device string) []string {
+	base := filepath.Base(device)
+	if !strings.HasPrefix(base, "md") {
+		return []string{baseBlockDevice(base)}
+	}
+
+	entries, err := os.ReadDir(filepath.Join("/sys/block", base, "slaves"))
+	if err != nil || len(entries) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	physical := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		disk := baseBlockDevice(entry.Name())
+		if disk == "" {
+			continue
+		}
+		if _, ok := seen[disk]; ok {
+			continue
+		}
+		seen[disk] = struct{}{}
+		physical = append(physical, disk)
+	}
+	return physical
 }
 
 func collectDisks() []diskState {
@@ -763,12 +801,13 @@ func collectDisks() []diskState {
 		}
 
 		disks = append(disks, diskState{
-			Name:       filepath.Base(device),
-			MountPath:  mountPath,
-			Type:       inferDiskType(device),
-			Health:     "unknown",
-			CapacityGb: capacityGb,
-			UsedGb:     usedGb,
+			Name:          filepath.Base(device),
+			MountPath:     mountPath,
+			Type:          inferDiskType(device),
+			Health:        "unknown",
+			CapacityGb:    capacityGb,
+			UsedGb:        usedGb,
+			PhysicalDisks: resolvePhysicalDisks(device),
 		})
 	}
 

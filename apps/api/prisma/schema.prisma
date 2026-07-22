@@ -236,6 +236,7 @@ model Disk {
   health     DiskHealth @default(unknown)
   capacityGb Int
   usedGb     Int
+  physicalDisks String[] @default([])
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
   node       Node       @relation(fields: [nodeId], references: [id], onDelete: Cascade)
