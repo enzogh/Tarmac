@@ -51,20 +51,22 @@ export function StatCard({ label, value, icon, change, changeType }: StatCardPro
 
 interface BadgeProps {
   label: string;
-  type?: 'success' | 'warning' | 'error' | 'info';
+  type?: 'success' | 'warning' | 'error' | 'critical' | 'info';
   icon?: ReactNode;
+  className?: string;
 }
 
-export function Badge({ label, type = 'info', icon }: BadgeProps) {
+export function Badge({ label, type = 'info', icon, className }: BadgeProps) {
   const variantMap = {
     success: 'success',
     warning: 'warning',
     error: 'destructive',
+    critical: 'critical',
     info: 'info',
   } as const;
 
   return (
-    <ShadBadge variant={variantMap[type]}>
+    <ShadBadge variant={variantMap[type]} className={className}>
       {icon && <span>{icon}</span>}
       {label}
     </ShadBadge>

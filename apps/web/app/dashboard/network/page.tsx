@@ -15,7 +15,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { api, VlanConnection, VlanConnectionTest, VlanStatus } from '@/lib/api';
-import { GeoInfo, flagFromCountryCode, getGeoInfo, parseHostFromEndpoint } from '@/lib/geo';
+import { GeoInfo, flagFromCountryCode, getGeoInfo, normalizeCountryCode, parseHostFromEndpoint } from '@/lib/geo';
 import { readNodeLabels } from '../../../lib/node-labels';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { PageHeader } from '../../../components/PageHeader';
@@ -169,12 +169,6 @@ const matrixCellTone = (status?: VlanConnection['status']) => {
 
 const clampScale = (value: number) => Math.max(0.45, Math.min(3.2, value));
 const NODE_RADIUS = 26;
-
-const normalizeCountryCode = (value?: string | null) => {
-  const trimmed = value?.trim().toUpperCase();
-  if (!trimmed) return undefined;
-  return trimmed.slice(0, 2);
-};
 
 export default function NetworkPage() {
   const [vlanStatus, setVlanStatus] = useState<VlanStatus | null>(null);

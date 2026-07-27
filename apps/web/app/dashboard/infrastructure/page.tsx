@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import {
+  Activity,
   ArrowDownToLine,
   ArrowUpToLine,
   Bell,
@@ -13,27 +14,26 @@ import {
   GitCommitHorizontal,
   Globe2,
   HardDrive,
-  MapPin,
-  Network,
+  type LucideIcon,
   Pencil,
   RefreshCcw,
   Server,
-  Tags,
   Thermometer,
   Trash2,
 } from 'lucide-react';
 import { api, DirectoryScanEntry, NodeActivityItem, NodeMetricSample, SmartHistoryPoint } from '../../../lib/api';
 import { usePolling } from '../../../lib/hooks/usePolling';
 import { CardListSkeleton, ChartCardSkeleton, StatCardSkeleton } from '../../../components/ui/skeleton';
-import { GeoInfo, flagFromCountryCode, getGeoInfo, parseHostFromEndpoint } from '../../../lib/geo';
+import { GeoInfo, flagFromCountryCode, getGeoInfo, normalizeCountryCode, parseHostFromEndpoint } from '../../../lib/geo';
 import { readNodeLabels, writeNodeLabels } from '../../../lib/node-labels';
+import { meterTone } from '../../../lib/utils';
 import { DashboardLayout } from '../../../components/DashboardLayout';
 import { PageHeader } from '../../../components/PageHeader';
 import { Callout } from '../../../components/Callout';
 import { SmartTrendChart } from '../../../components/dashboard-charts';
 import { ServerTrendCard } from '../../../components/ServerTrendCard';
 import { NodeComparisonChart } from '../../../components/dashboard-charts';
-import { StatCard, Badge } from '../../../components/ui';
+import { StatCard, Badge, NodeLabelBadges } from '../../../components/ui';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
@@ -65,6 +65,33 @@ const formatBytes = (value: number) => {
 };
 
 const formatDateTime = (value?: string | null) => (value ? new Date(value).toLocaleString('fr-FR') : '-');
+
+function NodeMeter({
+  icon: Icon,
+  label,
+  value,
+  suffix,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: number;
+  suffix?: string;
+}) {
+  const tone = meterTone(value);
+  return (
+    <div>
+      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+        <span className="flex items-center gap-1.5">
+          <Icon className="h-3.5 w-3.5" />
+          {label}
+        </span>
+        <span className={`font-medium ${tone.text}`}>{Math.round(value)}%</span>
+      </div>
+      <Progress value={value} className="mt-1.5 h-1.5" indicatorClassName={`bg-gradient-to-r ${tone.bar}`} />
+      {suffix && <p className="mt-1 truncate text-[11px] text-muted-foreground">{suffix}</p>}
+    </div>
+  );
+}
 
 export default function InfrastructurePage() {
   const { data: nodes = [], mutate: refreshNodes, isLoading: nodesLoading } = usePolling('activity:1h', () => api.nodes.activity());
@@ -387,9 +414,19 @@ export default function InfrastructurePage() {
 
   const getExternalIp = (node: NodeActivityItem) =>
     parseHostFromEndpoint(node.externalIp || node.overlayEndpoint) ?? '-';
-  const getNodeGeo = (node: NodeActivityItem) => {
+  // Location edited by hand (Réseau > nœud) always wins over the IP-based
+  // GeoIP lookup, which is only a fallback for nodes nobody has corrected yet.
+  const getNodeGeo = (node: NodeActivityItem): GeoInfo | null => {
     const ip = parseHostFromEndpoint(node.externalIp || node.overlayEndpoint);
-    return ip ? geoByIp[ip] : null;
+    const auto = ip ? geoByIp[ip] : null;
+    const hasOverride = Boolean(node.locationCity || node.locationCountry || node.locationCountryCode);
+    if (!hasOverride && !auto) return null;
+    return {
+      ip: ip ?? auto?.ip ?? '',
+      city: node.locationCity?.trim() || auto?.city || null,
+      country: node.locationCountry?.trim() || auto?.country || null,
+      countryCode: normalizeCountryCode(node.locationCountryCode) ?? auto?.countryCode ?? null,
+    };
   };
 
   return (
@@ -464,9 +501,18 @@ export default function InfrastructurePage() {
 
         <Tabs defaultValue="nodes" className="space-y-4">
           <TabsList>
-            <TabsTrigger value="nodes">Nœuds</TabsTrigger>
-            <TabsTrigger value="performance">Performance</TabsTrigger>
-            <TabsTrigger value="exploration">Exploration</TabsTrigger>
+            <TabsTrigger value="nodes" className="gap-1.5">
+              <Server className="h-3.5 w-3.5" />
+              Nœuds
+            </TabsTrigger>
+            <TabsTrigger value="performance" className="gap-1.5">
+              <Activity className="h-3.5 w-3.5" />
+              Performance
+            </TabsTrigger>
+            <TabsTrigger value="exploration" className="gap-1.5">
+              <FolderSearch className="h-3.5 w-3.5" />
+              Exploration
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="performance">
@@ -476,38 +522,43 @@ export default function InfrastructurePage() {
               <CardListSkeleton cards={4} />
             </div>
           ) : (
-          <div className="space-y-4 animate-fade-in">
-          <Card className="border-white/[0.08] bg-zinc-900/65">
-            <CardHeader>
-              <CardTitle className="text-base">Comparaison CPU / RAM par nœud</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <NodeComparisonChart data={nodeComparisonData} />
-            </CardContent>
-          </Card>
+          <div className="space-y-6 animate-fade-in">
+          <section className="space-y-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <SectionLabel>Comparaison CPU / RAM par nœud</SectionLabel>
+              <p className="text-xs text-muted-foreground">
+                Moyenne flotte : <span className="font-medium text-foreground">{Math.round(avgCpu)}% CPU</span> ·{' '}
+                <span className="font-medium text-foreground">{Math.round(avgRam)}% RAM</span>
+              </p>
+            </div>
+            <Card className="border-white/[0.08] bg-panel-glow">
+              <CardContent className="pt-6">
+                <NodeComparisonChart data={nodeComparisonData} />
+              </CardContent>
+            </Card>
+          </section>
 
-          <Card className="border-white/[0.08] bg-zinc-900/65">
-            <CardHeader>
-              <CardTitle className="text-base">Détail des serveurs les plus actifs</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                {[...nodes].sort((left, right) => right.metrics.cpu - left.metrics.cpu).slice(0, 6).map((node) => (
-                  <ServerTrendCard
-                    key={node.id}
-                    node={node}
-                    samples={samplesByNode[node.id] ?? []}
-                    labels={nodeLabels[node.id] ?? []}
-                  />
-                ))}
-                {nodes.length === 0 && (
-                  <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
-                    Aucun nœud détecté pour le moment.
-                  </p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+          <section className="space-y-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <SectionLabel>Détail par nœud</SectionLabel>
+              <p className="text-xs text-muted-foreground">Triés par charge CPU décroissante, 6 nœuds les plus actifs</p>
+            </div>
+            <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+              {[...nodes].sort((left, right) => right.metrics.cpu - left.metrics.cpu).slice(0, 6).map((node) => (
+                <ServerTrendCard
+                  key={node.id}
+                  node={node}
+                  samples={samplesByNode[node.id] ?? []}
+                  labels={nodeLabels[node.id] ?? []}
+                />
+              ))}
+              {nodes.length === 0 && (
+                <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
+                  Aucun nœud détecté pour le moment.
+                </p>
+              )}
+            </div>
+          </section>
           </div>
           )}
           </TabsContent>
@@ -654,218 +705,186 @@ export default function InfrastructurePage() {
           <CardContent className="space-y-3">
             {nodesLoading && <CardListSkeleton cards={4} />}
             {!nodesLoading && (
-            <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2 animate-fade-in">
-              {nodes.map((node) => (
-                <div key={node.id} className="rounded-2xl border border-white/[0.08] bg-zinc-950/45 p-4">
-                  {(() => {
-                    const geo = getNodeGeo(node);
-                    const labels = nodeLabels[node.id] ?? [];
-                    return (
-                      <>
-                        {(geo || labels.length > 0) && (
-                          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 animate-fade-in">
+              {nodes.map((node) => {
+                const geo = getNodeGeo(node);
+                const labels = nodeLabels[node.id] ?? [];
+                const statusDotClass =
+                  node.status === 'online' ? 'bg-emerald-400' : node.status === 'degraded' ? 'bg-amber-400' : 'bg-rose-400';
+                const smartIssue = node.storage.disks.some((disk) => disk.smart && disk.smart.overall !== 'healthy');
+
+                return (
+                  <div
+                    key={node.id}
+                    className="rounded-2xl border border-white/[0.08] bg-panel-glow p-5 transition-colors hover:border-white/[0.14]"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <span className="relative flex h-2.5 w-2.5 shrink-0">
+                          {node.status === 'online' && (
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                          )}
+                          <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${statusDotClass}`} />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-base font-semibold text-zinc-100">{node.name}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            <span className="capitalize">{node.role}</span>
                             {geo && (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-zinc-900/70 px-2 py-0.5 text-[11px] text-zinc-200">
-                                <MapPin className="h-3 w-3" />
+                              <>
+                                {' · '}
                                 {flagFromCountryCode(geo.countryCode)} {geo.city || geo.country || 'Location inconnue'}
-                              </span>
+                              </>
                             )}
-                            {labels.map((label) => (
-                              <span
-                                key={`${node.id}-${label}`}
-                                className="inline-flex items-center gap-1 rounded-full border border-violet-400/30 bg-violet-500/15 px-2 py-0.5 text-[11px] text-violet-100"
-                              >
-                                <Tags className="h-3 w-3" />
-                                {label}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-base font-semibold text-zinc-100">{node.name}</p>
-                      <p className="mt-0.5 text-xs capitalize text-muted-foreground">{node.role}</p>
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex cursor-default">
+                              <Badge {...versionBadge(node)} icon={<GitCommitHorizontal className="h-3 w-3" />} />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Agent : {node.agentVersion ?? 'jamais rapporté'}</p>
+                            <p>Contrôleur : {node.controlVersion ?? '—'}</p>
+                            {node.agentVersionAt && <p>Depuis : {formatDateTime(node.agentVersionAt)}</p>}
+                          </TooltipContent>
+                        </Tooltip>
+                        <Badge
+                          label={node.status}
+                          type={node.status === 'online' ? 'success' : node.status === 'degraded' ? 'warning' : 'error'}
+                        />
+                      </div>
                     </div>
-                    <div className="flex shrink-0 flex-col items-end gap-1.5">
-                      <Badge
-                        label={node.status}
-                        type={node.status === 'online' ? 'success' : node.status === 'degraded' ? 'warning' : 'error'}
+
+                    {labels.length > 0 && <NodeLabelBadges labels={labels} className="mt-3" />}
+
+                    <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                      <NodeMeter icon={Cpu} label="CPU" value={node.metrics.cpu} />
+                      <NodeMeter icon={Gauge} label="RAM" value={node.metrics.ram} />
+                      <NodeMeter
+                        icon={HardDrive}
+                        label="Stockage"
+                        value={node.storage.usageRatio * 100}
+                        suffix={`${node.storage.totalUsedGb} / ${node.storage.totalCapacityGb} GB`}
                       />
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-white/[0.06] pt-3 text-[11px] text-muted-foreground">
+                      <span className="flex items-center gap-1 font-mono">
+                        <Globe2 className="h-3 w-3" />
+                        {getExternalIp(node)}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <ArrowDownToLine className="h-3 w-3" />
+                        {formatMbps(node.metrics.networkRx)}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <ArrowUpToLine className="h-3 w-3" />
+                        {formatMbps(node.metrics.networkTx)}
+                      </span>
+                      <span className="truncate font-mono" title={node.id}>
+                        {node.id}
+                      </span>
+                      <span className="ml-auto shrink-0">Vu {formatDateTime(node.lastSeenAt)}</span>
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-end gap-1 border-t border-white/[0.06] pt-3">
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <span className="inline-flex cursor-default">
-                            <Badge {...versionBadge(node)} icon={<GitCommitHorizontal className="h-3 w-3" />} />
-                          </span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setInspectingNode(node)}
+                            className="h-8 w-8 text-muted-foreground hover:text-cyan-300"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Voir les détails du nœud</TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setSmartNode(node)}
+                            className={`h-8 w-8 ${
+                              smartIssue ? 'text-rose-400 hover:text-rose-300' : 'text-muted-foreground hover:text-cyan-300'
+                            }`}
+                          >
+                            <Thermometer className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Santé SMART détaillée des disques</TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => void triggerAgentUpdate(node)}
+                            disabled={node.status !== 'online' || updatingNodeIds.has(node.id)}
+                            className="h-8 w-8 text-muted-foreground hover:text-emerald-400 disabled:opacity-50"
+                          >
+                            <RefreshCcw className={`h-3.5 w-3.5 ${updatingNodeIds.has(node.id) ? 'animate-spin' : ''}`} />
+                          </Button>
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>Agent : {node.agentVersion ?? 'jamais rapporté'}</p>
-                          <p>Contrôleur : {node.controlVersion ?? '—'}</p>
-                          {node.agentVersionAt && <p>Depuis : {formatDateTime(node.agentVersionAt)}</p>}
+                          {node.status === 'online'
+                            ? 'Mettre à jour l’agent (recompile + redémarrage service)'
+                            : 'Agent hors ligne'}
                         </TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => void toggleMute(node)}
+                            className={`h-8 w-8 ${isMuted(node) ? 'text-amber-400 hover:text-amber-300' : 'text-muted-foreground hover:text-foreground'}`}
+                          >
+                            {isMuted(node) ? <BellOff className="h-3.5 w-3.5" /> : <Bell className="h-3.5 w-3.5" />}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {isMuted(node)
+                            ? `Alertes en silence jusqu’à ${formatDateTime(node.mutedUntil)}, cliquer pour réactiver`
+                            : 'Mettre les alertes en silence 1h (maintenance)'}
+                        </TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openEditModal(node)}
+                            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Modifier le nom et le rôle du nœud</TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setNodeToDelete(node)}
+                            className="h-8 w-8 text-muted-foreground hover:text-rose-400"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Supprimer définitivement ce nœud</TooltipContent>
                       </Tooltip>
                     </div>
                   </div>
-
-                  <div className="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-                    <div className="rounded-lg border border-white/[0.08] bg-zinc-900/50 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Node ID</p>
-                      <p className="mt-1 truncate font-mono text-zinc-200">{node.id}</p>
-                    </div>
-                    <div className="rounded-lg border border-white/[0.08] bg-zinc-900/50 px-2.5 py-2">
-                      <p className="flex items-center gap-1 text-[11px] uppercase tracking-wide text-muted-foreground">
-                        <Globe2 className="h-3 w-3" />
-                        IP externe
-                      </p>
-                      <p className="mt-1 truncate font-mono text-zinc-200">{getExternalIp(node)}</p>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-                    <div className="rounded-lg border border-white/[0.08] bg-zinc-900/50 px-2.5 py-2">
-                      <div className="mb-1.5 flex items-center justify-between text-muted-foreground">
-                        <span className="flex items-center gap-1.5">
-                          <Cpu className="h-3.5 w-3.5" />
-                          CPU
-                        </span>
-                        <span>{Math.round(node.metrics.cpu)}%</span>
-                      </div>
-                      <Progress value={node.metrics.cpu} className="h-1.5" />
-                    </div>
-                    <div className="rounded-lg border border-white/[0.08] bg-zinc-900/50 px-2.5 py-2">
-                      <div className="mb-1.5 flex items-center justify-between text-muted-foreground">
-                        <span className="flex items-center gap-1.5">
-                          <HardDrive className="h-3.5 w-3.5" />
-                          RAM
-                        </span>
-                        <span>{Math.round(node.metrics.ram)}%</span>
-                      </div>
-                      <Progress value={node.metrics.ram} className="h-1.5" />
-                    </div>
-                  </div>
-
-                  <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-muted-foreground sm:grid-cols-3">
-                    <div className="rounded-lg border border-white/[0.08] bg-zinc-900/45 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide">Débit réseau</p>
-                      <p className="mt-1 flex items-center gap-1.5">
-                        <ArrowDownToLine className="h-3.5 w-3.5" />
-                        Descendant: {formatMbps(node.metrics.networkRx)}
-                      </p>
-                      <p className="mt-0.5 flex items-center gap-1.5">
-                        <ArrowUpToLine className="h-3.5 w-3.5" />
-                        Montant: {formatMbps(node.metrics.networkTx)}
-                      </p>
-                    </div>
-                    <div className="rounded-lg border border-white/[0.08] bg-zinc-900/45 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide">Stockage</p>
-                      <p className="mt-1 text-zinc-200">
-                        {node.storage.totalUsedGb} / {node.storage.totalCapacityGb} GB
-                      </p>
-                      <p className="mt-0.5">{Math.round(node.storage.usageRatio * 100)}% utilisé</p>
-                    </div>
-                    <div className="rounded-lg border border-white/[0.08] bg-zinc-900/45 px-2.5 py-2">
-                      <p className="text-[11px] uppercase tracking-wide">Dernière activité</p>
-                      <p className="mt-1 text-zinc-200">{formatDateTime(node.lastSeenAt)}</p>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-end gap-1">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setInspectingNode(node)}
-                          className="h-8 w-8 text-muted-foreground hover:text-cyan-300"
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Voir les détails du nœud</TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setSmartNode(node)}
-                          className={`h-8 w-8 ${
-                            node.storage.disks.some((disk) => disk.smart && disk.smart.overall !== 'healthy')
-                              ? 'text-rose-400 hover:text-rose-300'
-                              : 'text-muted-foreground hover:text-cyan-300'
-                          }`}
-                        >
-                          <Thermometer className="h-3.5 w-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Santé SMART détaillée des disques</TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => void triggerAgentUpdate(node)}
-                          disabled={node.status !== 'online' || updatingNodeIds.has(node.id)}
-                          className="h-8 w-8 text-muted-foreground hover:text-emerald-400 disabled:opacity-50"
-                        >
-                          <RefreshCcw className={`h-3.5 w-3.5 ${updatingNodeIds.has(node.id) ? 'animate-spin' : ''}`} />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {node.status === 'online'
-                          ? 'Mettre à jour l’agent (recompile + redémarrage service)'
-                          : 'Agent hors ligne'}
-                      </TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => void toggleMute(node)}
-                          className={`h-8 w-8 ${isMuted(node) ? 'text-amber-400 hover:text-amber-300' : 'text-muted-foreground hover:text-foreground'}`}
-                        >
-                          {isMuted(node) ? <BellOff className="h-3.5 w-3.5" /> : <Bell className="h-3.5 w-3.5" />}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {isMuted(node)
-                          ? `Alertes en silence jusqu’à ${formatDateTime(node.mutedUntil)}, cliquer pour réactiver`
-                          : 'Mettre les alertes en silence 1h (maintenance)'}
-                      </TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => openEditModal(node)}
-                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Modifier le nom et le rôle du nœud</TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setNodeToDelete(node)}
-                          className="h-8 w-8 text-muted-foreground hover:text-rose-400"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Supprimer définitivement ce nœud</TooltipContent>
-                    </Tooltip>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
             )}
 

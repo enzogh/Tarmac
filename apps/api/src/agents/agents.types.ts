@@ -82,7 +82,8 @@ export interface CommandResultPayload {
     | 'scan_directory_sizes'
     | 'apply_ssh_authorized_keys'
     | 'update_agent'
-    | 'uninstall_agent';
+    | 'uninstall_agent'
+    | 'rotate_token';
   resourceType:
     | 'share'
     | 'mount'

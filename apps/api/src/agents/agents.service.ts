@@ -50,6 +50,17 @@ const MAX_RETRY_JITTER_MS = 50;
 // just be noise for the same underlying condition.
 const SMART_ALERT_COOLDOWN_MS = 60 * 60 * 1000;
 
+// Heartbeat-triggered overlay reconcile is only a drift-correction safety net
+// (real changes trigger reconcileOverlayForNode directly), so it doesn't need
+// to run often — gated per VLAN to avoid one broadcast per node heartbeat.
+const OVERLAY_RECONCILE_INTERVAL_MS = 3 * 60 * 1000;
+
+// Commands whose failure leaves the agent itself unmanageable (can't update,
+// can't uninstall cleanly, can't rotate its auth token) are more severe than
+// a single resource command failing, so they're logged as critical rather
+// than a routine error.
+const AGENT_CRITICAL_COMMANDS = new Set(['update_agent', 'uninstall_agent', 'rotate_token']);
+
 @Injectable()
 export class AgentsService implements OnModuleInit {
   private readonly logger = new Logger(AgentsService.name);
@@ -405,10 +416,17 @@ export class AgentsService implements OnModuleInit {
       }
     }
 
-    const lastSync = this.overlaySyncAt.get(nodeId) ?? 0;
-    if (Date.now() - lastSync >= 15_000) {
-      await this.reconcileOverlayForNode(nodeId);
-      this.overlaySyncAt.set(nodeId, Date.now());
+    // Heartbeat-triggered reconcile is a drift-correction safety net, not the primary
+    // trigger (membership/key changes already call reconcileOverlayForNode directly).
+    // Gate on the VLAN, not the node: reconcileOverlayForNode broadcasts to every member,
+    // so gating per-node still let each node's heartbeat re-trigger a full VLAN broadcast.
+    const membership = await this.prisma.vlanMember.findFirst({ where: { nodeId } });
+    if (membership) {
+      const lastSync = this.overlaySyncAt.get(membership.vlanId) ?? 0;
+      if (Date.now() - lastSync >= OVERLAY_RECONCILE_INTERVAL_MS) {
+        await this.reconcileOverlayForNode(nodeId);
+        this.overlaySyncAt.set(membership.vlanId, Date.now());
+      }
     }
   }
 
@@ -481,9 +499,14 @@ export class AgentsService implements OnModuleInit {
         result.success ? '' : ` (${result.message ?? 'no message'})`
       }`,
     );
+    const isAgentCritical =
+      AGENT_CRITICAL_COMMANDS.has(result.command) ||
+      result.resourceType === 'mount' ||
+      result.resourceType === 'mount_cleanup';
+    const level = result.success ? 'info' : isAgentCritical ? 'critical' : 'error';
     await this.agentLogsService.create({
       nodeId,
-      level: result.success ? 'info' : 'error',
+      level,
       message: `${result.command} (${result.resourceType}/${result.resourceId}): ${
         result.success ? 'succès' : 'échec'
       }${result.message ? ` — ${result.message}` : ''}`,

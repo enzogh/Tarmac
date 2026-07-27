@@ -20,6 +20,8 @@ const badgeVariants = cva(
           'border-amber-500/20 bg-amber-500/10 text-amber-300',
         info:
           'border-sky-500/20 bg-sky-500/10 text-sky-300',
+        critical:
+          'border-red-500/50 bg-red-600/25 text-red-200',
       },
     },
     defaultVariants: {

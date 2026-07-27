@@ -39,12 +39,21 @@ const LEVEL_TEXT_CLASS: Record<string, string> = {
   info: 'text-zinc-300',
   warning: 'text-amber-400',
   error: 'text-rose-400',
+  critical: 'text-red-300 font-semibold',
 };
 
-const LEVEL_BADGE_TYPE: Record<string, 'info' | 'warning' | 'error'> = {
+const LEVEL_BADGE_TYPE: Record<string, 'info' | 'warning' | 'error' | 'critical'> = {
   info: 'info',
   warning: 'warning',
   error: 'error',
+  critical: 'critical',
+};
+
+const LEVEL_LABEL: Record<string, string> = {
+  info: 'INFO',
+  warning: 'WARN',
+  error: 'ERROR',
+  critical: 'CRIT',
 };
 
 function formatDateTime(iso: string) {
@@ -300,6 +309,7 @@ const MAX_LIVE_LINES = 500;
 function AgentsTab() {
   const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
   const [nodeFilter, setNodeFilter] = useState('all');
+  const [levelFilter, setLevelFilter] = useState('all');
   const [lines, setLines] = useState<AgentLogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -319,7 +329,11 @@ function AgentsTab() {
     setPendingCount(0);
     pendingLinesRef.current = [];
     void api.agentLogs
-      .list({ nodeId: nodeFilter === 'all' ? undefined : nodeFilter, limit: 200 })
+      .list({
+        nodeId: nodeFilter === 'all' ? undefined : nodeFilter,
+        level: levelFilter === 'all' ? undefined : levelFilter,
+        limit: 200,
+      })
       .then((result) => {
         if (cancelled) return;
         setLines(result.items.slice().reverse());
@@ -330,7 +344,7 @@ function AgentsTab() {
     return () => {
       cancelled = true;
     };
-  }, [nodeFilter]);
+  }, [nodeFilter, levelFilter]);
 
   useEffect(() => {
     if (paused) return;
@@ -342,6 +356,7 @@ function AgentsTab() {
     if (message.type !== 'agent-log.new') return;
     const entry = message.payload as AgentLogItem;
     if (nodeFilter !== 'all' && entry.nodeId !== nodeFilter) return;
+    if (levelFilter !== 'all' && entry.level !== levelFilter) return;
     if (paused) {
       pendingLinesRef.current.push(entry);
       setPendingCount((count) => count + 1);
@@ -354,7 +369,11 @@ function AgentsTab() {
     const el = scrollRef.current;
     if (!el) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-    if (!atBottom && !paused) setPaused(true);
+    if (atBottom) {
+      if (paused) resume();
+    } else if (!paused) {
+      setPaused(true);
+    }
   };
 
   const resume = () => {
@@ -412,6 +431,21 @@ function AgentsTab() {
             </Select>
           </div>
           <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Niveau</Label>
+            <Select value={levelFilter} onValueChange={setLevelFilter}>
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tous les niveaux</SelectItem>
+                <SelectItem value="critical">Critique</SelectItem>
+                <SelectItem value="error">Erreur</SelectItem>
+                <SelectItem value="warning">Avertissement</SelectItem>
+                <SelectItem value="info">Info</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Export depuis</Label>
             <Input type="date" className="w-40" value={exportFrom} onChange={(e) => setExportFrom(e.target.value)} />
           </div>
@@ -463,9 +497,14 @@ function AgentsTab() {
                   <p className="py-8 text-center text-muted-foreground">Aucun log d'agent pour le moment.</p>
                 )}
                 {lines.map((line) => (
-                  <div key={line.id} className="flex gap-2 whitespace-pre-wrap break-all">
+                  <div key={line.id} className="flex items-baseline gap-2 whitespace-pre-wrap break-all py-0.5">
                     <span className="shrink-0 text-zinc-500">[{formatTime(line.createdAt)}]</span>
                     <span className="shrink-0 text-violet-300">[{nodeName(line.nodeId)}]</span>
+                    <Badge
+                      label={LEVEL_LABEL[line.level] ?? line.level.toUpperCase()}
+                      type={LEVEL_BADGE_TYPE[line.level] ?? 'info'}
+                      className="shrink-0 px-1.5 py-0 text-[10px] leading-4"
+                    />
                     <span className={LEVEL_TEXT_CLASS[line.level] ?? 'text-zinc-300'}>{line.message}</span>
                   </div>
                 ))}

@@ -61,6 +61,12 @@ export const parseHostFromEndpoint = (endpoint?: string | null) => {
   }
 };
 
+export const normalizeCountryCode = (value?: string | null) => {
+  const trimmed = value?.trim().toUpperCase();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, 2);
+};
+
 export const flagFromCountryCode = (code?: string | null) => {
   if (!code || code.length !== 2) return '🏳️';
   const upper = code.toUpperCase();

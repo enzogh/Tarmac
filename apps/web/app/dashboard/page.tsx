@@ -10,6 +10,7 @@ import {
   HardDrive,
   LayoutDashboard,
   Network,
+  RefreshCcw,
   Server,
 } from 'lucide-react';
 import { api, NodeMetricSample } from '../../lib/api';
@@ -184,7 +185,7 @@ export default function OverviewPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 animate-fade-in">
-              <Card className="border-white/[0.08] bg-zinc-900/65">
+              <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
                 <CardHeader>
                   <div className="flex items-center gap-2">
                     <Cpu className="h-5 w-5 text-violet-400" />
@@ -195,7 +196,7 @@ export default function OverviewPage() {
                   <FleetPerformanceChart data={performanceSeries} />
                 </CardContent>
               </Card>
-              <Card className="border-white/[0.08] bg-zinc-900/65">
+              <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
                 <CardHeader>
                   <div className="flex items-center gap-2">
                     <Network className="h-5 w-5 text-violet-400" />
@@ -219,7 +220,7 @@ export default function OverviewPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 animate-fade-in">
-              <Card className="border-white/[0.08] bg-zinc-900/65">
+              <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
                 <CardHeader>
                   <div className="flex items-center gap-2">
                     <Gauge className="h-5 w-5 text-violet-400" />
@@ -231,9 +232,12 @@ export default function OverviewPage() {
                 </CardContent>
               </Card>
 
-              <Card className="border-white/[0.08] bg-zinc-900/65">
+              <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
                 <CardHeader>
-                  <CardTitle className="text-base">Alertes récentes</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <Bell className="h-5 w-5 text-violet-400" />
+                    <CardTitle className="text-base">Alertes récentes</CardTitle>
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-2">
                   {alerts.slice(0, 5).map((alert) => (
@@ -268,7 +272,7 @@ export default function OverviewPage() {
           {spotlightLoading ? (
             <CardListSkeleton cards={4} />
           ) : (
-            <Card className="border-white/[0.08] bg-zinc-900/65 animate-fade-in">
+            <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14] animate-fade-in">
               <CardContent className="pt-6">
                 <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
                   {spotlightNodes.map((node) => (
@@ -294,17 +298,23 @@ export default function OverviewPage() {
           <SectionLabel>Activité</SectionLabel>
           {activityFeedLoading ? (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <Card className="border-white/[0.08] bg-zinc-900/65">
+              <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
                 <CardHeader>
-                  <CardTitle className="text-base">Travaux de synchronisation</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <RefreshCcw className="h-5 w-5 text-violet-400" />
+                    <CardTitle className="text-base">Travaux de synchronisation</CardTitle>
+                  </div>
                 </CardHeader>
                 <CardContent>
                   <ListSkeleton rows={3} />
                 </CardContent>
               </Card>
-              <Card className="border-white/[0.08] bg-zinc-900/65">
+              <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
                 <CardHeader>
-                  <CardTitle className="text-base">Migrations en cours</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <ArrowRightLeft className="h-5 w-5 text-violet-400" />
+                    <CardTitle className="text-base">Migrations en cours</CardTitle>
+                  </div>
                 </CardHeader>
                 <CardContent>
                   <ListSkeleton rows={3} />
@@ -313,9 +323,12 @@ export default function OverviewPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 animate-fade-in">
-              <Card className="border-white/[0.08] bg-zinc-900/65">
+              <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
                 <CardHeader>
-                  <CardTitle className="text-base">Travaux de synchronisation</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <RefreshCcw className="h-5 w-5 text-violet-400" />
+                    <CardTitle className="text-base">Travaux de synchronisation</CardTitle>
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-2">
                   {syncJobs.slice(0, 5).map((job) => (
@@ -334,7 +347,7 @@ export default function OverviewPage() {
                 </CardContent>
               </Card>
 
-              <Card className="border-white/[0.08] bg-zinc-900/65">
+              <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
                 <CardHeader>
                   <div className="flex items-center gap-2">
                     <ArrowRightLeft className="h-5 w-5 text-violet-400" />
