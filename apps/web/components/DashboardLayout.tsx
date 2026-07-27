@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { ReactNode } from 'react';
-import { LogOut, Layers, BookOpen, Search } from 'lucide-react';
+import { ReactNode, useEffect, useState } from 'react';
+import { LogOut, Layers, BookOpen, Search, Menu, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { NAV_GROUPS, NAV_ITEMS } from '../lib/nav-items';
 import { CommandPalette } from './CommandPalette';
@@ -14,6 +14,11 @@ import { cn } from '../lib/utils';
 export function DashboardLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [pathname]);
 
   const handleLogout = async () => {
     try {
@@ -27,18 +32,41 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
     <TooltipProvider delayDuration={300}>
       <CommandPalette />
       <div className="relative flex min-h-screen overflow-hidden">
+        {/* Mobile backdrop */}
+        {mobileNavOpen && (
+          <div
+            className="fixed inset-0 z-20 bg-black/60 backdrop-blur-sm lg:hidden"
+            onClick={() => setMobileNavOpen(false)}
+          />
+        )}
+
         {/* Sidebar */}
-        <aside className="relative z-10 flex w-64 flex-col border-r border-white/[0.06] bg-zinc-950/80 backdrop-blur-2xl">
+        <aside
+          className={cn(
+            'fixed inset-y-0 left-0 z-30 flex w-64 flex-col border-r border-white/[0.06] bg-zinc-950/95 backdrop-blur-2xl transition-transform duration-200 lg:relative lg:z-10 lg:translate-x-0 lg:bg-zinc-950/80',
+            mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
+          )}
+        >
           {/* Logo */}
           <div className="border-b border-white/[0.06] px-5 py-5">
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 shadow-glow">
-                <Layers className="h-4 w-4 text-white" />
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 shadow-glow">
+                  <Layers className="h-4 w-4 text-white" />
+                </div>
+                <div>
+                  <h1 className="text-base font-semibold tracking-tight text-foreground">Tarmac</h1>
+                  <p className="text-[11px] text-muted-foreground">Storage dashboard</p>
+                </div>
               </div>
-              <div>
-                <h1 className="text-base font-semibold tracking-tight text-foreground">Tarmac</h1>
-                <p className="text-[11px] text-muted-foreground">Storage dashboard</p>
-              </div>
+              <button
+                type="button"
+                onClick={() => setMobileNavOpen(false)}
+                className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100 lg:hidden"
+                aria-label="Fermer le menu"
+              >
+                <X className="h-5 w-5" />
+              </button>
             </div>
           </div>
 
@@ -111,12 +139,20 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
         {/* Main Content */}
         <div className="relative z-10 flex flex-1 flex-col overflow-hidden">
           {/* Top Bar */}
-          <header className="flex items-center justify-between border-b border-white/[0.06] bg-zinc-950/60 px-6 py-3.5 backdrop-blur-xl">
-            <div className="flex items-center gap-2">
-              <div className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
-              <span className="text-sm font-medium text-foreground">Tarmac</span>
-              <span className="text-zinc-600 text-sm">/</span>
-              <span className="text-sm text-muted-foreground">
+          <header className="flex items-center justify-between gap-2 border-b border-white/[0.06] bg-zinc-950/60 px-4 py-3.5 backdrop-blur-xl sm:px-6">
+            <div className="flex min-w-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setMobileNavOpen(true)}
+                className="-ml-1 mr-1 rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100 lg:hidden"
+                aria-label="Ouvrir le menu"
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+              <div className="h-2 w-2 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
+              <span className="hidden text-sm font-medium text-foreground sm:inline">Tarmac</span>
+              <span className="hidden text-sm text-zinc-600 sm:inline">/</span>
+              <span className="truncate text-sm text-muted-foreground">
                 {NAV_ITEMS.find(
                   (n) =>
                     n.exact
@@ -125,13 +161,13 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
                 )?.label ?? 'Dashboard'}
               </span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               <div className="hidden items-center gap-1.5 rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-xs text-muted-foreground sm:flex">
                 <Search className="h-3 w-3" />
                 <span>Rechercher</span>
                 <kbd className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 font-mono text-[10px]">⌘K</kbd>
               </div>
-              <div className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-xs text-muted-foreground">
+              <div className="hidden rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-xs text-muted-foreground sm:block">
                 {new Date().toLocaleDateString('fr-FR', {
                   weekday: 'short',
                   year: 'numeric',
@@ -144,7 +180,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
 
           {/* Content */}
           <main className="flex-1 overflow-auto">
-            <div className="mx-auto max-w-7xl px-6 py-8 lg:px-8">{children}</div>
+            <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">{children}</div>
           </main>
         </div>
       </div>

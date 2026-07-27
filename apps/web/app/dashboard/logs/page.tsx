@@ -1,0 +1,513 @@
+'use client';
+
+import { Fragment, useEffect, useRef, useState } from 'react';
+import { Download, PauseCircle, PlayCircle, ScrollText, Search } from 'lucide-react';
+import Link from 'next/link';
+import { api, AgentLogItem, AuditLogItem } from '../../../lib/api';
+import { usePolling } from '../../../lib/hooks/usePolling';
+import { useLiveSocket } from '../../../lib/hooks/useLiveSocket';
+import { DashboardLayout } from '../../../components/DashboardLayout';
+import { PageHeader } from '../../../components/PageHeader';
+import { Callout } from '../../../components/Callout';
+import { SectionLabel } from '../../../components/SectionLabel';
+import { Badge } from '../../../components/ui';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Button } from '../../../components/ui/button';
+import { Input } from '../../../components/ui/input';
+import { Label } from '../../../components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
+import { ListSkeleton } from '../../../components/ui/skeleton';
+
+// resourceType -> where an audit entry's affected resource can be reviewed.
+// notification_channel and share_client have no dedicated page yet.
+const RESOURCE_ROUTES: Record<string, string> = {
+  node: '/dashboard/infrastructure',
+  migration: '/dashboard/migrations',
+  mount: '/dashboard/mounts',
+  share: '/dashboard/mounts',
+  pool: '/dashboard/storage',
+  pool_member: '/dashboard/storage',
+  sync_job: '/dashboard/replication',
+  sync_job_run: '/dashboard/replication',
+  alert: '/dashboard/alerts',
+  alert_rule: '/dashboard/alerts',
+};
+
+const LEVEL_TEXT_CLASS: Record<string, string> = {
+  info: 'text-zinc-300',
+  warning: 'text-amber-400',
+  error: 'text-rose-400',
+};
+
+const LEVEL_BADGE_TYPE: Record<string, 'info' | 'warning' | 'error'> = {
+  info: 'info',
+  warning: 'warning',
+  error: 'error',
+};
+
+function formatDateTime(iso: string) {
+  return new Date(iso).toLocaleString('fr-FR');
+}
+
+function formatTime(iso: string) {
+  return new Date(iso).toLocaleTimeString('fr-FR', { hour12: false });
+}
+
+type AuditFilters = {
+  q: string;
+  actorUserId: string;
+  action: string;
+  resourceType: string;
+  from: string;
+};
+
+function matchesAuditFilters(entry: AuditLogItem, filters: AuditFilters) {
+  if (filters.actorUserId && entry.actorUserId !== filters.actorUserId) return false;
+  if (filters.action && entry.action !== filters.action) return false;
+  if (filters.resourceType && entry.resourceType !== filters.resourceType) return false;
+  if (filters.q) {
+    const haystack = `${entry.action} ${entry.resourceType} ${entry.resourceId ?? ''}`.toLowerCase();
+    if (!haystack.includes(filters.q.toLowerCase())) return false;
+  }
+  return true;
+}
+
+function ActionsTab() {
+  const [items, setItems] = useState<AuditLogItem[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [filters, setFilters] = useState<AuditFilters>({ q: '', actorUserId: '', action: '', resourceType: '', from: '' });
+  const [exportTo, setExportTo] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    void api.auditLogs
+      .list({
+        q: filters.q || undefined,
+        actorUserId: filters.actorUserId || undefined,
+        action: filters.action || undefined,
+        resourceType: filters.resourceType || undefined,
+        from: filters.from || undefined,
+        limit: 100,
+      })
+      .then((result) => {
+        if (cancelled) return;
+        setItems(result.items);
+        setCursor(result.nextCursor);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [filters.q, filters.actorUserId, filters.action, filters.resourceType, filters.from]);
+
+  useLiveSocket((message) => {
+    if (message.type !== 'audit.new') return;
+    const entry = message.payload as AuditLogItem;
+    if (!matchesAuditFilters(entry, filters)) return;
+    setItems((prev) => [entry, ...prev]);
+  });
+
+  const loadMore = async () => {
+    if (!cursor) return;
+    setLoadingMore(true);
+    try {
+      const result = await api.auditLogs.list({
+        before: cursor,
+        q: filters.q || undefined,
+        actorUserId: filters.actorUserId || undefined,
+        action: filters.action || undefined,
+        resourceType: filters.resourceType || undefined,
+        from: filters.from || undefined,
+        limit: 100,
+      });
+      setItems((prev) => [...prev, ...result.items]);
+      setCursor(result.nextCursor);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const openExport = (format: 'csv' | 'json') => {
+    const to = exportTo || new Date().toISOString();
+    const from = filters.from || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    window.open(api.auditLogs.exportUrl({ from, to, format }), '_blank');
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card className="border-white/[0.08] bg-zinc-900/65">
+        <CardContent className="grid grid-cols-1 gap-3 pt-6 md:grid-cols-2 xl:grid-cols-5">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Recherche</Label>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-8"
+                placeholder="action, ressource…"
+                value={filters.q}
+                onChange={(e) => setFilters((prev) => ({ ...prev, q: e.target.value }))}
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Acteur (ID)</Label>
+            <Input
+              value={filters.actorUserId}
+              onChange={(e) => setFilters((prev) => ({ ...prev, actorUserId: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Action</Label>
+            <Input
+              placeholder="ex: node.create"
+              value={filters.action}
+              onChange={(e) => setFilters((prev) => ({ ...prev, action: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Ressource</Label>
+            <Input
+              placeholder="ex: migration"
+              value={filters.resourceType}
+              onChange={(e) => setFilters((prev) => ({ ...prev, resourceType: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Depuis</Label>
+            <Input
+              type="date"
+              value={filters.from}
+              onChange={(e) => setFilters((prev) => ({ ...prev, from: e.target.value }))}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-white/[0.08] bg-zinc-900/65">
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <CardTitle className="text-base">Journal d'actions</CardTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              <Label className="text-xs text-muted-foreground">Export jusqu'au</Label>
+              <Input type="date" className="w-40" value={exportTo} onChange={(e) => setExportTo(e.target.value)} />
+              <Button variant="secondary" size="sm" onClick={() => openExport('csv')} className="gap-2">
+                <Download className="h-3.5 w-3.5" />
+                CSV
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => openExport('json')} className="gap-2">
+                <Download className="h-3.5 w-3.5" />
+                JSON
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <ListSkeleton rows={6} />
+          ) : items.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">Aucune action trouvée.</p>
+          ) : (
+            <div className="animate-fade-in overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Acteur</TableHead>
+                    <TableHead>Action</TableHead>
+                    <TableHead>Ressource</TableHead>
+                    <TableHead className="text-right">Détails</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {items.map((entry) => {
+                    const route = RESOURCE_ROUTES[entry.resourceType];
+                    return (
+                      <Fragment key={entry.id}>
+                        <TableRow>
+                          <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                            {formatDateTime(entry.createdAt)}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs">{entry.actorUserId ?? 'système'}</TableCell>
+                          <TableCell>
+                            <Badge label={entry.action} type="info" />
+                          </TableCell>
+                          <TableCell>
+                            {route ? (
+                              <Link href={route} className="text-violet-300 underline-offset-2 hover:underline">
+                                {entry.resourceType}
+                                {entry.resourceId ? ` · ${entry.resourceId.slice(0, 8)}` : ''}
+                              </Link>
+                            ) : (
+                              <span>
+                                {entry.resourceType}
+                                {entry.resourceId ? ` · ${entry.resourceId.slice(0, 8)}` : ''}
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {entry.details ? (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setExpandedId((current) => (current === entry.id ? null : entry.id))}
+                              >
+                                {expandedId === entry.id ? 'Masquer' : 'Voir'}
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                        {expandedId === entry.id && (
+                          <TableRow>
+                            <TableCell colSpan={5} className="bg-white/[0.02]">
+                              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-xs text-zinc-300">
+                                {JSON.stringify(entry.details, null, 2)}
+                              </pre>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+              {cursor && (
+                <div className="mt-4 flex justify-center">
+                  <Button variant="secondary" size="sm" onClick={() => void loadMore()} disabled={loadingMore}>
+                    {loadingMore ? 'Chargement…' : 'Charger plus'}
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+const MAX_LIVE_LINES = 500;
+
+function AgentsTab() {
+  const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
+  const [nodeFilter, setNodeFilter] = useState('all');
+  const [lines, setLines] = useState<AgentLogItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [exportFrom, setExportFrom] = useState('');
+  const [exportTo, setExportTo] = useState('');
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const pendingLinesRef = useRef<AgentLogItem[]>([]);
+
+  const nodeName = (nodeId: string) => nodes.find((node) => node.id === nodeId)?.name ?? nodeId;
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setPaused(false);
+    setPendingCount(0);
+    pendingLinesRef.current = [];
+    void api.agentLogs
+      .list({ nodeId: nodeFilter === 'all' ? undefined : nodeFilter, limit: 200 })
+      .then((result) => {
+        if (cancelled) return;
+        setLines(result.items.slice().reverse());
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [nodeFilter]);
+
+  useEffect(() => {
+    if (paused) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [lines, paused]);
+
+  useLiveSocket((message) => {
+    if (message.type !== 'agent-log.new') return;
+    const entry = message.payload as AgentLogItem;
+    if (nodeFilter !== 'all' && entry.nodeId !== nodeFilter) return;
+    if (paused) {
+      pendingLinesRef.current.push(entry);
+      setPendingCount((count) => count + 1);
+      return;
+    }
+    setLines((prev) => [...prev, entry].slice(-MAX_LIVE_LINES));
+  });
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    if (!atBottom && !paused) setPaused(true);
+  };
+
+  const resume = () => {
+    setPaused(false);
+    const pending = pendingLinesRef.current;
+    if (pending.length > 0) {
+      pendingLinesRef.current = [];
+      setLines((prev) => [...prev, ...pending].slice(-MAX_LIVE_LINES));
+    }
+    setPendingCount(0);
+  };
+
+  const loadOlder = async () => {
+    if (lines.length === 0) return;
+    setLoadingOlder(true);
+    try {
+      const result = await api.agentLogs.list({
+        nodeId: nodeFilter === 'all' ? undefined : nodeFilter,
+        before: lines[0].createdAt,
+        limit: 200,
+      });
+      setLines((prev) => [...result.items.slice().reverse(), ...prev]);
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
+
+  const openExport = (format: 'csv' | 'json') => {
+    const to = exportTo || new Date().toISOString();
+    const from = exportFrom || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    window.open(
+      api.agentLogs.exportUrl({ from, to, format, nodeId: nodeFilter === 'all' ? undefined : nodeFilter }),
+      '_blank',
+    );
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card className="border-white/[0.08] bg-zinc-900/65">
+        <CardContent className="flex flex-wrap items-end gap-3 pt-6">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Nœud</Label>
+            <Select value={nodeFilter} onValueChange={setNodeFilter}>
+              <SelectTrigger className="w-56">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tous les nœuds</SelectItem>
+                {nodes.map((node) => (
+                  <SelectItem key={node.id} value={node.id}>
+                    {node.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Export depuis</Label>
+            <Input type="date" className="w-40" value={exportFrom} onChange={(e) => setExportFrom(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Jusqu'au</Label>
+            <Input type="date" className="w-40" value={exportTo} onChange={(e) => setExportTo(e.target.value)} />
+          </div>
+          <Button variant="secondary" size="sm" onClick={() => openExport('csv')} className="gap-2">
+            <Download className="h-3.5 w-3.5" />
+            CSV
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => openExport('json')} className="gap-2">
+            <Download className="h-3.5 w-3.5" />
+            JSON
+          </Button>
+          <div className="ml-auto">
+            {paused ? (
+              <Button size="sm" onClick={resume} className="gap-2 bg-violet-600 text-white hover:bg-violet-500">
+                <PlayCircle className="h-3.5 w-3.5" />
+                Reprendre {pendingCount > 0 ? `(${pendingCount} nouvelles lignes)` : ''}
+              </Button>
+            ) : (
+              <Button variant="secondary" size="sm" onClick={() => setPaused(true)} className="gap-2">
+                <PauseCircle className="h-3.5 w-3.5" />
+                Pause
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-white/[0.08] bg-zinc-900/65">
+        <CardContent className="pt-6">
+          {loading ? (
+            <ListSkeleton rows={6} />
+          ) : (
+            <>
+              <div className="mb-2 flex justify-center">
+                <Button variant="ghost" size="sm" onClick={() => void loadOlder()} disabled={loadingOlder}>
+                  {loadingOlder ? 'Chargement…' : "Charger l'historique"}
+                </Button>
+              </div>
+              <div
+                ref={scrollRef}
+                onScroll={handleScroll}
+                className="h-[520px] overflow-y-auto rounded-xl border border-white/[0.06] bg-black/40 p-3 font-mono text-xs leading-relaxed"
+              >
+                {lines.length === 0 && (
+                  <p className="py-8 text-center text-muted-foreground">Aucun log d'agent pour le moment.</p>
+                )}
+                {lines.map((line) => (
+                  <div key={line.id} className="flex gap-2 whitespace-pre-wrap break-all">
+                    <span className="shrink-0 text-zinc-500">[{formatTime(line.createdAt)}]</span>
+                    <span className="shrink-0 text-violet-300">[{nodeName(line.nodeId)}]</span>
+                    <span className={LEVEL_TEXT_CLASS[line.level] ?? 'text-zinc-300'}>{line.message}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+export default function LogsPage() {
+  return (
+    <DashboardLayout>
+      <div className="space-y-8">
+        <PageHeader
+          icon={ScrollText}
+          title="Journal"
+          description="Actions effectuées sur la flotte et logs bruts des agents, en direct."
+        />
+
+        <Callout>
+          L'onglet Agents affiche les logs poussés en direct par chaque agent. Utilisez le filtre par nœud pour
+          éviter que plusieurs flux se mélangent.
+        </Callout>
+
+        <Tabs defaultValue="actions" className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="actions">Actions</TabsTrigger>
+            <TabsTrigger value="agents">Agents</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="actions">
+            <ActionsTab />
+          </TabsContent>
+
+          <TabsContent value="agents">
+            <AgentsTab />
+          </TabsContent>
+        </Tabs>
+      </div>
+    </DashboardLayout>
+  );
+}

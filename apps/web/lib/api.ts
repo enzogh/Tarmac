@@ -315,6 +315,26 @@ export type VlanStatus = {
   recentFailures: VlanConnectionTest[];
 };
 
+export type AuditLogItem = {
+  id: string;
+  actorUserId?: string | null;
+  action: string;
+  resourceType: string;
+  resourceId?: string | null;
+  details?: unknown;
+  createdAt: string;
+};
+
+export type AgentLogItem = {
+  id: string;
+  nodeId: string;
+  level: string;
+  message: string;
+  createdAt: string;
+};
+
+export type PagedResult<T> = { items: T[]; nextCursor: string | null };
+
 export type AdminProfile = {
   id: string;
   email: string;
@@ -623,5 +643,46 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ nodeId, vlanId }),
       }),
+  },
+
+  auditLogs: {
+    list: (params: {
+      before?: string;
+      from?: string;
+      limit?: number;
+      actorUserId?: string;
+      action?: string;
+      resourceType?: string;
+      q?: string;
+    } = {}) => {
+      const query = new URLSearchParams();
+      if (params.before) query.set('before', params.before);
+      if (params.from) query.set('from', params.from);
+      if (params.limit) query.set('limit', String(params.limit));
+      if (params.actorUserId) query.set('actorUserId', params.actorUserId);
+      if (params.action) query.set('action', params.action);
+      if (params.resourceType) query.set('resourceType', params.resourceType);
+      if (params.q) query.set('q', params.q);
+      return request<PagedResult<AuditLogItem>>(`/api/v1/audit-logs?${query.toString()}`);
+    },
+    exportUrl: (params: { from: string; to: string; format: 'csv' | 'json' }) =>
+      `${API_BASE}/api/v1/audit-logs/export?${new URLSearchParams(params).toString()}`,
+  },
+
+  agentLogs: {
+    list: (params: { nodeId?: string; level?: string; before?: string; from?: string; limit?: number } = {}) => {
+      const query = new URLSearchParams();
+      if (params.nodeId) query.set('nodeId', params.nodeId);
+      if (params.level) query.set('level', params.level);
+      if (params.before) query.set('before', params.before);
+      if (params.from) query.set('from', params.from);
+      if (params.limit) query.set('limit', String(params.limit));
+      return request<PagedResult<AgentLogItem>>(`/api/v1/agent-logs?${query.toString()}`);
+    },
+    exportUrl: (params: { from: string; to: string; format: 'csv' | 'json'; nodeId?: string }) => {
+      const query = new URLSearchParams({ from: params.from, to: params.to, format: params.format });
+      if (params.nodeId) query.set('nodeId', params.nodeId);
+      return `${API_BASE}/api/v1/agent-logs/export?${query.toString()}`;
+    },
   },
 };

@@ -7,7 +7,15 @@ import { MountsService } from '../mounts/mounts.service';
 import { PoolsService } from '../pools/pools.service';
 import { SharesService } from '../shares/shares.service';
 import { VlanService } from '../vlan/vlan.service';
-import { CommandPayload, CommandProgressPayload, CommandResultPayload, HeartbeatPayload, StateReportPayload } from './agents.types';
+import { AgentLogsService } from '../agent-logs/agent-logs.service';
+import {
+  AgentLogPayload,
+  CommandPayload,
+  CommandProgressPayload,
+  CommandResultPayload,
+  HeartbeatPayload,
+  StateReportPayload,
+} from './agents.types';
 
 type SendFn = (event: string, payload: unknown) => void;
 type PendingDirectoryRequest = {
@@ -221,6 +229,7 @@ export class AgentsService implements OnModuleInit {
     private readonly mountsService: MountsService,
     private readonly poolsService: PoolsService,
     private readonly vlanService: VlanService,
+    private readonly agentLogsService: AgentLogsService,
   ) {}
 
   onModuleInit() {
@@ -298,6 +307,15 @@ export class AgentsService implements OnModuleInit {
       this.logger.error('Error checking node heartbeats:', error);
       await this.createSystemAlert(`Heartbeat monitor failed: ${message}`, 'high');
     }
+  }
+
+  onAgentLog(payload: AgentLogPayload) {
+    if (!payload.nodeId || !payload.message) return;
+    return this.agentLogsService.create({
+      nodeId: payload.nodeId,
+      level: payload.level || 'info',
+      message: payload.message,
+    });
   }
 
   async onHeartbeat(payload: HeartbeatPayload) {

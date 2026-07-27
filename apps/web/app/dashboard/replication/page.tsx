@@ -473,7 +473,7 @@ export default function ReplicationPage() {
                         <Copy className="w-5 h-5 text-violet-400" />
                         {job.name}
                       </CardTitle>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <Badge label={statusBadge.label} type={statusBadge.type} />
                         <Button
                           variant="secondary"

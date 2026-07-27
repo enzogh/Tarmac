@@ -7,6 +7,7 @@ import {
   Bell,
   Network,
   HardDrive,
+  ScrollText,
   UserCog,
   type LucideIcon,
 } from 'lucide-react';
@@ -37,7 +38,10 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: 'Supervision',
-    items: [{ href: '/dashboard/alerts', label: 'Alertes', icon: Bell }],
+    items: [
+      { href: '/dashboard/alerts', label: 'Alertes', icon: Bell },
+      { href: '/dashboard/logs', label: 'Journal', icon: ScrollText },
+    ],
   },
   {
     label: 'Compte',

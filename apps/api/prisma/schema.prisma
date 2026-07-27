@@ -403,6 +403,20 @@ model AuditLog {
   createdAt    DateTime @default(now())
 
   @@index([createdAt])
+  @@index([actorUserId])
+  @@index([action])
+  @@index([resourceType])
+}
+
+model AgentLog {
+  id        String   @id @default(cuid())
+  nodeId    String
+  level     String
+  message   String
+  createdAt DateTime @default(now())
+
+  @@index([nodeId, createdAt])
+  @@index([createdAt])
 }
 
 model Vlan {

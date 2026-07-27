@@ -1,10 +1,8 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import {
   ArrowDownToLine,
-  ArrowRight,
   ArrowUpToLine,
   Bell,
   BellOff,
@@ -624,12 +622,12 @@ export default function InfrastructurePage() {
           <TabsContent value="nodes">
           <Card className="border-white/[0.08] bg-zinc-900/65">
           <CardHeader>
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <Server className="h-5 w-5 text-violet-400" />
                 <CardTitle>Nœuds (serveurs)</CardTitle>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span>
@@ -879,21 +877,6 @@ export default function InfrastructurePage() {
           </CardContent>
         </Card>
 
-        <Callout>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span>
-              Les pools de stockage (regroupement de nœuds selon une stratégie miroir/RAID/simple) se gèrent depuis la
-              page Stockage.
-            </span>
-            <Link
-              href="/dashboard/storage"
-              className="inline-flex shrink-0 items-center gap-1.5 text-sm font-medium text-violet-200 hover:text-violet-100"
-            >
-              Aller à Stockage
-              <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          </div>
-        </Callout>
           </TabsContent>
         </Tabs>
 

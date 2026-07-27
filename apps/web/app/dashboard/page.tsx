@@ -16,7 +16,6 @@ import { api, NodeMetricSample } from '../../lib/api';
 import { usePolling } from '../../lib/hooks/usePolling';
 import { DashboardLayout } from '../../components/DashboardLayout';
 import { PageHeader } from '../../components/PageHeader';
-import { Callout } from '../../components/Callout';
 import { ServerTrendCard } from '../../components/ServerTrendCard';
 import { FleetPerformanceChart, NetworkThroughputChart, StorageBreakdownChart } from '../../components/dashboard-charts';
 import { StatCard, Badge } from '../../components/ui';
@@ -135,11 +134,6 @@ export default function OverviewPage() {
           title="Vue d'ensemble"
           description="État en direct de votre flotte de nœuds : capacité, charge, alertes et travaux en cours."
         />
-
-        <Callout>
-          Les débits réseau sont affichés en <strong className="text-violet-100">MB/s</strong>, les tendances CPU/RAM
-          sur une échelle de 0 à 100 %.
-        </Callout>
 
         <section className="space-y-4">
           <SectionLabel>Aperçu</SectionLabel>

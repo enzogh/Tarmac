@@ -5,6 +5,7 @@ import type { Request } from 'express';
 import * as jwt from 'jsonwebtoken';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { AUTH_COOKIE_NAME } from './auth.controller';
+import { getCandidateJwtSecrets } from './jwt-secrets';
 
 function cookieExtractor(req: Request): string | null {
   return req?.cookies?.[AUTH_COOKIE_NAME] ?? null;
@@ -18,19 +19,11 @@ interface JwtPayload {
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(configService: ConfigService) {
-    const currentSecret = configService.get<string>('JWT_SECRET');
-    if (!currentSecret) {
-      throw new Error('JWT_SECRET must be set (refusing to start with an insecure default)');
-    }
-    const previousSecret = configService.get<string>('JWT_SECRET_PREVIOUS');
-    const candidateSecrets = [currentSecret, ...(previousSecret ? [previousSecret] : [])];
+    const candidateSecrets = getCandidateJwtSecrets(configService);
 
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([cookieExtractor, ExtractJwt.fromAuthHeaderAsBearerToken()]),
       ignoreExpiration: false,
-      // Rotating JWT_SECRET would otherwise invalidate every logged-in session
-      // instantly. During a rotation window (JWT_SECRET_PREVIOUS set), tokens
-      // signed with either secret verify - new logins always get the current one.
       secretOrKeyProvider: (_request: unknown, rawJwtToken: string, done: (err: Error | null, secret?: string) => void) => {
         for (const secret of candidateSecrets) {
           try {

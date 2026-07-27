@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -200,6 +201,84 @@ func (c *wsClient) send(v interface{}) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.conn.WriteJSON(v)
+}
+
+type logLine struct {
+	NodeID    string `json:"nodeId"`
+	Level     string `json:"level"`
+	Message   string `json:"message"`
+	Timestamp string `json:"timestamp"`
+}
+
+// wsLogForwarder mirrors everything written to it (i.e. every log.Printf
+// call, once main() redirects the standard logger through it) to the
+// control plane as "agent.log" envelopes, in addition to the normal
+// stderr/journalctl destination. Sends are non-blocking: if the control
+// plane can't keep up, lines are dropped rather than stalling whatever
+// goroutine happened to log something, and the drop count is reported
+// periodically so a burst of lost lines is visible instead of silent.
+type wsLogForwarder struct {
+	client  *wsClient
+	nodeID  string
+	lines   chan string
+	dropped int64
+	done    chan struct{}
+}
+
+func newWsLogForwarder(client *wsClient, nodeID string) *wsLogForwarder {
+	f := &wsLogForwarder{
+		client: client,
+		nodeID: nodeID,
+		lines:  make(chan string, 200),
+		done:   make(chan struct{}),
+	}
+	go f.run()
+	return f
+}
+
+func (f *wsLogForwarder) Write(p []byte) (int, error) {
+	line := strings.TrimRight(string(p), "\n")
+	if line != "" {
+		select {
+		case f.lines <- line:
+		default:
+			atomic.AddInt64(&f.dropped, 1)
+		}
+	}
+	return len(p), nil
+}
+
+func (f *wsLogForwarder) send(level, message string) {
+	_ = f.client.send(envelope{
+		Type: "agent.log",
+		Payload: logLine{
+			NodeID:    f.nodeID,
+			Level:     level,
+			Message:   message,
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		},
+	})
+}
+
+func (f *wsLogForwarder) run() {
+	dropTicker := time.NewTicker(30 * time.Second)
+	defer dropTicker.Stop()
+	for {
+		select {
+		case <-f.done:
+			return
+		case line := <-f.lines:
+			f.send("info", line)
+		case <-dropTicker.C:
+			if n := atomic.SwapInt64(&f.dropped, 0); n > 0 {
+				f.send("warning", fmt.Sprintf("%d log lines dropped (buffer full)", n))
+			}
+		}
+	}
+}
+
+func (f *wsLogForwarder) stop() {
+	close(f.done)
 }
 
 type cpuSnapshot struct {
@@ -3298,8 +3377,20 @@ func handleCommand(cmd commandPayload, onProgress func(progress commandProgress)
 	return result
 }
 
+// redactedURL strips query parameters (which carry the agent auth token)
+// before a URL is logged, so the token never lands in journalctl, the
+// agent-log stream, or the AgentLog table.
+func redactedURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	u.RawQuery = ""
+	return u.String()
+}
+
 func runSession(ctx context.Context, wsURL string, nodeID string) error {
-	log.Printf("connecting to %s", wsURL)
+	log.Printf("connecting to %s", redactedURL(wsURL))
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		return err
@@ -3307,6 +3398,12 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 	defer conn.Close()
 
 	client := &wsClient{conn: conn}
+	logForwarder := newWsLogForwarder(client, nodeID)
+	log.SetOutput(io.MultiWriter(os.Stderr, logForwarder))
+	defer func() {
+		log.SetOutput(os.Stderr)
+		logForwarder.stop()
+	}()
 	c := &collector{}
 	var overlay *overlayState
 	hasOverlayState := false

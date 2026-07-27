@@ -108,6 +108,13 @@ export interface CommandResultPayload {
   };
 }
 
+export interface AgentLogPayload {
+  nodeId: string;
+  level: string;
+  message: string;
+  timestamp?: string;
+}
+
 export interface CommandProgressPayload {
   command: 'run_rsync';
   resourceType: 'sync_job_run' | 'migration';

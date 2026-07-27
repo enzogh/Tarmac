@@ -372,7 +372,7 @@ export default function StoragePage() {
                         <Grid3x3 className="w-5 h-5 text-violet-400" />
                         {pool.name}
                       </CardTitle>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <Badge label={pool.strategy} type="info" />
                         <Badge label={statusBadge.label} type={statusBadge.type} />
                         <Button

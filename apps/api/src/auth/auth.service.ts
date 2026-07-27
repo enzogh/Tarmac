@@ -11,9 +11,16 @@ import type { User } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
+import * as jwt from 'jsonwebtoken';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { getCandidateJwtSecrets } from './jwt-secrets';
+
+interface JwtPayload {
+  sub: string;
+  email: string;
+}
 
 @Injectable()
 export class AuthService implements OnModuleInit {
@@ -137,6 +144,22 @@ export class AuthService implements OnModuleInit {
       }
       throw error;
     }
+  }
+
+  // Verifies a raw JWT outside of the passport/HTTP flow (used by the
+  // live-updates WebSocket, which authenticates off the same cookie but
+  // has no Express request/guard pipeline to hook into). Tries every
+  // secret in the current rotation window, same as JwtStrategy.
+  verifyToken(rawToken: string): { userId: string; email: string } | null {
+    for (const secret of getCandidateJwtSecrets(this.configService)) {
+      try {
+        const payload = jwt.verify(rawToken, secret) as JwtPayload;
+        return { userId: payload.sub, email: payload.email };
+      } catch {
+        continue;
+      }
+    }
+    return null;
   }
 
   private shouldBootstrapDefaultAdmin() {

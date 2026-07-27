@@ -2,11 +2,13 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { AgentLogsModule } from './agent-logs/agent-logs.module';
 import { AgentsModule } from './agents/agents.module';
 import { AlertRulesModule } from './alert-rules/alert-rules.module';
 import { AlertsModule } from './alerts/alerts.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { AuthModule } from './auth/auth.module';
+import { LiveModule } from './live/live.module';
 import { MigrationsModule } from './migrations/migrations.module';
 import { MountsModule } from './mounts/mounts.module';
 import { NodesModule } from './nodes/nodes.module';
@@ -28,6 +30,7 @@ import { VlanModule } from './vlan/vlan.module';
     }),
     PrismaModule,
     AuthModule,
+    LiveModule,
     NodesModule,
     SharesModule,
     MountsModule,
@@ -41,6 +44,7 @@ import { VlanModule } from './vlan/vlan.module';
     TopologyModule,
     StorageModule,
     AgentsModule,
+    AgentLogsModule,
     ReconciliationModule,
     VlanModule,
   ],

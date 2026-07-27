@@ -807,7 +807,7 @@ export default function NetworkPage() {
           <CardHeader className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle className="text-base">Vue interconnexion (mind map live)</CardTitle>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   size="sm"
                   variant="outline"

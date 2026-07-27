@@ -6,7 +6,13 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { PrismaService } from '../prisma/prisma.service';
 import { AgentTokenService } from './agent-token.service';
 import { AgentsService } from './agents.service';
-import { CommandProgressPayload, CommandResultPayload, HeartbeatPayload, StateReportPayload } from './agents.types';
+import {
+  AgentLogPayload,
+  CommandProgressPayload,
+  CommandResultPayload,
+  HeartbeatPayload,
+  StateReportPayload,
+} from './agents.types';
 
 interface AgentWsMessage {
   type: string;
@@ -77,6 +83,10 @@ export class AgentsWsServer implements OnModuleInit {
 
         if (msg.type === 'command_progress' && msg.payload) {
           await this.agentsService.onCommandProgress(msg.payload as CommandProgressPayload);
+        }
+
+        if (msg.type === 'agent.log' && msg.payload) {
+          await this.agentsService.onAgentLog(msg.payload as AgentLogPayload);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'unknown parse error';
