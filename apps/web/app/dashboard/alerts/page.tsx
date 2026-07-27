@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 import { Bell, Eye, CheckCircle2, AlertCircle, AlertTriangle, Circle, Trash2 } from 'lucide-react';
-import { api, AlertItem } from '../../../lib/api';
+import { api } from '../../../lib/api';
+import { usePolling } from '../../../lib/hooks/usePolling';
 import { DashboardLayout } from '../../../components/DashboardLayout';
 import { PageHeader } from '../../../components/PageHeader';
 import { Callout } from '../../../components/Callout';
@@ -14,47 +14,29 @@ import { Button } from '../../../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
 import { Label } from '../../../components/ui/label';
+import { ListSkeleton, StatCardSkeleton } from '../../../components/ui/skeleton';
 
 type SeverityFilter = 'all' | 'critical' | 'high' | 'medium' | 'low';
 type StatusFilter = 'all' | 'open' | 'acknowledged' | 'resolved';
 
 export default function AlertsPage() {
-  const router = useRouter();
-
-  const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const { data: alerts = [], mutate, isLoading } = usePolling('alerts', api.alerts.list);
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
-  const load = async () => {
-    try {
-      const a = await api.alerts.list();
-      setAlerts(a);
-    } catch {
-      router.push('/login');
-    }
-  };
-
-  useEffect(() => {
-    void load();
-    const id = setInterval(() => {
-      void load();
-    }, 5000);
-    return () => clearInterval(id);
-  }, []);
-
   const handleAck = async (alertId: string) => {
     await api.alerts.ack(alertId);
-    await load();
+    await mutate();
   };
 
   const handleResolve = async (alertId: string) => {
     await api.alerts.resolve(alertId);
-    await load();
+    await mutate();
   };
 
   const handleDelete = async (alertId: string) => {
     await api.alerts.remove(alertId);
-    await load();
+    await mutate();
   };
 
   const getSeverityColor = (severity: string): 'success' | 'warning' | 'error' | 'info' => {
@@ -114,11 +96,19 @@ export default function AlertsPage() {
 
         <section className="space-y-4">
           <SectionLabel>Aperçu</SectionLabel>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <StatCard label="Critiques actives" value={critical} icon={<AlertCircle className="h-8 w-8" />} changeType={critical > 0 ? 'down' : 'up'} />
-            <StatCard label="Avertissements actifs" value={warnings} icon={<AlertTriangle className="h-8 w-8" />} changeType={warnings > 0 ? 'neutral' : 'up'} />
-            <StatCard label="Total" value={alerts.length} icon={<Bell className="h-8 w-8" />} changeType="neutral" />
-          </div>
+          {isLoading ? (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <StatCardSkeleton />
+              <StatCardSkeleton />
+              <StatCardSkeleton />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3 animate-fade-in">
+              <StatCard label="Critiques actives" value={critical} icon={<AlertCircle className="h-8 w-8" />} changeType={critical > 0 ? 'down' : 'up'} />
+              <StatCard label="Avertissements actifs" value={warnings} icon={<AlertTriangle className="h-8 w-8" />} changeType={warnings > 0 ? 'neutral' : 'up'} />
+              <StatCard label="Total" value={alerts.length} icon={<Bell className="h-8 w-8" />} changeType="neutral" />
+            </div>
+          )}
         </section>
 
         <SectionLabel>Alertes</SectionLabel>
@@ -163,7 +153,8 @@ export default function AlertsPage() {
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            {filtered.map((alert) => (
+            {isLoading && <ListSkeleton rows={4} />}
+            {!isLoading && filtered.map((alert) => (
               <div
                 key={alert.id}
                 className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 transition-colors hover:bg-white/[0.04]"
@@ -244,7 +235,7 @@ export default function AlertsPage() {
                 </div>
               </div>
             ))}
-            {filtered.length === 0 && (
+            {!isLoading && filtered.length === 0 && (
               <div className="flex items-center justify-center gap-2 py-10 text-muted-foreground">
                 <CheckCircle2 className="h-5 w-5 text-emerald-400" />
                 <span>{alerts.length === 0 ? 'Aucune alerte' : 'Aucune alerte correspondant aux filtres'}</span>

@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import {
   ArrowRight,
   CheckCircle2,
@@ -20,6 +19,7 @@ import {
   Settings2,
 } from 'lucide-react';
 import { api, MountItem, NodeItem, VlanMember } from '../../../lib/api';
+import { usePolling } from '../../../lib/hooks/usePolling';
 import { DashboardLayout } from '../../../components/DashboardLayout';
 import { PageHeader } from '../../../components/PageHeader';
 import { Callout } from '../../../components/Callout';
@@ -56,6 +56,7 @@ import {
 } from '../../../components/ui/dialog';
 import { DirectoryBrowser } from '../../../components/ui/directory-browser';
 import { NodeLabelBadges, StatCard } from '../../../components/ui';
+import { CardListSkeleton, StatCardSkeleton } from '../../../components/ui/skeleton';
 import { SectionLabel } from '../../../components/SectionLabel';
 import { readNodeLabels } from '../../../lib/node-labels';
 
@@ -192,11 +193,26 @@ type WizardMode = 'mount-existing' | 'create-share';
 type Notice = { type: 'error' | 'success' | 'warning'; message: string } | null;
 
 export default function MountsPage() {
-  const router = useRouter();
-
-  const [mounts, setMounts] = useState<MountItem[]>([]);
-  const [nodes, setNodes] = useState<NodeItem[]>([]);
-  const [vlanMembers, setVlanMembers] = useState<VlanMember[]>([]);
+  const { data: mounts = [], mutate: refreshMounts, isLoading: mountsLoading } = usePolling('mounts', api.mounts.list);
+  const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
+  const { data: vlanMembers = [] } = usePolling('vlan-members', async () => {
+    const vlanData = await api.vlan.getAll().catch(() => ({ vlans: [] }));
+    const members: VlanMember[] = [];
+    for (const vlan of vlanData.vlans) {
+      if (vlan.members?.length) {
+        members.push(...vlan.members);
+      }
+    }
+    if (members.length === 0 && vlanData.vlans.length > 0) {
+      const arrays = await Promise.all(
+        vlanData.vlans.map((v) =>
+          api.vlan.getMembers(v.id).then((r) => r.members).catch(() => [] as VlanMember[]),
+        ),
+      );
+      arrays.forEach((arr) => members.push(...arr));
+    }
+    return members;
+  });
   const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
@@ -274,44 +290,6 @@ export default function MountsPage() {
     const t = setTimeout(() => setNotice(null), 4000);
     return () => clearTimeout(t);
   }, [notice]);
-
-  const load = async () => {
-    try {
-      const [m, n, vlanData] = await Promise.all([
-        api.mounts.list(),
-        api.nodes.list(),
-        api.vlan.getAll().catch(() => ({ vlans: [] })),
-      ]);
-      setMounts(m);
-      setNodes(n);
-
-      // Collect all VLAN members
-      const members: VlanMember[] = [];
-      for (const vlan of vlanData.vlans) {
-        if (vlan.members?.length) {
-          members.push(...vlan.members);
-        }
-      }
-      // If embedded members were empty, fetch them individually
-      if (members.length === 0 && vlanData.vlans.length > 0) {
-        const arrays = await Promise.all(
-          vlanData.vlans.map((v) =>
-            api.vlan.getMembers(v.id).then((r) => r.members).catch(() => [] as VlanMember[]),
-          ),
-        );
-        arrays.forEach((arr) => members.push(...arr));
-      }
-      setVlanMembers(members);
-    } catch {
-      router.push('/login');
-    }
-  };
-
-  useEffect(() => {
-    void load();
-    const id = setInterval(() => void load(), 5000);
-    return () => clearInterval(id);
-  }, []);
 
   const loadLiveDirectories = async (
     kind: 'export' | 'client' | 'existing',
@@ -416,7 +394,7 @@ export default function MountsPage() {
       closeWizard();
       setShareForm({ name: '', exportNodeId: '', exportPath: '/exports', mountNodeId: '', mountPath: '/mnt/nfs', fsType: 'nfs4', mountOptions: 'defaults,hard,intr' });
       setNotice({ type: 'success', message: 'Partage NFS créé et configuré avec succès.' });
-      await load();
+      await refreshMounts();
     } catch {
       setNotice({ type: 'error', message: 'Erreur lors de la création du partage NFS.' });
     }
@@ -467,7 +445,7 @@ export default function MountsPage() {
       closeWizard();
       resetMountForm();
       setNotice({ type: 'success', message: 'Montage créé.' });
-      await load();
+      await refreshMounts();
     } catch {
       setNotice({ type: 'error', message: 'Erreur lors de la création du montage.' });
     }
@@ -480,7 +458,7 @@ export default function MountsPage() {
     try {
       await api.mounts.remount(mountId);
       setNotice({ type: 'success', message: 'Nouvelle tentative de montage lancée.' });
-      await load();
+      await refreshMounts();
     } catch {
       setNotice({ type: 'error', message: 'Impossible de relancer ce montage.' });
     } finally {
@@ -521,7 +499,7 @@ export default function MountsPage() {
       await api.mounts.remount(sshEditMount.id);
       setNotice({ type: 'success', message: 'Source SSH mise à jour, nouvelle tentative lancée.' });
       setSshEditMount(null);
-      await load();
+      await refreshMounts();
     } catch {
       setNotice({ type: 'error', message: 'Erreur lors de la mise à jour de la source SSH.' });
     } finally {
@@ -536,7 +514,7 @@ export default function MountsPage() {
     try {
       await api.mounts.delete(mountId);
       setNotice({ type: 'success', message: 'Montage supprimé.' });
-      await load();
+      await refreshMounts();
     } catch {
       setNotice({ type: 'error', message: 'Impossible de supprimer ce montage.' });
     } finally {
@@ -1139,21 +1117,29 @@ export default function MountsPage() {
 
         <section className="space-y-4">
           <SectionLabel>Aperçu</SectionLabel>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <StatCard label="Montages" value={mounts.length} icon={<HardDrive className="h-8 w-8" />} changeType="neutral" />
-            <StatCard
-              label="Actifs"
-              value={activeMounts}
-              icon={<CheckCircle2 className="h-8 w-8" />}
-              changeType={activeMounts === mounts.length && mounts.length > 0 ? 'up' : 'neutral'}
-            />
-            <StatCard
-              label="En erreur"
-              value={errorMounts}
-              icon={<AlertCircle className="h-8 w-8" />}
-              changeType={errorMounts > 0 ? 'down' : 'up'}
-            />
-          </div>
+          {mountsLoading ? (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <StatCardSkeleton />
+              <StatCardSkeleton />
+              <StatCardSkeleton />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3 animate-fade-in">
+              <StatCard label="Montages" value={mounts.length} icon={<HardDrive className="h-8 w-8" />} changeType="neutral" />
+              <StatCard
+                label="Actifs"
+                value={activeMounts}
+                icon={<CheckCircle2 className="h-8 w-8" />}
+                changeType={activeMounts === mounts.length && mounts.length > 0 ? 'up' : 'neutral'}
+              />
+              <StatCard
+                label="En erreur"
+                value={errorMounts}
+                icon={<AlertCircle className="h-8 w-8" />}
+                changeType={errorMounts > 0 ? 'down' : 'up'}
+              />
+            </div>
+          )}
         </section>
 
         {/* Info banner */}
@@ -1169,7 +1155,9 @@ export default function MountsPage() {
 
         {/* Mount list */}
         <SectionLabel>Montages</SectionLabel>
-        {mounts.length === 0 ? (
+        {mountsLoading ? (
+          <CardListSkeleton cards={3} />
+        ) : mounts.length === 0 ? (
           <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
             <CardContent className="py-16 text-center">
               <div className="mb-4 text-5xl">📂</div>
@@ -1187,7 +1175,7 @@ export default function MountsPage() {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid gap-3">
+          <div className="grid gap-3 animate-fade-in">
             {mounts.map((mount) => {
               const sc = statusConfig[mount.status as keyof typeof statusConfig] ?? { label: mount.status, variant: 'secondary' as const };
               return (

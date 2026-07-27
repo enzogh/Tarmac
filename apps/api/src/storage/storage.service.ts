@@ -49,7 +49,10 @@ export class StorageService {
         orderBy: [{ nodeId: 'asc' }, { mountPath: 'asc' }],
       }),
       this.prisma.metricSample.findMany({
-        where: nodeId ? { nodeId } : undefined,
+        where: {
+          ...(nodeId ? { nodeId } : {}),
+          createdAt: { gte: new Date(Date.now() - 10 * 60_000) },
+        },
         orderBy: [{ nodeId: 'asc' }, { createdAt: 'desc' }],
         distinct: ['nodeId'],
       }),

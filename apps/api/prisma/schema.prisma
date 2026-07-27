@@ -258,6 +258,7 @@ model SmartReport {
   node               Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
 
   @@index([nodeId, collectedAt])
+  @@index([nodeId, diskName, collectedAt])
 }
 
 model Pool {

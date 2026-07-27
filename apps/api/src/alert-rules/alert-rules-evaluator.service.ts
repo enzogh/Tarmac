@@ -51,6 +51,7 @@ export class AlertRulesEvaluatorService {
     const [nodes, latestSamples, openAlerts] = await Promise.all([
       this.prisma.node.findMany({ select: { id: true, name: true, mutedUntil: true } }),
       this.prisma.metricSample.findMany({
+        where: { createdAt: { gte: new Date(Date.now() - 10 * 60_000) } },
         orderBy: [{ nodeId: 'asc' }, { createdAt: 'desc' }],
         distinct: ['nodeId'],
       }),

@@ -64,6 +64,7 @@ export class SyncJobsService {
     return this.prisma.syncJob.findMany({
       orderBy: { createdAt: 'desc' },
       include: { node: true, runs: { orderBy: { startedAt: 'desc' }, take: 5 } },
+      take: 200,
     });
   }
 

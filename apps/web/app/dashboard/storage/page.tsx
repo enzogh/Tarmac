@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import {
   Plus,
   HardDrive,
@@ -18,6 +17,7 @@ import {
   Server,
 } from 'lucide-react';
 import { api, NodeItem, PoolItem } from '../../../lib/api';
+import { usePolling } from '../../../lib/hooks/usePolling';
 import { DashboardLayout } from '../../../components/DashboardLayout';
 import { PageHeader } from '../../../components/PageHeader';
 import { Callout } from '../../../components/Callout';
@@ -25,6 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui
 import { Button } from '../../../components/ui/button';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Badge, NodeLabelBadges, StatCard } from '../../../components/ui';
+import { CardListSkeleton, StatCardSkeleton } from '../../../components/ui/skeleton';
 import { readNodeLabels } from '../../../lib/node-labels';
 import { SectionLabel } from '../../../components/SectionLabel';
 import {
@@ -74,10 +75,8 @@ const STATUS_BADGE: Record<string, { label: string; type: 'success' | 'warning' 
 };
 
 export default function StoragePage() {
-  const router = useRouter();
-
-  const [nodes, setNodes] = useState<NodeItem[]>([]);
-  const [pools, setPools] = useState<PoolItem[]>([]);
+  const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
+  const { data: pools = [], mutate: refreshPools, isLoading: poolsLoading } = usePolling('pools', api.pools.list);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState<PresetOption | null>(null);
   const [notice, setNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
@@ -89,22 +88,6 @@ export default function StoragePage() {
     strategy: 'mirror',
     nodeIds: [] as string[],
   });
-
-  const load = async () => {
-    try {
-      const [n, p] = await Promise.all([api.nodes.list(), api.pools.list()]);
-      setNodes(n);
-      setPools(p);
-    } catch {
-      router.push('/login');
-    }
-  };
-
-  useEffect(() => {
-    void load();
-    const id = setInterval(() => void load(), 5000);
-    return () => clearInterval(id);
-  }, []);
 
   useEffect(() => {
     setNodeLabels(readNodeLabels());
@@ -249,7 +232,7 @@ export default function StoragePage() {
       setNotice({ type: 'success', message: `Pool « ${pool.name} » créé.` });
       setWizardOpen(false);
       resetForm();
-      await load();
+      await refreshPools();
     } catch {
       setNotice({ type: 'error', message: 'Erreur lors de la création du pool.' });
     }
@@ -260,7 +243,7 @@ export default function StoragePage() {
     setBusyPoolId(pool.id);
     try {
       await api.pools.delete(pool.id);
-      await load();
+      await refreshPools();
     } catch {
       setNotice({ type: 'error', message: 'Erreur lors de la suppression du pool.' });
     } finally {
@@ -272,7 +255,7 @@ export default function StoragePage() {
     setBusyPoolId(poolId);
     try {
       await api.pools.removeMember(poolId, nodeId);
-      await load();
+      await refreshPools();
     } catch {
       setNotice({ type: 'error', message: "Erreur lors du retrait du nœud." });
     } finally {
@@ -308,16 +291,24 @@ export default function StoragePage() {
 
         <section className="space-y-4">
           <SectionLabel>Aperçu</SectionLabel>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <StatCard label="Pools" value={pools.length} icon={<Layers className="h-8 w-8" />} changeType="neutral" />
-            <StatCard
-              label="Pools actifs"
-              value={activePools}
-              icon={<Grid3x3 className="h-8 w-8" />}
-              changeType={activePools === pools.length && pools.length > 0 ? 'up' : 'neutral'}
-            />
-            <StatCard label="Nœuds regroupés" value={nodesInPools} icon={<Server className="h-8 w-8" />} changeType="neutral" />
-          </div>
+          {poolsLoading ? (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <StatCardSkeleton />
+              <StatCardSkeleton />
+              <StatCardSkeleton />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3 animate-fade-in">
+              <StatCard label="Pools" value={pools.length} icon={<Layers className="h-8 w-8" />} changeType="neutral" />
+              <StatCard
+                label="Pools actifs"
+                value={activePools}
+                icon={<Grid3x3 className="h-8 w-8" />}
+                changeType={activePools === pools.length && pools.length > 0 ? 'up' : 'neutral'}
+              />
+              <StatCard label="Nœuds regroupés" value={nodesInPools} icon={<Server className="h-8 w-8" />} changeType="neutral" />
+            </div>
+          )}
         </section>
 
         <section className="space-y-4">
@@ -359,7 +350,9 @@ export default function StoragePage() {
         </section>
 
         <SectionLabel>Pools</SectionLabel>
-        {pools.length === 0 ? (
+        {poolsLoading ? (
+          <CardListSkeleton cards={2} />
+        ) : pools.length === 0 ? (
           <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
             <CardContent className="pt-12 pb-12 text-center">
               <HardDrive className="mx-auto mb-4 h-12 w-12 text-muted-foreground/50" />
@@ -368,7 +361,7 @@ export default function StoragePage() {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid gap-4">
+          <div className="grid gap-4 animate-fade-in">
             {pools.map((pool) => {
               const statusBadge = STATUS_BADGE[pool.status] ?? STATUS_BADGE.pending;
               return (

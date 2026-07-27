@@ -195,6 +195,7 @@ export class MigrationsService {
     const migrations = await this.prisma.migrationTask.findMany({
       orderBy: { createdAt: 'desc' },
       include: { sourceNode: true, targetNode: true },
+      take: 200,
     });
     return migrations.map((migration) => this.withMetadata(migration));
   }

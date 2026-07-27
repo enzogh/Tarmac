@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import {
   Plus,
   Copy,
@@ -20,6 +19,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { api, API_BASE, NodeItem, SyncJobItem, SyncJobRunItem } from '../../../lib/api';
+import { usePolling } from '../../../lib/hooks/usePolling';
 import { DashboardLayout } from '../../../components/DashboardLayout';
 import { PageHeader } from '../../../components/PageHeader';
 import { Callout } from '../../../components/Callout';
@@ -27,6 +27,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui
 import { Button } from '../../../components/ui/button';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Badge, StatCard } from '../../../components/ui';
+import { CardListSkeleton, StatCardSkeleton } from '../../../components/ui/skeleton';
 import { SectionLabel } from '../../../components/SectionLabel';
 import { HelpText, InfoBox, StepConfig, WizardDialog } from '../../../components/ui/wizard';
 import {
@@ -47,10 +48,8 @@ const STATUS_BADGE: Record<string, { label: string; type: 'success' | 'warning' 
 };
 
 export default function ReplicationPage() {
-  const router = useRouter();
-
-  const [nodes, setNodes] = useState<NodeItem[]>([]);
-  const [jobs, setJobs] = useState<SyncJobItem[]>([]);
+  const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
+  const { data: jobs = [], mutate: refreshJobs, isLoading: jobsLoading } = usePolling('sync-jobs', api.syncJobs.list);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [notice, setNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
@@ -75,22 +74,6 @@ export default function ReplicationPage() {
     sourceUser: '',
     sourceSshPort: '',
   });
-
-  const load = async () => {
-    try {
-      const [n, j] = await Promise.all([api.nodes.list(), api.syncJobs.list()]);
-      setNodes(n);
-      setJobs(j);
-    } catch {
-      router.push('/login');
-    }
-  };
-
-  useEffect(() => {
-    void load();
-    const id = setInterval(() => void load(), 5000);
-    return () => clearInterval(id);
-  }, []);
 
   useEffect(() => {
     setNodeLabels(readNodeLabels());
@@ -296,7 +279,7 @@ export default function ReplicationPage() {
       }
       setWizardOpen(false);
       resetForm();
-      await load();
+      await refreshJobs();
     } catch {
       setNotice({ type: 'error', message: 'Erreur lors de la création de la tâche.' });
     }
@@ -341,7 +324,7 @@ export default function ReplicationPage() {
       });
       setNotice({ type: 'success', message: 'Source SSH mise à jour.' });
       setSshEditJob(null);
-      await load();
+      await refreshJobs();
     } catch {
       setNotice({ type: 'error', message: 'Erreur lors de la mise à jour de la source SSH.' });
     } finally {
@@ -367,7 +350,7 @@ export default function ReplicationPage() {
       await api.syncJobs.update(generalEditJob.id, { name, targetPath });
       setNotice({ type: 'success', message: 'Tâche mise à jour.' });
       setGeneralEditJob(null);
-      await load();
+      await refreshJobs();
     } catch {
       setNotice({ type: 'error', message: 'Erreur lors de la mise à jour de la tâche.' });
     } finally {
@@ -380,7 +363,7 @@ export default function ReplicationPage() {
     try {
       await api.syncJobs.run(job.id);
       setNotice({ type: 'success', message: `Réplication « ${job.name} » lancée.` });
-      await load();
+      await refreshJobs();
     } catch {
       setNotice({ type: 'error', message: 'Erreur lors du lancement de la réplication.' });
     } finally {
@@ -393,7 +376,7 @@ export default function ReplicationPage() {
     setBusyJobId(job.id);
     try {
       await api.syncJobs.delete(job.id);
-      await load();
+      await refreshJobs();
     } catch {
       setNotice({ type: 'error', message: 'Erreur lors de la suppression de la tâche.' });
     } finally {
@@ -441,16 +424,24 @@ export default function ReplicationPage() {
 
         <section className="space-y-4">
           <SectionLabel>Aperçu</SectionLabel>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <StatCard label="Tâches" value={jobs.length} icon={<Copy className="h-8 w-8" />} changeType="neutral" />
-            <StatCard label="Réussies" value={successfulJobs} icon={<CheckCircle2 className="h-8 w-8" />} changeType="up" />
-            <StatCard
-              label="Échouées"
-              value={failedJobs}
-              icon={<AlertCircle className="h-8 w-8" />}
-              changeType={failedJobs > 0 ? 'down' : 'up'}
-            />
-          </div>
+          {jobsLoading ? (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <StatCardSkeleton />
+              <StatCardSkeleton />
+              <StatCardSkeleton />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3 animate-fade-in">
+              <StatCard label="Tâches" value={jobs.length} icon={<Copy className="h-8 w-8" />} changeType="neutral" />
+              <StatCard label="Réussies" value={successfulJobs} icon={<CheckCircle2 className="h-8 w-8" />} changeType="up" />
+              <StatCard
+                label="Échouées"
+                value={failedJobs}
+                icon={<AlertCircle className="h-8 w-8" />}
+                changeType={failedJobs > 0 ? 'down' : 'up'}
+              />
+            </div>
+          )}
         </section>
 
         <Callout variant="info">
@@ -459,7 +450,9 @@ export default function ReplicationPage() {
         </Callout>
 
         <SectionLabel>Tâches de réplication</SectionLabel>
-        {jobs.length === 0 ? (
+        {jobsLoading ? (
+          <CardListSkeleton cards={3} />
+        ) : jobs.length === 0 ? (
           <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
             <CardContent className="pt-12 pb-12 text-center">
               <Copy className="mx-auto mb-4 h-12 w-12 text-muted-foreground/50" />
@@ -468,7 +461,7 @@ export default function ReplicationPage() {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid gap-4">
+          <div className="grid gap-4 animate-fade-in">
             {jobs.map((job) => {
               const statusBadge = STATUS_BADGE[job.status] ?? STATUS_BADGE.pending;
               const runs = runsByJob[job.id] ?? [];

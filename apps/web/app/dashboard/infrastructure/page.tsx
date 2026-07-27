@@ -1,7 +1,6 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   ArrowDownToLine,
@@ -26,6 +25,8 @@ import {
   Trash2,
 } from 'lucide-react';
 import { api, DirectoryScanEntry, NodeActivityItem, NodeMetricSample, SmartHistoryPoint } from '../../../lib/api';
+import { usePolling } from '../../../lib/hooks/usePolling';
+import { CardListSkeleton, ChartCardSkeleton, StatCardSkeleton } from '../../../components/ui/skeleton';
 import { GeoInfo, flagFromCountryCode, getGeoInfo, parseHostFromEndpoint } from '../../../lib/geo';
 import { readNodeLabels, writeNodeLabels } from '../../../lib/node-labels';
 import { DashboardLayout } from '../../../components/DashboardLayout';
@@ -68,10 +69,26 @@ const formatBytes = (value: number) => {
 const formatDateTime = (value?: string | null) => (value ? new Date(value).toLocaleString('fr-FR') : '-');
 
 export default function InfrastructurePage() {
-  const router = useRouter();
+  const { data: nodes = [], mutate: refreshNodes, isLoading: nodesLoading } = usePolling('activity:1h', () => api.nodes.activity());
 
-  const [nodes, setNodes] = useState<NodeActivityItem[]>([]);
-  const [samplesByNode, setSamplesByNode] = useState<Record<string, NodeMetricSample[]>>({});
+  const topNodeIds = useMemo(
+    () =>
+      [...nodes]
+        .sort((left, right) => right.metrics.cpu - left.metrics.cpu)
+        .slice(0, 6)
+        .map((node) => node.id),
+    [nodes],
+  );
+
+  const { data: samplesByNode = {} } = usePolling(
+    topNodeIds.length > 0 ? `metrics:${topNodeIds.join(',')}:6h` : null,
+    async () => {
+      const histories = await Promise.all(
+        topNodeIds.map(async (id) => [id, await api.nodes.metrics(id, '6h')] as const),
+      );
+      return Object.fromEntries(histories) as Record<string, NodeMetricSample[]>;
+    },
+  );
 
   const [editNode, setEditNode] = useState<NodeActivityItem | null>(null);
   const [editName, setEditName] = useState('');
@@ -136,20 +153,6 @@ export default function InfrastructurePage() {
   const [scanResults, setScanResults] = useState<DirectoryScanEntry[]>([]);
   const [scanTruncated, setScanTruncated] = useState(false);
 
-  const load = async () => {
-    try {
-      const n = await api.nodes.activity();
-      const topNodes = [...n].sort((left, right) => right.metrics.cpu - left.metrics.cpu).slice(0, 6);
-      const histories = await Promise.all(
-        topNodes.map(async (node) => [node.id, await api.nodes.metrics(node.id, '6h')] as const),
-      );
-      setNodes(n);
-      setSamplesByNode(Object.fromEntries(histories));
-    } catch {
-      router.push('/login');
-    }
-  };
-
   const loadNodeDirectories = async (nodeId: string, basePath: string) => {
     if (!nodeId) return;
     setDirectoryLoading(true);
@@ -189,14 +192,6 @@ export default function InfrastructurePage() {
 
   useEffect(() => {
     setNodeLabels(readNodeLabels());
-  }, []);
-
-  useEffect(() => {
-    void load();
-    const id = setInterval(() => {
-      void load();
-    }, 5000);
-    return () => clearInterval(id);
   }, []);
 
   useEffect(() => {
@@ -257,7 +252,7 @@ export default function InfrastructurePage() {
             message: `${node.name} supprimé, mais l’agent était hors ligne : désinstallez-le manuellement sur le serveur.`,
           },
     );
-    await load();
+    await refreshNodes();
     setNodeToDelete(null);
   };
 
@@ -284,7 +279,7 @@ export default function InfrastructurePage() {
         writeNodeLabels(next);
         return next;
       });
-      await load();
+      await refreshNodes();
       setEditNode(null);
     } finally {
       setEditLoading(false);
@@ -353,7 +348,7 @@ export default function InfrastructurePage() {
           message: `Alertes mises en silence pour ${node.name} pendant 1h (maintenance).`,
         });
       }
-      await load();
+      await refreshNodes();
     } catch {
       setUpdateNotice({ type: 'error', message: `Impossible de changer l’état de silence pour ${node.name}.` });
     }
@@ -422,7 +417,14 @@ export default function InfrastructurePage() {
 
         <section className="space-y-4">
           <SectionLabel>Aperçu</SectionLabel>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+          {nodesLoading ? (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+              {Array.from({ length: 6 }).map((_, index) => (
+                <StatCardSkeleton key={index} />
+              ))}
+            </div>
+          ) : (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6 animate-fade-in">
             <StatCard label="Nœuds online" value={onlineNodes} icon={<Server className="h-8 w-8" />} changeType="up" />
             <StatCard
               label="Nœuds dégradés"
@@ -459,6 +461,7 @@ export default function InfrastructurePage() {
               </TooltipContent>
             </Tooltip>
           </div>
+          )}
         </section>
 
         <Tabs defaultValue="nodes" className="space-y-4">
@@ -469,6 +472,13 @@ export default function InfrastructurePage() {
           </TabsList>
 
           <TabsContent value="performance">
+          {nodesLoading ? (
+            <div className="space-y-4">
+              <ChartCardSkeleton />
+              <CardListSkeleton cards={4} />
+            </div>
+          ) : (
+          <div className="space-y-4 animate-fade-in">
           <Card className="border-white/[0.08] bg-zinc-900/65">
             <CardHeader>
               <CardTitle className="text-base">Comparaison CPU / RAM par nœud</CardTitle>
@@ -500,6 +510,8 @@ export default function InfrastructurePage() {
               </div>
             </CardContent>
           </Card>
+          </div>
+          )}
           </TabsContent>
 
           <TabsContent value="exploration">
@@ -637,12 +649,14 @@ export default function InfrastructurePage() {
                     ({controlVersion ?? 'réf. inconnue'})
                   </TooltipContent>
                 </Tooltip>
-                <NodeOnboardingModal onCreated={load} />
+                <NodeOnboardingModal onCreated={refreshNodes} />
               </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2">
+            {nodesLoading && <CardListSkeleton cards={4} />}
+            {!nodesLoading && (
+            <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2 animate-fade-in">
               {nodes.map((node) => (
                 <div key={node.id} className="rounded-2xl border border-white/[0.08] bg-zinc-950/45 p-4">
                   {(() => {
@@ -855,8 +869,9 @@ export default function InfrastructurePage() {
                 </div>
               ))}
             </div>
+            )}
 
-            {nodes.length === 0 && (
+            {!nodesLoading && nodes.length === 0 && (
               <p className="py-8 text-center text-sm text-muted-foreground">
                 Aucun nœud enregistré. Cliquez sur « Onboarder un nœud » pour commencer.
               </p>

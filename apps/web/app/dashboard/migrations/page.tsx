@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import {
   ArrowRight,
   ArrowRightLeft,
@@ -17,6 +16,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { api, MigrationItem, NodeItem } from '../../../lib/api';
+import { usePolling } from '../../../lib/hooks/usePolling';
 import { DashboardLayout } from '../../../components/DashboardLayout';
 import { PageHeader } from '../../../components/PageHeader';
 import { SectionLabel } from '../../../components/SectionLabel';
@@ -61,6 +61,7 @@ import {
 } from '../../../components/ui/wizard';
 import { DirectoryBrowser } from '../../../components/ui/directory-browser';
 import { readNodeLabels } from '../../../lib/node-labels';
+import { CardListSkeleton, StatCardSkeleton, TableRowSkeleton } from '../../../components/ui/skeleton';
 
 const MIGRATION_PRESETS: PresetOption[] = [
   {
@@ -153,10 +154,8 @@ function RemoteEndpointFields({
 }
 
 export default function MigrationsPage() {
-  const router = useRouter();
-
-  const [migrations, setMigrations] = useState<MigrationItem[]>([]);
-  const [nodes, setNodes] = useState<NodeItem[]>([]);
+  const { data: migrations = [], mutate: refreshMigrations, isLoading: migrationsLoading } = usePolling('migrations', api.migrations.list);
+  const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
   const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
   const [wizardOpen, setWizardOpen] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState<PresetOption | null>(null);
@@ -198,16 +197,6 @@ export default function MigrationsPage() {
     notes: '',
   });
   const [deleteMigration, setDeleteMigration] = useState<MigrationItem | null>(null);
-
-  const load = async () => {
-    try {
-      const [mg, n] = await Promise.all([api.migrations.list(), api.nodes.list()]);
-      setMigrations(mg);
-      setNodes(n);
-    } catch {
-      router.push('/login');
-    }
-  };
 
   const loadDirectories = async (kind: 'source' | 'target', basePath: string) => {
     const endpointKind = kind === 'source' ? formData.sourceKind : formData.targetKind;
@@ -263,12 +252,6 @@ export default function MigrationsPage() {
       setDirectoriesLoading((prev) => ({ ...prev, [kind]: false }));
     }
   };
-
-  useEffect(() => {
-    void load();
-    const id = setInterval(() => void load(), 5000);
-    return () => clearInterval(id);
-  }, []);
 
   useEffect(() => {
     setNodeLabels(readNodeLabels());
@@ -446,7 +429,7 @@ export default function MigrationsPage() {
       });
       setSelectedPreset(null);
       setNotice({ type: 'success', message: 'Migration créée.' });
-      await load();
+      await refreshMigrations();
     } catch {
       setNotice({ type: 'error', message: 'Erreur lors de la création de la migration.' });
     }
@@ -457,7 +440,7 @@ export default function MigrationsPage() {
     try {
       await api.migrations.start(migrationId);
       setNotice({ type: 'success', message: 'Migration démarrée.' });
-      await load();
+      await refreshMigrations();
     } catch {
       setNotice({ type: 'error', message: 'Impossible de démarrer cette migration.' });
     } finally {
@@ -470,7 +453,7 @@ export default function MigrationsPage() {
     try {
       await api.migrations.retry(migrationId);
       setNotice({ type: 'success', message: 'Migration relancée.' });
-      await load();
+      await refreshMigrations();
     } catch {
       setNotice({ type: 'error', message: 'Impossible de relancer cette migration.' });
     } finally {
@@ -483,7 +466,7 @@ export default function MigrationsPage() {
     try {
       await api.migrations.stop(migrationId);
       setNotice({ type: 'success', message: 'Migration arrêtée.' });
-      await load();
+      await refreshMigrations();
     } catch {
       setNotice({ type: 'error', message: 'Impossible d’arrêter cette migration.' });
     } finally {
@@ -521,7 +504,7 @@ export default function MigrationsPage() {
       });
       setEditMigration(null);
       setNotice({ type: 'success', message: 'Migration modifiée.' });
-      await load();
+      await refreshMigrations();
     } catch {
       setNotice({ type: 'error', message: 'Impossible de modifier cette migration.' });
     } finally {
@@ -536,7 +519,7 @@ export default function MigrationsPage() {
       await api.migrations.remove(deleteMigration.id);
       setDeleteMigration(null);
       setNotice({ type: 'success', message: 'Migration supprimée.' });
-      await load();
+      await refreshMigrations();
     } catch {
       setNotice({ type: 'error', message: 'Impossible de supprimer cette migration.' });
     } finally {
@@ -912,22 +895,32 @@ export default function MigrationsPage() {
 
         <section className="space-y-4">
           <SectionLabel>Aperçu</SectionLabel>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <StatCard label="Total" value={metrics.total} icon={<ArrowRightLeft className="h-8 w-8" />} changeType="neutral" />
-            <StatCard label="En cours" value={metrics.running} icon={<Loader2 className="h-8 w-8" />} changeType="neutral" />
-            <StatCard label="En attente" value={metrics.pending} icon={<PlayCircle className="h-8 w-8" />} changeType="neutral" />
-            <StatCard
-              label="Échecs"
-              value={metrics.failed}
-              icon={<AlertCircle className="h-8 w-8" />}
-              changeType={metrics.failed > 0 ? 'down' : 'up'}
-            />
-          </div>
+          {migrationsLoading ? (
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <StatCardSkeleton key={index} />
+              ))}
+            </div>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 animate-fade-in">
+              <StatCard label="Total" value={metrics.total} icon={<ArrowRightLeft className="h-8 w-8" />} changeType="neutral" />
+              <StatCard label="En cours" value={metrics.running} icon={<Loader2 className="h-8 w-8" />} changeType="neutral" />
+              <StatCard label="En attente" value={metrics.pending} icon={<PlayCircle className="h-8 w-8" />} changeType="neutral" />
+              <StatCard
+                label="Échecs"
+                value={metrics.failed}
+                icon={<AlertCircle className="h-8 w-8" />}
+                changeType={metrics.failed > 0 ? 'down' : 'up'}
+              />
+            </div>
+          )}
         </section>
 
         <div className="space-y-4">
           <SectionLabel>Migrations actives</SectionLabel>
-          {activeMigrations.length === 0 ? (
+          {migrationsLoading ? (
+            <CardListSkeleton cards={2} />
+          ) : activeMigrations.length === 0 ? (
             <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
               <CardContent className="py-12 text-center">
                 <p className="font-medium text-muted-foreground">Aucune migration active</p>
@@ -935,7 +928,7 @@ export default function MigrationsPage() {
               </CardContent>
             </Card>
           ) : (
-            <div className="grid gap-4">
+            <div className="grid gap-4 animate-fade-in">
               {activeMigrations.map((migration) => (
                 <Card key={migration.id} className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
                   <CardHeader className="pb-2">
@@ -1058,10 +1051,27 @@ export default function MigrationsPage() {
             <CardTitle className="text-lg">Migrations terminées</CardTitle>
           </CardHeader>
           <CardContent>
-            {archivedMigrations.length === 0 ? (
+            {migrationsLoading ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Nom</TableHead>
+                    <TableHead>Source</TableHead>
+                    <TableHead>Destination</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead className="text-right">Statut</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {Array.from({ length: 3 }).map((_, index) => (
+                    <TableRowSkeleton key={index} columns={5} />
+                  ))}
+                </TableBody>
+              </Table>
+            ) : archivedMigrations.length === 0 ? (
               <p className="text-sm text-muted-foreground">Aucune migration archivée pour le moment.</p>
             ) : (
-              <Table>
+              <Table className="animate-fade-in">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Nom</TableHead>

@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge, StatCard } from '@/components/ui';
+import { ChartCardSkeleton, StatCardSkeleton } from '@/components/ui/skeleton';
 import {
   Select,
   SelectContent,
@@ -727,8 +728,14 @@ export default function NetworkPage() {
   };
 
   const content = initialLoading ? (
-    <div className="flex h-96 items-center justify-center">
-      <p className="text-muted-foreground">Chargement du réseau...</p>
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <StatCardSkeleton />
+        <StatCardSkeleton />
+        <StatCardSkeleton />
+        <StatCardSkeleton />
+      </div>
+      <ChartCardSkeleton height="h-96" />
     </div>
   ) : !vlanStatus ? (
     <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
@@ -741,7 +748,7 @@ export default function NetworkPage() {
       </CardContent>
     </Card>
   ) : (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fade-in">
       {notice && (
         <Alert variant={notice.type === 'error' ? 'destructive' : 'success'}>
           {notice.type === 'error' ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
