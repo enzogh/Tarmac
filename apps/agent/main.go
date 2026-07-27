@@ -3445,11 +3445,21 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 			}
 			command := cmd
 			go func() {
+				log.Printf("command received: %s", command.Type)
 				result := handleCommand(command, func(progress commandProgress) {
 					if err := client.send(envelope{Type: "command_progress", Payload: progress}); err != nil {
 						log.Printf("failed to send command_progress: %v", err)
 					}
 				})
+				status := "ok"
+				if !result.Success {
+					status = "failed"
+				}
+				resultMsg := fmt.Sprintf("command %s: %s (%s/%s)", status, result.Command, result.ResourceType, result.ResourceID)
+				if result.Message != "" {
+					resultMsg += ": " + result.Message
+				}
+				log.Printf("%s", resultMsg)
 				if err := client.send(envelope{Type: "command_result", Payload: result}); err != nil {
 					select {
 					case readDone <- err:

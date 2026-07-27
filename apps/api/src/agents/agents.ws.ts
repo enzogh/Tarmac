@@ -78,7 +78,7 @@ export class AgentsWsServer implements OnModuleInit {
         }
 
         if (msg.type === 'command_result' && msg.payload) {
-          await this.agentsService.onCommandResult(msg.payload as CommandResultPayload);
+          await this.agentsService.onCommandResult(nodeId, msg.payload as CommandResultPayload);
         }
 
         if (msg.type === 'command_progress' && msg.payload) {

@@ -475,12 +475,19 @@ export class AgentsService implements OnModuleInit {
     }
   }
 
-  async onCommandResult(result: CommandResultPayload) {
+  async onCommandResult(nodeId: string, result: CommandResultPayload) {
     this.logger.log(
       `Command result ${result.command} ${result.resourceId}: ${result.success}${
         result.success ? '' : ` (${result.message ?? 'no message'})`
       }`,
     );
+    await this.agentLogsService.create({
+      nodeId,
+      level: result.success ? 'info' : 'error',
+      message: `${result.command} (${result.resourceType}/${result.resourceId}): ${
+        result.success ? 'succès' : 'échec'
+      }${result.message ? ` — ${result.message}` : ''}`,
+    });
     const status = result.success ? 'active' : 'error';
 
     if (result.resourceType === 'share') {

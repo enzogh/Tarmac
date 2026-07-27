@@ -50,10 +50,10 @@ export class AgentsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @SubscribeMessage('command_result')
   async onCommandResult(
-    @ConnectedSocket() _client: Socket,
+    @ConnectedSocket() client: Socket,
     @MessageBody() payload: CommandResultPayload,
   ) {
-    await this.agentsService.onCommandResult(payload);
+    await this.agentsService.onCommandResult(client.data.nodeId as string, payload);
   }
 
   @SubscribeMessage('command_progress')

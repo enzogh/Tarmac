@@ -72,7 +72,7 @@ const config: Config = {
         'radial-premium':
           'radial-gradient(circle at top, rgba(37, 99, 235, 0.22), transparent 35%), radial-gradient(circle at right, rgba(168, 85, 247, 0.16), transparent 28%), linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(2, 6, 23, 1))',
         'panel-glow':
-          'linear-gradient(135deg, rgba(109, 40, 217, 0.12), rgba(79, 70, 229, 0.08), transparent)',
+          'linear-gradient(135deg, rgba(109, 40, 217, 0.05), rgba(79, 70, 229, 0.03), transparent)',
       },
       keyframes: {
         'accordion-down': {
