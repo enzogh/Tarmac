@@ -152,7 +152,7 @@ function ActionsTab() {
 
   return (
     <div className="space-y-4">
-      <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
+      <Card className="border-white/[0.08] transition-colors hover:border-white/[0.14]">
         <CardContent className="grid grid-cols-1 gap-3 pt-6 md:grid-cols-2 xl:grid-cols-5">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Recherche</Label>
@@ -200,7 +200,7 @@ function ActionsTab() {
         </CardContent>
       </Card>
 
-      <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
+      <Card className="border-white/[0.08] transition-colors hover:border-white/[0.14]">
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="text-base">Journal d'actions</CardTitle>
@@ -412,7 +412,7 @@ function AgentsTab() {
 
   return (
     <div className="space-y-4">
-      <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
+      <Card className="border-white/[0.08] transition-colors hover:border-white/[0.14]">
         <CardContent className="flex flex-wrap items-end gap-3 pt-6">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Nœud</Label>
@@ -477,7 +477,7 @@ function AgentsTab() {
         </CardContent>
       </Card>
 
-      <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
+      <Card className="border-white/[0.08] transition-colors hover:border-white/[0.14]">
         <CardContent className="pt-6">
           {loading ? (
             <ListSkeleton rows={6} />

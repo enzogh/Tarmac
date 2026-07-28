@@ -17,7 +17,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { api, VlanConnection, VlanConnectionTest, VlanStatus } from '@/lib/api';
-import { GeoInfo, flagFromCountryCode, getGeoInfo, normalizeCountryCode, parseHostFromEndpoint } from '@/lib/geo';
+import { GeoInfo, flagFromCountryCode, geocodeCity, getGeoInfo, normalizeCountryCode, parseHostFromEndpoint } from '@/lib/geo';
 import { countryCentroid } from '@/lib/country-centroids';
 import { readNodeLabels } from '../../../lib/node-labels';
 import { DashboardLayout } from '@/components/DashboardLayout';
@@ -714,12 +714,28 @@ export default function NetworkPage() {
       ? null
       : normalizeCountryCode(current.countryCode)?.trim() || null;
 
+    // A typed city needs to move the pin, not just relabel it — otherwise
+    // every corrected node without a dragged position collapses onto the
+    // same country-wide centroid. Resolve it to real coordinates the same
+    // way a manual drag on the map would.
+    let locationLat: number | null = null;
+    let locationLng: number | null = null;
+    if (locationCity) {
+      const geocoded = await geocodeCity(locationCity, locationCountry);
+      if (geocoded) {
+        locationLat = geocoded.lat;
+        locationLng = geocoded.lng;
+      }
+    }
+
     setGeoSavingByNodeId((prev) => ({ ...prev, [nodeId]: true }));
     try {
       const updatedNode = await api.nodes.update(nodeId, {
         locationCity,
         locationCountry,
         locationCountryCode,
+        locationLat,
+        locationLng,
       });
       setGeoOverrides((prev) => ({
         ...prev,
@@ -730,6 +746,14 @@ export default function NetworkPage() {
         },
       }));
       setGeoDirtyByNodeId((prev) => ({ ...prev, [nodeId]: false }));
+      setMapLocationOverrides((prev) => {
+        if (typeof updatedNode.locationLat !== 'number' || typeof updatedNode.locationLng !== 'number') {
+          const next = { ...prev };
+          delete next[nodeId];
+          return next;
+        }
+        return { ...prev, [nodeId]: [updatedNode.locationLat, updatedNode.locationLng] };
+      });
       setVlanStatus((prev) => {
         if (!prev) return prev;
         return {
@@ -746,6 +770,8 @@ export default function NetworkPage() {
                           locationCity: updatedNode.locationCity ?? null,
                           locationCountry: updatedNode.locationCountry ?? null,
                           locationCountryCode: updatedNode.locationCountryCode ?? null,
+                          locationLat: updatedNode.locationLat ?? null,
+                          locationLng: updatedNode.locationLng ?? null,
                         }
                       : member.node,
                   }

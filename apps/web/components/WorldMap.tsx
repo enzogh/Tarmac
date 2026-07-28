@@ -34,6 +34,12 @@ type WorldMapProps = {
 const CLUSTER_ZOOM_THRESHOLD = 9;
 const RING_RADIUS_DEG = 0.05;
 
+// This fleet is hosted mostly in France, so the map opens there by default
+// (metropolitan France roughly fills the view at this zoom) rather than
+// centering on whichever node happens to be first in the list.
+const DEFAULT_CENTER: [number, number] = [46.6, 2.4];
+const DEFAULT_ZOOM = 6;
+
 const STATUS_COLOR: Record<WorldMapNode['status'], string> = {
   online: '#34d399',
   degraded: '#fbbf24',
@@ -169,13 +175,11 @@ export function WorldMap({ nodes, onNodeDrag, onSelectNode, className }: WorldMa
     return Array.from(byKey.values());
   }, [nodes]);
 
-  const center: [number, number] = nodes.length > 0 ? [nodes[0].lat, nodes[0].lng] : [25, 10];
-
   return (
     <div className={cn('tarmac-map overflow-hidden rounded-xl border border-white/[0.08]', className)}>
       <MapContainer
-        center={center}
-        zoom={4}
+        center={DEFAULT_CENTER}
+        zoom={DEFAULT_ZOOM}
         minZoom={2}
         maxZoom={17}
         scrollWheelZoom
