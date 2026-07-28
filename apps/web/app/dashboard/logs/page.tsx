@@ -151,9 +151,31 @@ function ActionsTab() {
   };
 
   return (
-    <div className="space-y-4">
-      <Card className="border-white/[0.08] transition-colors hover:border-white/[0.14]">
-        <CardContent className="grid grid-cols-1 gap-3 pt-6 md:grid-cols-2 xl:grid-cols-5">
+    <Card className="border-white/[0.08] transition-colors hover:border-white/[0.14]">
+      <CardHeader className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <History className="h-5 w-5 text-violet-400" />
+            <CardTitle className="text-base">Journal d&apos;actions</CardTitle>
+            {!loading && (
+              <Badge label={`${items.length} entrée${items.length > 1 ? 's' : ''}`} type="info" />
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Label className="text-xs text-muted-foreground">Export jusqu&apos;au</Label>
+            <Input type="date" className="w-40" value={exportTo} onChange={(e) => setExportTo(e.target.value)} />
+            <Button variant="secondary" size="sm" onClick={() => openExport('csv')} className="gap-2">
+              <Download className="h-3.5 w-3.5" />
+              CSV
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => openExport('json')} className="gap-2">
+              <Download className="h-3.5 w-3.5" />
+              JSON
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 md:grid-cols-2 xl:grid-cols-5">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Recherche</Label>
             <div className="relative">
@@ -197,34 +219,16 @@ function ActionsTab() {
               onChange={(e) => setFilters((prev) => ({ ...prev, from: e.target.value }))}
             />
           </div>
-        </CardContent>
-      </Card>
-
-      <Card className="border-white/[0.08] transition-colors hover:border-white/[0.14]">
-        <CardHeader>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <CardTitle className="text-base">Journal d'actions</CardTitle>
-            <div className="flex flex-wrap items-center gap-2">
-              <Label className="text-xs text-muted-foreground">Export jusqu'au</Label>
-              <Input type="date" className="w-40" value={exportTo} onChange={(e) => setExportTo(e.target.value)} />
-              <Button variant="secondary" size="sm" onClick={() => openExport('csv')} className="gap-2">
-                <Download className="h-3.5 w-3.5" />
-                CSV
-              </Button>
-              <Button variant="secondary" size="sm" onClick={() => openExport('json')} className="gap-2">
-                <Download className="h-3.5 w-3.5" />
-                JSON
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <ListSkeleton rows={6} />
-          ) : items.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">Aucune action trouvée.</p>
-          ) : (
-            <div className="animate-fade-in overflow-x-auto">
+        </div>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <ListSkeleton rows={6} />
+        ) : items.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">Aucune action trouvée.</p>
+        ) : (
+          <div className="animate-fade-in overflow-hidden rounded-xl border border-white/[0.06]">
+            <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -289,18 +293,18 @@ function ActionsTab() {
                   })}
                 </TableBody>
               </Table>
-              {cursor && (
-                <div className="mt-4 flex justify-center">
-                  <Button variant="secondary" size="sm" onClick={() => void loadMore()} disabled={loadingMore}>
-                    {loadingMore ? 'Chargement…' : 'Charger plus'}
-                  </Button>
-                </div>
-              )}
             </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+            {cursor && (
+              <div className="flex justify-center border-t border-white/[0.06] bg-white/[0.02] py-3">
+                <Button variant="secondary" size="sm" onClick={() => void loadMore()} disabled={loadingMore}>
+                  {loadingMore ? 'Chargement…' : 'Charger plus'}
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -411,9 +415,47 @@ function AgentsTab() {
   };
 
   return (
-    <div className="space-y-4">
-      <Card className="border-white/[0.08] transition-colors hover:border-white/[0.14]">
-        <CardContent className="flex flex-wrap items-end gap-3 pt-6">
+    <Card className="border-white/[0.08] transition-colors hover:border-white/[0.14]">
+      <CardHeader className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <Server className="h-5 w-5 text-violet-400" />
+            <CardTitle className="text-base">Logs agents</CardTitle>
+            {!loading && !paused && (
+              <span className="flex items-center gap-1.5 text-xs text-emerald-400">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+                </span>
+                En direct
+              </span>
+            )}
+            {!loading && <Badge label={`${lines.length} lignes`} type="info" />}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => openExport('csv')} className="gap-2">
+              <Download className="h-3.5 w-3.5" />
+              CSV
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => openExport('json')} className="gap-2">
+              <Download className="h-3.5 w-3.5" />
+              JSON
+            </Button>
+            {paused ? (
+              <Button size="sm" onClick={resume} className="gap-2 bg-violet-600 text-white hover:bg-violet-500">
+                <PlayCircle className="h-3.5 w-3.5" />
+                Reprendre {pendingCount > 0 ? `(${pendingCount} nouvelles lignes)` : ''}
+              </Button>
+            ) : (
+              <Button variant="secondary" size="sm" onClick={() => setPaused(true)} className="gap-2">
+                <PauseCircle className="h-3.5 w-3.5" />
+                Pause
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Nœud</Label>
             <Select value={nodeFilter} onValueChange={setNodeFilter}>
@@ -453,67 +495,54 @@ function AgentsTab() {
             <Label className="text-xs text-muted-foreground">Jusqu'au</Label>
             <Input type="date" className="w-40" value={exportTo} onChange={(e) => setExportTo(e.target.value)} />
           </div>
-          <Button variant="secondary" size="sm" onClick={() => openExport('csv')} className="gap-2">
-            <Download className="h-3.5 w-3.5" />
-            CSV
-          </Button>
-          <Button variant="secondary" size="sm" onClick={() => openExport('json')} className="gap-2">
-            <Download className="h-3.5 w-3.5" />
-            JSON
-          </Button>
-          <div className="ml-auto">
-            {paused ? (
-              <Button size="sm" onClick={resume} className="gap-2 bg-violet-600 text-white hover:bg-violet-500">
-                <PlayCircle className="h-3.5 w-3.5" />
-                Reprendre {pendingCount > 0 ? `(${pendingCount} nouvelles lignes)` : ''}
-              </Button>
-            ) : (
-              <Button variant="secondary" size="sm" onClick={() => setPaused(true)} className="gap-2">
-                <PauseCircle className="h-3.5 w-3.5" />
-                Pause
-              </Button>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="border-white/[0.08] transition-colors hover:border-white/[0.14]">
-        <CardContent className="pt-6">
-          {loading ? (
-            <ListSkeleton rows={6} />
-          ) : (
-            <>
-              <div className="mb-2 flex justify-center">
-                <Button variant="ghost" size="sm" onClick={() => void loadOlder()} disabled={loadingOlder}>
-                  {loadingOlder ? 'Chargement…' : "Charger l'historique"}
-                </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <ListSkeleton rows={6} />
+        ) : (
+          <div className="overflow-hidden rounded-xl border border-white/[0.06] bg-zinc-950/70">
+            <div className="flex items-center gap-3 border-b border-white/[0.06] bg-white/[0.02] px-3 py-2">
+              <div className="flex gap-1.5">
+                <span className="h-2.5 w-2.5 rounded-full bg-rose-400/70" />
+                <span className="h-2.5 w-2.5 rounded-full bg-amber-400/70" />
+                <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" />
               </div>
-              <div
-                ref={scrollRef}
-                onScroll={handleScroll}
-                className="h-[520px] overflow-y-auto rounded-xl border border-white/[0.06] bg-black/40 p-3 font-mono text-xs leading-relaxed"
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void loadOlder()}
+                disabled={loadingOlder}
+                className="ml-auto h-7 text-xs"
               >
-                {lines.length === 0 && (
-                  <p className="py-8 text-center text-muted-foreground">Aucun log d'agent pour le moment.</p>
-                )}
-                {lines.map((line) => (
-                  <div key={line.id} className="flex items-baseline gap-2 whitespace-pre-wrap break-all py-0.5">
-                    <span className="shrink-0 text-zinc-500">[{formatTime(line.createdAt)}]</span>
-                    <span className="shrink-0 text-violet-300">[{nodeName(line.nodeId)}]</span>
-                    <Badge
-                      label={LEVEL_LABEL[line.level] ?? line.level.toUpperCase()}
-                      type={LEVEL_BADGE_TYPE[line.level] ?? 'info'}
-                      className="shrink-0 px-1.5 py-0 text-[10px] leading-4"
-                    />
-                    <span className={LEVEL_TEXT_CLASS[line.level] ?? 'text-zinc-300'}>{line.message}</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+                {loadingOlder ? 'Chargement…' : "Charger l'historique"}
+              </Button>
+            </div>
+            <div
+              ref={scrollRef}
+              onScroll={handleScroll}
+              className="h-[480px] overflow-y-auto p-3 font-mono text-xs leading-relaxed"
+            >
+              {lines.length === 0 && (
+                <p className="py-8 text-center text-muted-foreground">Aucun log d'agent pour le moment.</p>
+              )}
+              {lines.map((line) => (
+                <div key={line.id} className="flex items-baseline gap-2 whitespace-pre-wrap break-all py-0.5">
+                  <span className="shrink-0 text-zinc-500">[{formatTime(line.createdAt)}]</span>
+                  <span className="shrink-0 text-violet-300">[{nodeName(line.nodeId)}]</span>
+                  <Badge
+                    label={LEVEL_LABEL[line.level] ?? line.level.toUpperCase()}
+                    type={LEVEL_BADGE_TYPE[line.level] ?? 'info'}
+                    className="shrink-0 px-1.5 py-0 text-[10px] leading-4"
+                  />
+                  <span className={LEVEL_TEXT_CLASS[line.level] ?? 'text-zinc-300'}>{line.message}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

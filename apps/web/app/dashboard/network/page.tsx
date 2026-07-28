@@ -217,6 +217,7 @@ export default function NetworkPage() {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const panRef = useRef<{ pointerId: number; startX: number; startY: number; startTx: number; startTy: number } | null>(null);
   const nodeDragRef = useRef<{ pointerId: number; nodeId: string; offsetX: number; offsetY: number } | null>(null);
+  const geocodeAttemptedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     setNodeLabels(readNodeLabels());
@@ -321,6 +322,64 @@ export default function NetworkPage() {
       cancelled = true;
     };
   }, [vlanStatus, geoByIp]);
+
+  // Cities saved before geocoding existed (or entered without ever blurring
+  // out of the field again) only ever got a label, never coordinates — they
+  // still fall back to the country centroid, which is why "Roubaix" could
+  // render nowhere near Roubaix. Resolve any node that has a city but no
+  // coordinates yet, once, and persist the result so it sticks.
+  useEffect(() => {
+    const members = vlanStatus?.vlan.members ?? [];
+    const candidates = members.filter((member) => {
+      const node = member.node;
+      if (!node?.locationCity) return false;
+      if (typeof node.locationLat === 'number' && typeof node.locationLng === 'number') return false;
+      if (mapLocationOverrides[member.nodeId]) return false;
+      if (geocodeAttemptedRef.current.has(member.nodeId)) return false;
+      return true;
+    });
+    if (candidates.length === 0) return;
+    // Mark every candidate attempted synchronously, before any await runs —
+    // otherwise a second effect run triggered mid-loop (each geocode below
+    // updates vlanStatus, which re-triggers this effect) would still see
+    // not-yet-reached candidates as fair game and geocode them a second time.
+    candidates.forEach((member) => geocodeAttemptedRef.current.add(member.nodeId));
+
+    let cancelled = false;
+    void (async () => {
+      for (const member of candidates) {
+        const node = member.node;
+        if (!node?.locationCity) continue;
+        const geocoded = await geocodeCity(node.locationCity, node.locationCountry);
+        if (cancelled || !geocoded) continue;
+
+        setMapLocationOverrides((prev) => ({ ...prev, [member.nodeId]: [geocoded.lat, geocoded.lng] }));
+        setVlanStatus((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            vlan: {
+              ...prev.vlan,
+              members: (prev.vlan.members || []).map((m) =>
+                m.nodeId === member.nodeId && m.node
+                  ? { ...m, node: { ...m.node, locationLat: geocoded.lat, locationLng: geocoded.lng } }
+                  : m,
+              ),
+            },
+          };
+        });
+
+        try {
+          await api.nodes.update(member.nodeId, { locationLat: geocoded.lat, locationLng: geocoded.lng });
+        } catch (error) {
+          console.error('Failed to persist geocoded location:', error);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [vlanStatus, mapLocationOverrides]);
 
   const graph = useMemo(() => {
     if (!vlanStatus?.vlan.members?.length) {
