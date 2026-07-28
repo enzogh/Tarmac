@@ -16,7 +16,8 @@ import {
   Waves,
   Zap,
 } from 'lucide-react';
-import { api, VlanConnection, VlanConnectionTest, VlanStatus } from '@/lib/api';
+import { api, VlanConnection, VlanConnectionHistory, VlanConnectionTest, VlanStatus } from '@/lib/api';
+import { ConnectionHistoryChart } from '@/components/dashboard-charts';
 import { GeoInfo, flagFromCountryCode, geocodeCity, getGeoInfo, normalizeCountryCode, parseHostFromEndpoint } from '@/lib/geo';
 import { countryCentroid } from '@/lib/country-centroids';
 import { readNodeLabels } from '../../../lib/node-labels';
@@ -119,6 +120,15 @@ const testStatusLabel: Record<VlanConnectionTest['status'], string> = {
   timeout: 'Délai dépassé',
 };
 
+const REGION_LABELS: Record<string, string> = {
+  europe: 'Europe',
+  'north-america': 'Amérique du Nord',
+  'south-america': 'Amérique du Sud',
+  asia: 'Asie',
+  oceania: 'Océanie',
+  africa: 'Afrique',
+};
+
 const STATUS_PRIORITY: Record<LinkStatus, number> = {
   healthy: 0,
   unknown: 1,
@@ -214,10 +224,14 @@ export default function NetworkPage() {
     type?: TestType;
   }>({});
   const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
+  const [historyRange, setHistoryRange] = useState<'1h' | '24h' | '7d'>('1h');
+  const [history, setHistory] = useState<VlanConnectionHistory | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const panRef = useRef<{ pointerId: number; startX: number; startY: number; startTx: number; startTy: number } | null>(null);
   const nodeDragRef = useRef<{ pointerId: number; nodeId: string; offsetX: number; offsetY: number } | null>(null);
   const geocodeAttemptedRef = useRef<Set<string>>(new Set());
+  const countryPersistAttemptedRef = useRef<Set<string>>(new Set());
+  const [gatewaySavingByNodeId, setGatewaySavingByNodeId] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     setNodeLabels(readNodeLabels());
@@ -318,6 +332,71 @@ export default function NetworkPage() {
         return next;
       });
     });
+    return () => {
+      cancelled = true;
+    };
+  }, [vlanStatus, geoByIp]);
+
+  // A node's country is needed server-side to resolve its VLAN region (for
+  // regional gateway segmentation), but geo-IP detection only ever lived in
+  // this client's geoByIp cache — never persisted. Silently save the
+  // detected country the first time it's known for a node that doesn't have
+  // one in the database yet, so region resolution "just works" without the
+  // user having to open the manual location panel first.
+  useEffect(() => {
+    const members = vlanStatus?.vlan.members ?? [];
+    const candidates = members.filter((member) => {
+      const node = member.node;
+      if (!node || node.locationCountryCode) return false;
+      if (countryPersistAttemptedRef.current.has(member.nodeId)) return false;
+      const endpointHost = parseHostFromEndpoint(node.externalIp || node.overlayEndpoint);
+      const geo = endpointHost ? geoByIp[endpointHost] : null;
+      return Boolean(geo?.countryCode);
+    });
+    if (candidates.length === 0) return;
+    candidates.forEach((member) => countryPersistAttemptedRef.current.add(member.nodeId));
+
+    let cancelled = false;
+    void (async () => {
+      for (const member of candidates) {
+        const node = member.node;
+        const endpointHost = node ? parseHostFromEndpoint(node.externalIp || node.overlayEndpoint) : null;
+        const geo = endpointHost ? geoByIp[endpointHost] : null;
+        const countryCode = normalizeCountryCode(geo?.countryCode);
+        if (cancelled || !countryCode) continue;
+
+        try {
+          const updatedNode = await api.nodes.update(member.nodeId, {
+            locationCountry: geo?.country ?? null,
+            locationCountryCode: countryCode,
+          });
+          if (cancelled) continue;
+          setVlanStatus((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              vlan: {
+                ...prev.vlan,
+                members: (prev.vlan.members || []).map((m) =>
+                  m.nodeId === member.nodeId && m.node
+                    ? {
+                        ...m,
+                        node: {
+                          ...m.node,
+                          locationCountry: updatedNode.locationCountry ?? null,
+                          locationCountryCode: updatedNode.locationCountryCode ?? null,
+                        },
+                      }
+                    : m,
+                ),
+              },
+            };
+          });
+        } catch (error) {
+          console.error('Failed to persist detected country:', error);
+        }
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -634,6 +713,36 @@ export default function NetworkPage() {
     () => directedFlows.slice(0, 5),
     [directedFlows],
   );
+
+  useEffect(() => {
+    if (!vlanStatus || !selectedFlow) {
+      setHistory(null);
+      return;
+    }
+    let cancelled = false;
+    void api.vlan
+      .getHistory(vlanStatus.vlan.id, selectedFlow.sourceNodeId, selectedFlow.targetNodeId, historyRange)
+      .then((result) => {
+        if (!cancelled) setHistory(result);
+      })
+      .catch((error) => {
+        console.error('Failed to fetch connection history:', error);
+        if (!cancelled) setHistory(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [vlanStatus, selectedFlow, historyRange]);
+
+  const historyChartData = useMemo(
+    () =>
+      (history?.samples ?? []).map((sample) => ({
+        label: new Date(sample.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        latencyMs: sample.latencyMs ?? null,
+        packetLoss: sample.packetLoss ?? null,
+      })),
+    [history],
+  );
   const orderedNodes = useMemo(
     () => [...displayedNodes].sort((a, b) => a.label.localeCompare(b.label, 'fr')),
     [displayedNodes],
@@ -868,6 +977,28 @@ export default function NetworkPage() {
       setNotice({ type: 'error', message: 'Le test de connectivité a échoué.' });
     } finally {
       setTestRunning(false);
+    }
+  };
+
+  const handleSetGateway = async (nodeId: string, enabled: boolean) => {
+    if (!vlanStatus) return;
+    setGatewaySavingByNodeId((prev) => ({ ...prev, [nodeId]: true }));
+    try {
+      await api.vlan.setGateway(vlanStatus.vlan.id, nodeId, enabled);
+      setNotice({
+        type: 'success',
+        message: enabled ? 'Passerelle régionale définie.' : 'Passerelle régionale retirée.',
+      });
+      const status = await api.vlan.getStatus(vlanStatus.vlan.id);
+      setVlanStatus(status);
+    } catch (error) {
+      console.error('Failed to set VLAN gateway:', error);
+      setNotice({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Impossible de définir la passerelle régionale.',
+      });
+    } finally {
+      setGatewaySavingByNodeId((prev) => ({ ...prev, [nodeId]: false }));
     }
   };
 
@@ -1159,6 +1290,9 @@ export default function NetworkPage() {
                 {orderedNodes.map((node) => {
                   const override = geoOverrides[node.id] ?? {};
                   const detected = detectedGeoByNodeId.get(node.id);
+                  const member = memberByNodeId.get(node.id);
+                  const region = member?.region ?? null;
+                  const isGateway = Boolean(member?.node?.overlayIsGateway);
                   return (
                     <div key={`override-${node.id}`} className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-2">
                       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -1196,6 +1330,29 @@ export default function NetworkPage() {
                           disabled={geoSavingByNodeId[node.id]}
                         >
                           {geoSavingByNodeId[node.id] ? 'Enregistrement…' : 'Auto'}
+                        </Button>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                        <Badge
+                          label={region ? REGION_LABELS[region] ?? region : 'Région inconnue'}
+                          type={region ? 'info' : 'warning'}
+                        />
+                        <Button
+                          size="sm"
+                          variant={isGateway ? 'default' : 'outline'}
+                          disabled={!region || gatewaySavingByNodeId[node.id]}
+                          title={
+                            !region
+                              ? 'Définissez le pays du nœud (ci-dessus) pour activer la segmentation régionale'
+                              : undefined
+                          }
+                          onClick={() => void handleSetGateway(node.id, !isGateway)}
+                        >
+                          {gatewaySavingByNodeId[node.id]
+                            ? 'Enregistrement…'
+                            : isGateway
+                              ? 'Passerelle régionale ✓'
+                              : 'Définir comme passerelle régionale'}
                         </Button>
                       </div>
                     </div>
@@ -1248,6 +1405,32 @@ export default function NetworkPage() {
             })}
             {!selectedFlow && topTrafficFlows.length === 0 && (
               <p className="text-xs text-muted-foreground">Aucun flux détecté.</p>
+            )}
+            {selectedFlow && (
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-medium text-zinc-200">Historique</p>
+                    {history && (
+                      <Badge
+                        label={`Uptime ${history.uptimePercent}%`}
+                        type={history.uptimePercent >= 99 ? 'success' : history.uptimePercent >= 90 ? 'warning' : 'error'}
+                      />
+                    )}
+                  </div>
+                  <Select value={historyRange} onValueChange={(value) => setHistoryRange(value as '1h' | '24h' | '7d')}>
+                    <SelectTrigger className="h-7 w-24 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1h">1 heure</SelectItem>
+                      <SelectItem value="24h">24 heures</SelectItem>
+                      <SelectItem value="7d">7 jours</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <ConnectionHistoryChart data={historyChartData} />
+              </div>
             )}
             {selectedFlow && (
               <Button

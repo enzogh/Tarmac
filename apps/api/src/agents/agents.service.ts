@@ -7,6 +7,7 @@ import { MountsService } from '../mounts/mounts.service';
 import { PoolsService } from '../pools/pools.service';
 import { SharesService } from '../shares/shares.service';
 import { VlanService } from '../vlan/vlan.service';
+import { Region, resolveRegion } from '../vlan/region';
 import { AgentLogsService } from '../agent-logs/agent-logs.service';
 import {
   AgentLogPayload,
@@ -889,47 +890,133 @@ export class AgentsService implements OnModuleInit {
     this.unregister(nodeId);
 
     for (const vlanId of affectedVlanIds) {
-      const members = await this.prisma.vlanMember.findMany({
-        where: { vlanId },
-        select: { nodeId: true },
-      });
-      for (const member of members) {
-        await this.reconcileOverlayForNode(member.nodeId);
-      }
+      await this.reconcileOverlayForVlan(vlanId);
     }
   }
 
   private async reconcileOverlayForNode(nodeId: string) {
-    try {
-      const membership = await this.prisma.vlanMember.findFirst({
-        where: { nodeId },
-      });
-      if (!membership) return;
+    const membership = await this.prisma.vlanMember.findFirst({ where: { nodeId } });
+    if (!membership) return;
+    await this.reconcileOverlayForVlan(membership.vlanId);
+  }
 
+  /**
+   * Computes and pushes WireGuard peer config for every member of a VLAN.
+   *
+   * Members in the same region (or where region can't be resolved on either
+   * side) stay fully meshed — direct /32 peers, exactly like before regional
+   * segmentation existed. A cross-region pair is only routed through
+   * gateways when BOTH regions have one designated (Node.overlayIsGateway);
+   * otherwise it also falls back to a direct peer. This means: with no
+   * gateway designated anywhere (today's state for an all-France fleet),
+   * every pair takes the direct-peer path and output is identical to the
+   * pre-segmentation implementation.
+   */
+  async reconcileOverlayForVlan(vlanId: string): Promise<void> {
+    try {
       const members = await this.prisma.vlanMember.findMany({
-        where: { vlanId: membership.vlanId },
+        where: { vlanId },
         include: { node: true },
       });
+
+      const regionByNodeId = new Map<string, Region | null>();
+      for (const member of members) {
+        regionByNodeId.set(member.nodeId, resolveRegion(member.node.locationCountryCode));
+      }
+
+      const gatewayByRegion = new Map<Region, (typeof members)[number]>();
+      for (const member of members) {
+        const region = regionByNodeId.get(member.nodeId);
+        if (region && member.node.overlayIsGateway) {
+          gatewayByRegion.set(region, member);
+        }
+      }
 
       for (const member of members) {
         if (!member.node.vlanIp || !member.node.overlayPublicKey) {
           continue;
         }
 
-        const peers = members
-          .filter((candidate) =>
+        const region = regionByNodeId.get(member.nodeId) ?? null;
+        const localGateway = region ? gatewayByRegion.get(region) : undefined;
+        const isGateway = Boolean(localGateway && localGateway.nodeId === member.nodeId);
+
+        const eligibleCandidates = members.filter(
+          (candidate) =>
             candidate.nodeId !== member.nodeId &&
             Boolean(candidate.node.vlanIp) &&
             Boolean(candidate.node.overlayPublicKey) &&
             Boolean(candidate.node.overlayEndpoint),
-          )
-          .map((candidate) => ({
-            nodeId: candidate.nodeId,
-            publicKey: candidate.node.overlayPublicKey as string,
-            endpoint: candidate.node.overlayEndpoint as string,
-            allowedIps: [`${candidate.node.vlanIp}/32`],
-            persistentKeepalive: 25,
-          }));
+        );
+
+        type Peer = {
+          nodeId: string;
+          publicKey: string;
+          endpoint: string;
+          allowedIps: string[];
+          persistentKeepalive: number;
+        };
+        const peers: Peer[] = [];
+        const peerByNodeId = new Map<string, Peer>();
+
+        for (const candidate of eligibleCandidates) {
+          const candidateRegion = regionByNodeId.get(candidate.nodeId) ?? null;
+          const sameRegion = !region || !candidateRegion || region === candidateRegion;
+          const remoteGateway = sameRegion ? undefined : gatewayByRegion.get(candidateRegion as Region);
+          const segmented = !sameRegion && Boolean(localGateway) && Boolean(remoteGateway);
+
+          if (!segmented || !remoteGateway) {
+            // Same region, or cross-region without a gateway on both sides yet: unchanged full-mesh behavior.
+            const peer: Peer = {
+              nodeId: candidate.nodeId,
+              publicKey: candidate.node.overlayPublicKey as string,
+              endpoint: candidate.node.overlayEndpoint as string,
+              allowedIps: [`${candidate.node.vlanIp}/32`],
+              persistentKeepalive: 25,
+            };
+            peers.push(peer);
+            peerByNodeId.set(candidate.nodeId, peer);
+            continue;
+          }
+
+          if (isGateway) {
+            // Only a single peer to the remote gateway, carrying the whole remote region's hosts.
+            if (candidate.nodeId === remoteGateway.nodeId) {
+              const remoteRegionIps = members
+                .filter((m) => regionByNodeId.get(m.nodeId) === candidateRegion && m.node.vlanIp)
+                .map((m) => `${m.node.vlanIp}/32`);
+              const peer: Peer = {
+                nodeId: candidate.nodeId,
+                publicKey: candidate.node.overlayPublicKey as string,
+                endpoint: candidate.node.overlayEndpoint as string,
+                allowedIps: remoteRegionIps,
+                persistentKeepalive: 25,
+              };
+              peers.push(peer);
+              peerByNodeId.set(candidate.nodeId, peer);
+            }
+            // Individual remote members are reached via the remote gateway peer above, not directly.
+            continue;
+          }
+          // Not a gateway: no direct peer into the other region at all — routed via the local
+          // gateway peer entry instead (augmented below).
+        }
+
+        if (!isGateway && localGateway) {
+          const localGatewayPeer = peerByNodeId.get(localGateway.nodeId);
+          if (localGatewayPeer) {
+            for (const otherRegion of gatewayByRegion.keys()) {
+              if (otherRegion === region) continue;
+              const remoteRegionIps = members
+                .filter((m) => regionByNodeId.get(m.nodeId) === otherRegion && m.node.vlanIp)
+                .map((m) => `${m.node.vlanIp}/32`);
+              if (remoteRegionIps.length > 0) {
+                localGatewayPeer.allowedIps.push(...remoteRegionIps);
+              }
+            }
+          }
+        }
+
         const authorizedKeys = members
           .filter((candidate) => candidate.nodeId !== member.nodeId && Boolean(candidate.node.overlaySshPublicKey))
           .map((candidate) => candidate.node.overlaySshPublicKey as string);
@@ -941,6 +1028,7 @@ export class AgentsService implements OnModuleInit {
             addressCidr: `${member.node.vlanIp}/24`,
             listenPort: member.node.overlayListenPort ?? 51820,
             peers,
+            ipForward: isGateway,
           },
         };
 
@@ -957,8 +1045,8 @@ export class AgentsService implements OnModuleInit {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Failed to reconcile overlay for node ${nodeId}:`, error);
-      await this.createSystemAlert(`Overlay reconcile failed for node ${nodeId}: ${message}`, 'medium');
+      this.logger.warn(`Failed to reconcile overlay for VLAN ${vlanId}:`, error);
+      await this.createSystemAlert(`Overlay reconcile failed for VLAN ${vlanId}: ${message}`, 'medium');
     }
   }
 
@@ -1134,6 +1222,20 @@ export class AgentsService implements OnModuleInit {
         return a.targetNodeId.localeCompare(b.targetNodeId);
       });
 
+      const existingConnections = await this.prisma.vlanConnection.findMany({
+        where: {
+          vlanId: sourceMembership.vlanId,
+          OR: sortedUpdates.map((update) => ({
+            sourceNodeId: update.sourceNodeId,
+            targetNodeId: update.targetNodeId,
+          })),
+        },
+        select: { sourceNodeId: true, targetNodeId: true, status: true },
+      });
+      const previousStatusByPair = new Map(
+        existingConnections.map((connection) => [`${connection.sourceNodeId}:${connection.targetNodeId}`, connection.status]),
+      );
+
       for (const update of sortedUpdates) {
         await this.retryWithExponentialBackoff(
           () =>
@@ -1154,6 +1256,15 @@ export class AgentsService implements OnModuleInit {
               },
             }),
           `upsert vlanConnection ${update.sourceNodeId}->${update.targetNodeId}`,
+        );
+
+        const previousStatus = previousStatusByPair.get(`${update.sourceNodeId}:${update.targetNodeId}`);
+        await this.vlanService.recordConnectionTransition(
+          sourceMembership.vlanId,
+          update.sourceNodeId,
+          update.targetNodeId,
+          previousStatus,
+          update.data,
         );
       }
     }

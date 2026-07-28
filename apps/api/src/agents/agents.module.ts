@@ -20,7 +20,7 @@ import { AgentsWsServer } from './agents.ws';
     forwardRef(() => MountsModule),
     forwardRef(() => MigrationsModule),
     PoolsModule,
-    VlanModule,
+    forwardRef(() => VlanModule),
   ],
   controllers: [AgentsController],
   providers: [AgentsGateway, AgentsService, AgentsWsServer, AgentTokenService],

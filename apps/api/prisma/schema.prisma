@@ -140,6 +140,7 @@ model Node {
   overlayListenPort  Int?
   overlaySshPublicKey String?
   overlaySshUser     String?
+  overlayIsGateway   Boolean          @default(false)
   agentVersion       String?
   agentVersionAt     DateTime?
   agentTokenHash         String?
@@ -432,6 +433,7 @@ model Vlan {
   members         VlanMember[]
   connections     VlanConnection[]
   connectionTests VlanConnectionTest[]
+  connectionSamples VlanConnectionSample[]
 }
 
 model VlanMember {
@@ -496,4 +498,19 @@ model VlanConnectionTest {
   @@index([vlanId])
   @@index([initiatorNodeId])
   @@index([startedAt])
+}
+
+model VlanConnectionSample {
+  id           String               @id @default(cuid())
+  vlanId       String
+  sourceNodeId String
+  targetNodeId String
+  status       VlanConnectionStatus
+  latencyMs    Float?
+  packetLoss   Float?
+  bandwidth    Float?
+  createdAt    DateTime             @default(now())
+  vlan         Vlan                 @relation(fields: [vlanId], references: [id], onDelete: Cascade)
+
+  @@index([vlanId, sourceNodeId, targetNodeId, createdAt])
 }

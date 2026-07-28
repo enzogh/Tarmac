@@ -1,13 +1,17 @@
-import { Controller, Get, Post, Param, Body, UseGuards, HttpException, HttpStatus, Logger } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, Query, UseGuards, HttpException, HttpStatus, Logger, Inject, forwardRef } from '@nestjs/common';
 import { VlanService } from './vlan.service';
+import { AgentsService } from '../agents/agents.service';
 import { AuthGuard } from '@nestjs/passport';
 
 @Controller('vlan')
 @UseGuards(AuthGuard('jwt'))
 export class VlanController {
   private readonly logger = new Logger(VlanController.name);
-  
-  constructor(private vlanService: VlanService) {}
+
+  constructor(
+    private vlanService: VlanService,
+    @Inject(forwardRef(() => AgentsService)) private agentsService: AgentsService,
+  ) {}
 
   @Get()
   async getAllVlans() {
@@ -69,6 +73,25 @@ export class VlanController {
       const status = await this.vlanService.getVlanStatus(vlanId);
       return status;
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new HttpException(message, HttpStatus.NOT_FOUND);
+    }
+  }
+
+  @Get(':vlanId/history')
+  async getConnectionHistory(
+    @Param('vlanId') vlanId: string,
+    @Query('source') source: string,
+    @Query('target') target: string,
+    @Query('range') range?: string,
+  ) {
+    try {
+      if (!source || !target) {
+        throw new HttpException('Les paramètres source et target sont requis', HttpStatus.BAD_REQUEST);
+      }
+      return await this.vlanService.getConnectionHistory(vlanId, source, target, range);
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new HttpException(message, HttpStatus.NOT_FOUND);
     }
@@ -160,6 +183,22 @@ export class VlanController {
         success: true,
         test,
       };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new HttpException(message, HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  @Post(':vlanId/members/:nodeId/gateway')
+  async setGateway(
+    @Param('vlanId') vlanId: string,
+    @Param('nodeId') nodeId: string,
+    @Body() body: { enabled: boolean },
+  ) {
+    try {
+      const result = await this.vlanService.setGateway(vlanId, nodeId, Boolean(body.enabled));
+      await this.agentsService.reconcileOverlayForVlan(vlanId);
+      return { success: true, ...result };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new HttpException(message, HttpStatus.BAD_REQUEST);

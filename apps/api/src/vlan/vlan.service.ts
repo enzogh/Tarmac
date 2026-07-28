@@ -2,9 +2,18 @@ import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { Region, resolveRegion } from './region';
 
 const CONNECTION_OFFLINE_TIMEOUT_MS = 60_000;
 const CONNECTION_DEGRADED_TIMEOUT_MS = 20_000;
+const CONNECTION_ALERT_COOLDOWN_MS = 10 * 60_000;
+const CONNECTION_STATUS_RANK: Record<string, number> = { healthy: 0, unknown: 0, degraded: 1, offline: 2 };
+const CONNECTION_SAMPLE_RETENTION_DAYS = 30;
+const HISTORY_RANGE_MS: Record<string, number> = {
+  '1h': 60 * 60 * 1000,
+  '24h': 24 * 60 * 60 * 1000,
+  '7d': 7 * 24 * 60 * 60 * 1000,
+};
 
 @Injectable()
 export class VlanService implements OnModuleInit {
@@ -12,6 +21,7 @@ export class VlanService implements OnModuleInit {
   private readonly VLAN_SUBNET = '10.255.0.0/16';
   private readonly VLAN_GATEWAY = '10.255.0.1';
   private readonly BASE_IP = 0x0aff0002; // 10.255.0.2 in hex
+  private readonly connectionAlertCooldownAt = new Map<string, number>();
 
   constructor(private prisma: PrismaService) {}
 
@@ -189,10 +199,11 @@ export class VlanService implements OnModuleInit {
       throw new Error(`VLAN not found: ${vlanIdOrName}`);
     }
 
-    return this.prisma.vlanMember.findMany({
+    const members = await this.prisma.vlanMember.findMany({
       where: { vlanId: vlan.id },
       include: { node: true },
     });
+    return members.map((member) => this.withRegion(member));
   }
 
   async getVlanConnections(vlanIdOrName: string): Promise<any> {
@@ -240,6 +251,70 @@ export class VlanService implements OnModuleInit {
         status,
         lastCheckedAt: new Date(),
         ...metrics,
+      },
+    });
+  }
+
+  /**
+   * Single write path for both VlanConnection update sites (real link-metric
+   * ingestion and the heartbeat-timeout refresh loop): records a history
+   * sample unconditionally, and raises a panel alert only on a genuine
+   * degrading transition (never on recovery — matches the failure-only
+   * convention used by the other alert producers in this codebase).
+   */
+  async recordConnectionTransition(
+    vlanId: string,
+    sourceNodeId: string,
+    targetNodeId: string,
+    previousStatus: string | undefined,
+    next: {
+      status: 'healthy' | 'degraded' | 'offline' | 'unknown';
+      latencyMs?: number | null;
+      packetLoss?: number | null;
+      bandwidth?: number | null;
+    },
+  ): Promise<void> {
+    await this.prisma.vlanConnectionSample.create({
+      data: {
+        vlanId,
+        sourceNodeId,
+        targetNodeId,
+        status: next.status,
+        latencyMs: next.latencyMs ?? null,
+        packetLoss: next.packetLoss ?? null,
+        bandwidth: next.bandwidth ?? null,
+      },
+    });
+
+    if (!previousStatus || previousStatus === next.status) return;
+    const isDegrading = (CONNECTION_STATUS_RANK[next.status] ?? 0) > (CONNECTION_STATUS_RANK[previousStatus] ?? 0);
+    if (!isDegrading) return;
+
+    const pairKey = [sourceNodeId, targetNodeId].sort().join('__');
+    const cooldownKey = `${pairKey}:${next.status}`;
+    const lastAlertAt = this.connectionAlertCooldownAt.get(cooldownKey) ?? 0;
+    if (Date.now() - lastAlertAt < CONNECTION_ALERT_COOLDOWN_MS) return;
+    this.connectionAlertCooldownAt.set(cooldownKey, Date.now());
+
+    const [source, target] = await Promise.all([
+      this.prisma.node.findUnique({ where: { id: sourceNodeId }, select: { name: true, vlanIp: true, mutedUntil: true } }),
+      this.prisma.node.findUnique({ where: { id: targetNodeId }, select: { name: true, vlanIp: true, mutedUntil: true } }),
+    ]);
+
+    const now = Date.now();
+    if ((source?.mutedUntil && source.mutedUntil.getTime() > now) || (target?.mutedUntil && target.mutedUntil.getTime() > now)) {
+      return;
+    }
+
+    const sourceLabel = `${source?.name ?? sourceNodeId} (${source?.vlanIp ?? '?'})`;
+    const targetLabel = `${target?.name ?? targetNodeId} (${target?.vlanIp ?? '?'})`;
+    const statusLabel = next.status === 'offline' ? 'hors ligne' : 'dégradé';
+
+    await this.prisma.alert.create({
+      data: {
+        nodeId: sourceNodeId,
+        severity: next.status === 'offline' ? 'high' : 'medium',
+        message: `Lien VLAN ${statusLabel} : ${sourceLabel} ↔ ${targetLabel}`,
       },
     });
   }
@@ -311,6 +386,103 @@ export class VlanService implements OnModuleInit {
     });
   }
 
+  async getConnectionHistory(
+    vlanIdOrName: string,
+    sourceNodeId: string,
+    targetNodeId: string,
+    range: string = '1h',
+  ): Promise<{ samples: any[]; uptimePercent: number }> {
+    const vlanLookup = await this.prisma.vlan.findFirst({
+      where: {
+        OR: [{ id: vlanIdOrName }, { name: vlanIdOrName }],
+      },
+    });
+
+    if (!vlanLookup) {
+      throw new Error(`VLAN not found: ${vlanIdOrName}`);
+    }
+
+    const ms = HISTORY_RANGE_MS[range] ?? HISTORY_RANGE_MS['1h'];
+    const samples = await this.prisma.vlanConnectionSample.findMany({
+      where: {
+        vlanId: vlanLookup.id,
+        sourceNodeId,
+        targetNodeId,
+        createdAt: { gte: new Date(Date.now() - ms) },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 500,
+    });
+
+    const uptimePercent =
+      samples.length > 0
+        ? Math.round((samples.filter((sample) => sample.status === 'healthy').length / samples.length) * 100)
+        : 100;
+
+    return { samples, uptimePercent };
+  }
+
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  async pruneOldConnectionSamples() {
+    const cutoff = new Date(Date.now() - CONNECTION_SAMPLE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const { count } = await this.prisma.vlanConnectionSample.deleteMany({ where: { createdAt: { lt: cutoff } } });
+    if (count > 0) {
+      this.logger.log(`Pruned ${count} VLAN connection sample(s) older than ${CONNECTION_SAMPLE_RETENTION_DAYS} days`);
+    }
+  }
+
+  /**
+   * Designates (or clears) a node as the regional gateway used by cross-region
+   * segmentation in AgentsService.reconcileOverlayForVlan. Only one gateway is
+   * allowed per region within a VLAN — enabling one clears any other. Actual
+   * WireGuard reconfiguration is triggered by the caller (AgentsService), not
+   * here, to avoid a hard dependency from VlanService onto AgentsService.
+   */
+  async setGateway(
+    vlanIdOrName: string,
+    nodeId: string,
+    enabled: boolean,
+  ): Promise<{ nodeId: string; overlayIsGateway: boolean; region: Region | null }> {
+    const vlan = await this.prisma.vlan.findFirst({
+      where: { OR: [{ id: vlanIdOrName }, { name: vlanIdOrName }] },
+    });
+    if (!vlan) {
+      throw new Error(`VLAN not found: ${vlanIdOrName}`);
+    }
+
+    const membership = await this.prisma.vlanMember.findFirst({
+      where: { vlanId: vlan.id, nodeId },
+      include: { node: true },
+    });
+    if (!membership) {
+      throw new Error(`Node is not a member of this VLAN: ${nodeId}`);
+    }
+
+    const region = resolveRegion(membership.node.locationCountryCode);
+    if (enabled && !region) {
+      throw new Error(
+        "Impossible de désigner ce nœud comme passerelle : sa région ne peut pas être déterminée (localisation manquante)",
+      );
+    }
+
+    if (enabled && region) {
+      const otherMembers = await this.prisma.vlanMember.findMany({
+        where: { vlanId: vlan.id, nodeId: { not: nodeId } },
+        include: { node: true },
+      });
+      const idsToClear = otherMembers
+        .filter((m) => m.node.overlayIsGateway && resolveRegion(m.node.locationCountryCode) === region)
+        .map((m) => m.nodeId);
+      if (idsToClear.length > 0) {
+        await this.prisma.node.updateMany({ where: { id: { in: idsToClear } }, data: { overlayIsGateway: false } });
+      }
+    }
+
+    await this.prisma.node.update({ where: { id: nodeId }, data: { overlayIsGateway: enabled } });
+
+    return { nodeId, overlayIsGateway: enabled, region };
+  }
+
   async getVlanStatus(vlanIdOrName: string): Promise<any> {
     // Resolve VLAN name alias to ID
     const vlanLookup = await this.prisma.vlan.findFirst({
@@ -349,8 +521,12 @@ export class VlanService implements OnModuleInit {
     const degradedConnections = connections.filter((c) => c.status === 'degraded').length;
     const offlineConnections = connections.filter((c) => c.status === 'offline').length;
 
+    const vlanWithRegions = vlan
+      ? { ...vlan, members: (vlan.members ?? []).map((member: any) => this.withRegion(member)) }
+      : vlan;
+
     return {
-      vlan,
+      vlan: vlanWithRegions,
       memberCount: members,
       connectionStats: {
         total: connections.length,
@@ -360,6 +536,12 @@ export class VlanService implements OnModuleInit {
       },
       recentFailures: failedTests,
     };
+  }
+
+  private withRegion<T extends { node?: { locationCountryCode?: string | null } | null }>(
+    member: T,
+  ): T & { region: Region | null } {
+    return { ...member, region: resolveRegion(member.node?.locationCountryCode) };
   }
 
   private generateVlanIp(index: number): string {
@@ -460,6 +642,12 @@ export class VlanService implements OnModuleInit {
     const memberByNodeId = new Map(members.map((member) => [member.nodeId, member]));
 
     const now = new Date();
+    const transitions: Array<{
+      sourceNodeId: string;
+      targetNodeId: string;
+      previousStatus: string;
+      next: { status: 'healthy' | 'degraded' | 'offline'; latencyMs: null; packetLoss: null; bandwidth: null };
+    }> = [];
     const updates = connections.flatMap((connection) => {
       const checkedRecently =
         connection.lastCheckedAt &&
@@ -484,6 +672,13 @@ export class VlanService implements OnModuleInit {
         now,
       });
 
+      transitions.push({
+        sourceNodeId: connection.sourceNodeId,
+        targetNodeId: connection.targetNodeId,
+        previousStatus: connection.status,
+        next: { status: telemetry.status, latencyMs: null, packetLoss: null, bandwidth: null },
+      });
+
       return [
         this.prisma.vlanConnection.update({
           where: { id: connection.id },
@@ -502,6 +697,16 @@ export class VlanService implements OnModuleInit {
 
     if (updates.length > 0) {
       await this.prisma.$transaction(updates);
+    }
+
+    for (const transition of transitions) {
+      await this.recordConnectionTransition(
+        vlanId,
+        transition.sourceNodeId,
+        transition.targetNodeId,
+        transition.previousStatus,
+        transition.next,
+      );
     }
   }
 

@@ -20,6 +20,7 @@ export type NodeItem = {
   controlVersion?: string;
   agentUpToDate?: boolean | null;
   mutedUntil?: string | null;
+  overlayIsGateway?: boolean;
 };
 
 export type SmartHistoryPoint = {
@@ -252,6 +253,8 @@ export type StorageOverview = Forecast & {
   }>;
 };
 
+export type VlanRegion = 'europe' | 'north-america' | 'south-america' | 'asia' | 'oceania' | 'africa';
+
 export type VlanMember = {
   id: string;
   vlanId: string;
@@ -261,6 +264,7 @@ export type VlanMember = {
   joinedAt: string;
   lastHeartbeat: string;
   node?: NodeItem;
+  region?: VlanRegion | null;
 };
 
 export type VlanConnection = {
@@ -291,6 +295,23 @@ export type VlanConnectionTest = {
   startedAt: string;
   completedAt?: string | null;
   initiatorNode?: { id: string; name: string; vlanIp: string };
+};
+
+export type VlanConnectionSample = {
+  id: string;
+  vlanId: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  status: 'healthy' | 'degraded' | 'offline' | 'unknown';
+  latencyMs?: number | null;
+  packetLoss?: number | null;
+  bandwidth?: number | null;
+  createdAt: string;
+};
+
+export type VlanConnectionHistory = {
+  samples: VlanConnectionSample[];
+  uptimePercent: number;
 };
 
 export type Vlan = {
@@ -637,11 +658,23 @@ export const api = {
       request<VlanStatus>(`/api/v1/vlan/${vlanId}/status`),
     getTests: (vlanId: string) =>
       request<{ tests: VlanConnectionTest[] }>(`/api/v1/vlan/${vlanId}/tests`),
+    getHistory: (vlanId: string, sourceNodeId: string, targetNodeId: string, range: '1h' | '24h' | '7d' = '1h') =>
+      request<VlanConnectionHistory>(
+        `/api/v1/vlan/${vlanId}/history?source=${encodeURIComponent(sourceNodeId)}&target=${encodeURIComponent(targetNodeId)}&range=${range}`,
+      ),
     runTest: (vlanId: string, initiatorNodeId: string, targetNodeId: string, testType: 'ping' | 'connectivity' | 'latency') =>
       request<{ success: boolean; test: VlanConnectionTest }>(`/api/v1/vlan/${vlanId}/test`, {
         method: 'POST',
         body: JSON.stringify({ initiatorNodeId, targetNodeId, testType }),
       }),
+    setGateway: (vlanId: string, nodeId: string, enabled: boolean) =>
+      request<{ success: boolean; nodeId: string; overlayIsGateway: boolean; region: VlanRegion | null }>(
+        `/api/v1/vlan/${vlanId}/members/${nodeId}/gateway`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ enabled }),
+        },
+      ),
     heartbeat: (nodeId: string, vlanId?: string) =>
       request<{ success: boolean; membership: VlanMember | null }>('/api/v1/vlan/heartbeat', {
         method: 'POST',

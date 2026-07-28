@@ -220,6 +220,56 @@ export function SmartTrendChart({ data }: { data: SmartTrendPoint[] }) {
   );
 }
 
-function ChartEmptyState({ label, className = 'h-64' }: { label: string; className?: string }) {
+export type ConnectionHistoryPoint = { label: string; latencyMs: number | null; packetLoss: number | null };
+
+const CONNECTION_HISTORY_CONFIG: ChartConfig = {
+  latencyMs: { label: 'Latence', color: 'hsl(var(--chart-1))' },
+  packetLoss: { label: 'Perte de paquets', color: 'hsl(var(--chart-4))' },
+};
+
+export function ConnectionHistoryChart({ data }: { data: ConnectionHistoryPoint[] }) {
+  if (data.length === 0) {
+    return <ChartEmptyState label="Pas encore d’historique pour ce lien." className="h-48" />;
+  }
+
+  return (
+    <ChartContainer config={CONNECTION_HISTORY_CONFIG} className="h-48">
+      <AreaChart data={data} margin={{ left: -16, right: 8, top: 8, bottom: 0 }}>
+        <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeDasharray="4 8" />
+        <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
+        <YAxis yAxisId="latency" tickLine={false} axisLine={false} tickMargin={8} width={36} />
+        <YAxis yAxisId="loss" orientation="right" domain={[0, 100]} tickLine={false} axisLine={false} tickMargin={8} width={36} />
+        <ChartTooltip
+          content={
+            <ChartTooltipContent
+              valueFormatter={(v, key) => (key === 'packetLoss' ? `${v} %` : `${v} ms`)}
+            />
+          }
+        />
+        <Area
+          yAxisId="latency"
+          dataKey="latencyMs"
+          type="monotone"
+          stroke="var(--color-latencyMs)"
+          fill="var(--color-latencyMs)"
+          fillOpacity={0.12}
+          strokeWidth={2}
+          connectNulls
+        />
+        <Line
+          yAxisId="loss"
+          dataKey="packetLoss"
+          type="monotone"
+          stroke="var(--color-packetLoss)"
+          strokeWidth={2}
+          dot={false}
+          connectNulls
+        />
+      </AreaChart>
+    </ChartContainer>
+  );
+}
+
+export function ChartEmptyState({ label, className = 'h-64' }: { label: string; className?: string }) {
   return <div className={`flex items-center justify-center text-sm text-muted-foreground ${className}`}>{label}</div>;
 }

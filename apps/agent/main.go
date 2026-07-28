@@ -1112,6 +1112,18 @@ func readInt(payload map[string]interface{}, key string, fallback int) int {
 	return fallback
 }
 
+func readBool(payload map[string]interface{}, key string) bool {
+	raw, ok := payload[key]
+	if !ok {
+		return false
+	}
+	value, ok := raw.(bool)
+	if !ok {
+		return false
+	}
+	return value
+}
+
 type overlayPeer struct {
 	publicKey           string
 	endpoint            string
@@ -1859,7 +1871,43 @@ func applyOverlay(payload map[string]interface{}) (string, error) {
 		}
 	}
 
+	if err := applyOverlayIPForward(readBool(payload, "ipForward")); err != nil {
+		return "", err
+	}
+
 	return fmt.Sprintf("overlay applied on %s with %d peers", iface, len(peers)), nil
+}
+
+// overlayForwardSysctlDropIn persists IP forwarding across reboots only while
+// this node is a designated VLAN regional gateway (see reconcileOverlayForVlan
+// server-side). Regional segmentation routes cross-region traffic through a
+// pair of gateway nodes, so the gateway's kernel must forward packets between
+// the two WireGuard tunnels sharing the tarmacwg0 interface.
+const overlayForwardSysctlDropIn = "/etc/sysctl.d/99-tarmac-overlay-forward.conf"
+
+func applyOverlayIPForward(enabled bool) error {
+	if enabled {
+		if out, err := exec.Command("sysctl", "-w", "net.ipv4.ip_forward=1").CombinedOutput(); err != nil {
+			return fmt.Errorf("cannot enable ip forwarding: %s", strings.TrimSpace(string(out)))
+		}
+		content := "# Managed by tarmac-agent: this node is a VLAN regional gateway.\nnet.ipv4.ip_forward = 1\n"
+		if err := os.WriteFile(overlayForwardSysctlDropIn, []byte(content), 0644); err != nil {
+			return fmt.Errorf("cannot persist ip forwarding setting: %w", err)
+		}
+		return nil
+	}
+
+	// No longer a gateway: only remove our own persisted drop-in so a reboot
+	// won't re-enable forwarding. Deliberately does NOT force
+	// net.ipv4.ip_forward back to 0 on the running kernel — something else on
+	// this host (Docker, another VM/router role, ...) may also depend on it
+	// being on, and we have no way to know that from here.
+	if _, err := os.Stat(overlayForwardSysctlDropIn); err == nil {
+		if err := os.Remove(overlayForwardSysctlDropIn); err != nil {
+			return fmt.Errorf("cannot remove ip forwarding drop-in: %w", err)
+		}
+	}
+	return nil
 }
 
 func isTargetMounted(target string) (string, bool) {
