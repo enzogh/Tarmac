@@ -58,6 +58,17 @@ while true; do
   exit "$create_status"
 done
 
+echo "Migrating away deprecated VlanConnectionTest.testType values (if any)..."
+set +e
+migrate_test_types_output=$(printf '%s' 'UPDATE "VlanConnectionTest" SET "testType" = '"'"'ping'"'"' WHERE "testType"::text IN ('"'"'connectivity'"'"', '"'"'latency'"'"');' | npx prisma db execute --url "$DATABASE_URL" --stdin 2>&1)
+migrate_test_types_status=$?
+set -e
+if [ "$migrate_test_types_status" -ne 0 ] && ! printf '%s' "$migrate_test_types_output" | grep -qi 'does not exist'; then
+  # Table not existing yet (fresh install, schema not pushed at all) is fine —
+  # anything else here is unexpected and worth surfacing before the schema push.
+  echo "$migrate_test_types_output"
+fi
+
 echo "Applying Prisma schema..."
 until npx prisma db push --schema apps/api/prisma/schema.prisma --accept-data-loss 2>&1; do
   echo "DB schema push failed, retrying in 3s..."
