@@ -139,6 +139,17 @@ type directoryScanData struct {
 	Truncated bool                 `json:"truncated"`
 }
 
+type tracerouteHop struct {
+	Hop       int      `json:"hop"`
+	IP        *string  `json:"ip"`
+	LatencyMs *float64 `json:"latencyMs"`
+}
+
+type tracerouteData struct {
+	TargetIP string          `json:"targetIp"`
+	Hops     []tracerouteHop `json:"hops"`
+}
+
 var rsyncExecutions = struct {
 	mu    sync.Mutex
 	byKey map[string]context.CancelFunc
@@ -623,6 +634,105 @@ func probeOverlayLatency(iface, targetIP string) (*float64, *float64) {
 		}
 	}
 	return fallbackLatency, fallbackLoss
+}
+
+// Matches "traceroute -n" numeric output, one probe per hop (-q 1):
+//
+//	 1  10.255.0.1  0.512 ms
+//	 2  * * *
+var tracerouteLineRe = regexp.MustCompile(`^\s*(\d+)\s+(\S+)(?:\s+([\d.]+)\s*ms)?`)
+
+func parseTracerouteOutput(output string) []tracerouteHop {
+	hops := make([]tracerouteHop, 0, 16)
+	for _, line := range strings.Split(output, "\n") {
+		match := tracerouteLineRe.FindStringSubmatch(line)
+		if match == nil {
+			continue
+		}
+		hopNum, err := strconv.Atoi(match[1])
+		if err != nil {
+			continue
+		}
+		hop := tracerouteHop{Hop: hopNum}
+		if match[2] != "*" {
+			ip := match[2]
+			hop.IP = &ip
+		}
+		if match[3] != "" {
+			if latency, err := strconv.ParseFloat(match[3], 64); err == nil {
+				hop.LatencyMs = &latency
+			}
+		}
+		hops = append(hops, hop)
+	}
+	return hops
+}
+
+// Matches "tracepath -n" output. Each hop can appear on more than one line
+// (asymmetric forward/return probes); later lines for the same hop overwrite
+// earlier ones, which naturally keeps the last (most complete) reading:
+//
+//	 1?: [LOCALHOST]                      pmtu 1420
+//	 1:  10.255.0.1                        0.412ms
+//	 2:  10.255.0.2                        1.021ms reached
+var tracepathLineRe = regexp.MustCompile(`^\s*(\d+)\??:\s+(\S+)\s+([\d.]+)ms`)
+
+func parseTracepathOutput(output string) []tracerouteHop {
+	byHop := make(map[int]tracerouteHop)
+	order := make([]int, 0, 16)
+	for _, line := range strings.Split(output, "\n") {
+		match := tracepathLineRe.FindStringSubmatch(line)
+		if match == nil {
+			continue
+		}
+		hopNum, err := strconv.Atoi(match[1])
+		if err != nil {
+			continue
+		}
+		if _, seen := byHop[hopNum]; !seen {
+			order = append(order, hopNum)
+		}
+		hop := tracerouteHop{Hop: hopNum}
+		ip := match[2]
+		hop.IP = &ip
+		if latency, err := strconv.ParseFloat(match[3], 64); err == nil {
+			hop.LatencyMs = &latency
+		}
+		byHop[hopNum] = hop
+	}
+	hops := make([]tracerouteHop, 0, len(order))
+	for _, hopNum := range order {
+		hops = append(hops, byHop[hopNum])
+	}
+	return hops
+}
+
+func runTraceroute(payload map[string]interface{}) (tracerouteData, error) {
+	targetIP := strings.TrimSpace(readString(payload, "targetIp"))
+	if targetIP == "" {
+		return tracerouteData{}, errors.New("targetIp is required")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+
+	var hops []tracerouteHop
+	switch {
+	case commandExists("traceroute"):
+		output, _ := exec.CommandContext(ctx, "traceroute", "-n", "-q", "1", "-w", "1", "-m", "15", targetIP).CombinedOutput()
+		hops = parseTracerouteOutput(string(output))
+	case commandExists("tracepath"):
+		output, _ := exec.CommandContext(ctx, "tracepath", "-n", targetIP).CombinedOutput()
+		hops = parseTracepathOutput(string(output))
+	default:
+		return tracerouteData{}, errors.New("traceroute/tracepath not found on agent (install the 'traceroute' package)")
+	}
+
+	if len(hops) == 0 {
+		return tracerouteData{}, fmt.Errorf("no route found to %s", targetIP)
+	}
+
+	return tracerouteData{TargetIP: targetIP, Hops: hops}, nil
 }
 
 func pokeOverlayTraffic(targetIP string) bool {
@@ -3364,6 +3474,21 @@ func handleCommand(cmd commandPayload, onProgress func(progress commandProgress)
 		} else {
 			result.Data = data
 			result.Message = fmt.Sprintf("%d directories scanned", len(data.Entries))
+		}
+	case "command.run_traceroute":
+		result.Command = "run_traceroute"
+		result.ResourceType = "traceroute"
+		result.ResourceID = readString(cmd.Payload, "requestId")
+		if result.ResourceID == "" {
+			result.ResourceID = fmt.Sprintf("trace-%d", time.Now().UnixNano())
+		}
+		data, err := runTraceroute(cmd.Payload)
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Data = data
+			result.Message = fmt.Sprintf("%d hops", len(data.Hops))
 		}
 	case "command.apply_ssh_authorized_keys":
 		result.Command = "apply_ssh_authorized_keys"

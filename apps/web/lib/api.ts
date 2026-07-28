@@ -281,17 +281,20 @@ export type VlanConnection = {
   targetNode?: { id: string; name: string; vlanIp: string };
 };
 
+export type VlanTraceHop = { hop: number; ip: string | null; latencyMs: number | null };
+
 export type VlanConnectionTest = {
   id: string;
   vlanId: string;
   initiatorNodeId: string;
   targetNodeId: string;
-  testType: 'ping' | 'connectivity' | 'latency';
+  testType: 'ping' | 'traceroute';
   status: 'pending' | 'success' | 'failed' | 'timeout';
   resultCode?: number | null;
   resultMessage?: string | null;
   latencyMs?: number | null;
   packetLoss?: number | null;
+  hops?: VlanTraceHop[] | null;
   startedAt: string;
   completedAt?: string | null;
   initiatorNode?: { id: string; name: string; vlanIp: string };
@@ -662,7 +665,7 @@ export const api = {
       request<VlanConnectionHistory>(
         `/api/v1/vlan/${vlanId}/history?source=${encodeURIComponent(sourceNodeId)}&target=${encodeURIComponent(targetNodeId)}&range=${range}`,
       ),
-    runTest: (vlanId: string, initiatorNodeId: string, targetNodeId: string, testType: 'ping' | 'connectivity' | 'latency') =>
+    runTest: (vlanId: string, initiatorNodeId: string, targetNodeId: string, testType: 'ping' | 'traceroute') =>
       request<{ success: boolean; test: VlanConnectionTest }>(`/api/v1/vlan/${vlanId}/test`, {
         method: 'POST',
         body: JSON.stringify({ initiatorNodeId, targetNodeId, testType }),

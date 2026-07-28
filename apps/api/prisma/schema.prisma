@@ -103,8 +103,7 @@ enum VlanConnectionStatus {
 
 enum VlanTestType {
   ping
-  connectivity
-  latency
+  traceroute
 }
 
 enum MigrationStatus {
@@ -489,6 +488,7 @@ model VlanConnectionTest {
   resultMessage String?
   latencyMs   Float?
   packetLoss  Float?
+  hops        Json?
   startedAt   DateTime       @default(now())
   completedAt DateTime?
   createdAt   DateTime       @default(now())

@@ -323,12 +323,13 @@ export class VlanService implements OnModuleInit {
     vlanIdOrName: string,
     initiatorNodeId: string,
     targetNodeId: string,
-    testType: 'ping' | 'connectivity' | 'latency',
+    testType: 'ping' | 'traceroute',
     result: {
       status: 'success' | 'failed' | 'timeout';
       latencyMs?: number;
       packetLoss?: number;
       message?: string;
+      hops?: Array<{ hop: number; ip: string | null; latencyMs: number | null }>;
     },
   ): Promise<any> {
     // Resolve VLAN name alias to ID
@@ -356,6 +357,7 @@ export class VlanService implements OnModuleInit {
         resultMessage: result.message,
         latencyMs: result.latencyMs,
         packetLoss: result.packetLoss,
+        hops: result.hops,
         completedAt: new Date(),
       },
     });

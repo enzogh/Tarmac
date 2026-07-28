@@ -61,6 +61,7 @@ export interface CommandPayload {
     | 'command.list_directories'
     | 'command.list_remote_directories'
     | 'command.scan_directory_sizes'
+    | 'command.run_traceroute'
     | 'command.apply_ssh_authorized_keys'
     | 'command.update_agent'
     | 'command.uninstall_agent'
@@ -80,6 +81,7 @@ export interface CommandResultPayload {
     | 'list_directories'
     | 'list_remote_directories'
     | 'scan_directory_sizes'
+    | 'run_traceroute'
     | 'apply_ssh_authorized_keys'
     | 'update_agent'
     | 'uninstall_agent'
@@ -93,19 +95,26 @@ export interface CommandResultPayload {
     | 'overlay'
     | 'directory_list'
     | 'directory_scan'
+    | 'traceroute'
     | 'migration'
     | 'agent';
   resourceId: string;
   success: boolean;
   message?: string;
   data?: {
-    basePath: string;
-    directories: string[];
+    basePath?: string;
+    directories?: string[];
     entries?: Array<{
       path: string;
       sizeBytes: number;
     }>;
     truncated?: boolean;
+    targetIp?: string;
+    hops?: Array<{
+      hop: number;
+      ip: string | null;
+      latencyMs: number | null;
+    }>;
   };
 }
 

@@ -86,8 +86,11 @@ export default function OverviewPage() {
   const activityFeedLoading = syncJobsLoading || migrationsLoading;
 
   const nodesOnline = activities.filter((node) => node.status === 'online').length;
-  const alertsCritical = alerts.filter((a) => a.severity === 'critical').length;
-  const alertsWarning = alerts.filter((a) => a.severity === 'high').length;
+  // "Actives" means not yet resolved — open (unread) and acknowledged (read
+  // but still pending) both count; only resolved alerts drop off.
+  const activeAlerts = alerts.filter((a) => a.status !== 'resolved');
+  const alertsCritical = activeAlerts.filter((a) => a.severity === 'critical').length;
+  const alertsWarning = activeAlerts.filter((a) => a.severity === 'high').length;
   const activeMigrations = migrations.filter(
     (migration) =>
       (migration.status === 'pending' || migration.status === 'running') && migration.progress < 100,
@@ -161,7 +164,7 @@ export default function OverviewPage() {
               />
               <StatCard
                 label="Alertes actives"
-                value={alerts.length}
+                value={activeAlerts.length}
                 icon={<Bell className="h-8 w-8" />}
                 change={alertsCritical > 0 ? `${alertsCritical} critiques` : `${alertsWarning} avertissements`}
                 changeType={alertsCritical > 0 ? 'down' : alertsWarning > 0 ? 'neutral' : 'up'}
@@ -240,7 +243,7 @@ export default function OverviewPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                  {alerts.slice(0, 5).map((alert) => (
+                  {activeAlerts.slice(0, 5).map((alert) => (
                     <div
                       key={alert.id}
                       className="flex items-start gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3"
@@ -255,7 +258,7 @@ export default function OverviewPage() {
                       />
                     </div>
                   ))}
-                  {alerts.length === 0 && (
+                  {activeAlerts.length === 0 && (
                     <div className="flex items-center justify-center gap-2 py-4 text-sm text-emerald-400">
                       <CheckCircle2 className="h-4 w-4" />
                       Aucune alerte active

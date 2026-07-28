@@ -115,7 +115,7 @@ export class VlanController {
     body: {
       initiatorNodeId: string;
       targetNodeId: string;
-      testType: 'ping' | 'connectivity' | 'latency';
+      testType: 'ping' | 'traceroute';
     },
   ) {
     try {
@@ -135,6 +135,40 @@ export class VlanController {
         throw new HttpException('Le test doit passer par des IPs VLAN privées', HttpStatus.BAD_REQUEST);
       }
 
+      if (body.testType === 'traceroute') {
+        let result: {
+          status: 'success' | 'failed';
+          message: string;
+          latencyMs?: number;
+          hops?: Array<{ hop: number; ip: string | null; latencyMs: number | null }>;
+        };
+        try {
+          const trace = await this.agentsService.requestTraceroute(body.initiatorNodeId, target.vlanIp);
+          const lastHop = trace.hops[trace.hops.length - 1];
+          result = {
+            status: 'success',
+            message: `Traceroute vers ${target.vlanIp} : ${trace.hops.length} saut(s)`,
+            latencyMs: typeof lastHop?.latencyMs === 'number' ? lastHop.latencyMs : undefined,
+            hops: trace.hops,
+          };
+        } catch (error) {
+          result = {
+            status: 'failed',
+            message: error instanceof Error ? error.message : 'Traceroute échoué',
+          };
+        }
+
+        const test = await this.vlanService.recordConnectionTest(
+          vlanId,
+          body.initiatorNodeId,
+          body.targetNodeId,
+          'traceroute',
+          result,
+        );
+
+        return { success: true, test };
+      }
+
       const connections = await this.vlanService.getVlanConnections(vlanId);
       const connection = connections.find(
         (conn: any) =>
@@ -142,25 +176,20 @@ export class VlanController {
           (conn.sourceNodeId === body.targetNodeId && conn.targetNodeId === body.initiatorNodeId),
       );
 
-      let status: 'success' | 'failed' | 'timeout' = 'success';
-      if (!connection || connection.status === 'offline') {
-        status = 'failed';
-      } else if (body.testType === 'latency' && typeof connection.latencyMs !== 'number') {
-        status = 'timeout';
-      }
+      const status: 'success' | 'failed' = !connection || connection.status === 'offline' ? 'failed' : 'success';
 
       const result = {
         status,
         latencyMs: typeof connection?.latencyMs === 'number' ? connection.latencyMs : undefined,
         packetLoss: typeof connection?.packetLoss === 'number' ? connection.packetLoss : undefined,
-        message: `Test ${body.testType} via VLAN privé ${initiator.vlanIp} -> ${target.vlanIp}`,
+        message: `Ping via VLAN privé ${initiator.vlanIp} -> ${target.vlanIp}`,
       };
 
       const test = await this.vlanService.recordConnectionTest(
         vlanId,
         body.initiatorNodeId,
         body.targetNodeId,
-        body.testType,
+        'ping',
         result,
       );
 

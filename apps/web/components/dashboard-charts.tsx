@@ -234,11 +234,11 @@ export function ConnectionHistoryChart({ data }: { data: ConnectionHistoryPoint[
 
   return (
     <ChartContainer config={CONNECTION_HISTORY_CONFIG} className="h-48">
-      <AreaChart data={data} margin={{ left: -16, right: 8, top: 8, bottom: 0 }}>
+      <AreaChart data={data} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
         <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeDasharray="4 8" />
         <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
-        <YAxis yAxisId="latency" tickLine={false} axisLine={false} tickMargin={8} width={36} />
-        <YAxis yAxisId="loss" orientation="right" domain={[0, 100]} tickLine={false} axisLine={false} tickMargin={8} width={36} />
+        <YAxis yAxisId="latency" tickLine={false} axisLine={false} tickMargin={8} width={44} tickFormatter={(v) => `${v}`} />
+        <YAxis yAxisId="loss" orientation="right" domain={[0, 100]} tickLine={false} axisLine={false} tickMargin={8} width={40} />
         <ChartTooltip
           content={
             <ChartTooltipContent

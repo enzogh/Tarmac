@@ -35,11 +35,23 @@ type PendingDirectoryScanRequest = {
   reject: (reason: Error) => void;
   timeout: NodeJS.Timeout;
 };
+type PendingTracerouteRequest = {
+  nodeId: string;
+  resolve: (value: { targetIp: string; hops: Array<{ hop: number; ip: string | null; latencyMs: number | null }> }) => void;
+  reject: (reason: Error) => void;
+  timeout: NodeJS.Timeout;
+};
 
 // Node is considered offline if no heartbeat received within this time
 const NODE_HEARTBEAT_TIMEOUT_MS = 60 * 1000; // 60 seconds
 const LINK_OFFLINE_HANDSHAKE_SEC = 600;
 const LINK_DEGRADED_HANDSHAKE_SEC = 240;
+// A link between two nodes in the same region is expected to stay well under
+// this; a link crossing regions (e.g. an intercontinental gateway backbone)
+// has a much higher physical floor (~80-120ms for a transatlantic hop) that
+// isn't itself a sign of trouble, so it gets a separate, higher bar.
+const LINK_DEGRADED_LATENCY_MS = 180;
+const LINK_DEGRADED_LATENCY_CROSS_REGION_MS = 300;
 
 // Retry config for deadlock handling
 const MAX_DEADLOCK_RETRIES = 5;
@@ -69,6 +81,7 @@ export class AgentsService implements OnModuleInit {
   private readonly overlaySyncAt = new Map<string, number>();
   private readonly pendingDirectoryRequests = new Map<string, PendingDirectoryRequest>();
   private readonly pendingDirectoryScanRequests = new Map<string, PendingDirectoryScanRequest>();
+  private readonly pendingTracerouteRequests = new Map<string, PendingTracerouteRequest>();
   private readonly smartAlertAt = new Map<string, number>();
 
   private normalizeFailureMessage(message?: string | null) {
@@ -266,6 +279,12 @@ export class AgentsService implements OnModuleInit {
       clearTimeout(request.timeout);
       request.reject(new Error(`node ${nodeId} disconnected`));
       this.pendingDirectoryScanRequests.delete(requestId);
+    }
+    for (const [requestId, request] of this.pendingTracerouteRequests.entries()) {
+      if (request.nodeId !== nodeId) continue;
+      clearTimeout(request.timeout);
+      request.reject(new Error(`node ${nodeId} disconnected`));
+      this.pendingTracerouteRequests.delete(requestId);
     }
   }
 
@@ -636,6 +655,37 @@ export class AgentsService implements OnModuleInit {
       return;
     }
 
+    if (result.resourceType === 'traceroute') {
+      const pending = this.pendingTracerouteRequests.get(result.resourceId);
+      if (!pending) return;
+
+      clearTimeout(pending.timeout);
+      this.pendingTracerouteRequests.delete(result.resourceId);
+
+      if (!result.success) {
+        pending.reject(new Error(result.message ?? 'traceroute failed'));
+        return;
+      }
+
+      const payload = result.data;
+      pending.resolve({
+        targetIp: payload?.targetIp ?? '',
+        hops: Array.isArray(payload?.hops)
+          ? payload.hops
+              .filter(
+                (hop): hop is { hop: number; ip: string | null; latencyMs: number | null } =>
+                  Boolean(hop) && typeof hop.hop === 'number',
+              )
+              .map((hop) => ({
+                hop: hop.hop,
+                ip: typeof hop.ip === 'string' ? hop.ip : null,
+                latencyMs: typeof hop.latencyMs === 'number' ? hop.latencyMs : null,
+              }))
+          : [],
+      });
+      return;
+    }
+
     if (result.resourceType === 'migration') {
       if (result.command === 'stop_rsync') {
         return;
@@ -858,6 +908,39 @@ export class AgentsService implements OnModuleInit {
     });
   }
 
+  requestTraceroute(
+    nodeId: string,
+    targetIp: string,
+    timeoutMs = 15000,
+  ): Promise<{ targetIp: string; hops: Array<{ hop: number; ip: string | null; latencyMs: number | null }> }> {
+    const requestId = `trace:${nodeId}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingTracerouteRequests.delete(requestId);
+        reject(new Error('traceroute timeout'));
+      }, timeoutMs);
+
+      this.pendingTracerouteRequests.set(requestId, {
+        nodeId,
+        resolve,
+        reject,
+        timeout,
+      });
+
+      const sent = this.sendCommand(nodeId, {
+        type: 'command.run_traceroute',
+        payload: { requestId, targetIp },
+      });
+
+      if (!sent) {
+        clearTimeout(timeout);
+        this.pendingTracerouteRequests.delete(requestId);
+        reject(new Error(`node ${nodeId} is offline`));
+      }
+    });
+  }
+
   async handleAgentUninstall(nodeId: string) {
     const memberships = await this.prisma.vlanMember.findMany({
       where: { nodeId },
@@ -1056,9 +1139,10 @@ export class AgentsService implements OnModuleInit {
   ) {
     const sourceMembership = await this.prisma.vlanMember.findFirst({
       where: { nodeId: sourceNodeId },
-      select: { vlanId: true },
+      select: { vlanId: true, node: { select: { locationCountryCode: true } } },
     });
     if (!sourceMembership) return;
+    const sourceRegion = resolveRegion(sourceMembership.node.locationCountryCode);
 
     const publicKeys = Array.from(
       new Set(linkMetrics.map((metric) => metric.targetPublicKey).filter((value): value is string => Boolean(value))),
@@ -1080,6 +1164,7 @@ export class AgentsService implements OnModuleInit {
               status: true,
               overlayPublicKey: true,
               vlanIp: true,
+              locationCountryCode: true,
             },
           })
         : Promise.resolve([]),
@@ -1092,6 +1177,7 @@ export class AgentsService implements OnModuleInit {
               status: true,
               overlayPublicKey: true,
               vlanIp: true,
+              locationCountryCode: true,
             },
           },
         },
@@ -1110,6 +1196,7 @@ export class AgentsService implements OnModuleInit {
             status: 'online' | 'offline' | 'degraded';
             overlayPublicKey: string;
             vlanIp: string | null;
+            locationCountryCode: string | null;
           } =>
           Boolean(node.overlayPublicKey),
         )
@@ -1123,6 +1210,7 @@ export class AgentsService implements OnModuleInit {
             status: 'online' | 'offline' | 'degraded';
             overlayPublicKey: string | null;
             vlanIp: string;
+            locationCountryCode: string | null;
           } => Boolean(node.vlanIp),
         )
         .map((node) => [node.vlanIp, node]),
@@ -1148,6 +1236,15 @@ export class AgentsService implements OnModuleInit {
         handshakeAgeSec < LINK_OFFLINE_HANDSHAKE_SEC;
       const peerReportedOffline = target.status !== 'online';
 
+      // A link crossing regions (e.g. the France <-> Canada gateway backbone)
+      // has a much higher latency floor than an intra-region link purely from
+      // physical distance — don't flag that baseline as degraded.
+      const targetRegion = resolveRegion(target.locationCountryCode);
+      const isCrossRegionLink = Boolean(sourceRegion && targetRegion && sourceRegion !== targetRegion);
+      const latencyDegradedThresholdMs = isCrossRegionLink
+        ? LINK_DEGRADED_LATENCY_CROSS_REGION_MS
+        : LINK_DEGRADED_LATENCY_MS;
+
       const status: 'healthy' | 'degraded' | 'offline' =
         // Only classify as offline from hard link telemetry signals.
         // Node status can be stale while tunnel traffic/probes are actually healthy.
@@ -1157,7 +1254,7 @@ export class AgentsService implements OnModuleInit {
               (handshakeUnknown && !hasTraffic && !hasUsableProbe) ||
               (handshakeDegraded && !hasTraffic && !hasUsableProbe) ||
               (metric.packetLoss ?? 0) >= 8 ||
-              (metric.latencyMs ?? 0) >= 180
+              (metric.latencyMs ?? 0) >= latencyDegradedThresholdMs
             ? 'degraded'
             : 'healthy';
 

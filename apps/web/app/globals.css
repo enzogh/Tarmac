@@ -203,3 +203,22 @@
   border-top-color: rgba(255, 255, 255, 0.1) !important;
 }
 
+/* Glow on the inter-node link lines, matching the topology graph tab's
+   per-status glow. Fixed classes (not inline styles) since Leaflet's SVG
+   renderer applies pathOptions.className straight to the <path> element. */
+.tarmac-map-link-healthy {
+  filter: drop-shadow(0 0 4px rgba(16, 185, 129, 0.55));
+}
+
+.tarmac-map-link-degraded {
+  filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.5));
+}
+
+.tarmac-map-link-offline {
+  filter: drop-shadow(0 0 3px rgba(244, 63, 94, 0.4));
+}
+
+.tarmac-map-link-unknown {
+  filter: drop-shadow(0 0 3px rgba(161, 161, 170, 0.35));
+}
+

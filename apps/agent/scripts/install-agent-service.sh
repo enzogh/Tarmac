@@ -131,6 +131,7 @@ apt-get install -y --no-install-recommends \
   nfs-common \
   cifs-utils \
   sshpass \
+  traceroute \
   wireguard-tools \
   iproute2 \
   util-linux

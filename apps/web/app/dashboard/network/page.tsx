@@ -39,7 +39,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import type { WorldMapNode } from '@/components/WorldMap';
+import type { WorldMapLink, WorldMapNode } from '@/components/WorldMap';
 
 const WorldMap = dynamic(() => import('@/components/WorldMap').then((mod) => mod.WorldMap), {
   ssr: false,
@@ -50,7 +50,7 @@ const WorldMap = dynamic(() => import('@/components/WorldMap').then((mod) => mod
   ),
 });
 
-type TestType = 'ping' | 'connectivity' | 'latency';
+type TestType = 'ping' | 'traceroute';
 type LinkStatus = 'healthy' | 'degraded' | 'offline' | 'unknown';
 
 type GraphNode = {
@@ -109,8 +109,7 @@ const MIND_MAP_HEIGHT = 760;
 
 const TEST_OPTIONS: Array<{ value: TestType; label: string }> = [
   { value: 'ping', label: 'Ping' },
-  { value: 'connectivity', label: 'Connectivité' },
-  { value: 'latency', label: 'Latence' },
+  { value: 'traceroute', label: 'Traceroute' },
 ];
 
 const testStatusLabel: Record<VlanConnectionTest['status'], string> = {
@@ -145,8 +144,19 @@ const formatLoss = (value?: number | null) =>
 const formatBandwidth = (value?: number | null) =>
   typeof value === 'number' ? `${value} MB/s` : '—';
 
-const isTestType = (value: string): value is TestType =>
-  value === 'ping' || value === 'connectivity' || value === 'latency';
+const HISTORY_RANGE_LABELS: Record<'1h' | '24h' | '7d', string> = {
+  '1h': '1 heure',
+  '24h': '24 heures',
+  '7d': '7 jours',
+};
+
+const uptimeToneClass = (percent: number) => {
+  if (percent >= 99) return 'text-emerald-400';
+  if (percent >= 90) return 'text-amber-400';
+  return 'text-rose-400';
+};
+
+const isTestType = (value: string): value is TestType => value === 'ping' || value === 'traceroute';
 
 const getConnectionBadgeVariant = (status: VlanConnection['status']): 'success' | 'warning' | 'error' | 'info' => {
   if (status === 'healthy') return 'success';
@@ -236,6 +246,9 @@ export default function NetworkPage() {
   useEffect(() => {
     setNodeLabels(readNodeLabels());
   }, []);
+
+
+
 
   useEffect(() => {
     const members = vlanStatus?.vlan.members ?? [];
@@ -598,6 +611,17 @@ export default function NetworkPage() {
       })),
     [graph.nodes],
   );
+  const worldMapLinks: WorldMapLink[] = useMemo(
+    () =>
+      graph.links.map((link) => ({
+        key: link.key,
+        sourceNodeId: link.sourceNodeId,
+        targetNodeId: link.targetNodeId,
+        status: link.status,
+        latencyMs: link.latencyMs,
+      })),
+    [graph.links],
+  );
   const handleMapNodeDrag = (nodeId: string, lat: number, lng: number) => {
     setMapLocationOverrides((prev) => ({ ...prev, [nodeId]: [lat, lng] }));
     void api.nodes
@@ -684,6 +708,43 @@ export default function NetworkPage() {
     () => new Map((vlanStatus?.vlan.members || []).map((member) => [member.nodeId, member])),
     [vlanStatus],
   );
+  const memberByVlanIp = useMemo(
+    () => new Map((vlanStatus?.vlan.members || []).filter((member) => member.vlanIp).map((member) => [member.vlanIp, member])),
+    [vlanStatus],
+  );
+  const regionSummaries = useMemo(() => {
+    const members = vlanStatus?.vlan.members ?? [];
+    const byRegion = new Map<string, typeof members>();
+    for (const member of members) {
+      const key = member.region ?? 'unknown';
+      const list = byRegion.get(key) ?? [];
+      list.push(member);
+      byRegion.set(key, list);
+    }
+    return Array.from(byRegion.entries()).map(([region, group]) => ({
+      region,
+      members: group,
+      gateway: group.find((m) => m.node?.overlayIsGateway) ?? null,
+    }));
+  }, [vlanStatus]);
+  const knownRegionSummaries = useMemo(
+    () => regionSummaries.filter((summary) => summary.region !== 'unknown'),
+    [regionSummaries],
+  );
+  const segmentedRegionPairs = useMemo(() => {
+    const withGateway = knownRegionSummaries.filter((summary) => summary.gateway);
+    const pairs: Array<[(typeof withGateway)[number], (typeof withGateway)[number]]> = [];
+    for (let i = 0; i < withGateway.length; i++) {
+      for (let j = i + 1; j < withGateway.length; j++) {
+        pairs.push([withGateway[i], withGateway[j]]);
+      }
+    }
+    return pairs;
+  }, [knownRegionSummaries]);
+  const meshedRegionSummaries = useMemo(
+    () => (knownRegionSummaries.length > 1 ? knownRegionSummaries.filter((summary) => !summary.gateway) : []),
+    [knownRegionSummaries],
+  );
   const directedFlows = useMemo(
     () =>
       [...connections]
@@ -713,15 +774,19 @@ export default function NetworkPage() {
     () => directedFlows.slice(0, 5),
     [directedFlows],
   );
+  // The history card always shows something when there's at least one flow:
+  // the explicitly selected one, or — failing that — the most active pair,
+  // so the section never sits empty just because nothing's been clicked yet.
+  const historyFlow = selectedFlow ?? topTrafficFlows[0] ?? null;
 
   useEffect(() => {
-    if (!vlanStatus || !selectedFlow) {
+    if (!vlanStatus || !historyFlow) {
       setHistory(null);
       return;
     }
     let cancelled = false;
     void api.vlan
-      .getHistory(vlanStatus.vlan.id, selectedFlow.sourceNodeId, selectedFlow.targetNodeId, historyRange)
+      .getHistory(vlanStatus.vlan.id, historyFlow.sourceNodeId, historyFlow.targetNodeId, historyRange)
       .then((result) => {
         if (!cancelled) setHistory(result);
       })
@@ -732,7 +797,7 @@ export default function NetworkPage() {
     return () => {
       cancelled = true;
     };
-  }, [vlanStatus, selectedFlow, historyRange]);
+  }, [vlanStatus, historyFlow, historyRange]);
 
   const historyChartData = useMemo(
     () =>
@@ -1077,6 +1142,85 @@ export default function NetworkPage() {
       </section>
 
       <SectionLabel>Topologie</SectionLabel>
+
+      {knownRegionSummaries.length > 1 && (
+        <Callout>
+          <div className="space-y-1.5">
+            {segmentedRegionPairs.map(([a, b]) => (
+              <p key={`${a.region}-${b.region}`} className="flex flex-wrap items-center gap-1.5">
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                Segmentation active : {REGION_LABELS[a.region] ?? a.region} ↔ {REGION_LABELS[b.region] ?? b.region} via{' '}
+                <span className="font-medium text-zinc-100">{a.gateway?.node?.name ?? a.gateway?.nodeId}</span>
+                <span>↔</span>
+                <span className="font-medium text-zinc-100">{b.gateway?.node?.name ?? b.gateway?.nodeId}</span>
+              </p>
+            ))}
+            {meshedRegionSummaries.map((summary) => (
+              <p key={summary.region} className="flex flex-wrap items-center gap-1.5">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+                {REGION_LABELS[summary.region] ?? summary.region} : aucune passerelle désignée — maillage complet par
+                défaut avec les autres régions.
+              </p>
+            ))}
+          </div>
+        </Callout>
+      )}
+
+      <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Globe2 className="h-5 w-5 text-violet-400" />
+            <CardTitle className="text-base">Régions &amp; passerelles</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {regionSummaries.map(({ region, members, gateway }) => (
+            <div key={region} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium text-zinc-100">
+                  {region === 'unknown' ? 'Région inconnue' : REGION_LABELS[region] ?? region}
+                </p>
+                <span className="text-xs text-muted-foreground">
+                  {members.length} nœud{members.length > 1 ? 's' : ''}
+                </span>
+              </div>
+              {region === 'unknown' ? (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Localisation manquante — définissez un pays dans le panneau ci-dessous pour activer la segmentation
+                  sur ces nœuds.
+                </p>
+              ) : (
+                <>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {members.map((member) => {
+                      const isGateway = Boolean(member.node?.overlayIsGateway);
+                      return (
+                        <Button
+                          key={member.nodeId}
+                          size="sm"
+                          variant={isGateway ? 'default' : 'outline'}
+                          disabled={gatewaySavingByNodeId[member.nodeId]}
+                          onClick={() => void handleSetGateway(member.nodeId, !isGateway)}
+                        >
+                          {gatewaySavingByNodeId[member.nodeId]
+                            ? 'Enregistrement…'
+                            : `${member.node?.name ?? member.nodeId}${isGateway ? ' · Passerelle ✓' : ''}`}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                  {!gateway && (
+                    <p className="mt-2 text-[11px] text-muted-foreground">
+                      Aucune passerelle désignée dans cette région — clique un nœud ci-dessus pour l’activer.
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
       <div className="grid gap-4 xl:grid-cols-[1.6fr_minmax(0,1fr)]">
         <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
           <CardHeader className="space-y-3">
@@ -1127,7 +1271,13 @@ export default function NetworkPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             {mapView === 'map' ? (
-              <WorldMap nodes={worldMapNodes} onNodeDrag={handleMapNodeDrag} onSelectNode={setSelectedMapNodeId} className="h-[560px] w-full" />
+              <WorldMap
+                nodes={worldMapNodes}
+                links={worldMapLinks}
+                onNodeDrag={handleMapNodeDrag}
+                onSelectNode={setSelectedMapNodeId}
+                className="h-[560px] w-full"
+              />
             ) : (
             <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-4">
               <svg
@@ -1332,28 +1482,12 @@ export default function NetworkPage() {
                           {geoSavingByNodeId[node.id] ? 'Enregistrement…' : 'Auto'}
                         </Button>
                       </div>
-                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                      <div className="mt-2 flex items-center justify-between gap-2">
                         <Badge
                           label={region ? REGION_LABELS[region] ?? region : 'Région inconnue'}
                           type={region ? 'info' : 'warning'}
                         />
-                        <Button
-                          size="sm"
-                          variant={isGateway ? 'default' : 'outline'}
-                          disabled={!region || gatewaySavingByNodeId[node.id]}
-                          title={
-                            !region
-                              ? 'Définissez le pays du nœud (ci-dessus) pour activer la segmentation régionale'
-                              : undefined
-                          }
-                          onClick={() => void handleSetGateway(node.id, !isGateway)}
-                        >
-                          {gatewaySavingByNodeId[node.id]
-                            ? 'Enregistrement…'
-                            : isGateway
-                              ? 'Passerelle régionale ✓'
-                              : 'Définir comme passerelle régionale'}
-                        </Button>
+                        {isGateway && <Badge label="Passerelle régionale" type="warning" />}
                       </div>
                     </div>
                   );
@@ -1407,32 +1541,6 @@ export default function NetworkPage() {
               <p className="text-xs text-muted-foreground">Aucun flux détecté.</p>
             )}
             {selectedFlow && (
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
-                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <p className="text-xs font-medium text-zinc-200">Historique</p>
-                    {history && (
-                      <Badge
-                        label={`Uptime ${history.uptimePercent}%`}
-                        type={history.uptimePercent >= 99 ? 'success' : history.uptimePercent >= 90 ? 'warning' : 'error'}
-                      />
-                    )}
-                  </div>
-                  <Select value={historyRange} onValueChange={(value) => setHistoryRange(value as '1h' | '24h' | '7d')}>
-                    <SelectTrigger className="h-7 w-24 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="1h">1 heure</SelectItem>
-                      <SelectItem value="24h">24 heures</SelectItem>
-                      <SelectItem value="7d">7 jours</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <ConnectionHistoryChart data={historyChartData} />
-              </div>
-            )}
-            {selectedFlow && (
               <Button
                 variant="outline"
                 className="w-full"
@@ -1447,6 +1555,78 @@ export default function NetworkPage() {
           </CardContent>
         </Card>
       </div>
+
+      <SectionLabel>Historique</SectionLabel>
+      <Card className="border-white/[0.08] bg-panel-glow backdrop-blur transition-colors hover:border-white/[0.14]">
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Waves className="h-5 w-5 text-violet-400" />
+              <CardTitle className="text-base">Historique du lien</CardTitle>
+            </div>
+            <Tabs value={historyRange} onValueChange={(value) => setHistoryRange(value as '1h' | '24h' | '7d')}>
+              <TabsList>
+                <TabsTrigger value="1h">1 h</TabsTrigger>
+                <TabsTrigger value="24h">24 h</TabsTrigger>
+                <TabsTrigger value="7d">7 j</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {historyFlow ? (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <Select
+                  value={historyFlow.key}
+                  onValueChange={(value) => {
+                    const flow = directedFlows.find((candidate) => candidate.key === value);
+                    if (!flow) return;
+                    setSelectedFlowKey(flow.key);
+                    setSelectedPairKey([flow.sourceNodeId, flow.targetNodeId].sort().join('__'));
+                  }}
+                >
+                  <SelectTrigger className="w-auto min-w-[220px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {directedFlows.map((flow) => {
+                      const source = nodeById.get(flow.sourceNodeId);
+                      const target = nodeById.get(flow.targetNodeId);
+                      if (!source || !target) return null;
+                      return (
+                        <SelectItem key={flow.key} value={flow.key}>
+                          {source.label} → {target.label}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+                {!selectedFlow && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Lien le plus actif — choisissez-en un autre ci-dessus ou dans la topologie.
+                  </p>
+                )}
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-[auto_1fr] sm:items-stretch">
+                <div className="flex flex-col items-center justify-center gap-1 rounded-xl border border-white/[0.06] bg-black/20 px-8 py-4 sm:min-w-[150px]">
+                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Uptime</p>
+                  <p className={`text-3xl font-semibold tabular-nums ${history ? uptimeToneClass(history.uptimePercent) : 'text-zinc-500'}`}>
+                    {history ? `${history.uptimePercent}%` : '—'}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">sur {HISTORY_RANGE_LABELS[historyRange]}</p>
+                </div>
+                <div className="rounded-xl border border-white/[0.06] bg-black/10 p-3">
+                  <ConnectionHistoryChart data={historyChartData} />
+                </div>
+              </div>
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">Aucun lien détecté pour l’instant.</p>
+          )}
+        </CardContent>
+      </Card>
 
       <Card className="border-white/[0.08] bg-panel-glow backdrop-blur transition-colors hover:border-white/[0.14]">
         <CardHeader>
@@ -1611,22 +1791,53 @@ export default function NetworkPage() {
               {tests.slice(0, 5).map((test) => (
                 <div
                   key={test.id}
-                  className="flex items-start justify-between rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3"
+                  className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3"
                 >
-                  <div className="space-y-1">
-                    <p className="font-mono text-xs text-foreground">
-                      {(memberByNodeId.get(test.initiatorNodeId)?.vlanIp || test.initiatorNodeId.slice(0, 8))} →{' '}
-                      {(memberByNodeId.get(test.targetNodeId)?.vlanIp || test.targetNodeId.slice(0, 8))}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatLatency(test.latencyMs)} · {formatLoss(test.packetLoss)}
-                    </p>
+                  <div className="flex items-start justify-between">
+                    <div className="space-y-1">
+                      <p className="font-mono text-xs text-foreground">
+                        {(memberByNodeId.get(test.initiatorNodeId)?.vlanIp || test.initiatorNodeId.slice(0, 8))} →{' '}
+                        {(memberByNodeId.get(test.targetNodeId)?.vlanIp || test.targetNodeId.slice(0, 8))}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {test.testType === 'traceroute'
+                          ? `${test.hops?.length ?? 0} saut(s)`
+                          : `${formatLatency(test.latencyMs)} · ${formatLoss(test.packetLoss)}`}
+                      </p>
+                    </div>
+                    <Badge
+                      label={testStatusLabel[test.status]}
+                      type={test.status === 'success' ? 'success' : test.status === 'pending' ? 'info' : 'error'}
+                      icon={<Waves className="h-3 w-3" />}
+                    />
                   </div>
-                  <Badge
-                    label={testStatusLabel[test.status]}
-                    type={test.status === 'success' ? 'success' : test.status === 'pending' ? 'info' : 'error'}
-                    icon={<Waves className="h-3 w-3" />}
-                  />
+                  {test.testType === 'traceroute' && test.hops && test.hops.length > 0 && (
+                    <ol className="mt-3 space-y-1.5 border-t border-white/[0.06] pt-3">
+                      {test.hops.map((hop) => {
+                        const hopMember = hop.ip ? memberByVlanIp.get(hop.ip) : undefined;
+                        return (
+                          <li key={hop.hop} className="flex flex-wrap items-center gap-2 text-xs">
+                            <span className="w-5 shrink-0 text-right font-mono text-[11px] text-muted-foreground">
+                              {hop.hop}
+                            </span>
+                            <span className="font-mono text-zinc-300">{hop.ip ?? '* (aucune réponse)'}</span>
+                            {hopMember && (
+                              <span className="text-zinc-100">
+                                {hopMember.node?.name ?? hopMember.nodeId}
+                              </span>
+                            )}
+                            {hopMember?.region && (
+                              <Badge label={REGION_LABELS[hopMember.region] ?? hopMember.region} type="info" />
+                            )}
+                            {hopMember?.node?.overlayIsGateway && <Badge label="Passerelle" type="warning" />}
+                            <span className="ml-auto font-mono text-[11px] text-muted-foreground">
+                              {formatLatency(hop.latencyMs)}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  )}
                 </div>
               ))}
             </div>
