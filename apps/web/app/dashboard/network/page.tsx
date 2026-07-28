@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import dynamic from 'next/dynamic';
 import {
   Activity,
@@ -235,7 +235,8 @@ export default function NetworkPage() {
   }>({});
   const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
   const [historyRange, setHistoryRange] = useState<'1h' | '24h' | '7d'>('1h');
-  const [history, setHistory] = useState<VlanConnectionHistory | null>(null);
+  const [historyForward, setHistoryForward] = useState<VlanConnectionHistory | null>(null);
+  const [historyReverse, setHistoryReverse] = useState<VlanConnectionHistory | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const panRef = useRef<{ pointerId: number; startX: number; startY: number; startTx: number; startTy: number } | null>(null);
   const nodeDragRef = useRef<{ pointerId: number; nodeId: string; offsetX: number; offsetY: number } | null>(null);
@@ -687,6 +688,10 @@ export default function NetworkPage() {
     };
   }, [displayedNodes]);
   const nodeById = useMemo(() => new Map(displayedNodes.map((node) => [node.id, node])), [displayedNodes]);
+  const getNodeDisplayName = useCallback(
+    (nodeId: string) => nodeLabels[nodeId]?.[0] || nodeById.get(nodeId)?.label || nodeId.slice(0, 8),
+    [nodeLabels, nodeById],
+  );
   const detectedGeoByNodeId = useMemo(() => {
     const map = new Map<string, { city: string; country: string; countryCode: string | null }>();
     for (const member of vlanStatus?.vlan.members || []) {
@@ -774,40 +779,70 @@ export default function NetworkPage() {
     () => directedFlows.slice(0, 5),
     [directedFlows],
   );
-  // The history card always shows something when there's at least one flow:
+  // One entry per unordered node pair (A↔B), carrying both directions' flows
+  // when known — avoids listing "A→B" and "B→A" as separate history entries.
+  const pairFlows = useMemo(() => {
+    const byPair = new Map<
+      string,
+      { key: string; nodeAId: string; nodeBId: string; forward: DirectedFlow | null; reverse: DirectedFlow | null; trafficScore: number }
+    >();
+    for (const flow of directedFlows) {
+      const [nodeAId, nodeBId] = [flow.sourceNodeId, flow.targetNodeId].sort();
+      const key = `${nodeAId}__${nodeBId}`;
+      const pair = byPair.get(key) ?? { key, nodeAId, nodeBId, forward: null, reverse: null, trafficScore: 0 };
+      if (flow.sourceNodeId === nodeAId) {
+        pair.forward = flow;
+      } else {
+        pair.reverse = flow;
+      }
+      pair.trafficScore = Math.max(pair.trafficScore, flow.trafficScore);
+      byPair.set(key, pair);
+    }
+    return Array.from(byPair.values()).sort((a, b) => b.trafficScore - a.trafficScore);
+  }, [directedFlows]);
+  // The history card always shows something when there's at least one pair:
   // the explicitly selected one, or — failing that — the most active pair,
   // so the section never sits empty just because nothing's been clicked yet.
-  const historyFlow = selectedFlow ?? topTrafficFlows[0] ?? null;
+  const historyPair = useMemo(
+    () => pairFlows.find((pair) => pair.key === selectedPairKey) ?? pairFlows[0] ?? null,
+    [pairFlows, selectedPairKey],
+  );
 
   useEffect(() => {
-    if (!vlanStatus || !historyFlow) {
-      setHistory(null);
+    if (!vlanStatus || !historyPair) {
+      setHistoryForward(null);
+      setHistoryReverse(null);
       return;
     }
     let cancelled = false;
-    void api.vlan
-      .getHistory(vlanStatus.vlan.id, historyFlow.sourceNodeId, historyFlow.targetNodeId, historyRange)
-      .then((result) => {
-        if (!cancelled) setHistory(result);
+    const fetchDirection = (flow: DirectedFlow | null) =>
+      flow ? api.vlan.getHistory(vlanStatus.vlan.id, flow.sourceNodeId, flow.targetNodeId, historyRange) : Promise.resolve(null);
+    void Promise.all([fetchDirection(historyPair.forward), fetchDirection(historyPair.reverse)])
+      .then(([forward, reverse]) => {
+        if (cancelled) return;
+        setHistoryForward(forward);
+        setHistoryReverse(reverse);
       })
       .catch((error) => {
         console.error('Failed to fetch connection history:', error);
-        if (!cancelled) setHistory(null);
+        if (!cancelled) {
+          setHistoryForward(null);
+          setHistoryReverse(null);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [vlanStatus, historyFlow, historyRange]);
+  }, [vlanStatus, historyPair, historyRange]);
 
-  const historyChartData = useMemo(
-    () =>
-      (history?.samples ?? []).map((sample) => ({
-        label: new Date(sample.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-        latencyMs: sample.latencyMs ?? null,
-        packetLoss: sample.packetLoss ?? null,
-      })),
-    [history],
-  );
+  const toHistoryChartData = (history: VlanConnectionHistory | null) =>
+    (history?.samples ?? []).map((sample) => ({
+      label: new Date(sample.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+      latencyMs: sample.latencyMs ?? null,
+      packetLoss: sample.packetLoss ?? null,
+    }));
+  const historyForwardChartData = useMemo(() => toHistoryChartData(historyForward), [historyForward]);
+  const historyReverseChartData = useMemo(() => toHistoryChartData(historyReverse), [historyReverse]);
   const orderedNodes = useMemo(
     () => [...displayedNodes].sort((a, b) => a.label.localeCompare(b.label, 'fr')),
     [displayedNodes],
@@ -1574,53 +1609,66 @@ export default function NetworkPage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          {historyFlow ? (
+          {historyPair ? (
             <>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <Select
-                  value={historyFlow.key}
+                  value={historyPair.key}
                   onValueChange={(value) => {
-                    const flow = directedFlows.find((candidate) => candidate.key === value);
-                    if (!flow) return;
-                    setSelectedFlowKey(flow.key);
-                    setSelectedPairKey([flow.sourceNodeId, flow.targetNodeId].sort().join('__'));
+                    const pair = pairFlows.find((candidate) => candidate.key === value);
+                    if (!pair) return;
+                    setSelectedPairKey(pair.key);
+                    setSelectedFlowKey(pair.forward?.key ?? pair.reverse?.key ?? null);
                   }}
                 >
                   <SelectTrigger className="w-auto min-w-[220px]">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {directedFlows.map((flow) => {
-                      const source = nodeById.get(flow.sourceNodeId);
-                      const target = nodeById.get(flow.targetNodeId);
-                      if (!source || !target) return null;
-                      return (
-                        <SelectItem key={flow.key} value={flow.key}>
-                          {source.label} → {target.label}
-                        </SelectItem>
-                      );
-                    })}
+                    {pairFlows.map((pair) => (
+                      <SelectItem key={pair.key} value={pair.key}>
+                        {getNodeDisplayName(pair.nodeAId)} ↔ {getNodeDisplayName(pair.nodeBId)}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
-                {!selectedFlow && (
+                {!selectedPairKey && (
                   <p className="text-[11px] text-muted-foreground">
                     Lien le plus actif — choisissez-en un autre ci-dessus ou dans la topologie.
                   </p>
                 )}
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-[auto_1fr] sm:items-stretch">
-                <div className="flex flex-col items-center justify-center gap-1 rounded-xl border border-white/[0.06] bg-black/20 px-8 py-4 sm:min-w-[150px]">
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Uptime</p>
-                  <p className={`text-3xl font-semibold tabular-nums ${history ? uptimeToneClass(history.uptimePercent) : 'text-zinc-500'}`}>
-                    {history ? `${history.uptimePercent}%` : '—'}
+              {(
+                [
+                  { flow: historyPair.forward, history: historyForward, chartData: historyForwardChartData },
+                  { flow: historyPair.reverse, history: historyReverse, chartData: historyReverseChartData },
+                ] as const
+              ).map(({ flow, history, chartData }, index) =>
+                flow ? (
+                  <div key={index} className="space-y-2">
+                    <p className="font-mono text-xs text-zinc-300">
+                      {getNodeDisplayName(flow.sourceNodeId)} → {getNodeDisplayName(flow.targetNodeId)}
+                    </p>
+                    <div className="grid gap-4 sm:grid-cols-[auto_1fr] sm:items-stretch">
+                      <div className="flex flex-col items-center justify-center gap-1 rounded-xl border border-white/[0.06] bg-black/20 px-8 py-4 sm:min-w-[150px]">
+                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Uptime</p>
+                        <p className={`text-3xl font-semibold tabular-nums ${history ? uptimeToneClass(history.uptimePercent) : 'text-zinc-500'}`}>
+                          {history ? `${history.uptimePercent}%` : '—'}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground">sur {HISTORY_RANGE_LABELS[historyRange]}</p>
+                      </div>
+                      <div className="rounded-xl border border-white/[0.06] bg-black/10 p-3">
+                        <ConnectionHistoryChart data={chartData} />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p key={index} className="text-xs text-muted-foreground">
+                    Aucune mesure enregistrée dans ce sens pour l’instant.
                   </p>
-                  <p className="text-[11px] text-muted-foreground">sur {HISTORY_RANGE_LABELS[historyRange]}</p>
-                </div>
-                <div className="rounded-xl border border-white/[0.06] bg-black/10 p-3">
-                  <ConnectionHistoryChart data={historyChartData} />
-                </div>
-              </div>
+                ),
+              )}
             </>
           ) : (
             <p className="text-xs text-muted-foreground">Aucun lien détecté pour l’instant.</p>
@@ -1804,6 +1852,9 @@ export default function NetworkPage() {
                           ? `${test.hops?.length ?? 0} saut(s)`
                           : `${formatLatency(test.latencyMs)} · ${formatLoss(test.packetLoss)}`}
                       </p>
+                      {test.status !== 'success' && test.status !== 'pending' && test.resultMessage && (
+                        <p className="text-xs text-rose-400">{test.resultMessage}</p>
+                      )}
                     </div>
                     <Badge
                       label={testStatusLabel[test.status]}
