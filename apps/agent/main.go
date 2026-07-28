@@ -1990,6 +1990,9 @@ func applyOverlay(payload map[string]interface{}) (string, error) {
 	if err := applyOverlayIPForward(readBool(payload, "ipForward")); err != nil {
 		return "", err
 	}
+	if err := applyOverlayForwardFirewallRule(readBool(payload, "ipForward")); err != nil {
+		return "", err
+	}
 
 	return fmt.Sprintf("overlay applied on %s with %d peers", iface, len(peers)), nil
 }
@@ -2021,6 +2024,53 @@ func applyOverlayIPForward(enabled bool) error {
 	if _, err := os.Stat(overlayForwardSysctlDropIn); err == nil {
 		if err := os.Remove(overlayForwardSysctlDropIn); err != nil {
 			return fmt.Errorf("cannot remove ip forwarding drop-in: %w", err)
+		}
+	}
+	return nil
+}
+
+// overlayForwardRuleComment tags the iptables rule this agent owns, so it can
+// find and remove exactly that rule later without touching anything else in
+// the chain.
+const overlayForwardRuleComment = "tarmac-overlay-forward"
+
+// applyOverlayForwardFirewallRule keeps a gateway's kernel-level ip_forward
+// (applyOverlayIPForward) from being silently useless: net.ipv4.ip_forward=1
+// only lets the kernel route packets — it says nothing about the firewall's
+// FORWARD chain, which most distros default to ACCEPT but which Docker
+// unconditionally flips to DROP (and inserts its own DOCKER-USER chain ahead
+// of it) as soon as it's installed, regardless of ufw's state. Without an
+// explicit ACCEPT here, cross-region traffic relayed through this node's two
+// WireGuard tunnels on tarmacwg0 is silently dropped even though wg/sysctl
+// both report everything as configured correctly.
+func applyOverlayForwardFirewallRule(enabled bool) error {
+	if !commandExists("iptables") {
+		return nil
+	}
+
+	spec := []string{"-i", "tarmacwg0", "-o", "tarmacwg0", "-j", "ACCEPT", "-m", "comment", "--comment", overlayForwardRuleComment}
+	chains := []string{"FORWARD"}
+	// DOCKER-USER is consulted before the plain FORWARD chain whenever Docker
+	// manages iptables, and — unlike FORWARD — Docker never rewrites rules
+	// already present in it, so a rule inserted here survives Docker/daemon
+	// restarts. Only touch it when it actually exists (i.e. Docker is present).
+	if exec.Command("iptables", "-L", "DOCKER-USER", "-n").Run() == nil {
+		chains = append(chains, "DOCKER-USER")
+	}
+
+	for _, chain := range chains {
+		exists := exec.Command("iptables", append([]string{"-C", chain}, spec...)...).Run() == nil
+		switch {
+		case enabled && !exists:
+			args := append([]string{"-I", chain}, spec...)
+			if out, err := exec.Command("iptables", args...).CombinedOutput(); err != nil {
+				return fmt.Errorf("cannot insert overlay forward rule in %s: %s", chain, strings.TrimSpace(string(out)))
+			}
+		case !enabled && exists:
+			args := append([]string{"-D", chain}, spec...)
+			if out, err := exec.Command("iptables", args...).CombinedOutput(); err != nil {
+				return fmt.Errorf("cannot remove overlay forward rule from %s: %s", chain, strings.TrimSpace(string(out)))
+			}
 		}
 	}
 	return nil
