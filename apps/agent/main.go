@@ -1024,7 +1024,11 @@ func buildStateReport(nodeID string) stateReport {
 // ATA and NVMe drives populate different sub-objects, so both are optional.
 type smartctlOutput struct {
 	SmartStatus struct {
-		Passed bool `json:"passed"`
+		// Pointer, not bool: smartctl omits this key entirely when a device has
+		// no real SMART data behind it (e.g. a virtio/virtual disk on a VPS).
+		// A plain bool would zero-value to false in that case and read as an
+		// explicit failure, which it isn't — see buildSmartState.
+		Passed *bool `json:"passed"`
 	} `json:"smart_status"`
 	Temperature struct {
 		Current int `json:"current"`
@@ -1092,6 +1096,10 @@ func buildSmartState(diskName string, parsed smartctlOutput) smartState {
 		powerOnHours = parsed.NvmeLog.PowerOnHours
 	}
 
+	hasAtaData := len(parsed.AtaSmartAttributes.Table) > 0
+	hasNvmeData := parsed.NvmeLog.PowerOnHours > 0 || parsed.NvmeLog.Temperature > 0 ||
+		parsed.NvmeLog.CriticalWarning != 0 || parsed.NvmeLog.MediaErrors > 0 || parsed.NvmeLog.PercentageUsed > 0
+
 	reallocatedSectors := int64(0)
 	pendingSectors := int64(0)
 	for _, attr := range parsed.AtaSmartAttributes.Table {
@@ -1102,21 +1110,31 @@ func buildSmartState(diskName string, parsed smartctlOutput) smartState {
 			pendingSectors = attr.Raw.Value
 		}
 	}
-	if len(parsed.AtaSmartAttributes.Table) == 0 {
+	if !hasAtaData {
 		// NVMe has no reallocated/pending sector concept; media errors are
 		// the closest equivalent signal of physical media degradation.
 		reallocatedSectors = parsed.NvmeLog.MediaErrors
 	}
 
-	overall := "healthy"
-	if !parsed.SmartStatus.Passed {
+	var overall string
+	switch {
+	case !hasAtaData && !hasNvmeData:
+		// smartctl returned no usable ATA or NVMe attributes at all — typical
+		// of a virtualized block device (e.g. a VPS's virtio disk), which has
+		// no real physical SMART data behind it. Reporting "critical" off an
+		// all-zeroed response here would be a false positive, not an actual
+		// disk problem, so leave it unclassified instead of alerting on it.
+		overall = "unknown"
+	case parsed.SmartStatus.Passed != nil && !*parsed.SmartStatus.Passed:
 		overall = "critical"
-	} else if parsed.NvmeLog.CriticalWarning != 0 {
+	case parsed.NvmeLog.CriticalWarning != 0:
 		overall = "critical"
-	} else if reallocatedSectors > 0 || pendingSectors > 0 {
+	case reallocatedSectors > 0 || pendingSectors > 0:
 		overall = "warning"
-	} else if parsed.NvmeLog.PercentageUsed >= 90 {
+	case parsed.NvmeLog.PercentageUsed >= 90:
 		overall = "warning"
+	default:
+		overall = "healthy"
 	}
 
 	return smartState{

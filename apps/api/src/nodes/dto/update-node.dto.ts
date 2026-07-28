@@ -35,4 +35,12 @@ export class UpdateNodeDto {
   @IsOptional()
   @IsNumber()
   locationLng?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  graphX?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  graphY?: number | null;
 }

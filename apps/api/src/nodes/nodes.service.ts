@@ -114,6 +114,8 @@ export class NodesService {
       ...(locationCountryCode !== undefined ? { locationCountryCode } : {}),
       ...(dto.locationLat !== undefined ? { locationLat: dto.locationLat } : {}),
       ...(dto.locationLng !== undefined ? { locationLng: dto.locationLng } : {}),
+      ...(dto.graphX !== undefined ? { graphX: dto.graphX } : {}),
+      ...(dto.graphY !== undefined ? { graphY: dto.graphY } : {}),
     };
 
     const updated = await this.prisma.node.update({ where: { id }, data });

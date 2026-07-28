@@ -625,13 +625,23 @@ export default function NetworkPage() {
     };
   }, [physicalConnections, geoByIp, geoOverrides, mapLocationOverrides, vlanStatus]);
 
+  const persistedGraphPositions = useMemo(() => {
+    const map = new Map<string, { x: number; y: number }>();
+    for (const member of vlanStatus?.vlan.members ?? []) {
+      if (typeof member.node?.graphX === 'number' && typeof member.node?.graphY === 'number') {
+        map.set(member.nodeId, { x: member.node.graphX, y: member.node.graphY });
+      }
+    }
+    return map;
+  }, [vlanStatus]);
   const displayedNodes = useMemo(
     () =>
       graph.nodes.map((node) => ({
         ...node,
+        ...(persistedGraphPositions.get(node.id) ?? {}),
         ...(nodePositionOverrides[node.id] ?? {}),
       })),
-    [graph.nodes, nodePositionOverrides],
+    [graph.nodes, persistedGraphPositions, nodePositionOverrides],
   );
   const worldMapNodes: WorldMapNode[] = useMemo(
     () =>
@@ -971,6 +981,13 @@ export default function NetworkPage() {
 
   const endPointerInteraction = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (nodeDragRef.current?.pointerId === event.pointerId) {
+      const { nodeId } = nodeDragRef.current;
+      const droppedAt = nodePositionOverrides[nodeId];
+      if (droppedAt) {
+        void api.nodes
+          .update(nodeId, { graphX: droppedAt.x, graphY: droppedAt.y })
+          .catch(() => setNotice({ type: 'error', message: 'Impossible d’enregistrer la position dans le graphe.' }));
+      }
       nodeDragRef.current = null;
     }
     if (panRef.current?.pointerId === event.pointerId) {
@@ -1459,37 +1476,53 @@ export default function NetworkPage() {
                     );
                   })}
 
-                  {displayedNodes.map((node) => (
-                    <g
-                      key={node.id}
-                      data-node-draggable="true"
-                      onPointerDown={(event) => handleNodePointerDown(event, node.id)}
-                      className="cursor-grab active:cursor-grabbing"
-                    >
-                      <circle cx={node.x} cy={node.y} r={26} fill="rgba(9,9,11,0.95)" stroke={nodeFill(node.status)} strokeWidth={2.5} />
-                      <circle cx={node.x} cy={node.y} r={10} fill={nodeFill(node.status)} />
-                      <text
-                        x={node.x}
-                        y={node.y + 54}
-                        textAnchor="middle"
-                        fill="rgba(244,244,245,0.94)"
-                        fontSize={13}
-                        fontFamily="ui-sans-serif, system-ui, sans-serif"
+                  {displayedNodes.map((node) => {
+                    const nameLine = `${flagFromCountryCode(node.countryCode)} ${getNodeDisplayName(node.id)}`;
+                    const detailLine = `${node.city} · ${node.vlanIp}`;
+                    // Rough char-width estimate (no canvas measurement available in SVG) so the
+                    // backing plate covers whichever line is wider, keeping neighbouring node
+                    // labels from visually merging when nodes sit close together.
+                    const labelWidth = Math.max(nameLine.length * 7.2, detailLine.length * 6.2) + 16;
+                    return (
+                      <g
+                        key={node.id}
+                        data-node-draggable="true"
+                        onPointerDown={(event) => handleNodePointerDown(event, node.id)}
+                        className="cursor-grab active:cursor-grabbing"
                       >
-                        {flagFromCountryCode(node.countryCode)} {node.label}
-                      </text>
-                      <text
-                        x={node.x}
-                        y={node.y + 74}
-                        textAnchor="middle"
-                        fill="rgba(161,161,170,0.95)"
-                        fontSize={11}
-                        fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-                      >
-                        {node.city} · {node.vlanIp}
-                      </text>
-                    </g>
-                  ))}
+                        <circle cx={node.x} cy={node.y} r={26} fill="rgba(9,9,11,0.95)" stroke={nodeFill(node.status)} strokeWidth={2.5} />
+                        <circle cx={node.x} cy={node.y} r={10} fill={nodeFill(node.status)} />
+                        <rect
+                          x={node.x - labelWidth / 2}
+                          y={node.y + 40}
+                          width={labelWidth}
+                          height={42}
+                          rx={8}
+                          fill="rgba(9,9,11,0.85)"
+                        />
+                        <text
+                          x={node.x}
+                          y={node.y + 54}
+                          textAnchor="middle"
+                          fill="rgba(244,244,245,0.94)"
+                          fontSize={13}
+                          fontFamily="ui-sans-serif, system-ui, sans-serif"
+                        >
+                          {nameLine}
+                        </text>
+                        <text
+                          x={node.x}
+                          y={node.y + 74}
+                          textAnchor="middle"
+                          fill="rgba(161,161,170,0.95)"
+                          fontSize={11}
+                          fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+                        >
+                          {detailLine}
+                        </text>
+                      </g>
+                    );
+                  })}
                 </g>
               </svg>
             </div>
@@ -1500,7 +1533,12 @@ export default function NetworkPage() {
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => setNodePositionOverrides({})}
+                  onClick={() => {
+                    setNodePositionOverrides({});
+                    for (const nodeId of persistedGraphPositions.keys()) {
+                      void api.nodes.update(nodeId, { graphX: null, graphY: null }).catch(() => {});
+                    }
+                  }}
                 >
                   Réinitialiser les positions
                 </Button>

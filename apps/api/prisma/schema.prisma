@@ -131,6 +131,8 @@ model Node {
   locationCountryCode String?
   locationLat        Float?
   locationLng        Float?
+  graphX             Float?
+  graphY             Float?
   lastSeenAt         DateTime?
   vlanIp             String?          @unique
   vlanMac            String?          @unique
