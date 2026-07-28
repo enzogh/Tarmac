@@ -717,18 +717,24 @@ func runTraceroute(payload map[string]interface{}) (tracerouteData, error) {
 	defer cancel()
 
 	var hops []tracerouteHop
+	var rawOutput string
 	switch {
 	case commandExists("traceroute"):
 		output, _ := exec.CommandContext(ctx, "traceroute", "-n", "-q", "1", "-w", "1", "-m", "15", targetIP).CombinedOutput()
-		hops = parseTracerouteOutput(string(output))
+		rawOutput = string(output)
+		hops = parseTracerouteOutput(rawOutput)
 	case commandExists("tracepath"):
 		output, _ := exec.CommandContext(ctx, "tracepath", "-n", targetIP).CombinedOutput()
-		hops = parseTracepathOutput(string(output))
+		rawOutput = string(output)
+		hops = parseTracepathOutput(rawOutput)
 	default:
 		return tracerouteData{}, errors.New("traceroute/tracepath not found on agent (install the 'traceroute' package)")
 	}
 
 	if len(hops) == 0 {
+		if detail := strings.TrimSpace(rawOutput); detail != "" {
+			return tracerouteData{}, fmt.Errorf("no route found to %s: %s", targetIP, detail)
+		}
 		return tracerouteData{}, fmt.Errorf("no route found to %s", targetIP)
 	}
 
