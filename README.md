@@ -142,4 +142,25 @@ V1 storage/orchestration:
 - `POST /sync-jobs/:id/runs`
 - `GET /audit-logs`
 
+Réseau (VLAN) :
+- `GET /vlan` (récupère/crée le VLAN par défaut)
+- `POST /vlan/join`
+- `GET /vlan/:vlanId/members` (chaque membre est enrichi de sa région géographique)
+- `GET /vlan/:vlanId/connections`
+- `GET /vlan/:vlanId/status`
+- `GET /vlan/:vlanId/history` (`?source=&target=&range=1h|24h|7d`) — historique de latence/perte de paquets + uptime %
+- `GET /vlan/:vlanId/tests`
+- `POST /vlan/:vlanId/test` (`testType: ping | traceroute`)
+- `POST /vlan/:vlanId/members/:nodeId/gateway` — désigne/retire un nœud comme passerelle régionale
+- `POST /vlan/heartbeat`
+
 La boucle de reconciliation inclut désormais shares, mounts et pool_members en `pending` et reste safe si un agent est offline.
+
+## Nouveautés récentes
+
+- **Carte du monde** : vue géographique de la flotte (`/dashboard/network`, onglet Carte), en complément du graphe topologique. Positions de nœuds déplaçables à la souris et mémorisées côté serveur (`graphX`/`graphY` sur le graphe, `locationLat`/`locationLng` sur la carte).
+- **Segmentation régionale du VLAN** : au-delà de deux régions géographiques, un maillage WireGuard complet devient coûteux. Un nœud par région peut être désigné « passerelle » (`POST /vlan/:vlanId/members/:nodeId/gateway`) ; seules les passerelles se relient entre régions, le reste du mesh est inchangé (maillage complet intra-région, comme avant).
+- **Traceroute** : en plus du test ping existant, `POST /vlan/:vlanId/test` avec `testType: "traceroute"` interroge l'agent en temps réel et remonte le détail saut par saut.
+- **Historique des liens VLAN** : `GET /vlan/:vlanId/history` renvoie jusqu'à 500 échantillons de latence/perte de paquets sur 1h/24h/7j, ainsi qu'un pourcentage de disponibilité (uptime), purgés automatiquement après 30 jours.
+- **Fiabilisation SMART** : un disque virtualisé (VPS) sans données SMART exploitables est désormais classé « inconnu » plutôt que « critique », pour éviter les faux positifs sur les disques virtio.
+- **Alertes actives** : le tableau de bord ne compte plus les alertes déjà résolues dans le total « alertes actives ».

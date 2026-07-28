@@ -1,4 +1,4 @@
-import { Server, Share2, HardDrive, RefreshCw, ArrowRightLeft, Network, Bell, Thermometer, BellOff } from 'lucide-react';
+import { Server, Share2, HardDrive, RefreshCw, ArrowRightLeft, Network, Bell, Thermometer, BellOff, Globe, Waypoints } from 'lucide-react';
 import { PageHeader } from '../../../components/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../../components/ui/card';
 
@@ -37,7 +37,19 @@ const CONCEPTS = [
     icon: Network,
     title: 'Réseau privé (VLAN)',
     description:
-      "Les nœuds peuvent être reliés sur un réseau privé dédié, isolé d'Internet. Tarmac permet de visualiser cette carte réseau et de tester la latence et la connectivité entre deux nœuds.",
+      "Les nœuds sont reliés entre eux sur un mesh WireGuard privé, isolé d'Internet, avec une IP dédiée par nœud. Tarmac visualise ce réseau sous forme de graphe (positions déplaçables et mémorisées) et permet de tester deux nœuds entre eux, en latence/perte de paquets (ping) ou saut par saut (traceroute).",
+  },
+  {
+    icon: Globe,
+    title: 'Carte du monde',
+    description:
+      "Une vue géographique de la flotte, en plus du graphe : chaque nœud est placé sur sa position réelle (ou approximative, déduite du pays, en attendant d'être précisée à la souris) et les liens VLAN s'animent en direct selon leur état — sain, dégradé ou hors ligne.",
+  },
+  {
+    icon: Waypoints,
+    title: 'Régions & passerelles',
+    description:
+      "Au-delà de deux continents, relier chaque nœud à tous les autres en direct devient coûteux. Tarmac regroupe automatiquement les membres du VLAN par région géographique (Europe, Amérique du Nord…) : au sein d'une région, le maillage reste complet ; entre deux régions, seuls les nœuds désignés « passerelle » se relient. Sans passerelle désignée, tout reste en maillage direct comme avant.",
   },
   {
     icon: Bell,
@@ -49,7 +61,7 @@ const CONCEPTS = [
     icon: Thermometer,
     title: 'Santé SMART',
     description:
-      "Chaque disque physique est interrogé via smartctl (température, secteurs réalloués/en attente). Un disque qui passe en état critique déclenche une alerte et une migration de sécurisation suggérée vers le nœud le moins chargé — jamais démarrée automatiquement.",
+      "Chaque disque physique est interrogé via smartctl (température, secteurs réalloués/en attente). Un disque qui passe en état critique déclenche une alerte et une migration de sécurisation suggérée vers le nœud le moins chargé — jamais démarrée automatiquement. Un disque virtualisé (VPS) sans données SMART réelles est classé « inconnu », jamais « critique » par défaut.",
   },
   {
     icon: BellOff,
@@ -199,6 +211,42 @@ export default function ConceptsPage() {
               <rect x="240" y="128" width="160" height="60" rx="14" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
               <text x="320" y="154" textAnchor="middle" fill="rgb(244 244 245)" fontSize="13" fontWeight="600">Nœud C</text>
               <text x="320" y="172" textAnchor="middle" fill="rgb(161 161 170)" fontSize="10">10.10.0.3</text>
+            </svg>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Segmentation régionale via passerelles</CardTitle>
+            <CardDescription>Maillage complet au sein de chaque région, un seul lien entre les deux passerelles.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <svg viewBox="0 0 640 220" className="w-full" role="img" aria-label="Schéma de deux régions VLAN, chacune en maillage complet en interne, reliées uniquement par leurs nœuds passerelle respectifs">
+              <rect x="16" y="16" width="270" height="188" rx="16" fill="rgb(255 255 255 / 0.015)" stroke="rgb(255 255 255 / 0.08)" strokeDasharray="4 4" />
+              <text x="151" y="36" textAnchor="middle" fill="rgb(161 161 170)" fontSize="11" fontWeight="600">Région : Europe</text>
+
+              <rect x="354" y="16" width="270" height="188" rx="16" fill="rgb(255 255 255 / 0.015)" stroke="rgb(255 255 255 / 0.08)" strokeDasharray="4 4" />
+              <text x="489" y="36" textAnchor="middle" fill="rgb(161 161 170)" fontSize="11" fontWeight="600">Région : Amérique du Nord</text>
+
+              <line x1="105" y1="90" x2="105" y2="160" stroke="rgb(255 255 255 / 0.12)" strokeWidth="2" />
+              <line x1="443" y1="90" x2="443" y2="160" stroke="rgb(255 255 255 / 0.12)" strokeWidth="2" />
+
+              <rect x="46" y="60" width="118" height="52" rx="12" fill="rgb(139 92 246 / 0.12)" stroke="rgb(139 92 246 / 0.6)" />
+              <text x="105" y="82" textAnchor="middle" fill="rgb(244 244 245)" fontSize="12" fontWeight="600">Nœud A</text>
+              <text x="105" y="98" textAnchor="middle" fill="rgb(196 181 253)" fontSize="9">Passerelle ✓</text>
+
+              <rect x="46" y="150" width="118" height="42" rx="12" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
+              <text x="105" y="176" textAnchor="middle" fill="rgb(244 244 245)" fontSize="12" fontWeight="600">Nœud B</text>
+
+              <rect x="384" y="60" width="118" height="52" rx="12" fill="rgb(139 92 246 / 0.12)" stroke="rgb(139 92 246 / 0.6)" />
+              <text x="443" y="82" textAnchor="middle" fill="rgb(244 244 245)" fontSize="12" fontWeight="600">Nœud C</text>
+              <text x="443" y="98" textAnchor="middle" fill="rgb(196 181 253)" fontSize="9">Passerelle ✓</text>
+
+              <rect x="384" y="150" width="118" height="42" rx="12" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
+              <text x="443" y="176" textAnchor="middle" fill="rgb(244 244 245)" fontSize="12" fontWeight="600">Nœud D</text>
+
+              <line x1="164" y1="86" x2="384" y2="86" stroke="rgb(139 92 246 / 0.8)" strokeWidth="2.5" />
+              <text x="274" y="72" textAnchor="middle" fill="rgb(196 181 253)" fontSize="10">seul lien inter-régions</text>
             </svg>
           </CardContent>
         </Card>

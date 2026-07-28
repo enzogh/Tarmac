@@ -21,6 +21,7 @@
     "@tarmac/shared": "file:../../packages/shared",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "framer-motion": "^12.43.0",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.23.0",
     "next": "14.2.5",

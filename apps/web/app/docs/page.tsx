@@ -82,7 +82,7 @@ export default function DocsHomePage() {
             { icon: Server, title: 'Infrastructure', href: '/docs/concepts', text: 'Nœuds, agents et pools de stockage.' },
             { icon: Database, title: 'Stockage & montages', href: '/docs/concepts', text: 'Partages NFS et montages multi-sources.' },
             { icon: RefreshCw, title: 'Réplication & migrations', href: '/docs/concepts', text: 'Duplication et déplacement de volumes.' },
-            { icon: Network, title: 'Réseau', href: '/docs/concepts', text: 'VLAN privé et tests de connectivité entre nœuds.' },
+            { icon: Network, title: 'Réseau', href: '/docs/concepts', text: 'VLAN privé, carte du monde, passerelles régionales et tests ping/traceroute.' },
           ].map((item) => (
             <Link key={item.title} href={item.href} className="group panel flex items-start gap-3 p-4">
               <item.icon className="mt-0.5 h-4 w-4 shrink-0 text-violet-400" />
