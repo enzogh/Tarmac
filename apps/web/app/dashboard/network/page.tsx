@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
+import dynamic from 'next/dynamic';
 import {
   Activity,
   AlertCircle,
   AlertTriangle,
   CheckCircle2,
   Gauge,
+  Globe2,
   Network,
   Play,
   RadioTower,
@@ -16,6 +18,7 @@ import {
 } from 'lucide-react';
 import { api, VlanConnection, VlanConnectionTest, VlanStatus } from '@/lib/api';
 import { GeoInfo, flagFromCountryCode, getGeoInfo, normalizeCountryCode, parseHostFromEndpoint } from '@/lib/geo';
+import { countryCentroid } from '@/lib/country-centroids';
 import { readNodeLabels } from '../../../lib/node-labels';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { PageHeader } from '../../../components/PageHeader';
@@ -34,6 +37,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import type { WorldMapNode } from '@/components/WorldMap';
+
+const WorldMap = dynamic(() => import('@/components/WorldMap').then((mod) => mod.WorldMap), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-[560px] items-center justify-center rounded-xl border border-white/[0.08] bg-zinc-950/50 text-sm text-muted-foreground">
+      Chargement de la carte…
+    </div>
+  ),
+});
 
 type TestType = 'ping' | 'connectivity' | 'latency';
 type LinkStatus = 'healthy' | 'degraded' | 'offline' | 'unknown';
@@ -48,6 +62,9 @@ type GraphNode = {
   countryCode: string | null;
   x: number;
   y: number;
+  lat: number;
+  lng: number;
+  isPositionApproximate: boolean;
 };
 
 type GraphBubble = {
@@ -187,6 +204,9 @@ export default function NetworkPage() {
   const [geoDirtyByNodeId, setGeoDirtyByNodeId] = useState<Record<string, boolean>>({});
   const [geoSavingByNodeId, setGeoSavingByNodeId] = useState<Record<string, boolean>>({});
   const [nodePositionOverrides, setNodePositionOverrides] = useState<Record<string, { x: number; y: number }>>({});
+  const [mapLocationOverrides, setMapLocationOverrides] = useState<Record<string, [number, number]>>({});
+  const [mapView, setMapView] = useState<'map' | 'graph'>('map');
+  const [selectedMapNodeId, setSelectedMapNodeId] = useState<string | null>(null);
   const [viewTransform, setViewTransform] = useState({ scale: 1, tx: 0, ty: 0 });
   const [selectedTest, setSelectedTest] = useState<{
     from?: string;
@@ -352,6 +372,26 @@ export default function NetworkPage() {
           const nodeAngle = (memberIndex / Math.max(members.length, 1)) * Math.PI * 2 - Math.PI / 2;
           const nodeOrbitRadius = members.length <= 1 ? 0 : Math.min(220, 58 + members.length * 14);
           const countryCode = normalizeCountryCode(override?.countryCode) ?? geo?.countryCode ?? null;
+          const mapOverride = mapLocationOverrides[member.nodeId];
+          let lat: number;
+          let lng: number;
+          let isPositionApproximate: boolean;
+          if (mapOverride) {
+            [lat, lng] = mapOverride;
+            isPositionApproximate = false;
+          } else if (typeof member.node?.locationLat === 'number' && typeof member.node?.locationLng === 'number') {
+            lat = member.node.locationLat;
+            lng = member.node.locationLng;
+            isPositionApproximate = false;
+          } else if (typeof geo?.latitude === 'number' && typeof geo?.longitude === 'number') {
+            lat = geo.latitude;
+            lng = geo.longitude;
+            isPositionApproximate = false;
+          } else {
+            const centroid = countryCentroid(countryCode);
+            [lat, lng] = centroid ?? [15, 10];
+            isPositionApproximate = true;
+          }
           nodes.push({
             id: member.nodeId,
             label: member.node?.name || member.nodeId.slice(0, 8),
@@ -362,6 +402,9 @@ export default function NetworkPage() {
             countryCode,
             x: cityCenterX + Math.cos(nodeAngle) * nodeOrbitRadius,
             y: cityCenterY + Math.sin(nodeAngle) * nodeOrbitRadius,
+            lat,
+            lng,
+            isPositionApproximate,
           });
         });
       });
@@ -391,7 +434,7 @@ export default function NetworkPage() {
       nodes,
       links: Array.from(bestByPair.values()),
     };
-  }, [connections, geoByIp, geoOverrides, vlanStatus]);
+  }, [connections, geoByIp, geoOverrides, mapLocationOverrides, vlanStatus]);
 
   const displayedNodes = useMemo(
     () =>
@@ -401,6 +444,28 @@ export default function NetworkPage() {
       })),
     [graph.nodes, nodePositionOverrides],
   );
+  const worldMapNodes: WorldMapNode[] = useMemo(
+    () =>
+      graph.nodes.map((node) => ({
+        id: node.id,
+        label: node.label,
+        vlanIp: node.vlanIp,
+        status: node.status,
+        city: node.city,
+        country: node.country,
+        countryCode: node.countryCode,
+        lat: node.lat,
+        lng: node.lng,
+        isPositionApproximate: node.isPositionApproximate,
+      })),
+    [graph.nodes],
+  );
+  const handleMapNodeDrag = (nodeId: string, lat: number, lng: number) => {
+    setMapLocationOverrides((prev) => ({ ...prev, [nodeId]: [lat, lng] }));
+    void api.nodes
+      .update(nodeId, { locationLat: lat, locationLng: lng })
+      .catch(() => setNotice({ type: 'error', message: 'Impossible d’enregistrer la position sur la carte.' }));
+  };
   const { cityBubbles, countryBubbles } = useMemo(() => {
     const cityGroups = new Map<string, GraphNode[]>();
     for (const node of displayedNodes) {
@@ -732,7 +797,7 @@ export default function NetworkPage() {
       <ChartCardSkeleton height="h-96" />
     </div>
   ) : !vlanStatus ? (
-    <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+    <Card className="border-white/[0.08] bg-panel-glow backdrop-blur transition-colors hover:border-white/[0.14]">
       <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
         <AlertTriangle className="h-8 w-8 text-violet-400" />
         <h3 className="text-xl font-semibold text-foreground">Aucun réseau VLAN trouvé</h3>
@@ -797,39 +862,57 @@ export default function NetworkPage() {
 
       <SectionLabel>Topologie</SectionLabel>
       <div className="grid gap-4 xl:grid-cols-[1.6fr_minmax(0,1fr)]">
-        <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+        <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
           <CardHeader className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <CardTitle className="text-base">Vue interconnexion (mind map live)</CardTitle>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => zoomFrom(1.16)}
-                >
-                  Zoom +
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => zoomFrom(1 / 1.16)}
-                >
-                  Zoom -
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setViewTransform({ scale: 1, tx: 0, ty: 0 })}
-                >
-                  Recentrer
-                </Button>
-              </div>
+              <Tabs value={mapView} onValueChange={(value) => setMapView(value === 'graph' ? 'graph' : 'map')}>
+                <TabsList>
+                  <TabsTrigger value="map" className="gap-1.5">
+                    <Globe2 className="h-3.5 w-3.5" />
+                    Carte
+                  </TabsTrigger>
+                  <TabsTrigger value="graph" className="gap-1.5">
+                    <Network className="h-3.5 w-3.5" />
+                    Graphe
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+              {mapView === 'graph' && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => zoomFrom(1.16)}
+                  >
+                    Zoom +
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => zoomFrom(1 / 1.16)}
+                  >
+                    Zoom -
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setViewTransform({ scale: 1, tx: 0, ty: 0 })}
+                  >
+                    Recentrer
+                  </Button>
+                </div>
+              )}
             </div>
             <p className="text-xs text-muted-foreground">
-              Molette pour zoomer, glisser le fond pour déplacer la vue, glisser un nœud pour le repositionner.
+              {mapView === 'map'
+                ? 'Molette pour zoomer, glisser le fond pour déplacer la vue, glisser un point pour corriger sa position exacte. Les nœuds à la même localisation sont regroupés en badge tant que vous n’avez pas zoomé assez près.'
+                : 'Molette pour zoomer, glisser le fond pour déplacer la vue, glisser un nœud pour le repositionner.'}
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
+            {mapView === 'map' ? (
+              <WorldMap nodes={worldMapNodes} onNodeDrag={handleMapNodeDrag} onSelectNode={setSelectedMapNodeId} className="h-[560px] w-full" />
+            ) : (
             <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-4">
               <svg
                 ref={svgRef}
@@ -972,6 +1055,7 @@ export default function NetworkPage() {
                 </g>
               </svg>
             </div>
+            )}
             <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <p className="text-xs font-medium text-zinc-200">Localisation manuelle des nœuds</p>
@@ -1037,9 +1121,12 @@ export default function NetworkPage() {
           </CardContent>
         </Card>
 
-        <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+        <Card className="border-white/[0.08] bg-panel-glow backdrop-blur transition-colors hover:border-white/[0.14]">
           <CardHeader>
-            <CardTitle className="text-base">Flux actifs</CardTitle>
+            <div className="flex items-center gap-2">
+              <Activity className="h-5 w-5 text-violet-400" />
+              <CardTitle className="text-base">Flux actifs</CardTitle>
+            </div>
           </CardHeader>
           <CardContent className="space-y-3">
             {(selectedFlow ? [selectedFlow] : topTrafficFlows).map((flow) => {
@@ -1093,7 +1180,7 @@ export default function NetworkPage() {
         </Card>
       </div>
 
-      <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+      <Card className="border-white/[0.08] bg-panel-glow backdrop-blur transition-colors hover:border-white/[0.14]">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Zap className="h-4 w-4 text-violet-300" />
@@ -1169,9 +1256,12 @@ export default function NetworkPage() {
       </Card>
 
       <SectionLabel>Diagnostics</SectionLabel>
-      <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+      <Card className="border-white/[0.08] bg-panel-glow backdrop-blur transition-colors hover:border-white/[0.14]">
         <CardHeader>
-          <CardTitle className="text-base">Tests de connectivité</CardTitle>
+          <div className="flex items-center gap-2">
+            <Waves className="h-5 w-5 text-violet-400" />
+            <CardTitle className="text-base">Tests de connectivité</CardTitle>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">

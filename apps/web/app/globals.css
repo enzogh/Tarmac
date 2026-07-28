@@ -116,3 +116,82 @@
   }
 }
 
+/* Leaflet marker pulse — kept as a hand-written keyframe (not a Tailwind
+   utility) so it renders correctly from the raw HTML strings Leaflet uses
+   for divIcon markers, which Tailwind's content scanner never sees. */
+@keyframes tarmac-map-ping {
+  75%,
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+/* Re-theme Leaflet's own chrome (tiles container, zoom buttons, popups,
+   attribution) to match the app's dark/violet palette instead of Leaflet's
+   default light UI. Scoped to .tarmac-map so it can't leak elsewhere. */
+.tarmac-map .leaflet-container {
+  background: #09090b;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+.tarmac-map .leaflet-control-zoom {
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 0.75rem !important;
+  overflow: hidden;
+  box-shadow: none !important;
+}
+
+.tarmac-map .leaflet-control-zoom a {
+  background: rgba(24, 24, 27, 0.92) !important;
+  color: #e4e4e7 !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.tarmac-map .leaflet-control-zoom a:hover {
+  background: rgba(139, 92, 246, 0.18) !important;
+  color: #f4f4f5 !important;
+}
+
+.tarmac-map .leaflet-control-attribution {
+  background: rgba(9, 9, 11, 0.65) !important;
+  color: rgba(161, 161, 170, 0.85) !important;
+  border-radius: 0.5rem 0 0 0;
+}
+
+.tarmac-map .leaflet-control-attribution a {
+  color: rgba(196, 181, 253, 0.9) !important;
+}
+
+.tarmac-map .leaflet-popup-content-wrapper {
+  background: rgba(9, 9, 11, 0.97) !important;
+  color: #f4f4f5 !important;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.75rem !important;
+  box-shadow: 0 18px 50px rgba(2, 6, 23, 0.55) !important;
+}
+
+.tarmac-map .leaflet-popup-content {
+  margin: 0.65rem 0.8rem !important;
+}
+
+.tarmac-map .leaflet-popup-tip {
+  background: rgba(9, 9, 11, 0.97) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: none !important;
+}
+
+.tarmac-map .leaflet-tooltip {
+  background: rgba(9, 9, 11, 0.92) !important;
+  color: #e4e4e7 !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 0.5rem !important;
+  font-size: 11px !important;
+  padding: 0.2rem 0.5rem !important;
+  box-shadow: none !important;
+}
+
+.tarmac-map .leaflet-tooltip-top:before {
+  border-top-color: rgba(255, 255, 255, 0.1) !important;
+}
+

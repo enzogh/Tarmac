@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { Download, PauseCircle, PlayCircle, ScrollText, Search } from 'lucide-react';
+import { Download, History, PauseCircle, PlayCircle, ScrollText, Search, Server } from 'lucide-react';
 import Link from 'next/link';
 import { api, AgentLogItem, AuditLogItem } from '../../../lib/api';
 import { usePolling } from '../../../lib/hooks/usePolling';
@@ -152,7 +152,7 @@ function ActionsTab() {
 
   return (
     <div className="space-y-4">
-      <Card className="border-white/[0.08] bg-zinc-900/65">
+      <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
         <CardContent className="grid grid-cols-1 gap-3 pt-6 md:grid-cols-2 xl:grid-cols-5">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Recherche</Label>
@@ -200,7 +200,7 @@ function ActionsTab() {
         </CardContent>
       </Card>
 
-      <Card className="border-white/[0.08] bg-zinc-900/65">
+      <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="text-base">Journal d'actions</CardTitle>
@@ -412,7 +412,7 @@ function AgentsTab() {
 
   return (
     <div className="space-y-4">
-      <Card className="border-white/[0.08] bg-zinc-900/65">
+      <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
         <CardContent className="flex flex-wrap items-end gap-3 pt-6">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Nœud</Label>
@@ -477,7 +477,7 @@ function AgentsTab() {
         </CardContent>
       </Card>
 
-      <Card className="border-white/[0.08] bg-zinc-900/65">
+      <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
         <CardContent className="pt-6">
           {loading ? (
             <ListSkeleton rows={6} />
@@ -534,8 +534,14 @@ export default function LogsPage() {
 
         <Tabs defaultValue="actions" className="space-y-4">
           <TabsList>
-            <TabsTrigger value="actions">Actions</TabsTrigger>
-            <TabsTrigger value="agents">Agents</TabsTrigger>
+            <TabsTrigger value="actions" className="gap-1.5">
+              <History className="h-3.5 w-3.5" />
+              Actions
+            </TabsTrigger>
+            <TabsTrigger value="agents" className="gap-1.5">
+              <Server className="h-3.5 w-3.5" />
+              Agents
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="actions">

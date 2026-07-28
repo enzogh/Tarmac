@@ -426,6 +426,8 @@ export default function InfrastructurePage() {
       city: node.locationCity?.trim() || auto?.city || null,
       country: node.locationCountry?.trim() || auto?.country || null,
       countryCode: normalizeCountryCode(node.locationCountryCode) ?? auto?.countryCode ?? null,
+      latitude: node.locationLat ?? auto?.latitude ?? null,
+      longitude: node.locationLng ?? auto?.longitude ?? null,
     };
   };
 

@@ -3,6 +3,8 @@ export type GeoInfo = {
   city: string | null;
   country: string | null;
   countryCode: string | null;
+  latitude: number | null;
+  longitude: number | null;
 };
 
 const memoryCache = new Map<string, GeoInfo | null>();
@@ -14,6 +16,8 @@ type IpWhoResult = {
   city?: string;
   country?: string;
   country_code?: string;
+  latitude?: number;
+  longitude?: number;
   message?: string;
 };
 
@@ -102,6 +106,8 @@ export const getGeoInfo = async (ip: string): Promise<GeoInfo | null> => {
       city: payload.city?.trim() || null,
       country: payload.country?.trim() || null,
       countryCode: payload.country_code?.trim().toUpperCase() || null,
+      latitude: typeof payload.latitude === 'number' ? payload.latitude : null,
+      longitude: typeof payload.longitude === 'number' ? payload.longitude : null,
     };
     memoryCache.set(ip, info);
     storageCache[ip] = info;

@@ -18,6 +18,11 @@ type ActivityNode = {
   agentVersion: string | null;
   agentVersionAt: Date | null;
   mutedUntil: Date | null;
+  locationCity: string | null;
+  locationCountry: string | null;
+  locationCountryCode: string | null;
+  locationLat: number | null;
+  locationLng: number | null;
 };
 
 type ActivitySample = {
@@ -107,6 +112,8 @@ export class NodesService {
       ...(dto.locationCity !== undefined ? { locationCity: dto.locationCity?.trim() || null } : {}),
       ...(dto.locationCountry !== undefined ? { locationCountry: dto.locationCountry?.trim() || null } : {}),
       ...(locationCountryCode !== undefined ? { locationCountryCode } : {}),
+      ...(dto.locationLat !== undefined ? { locationLat: dto.locationLat } : {}),
+      ...(dto.locationLng !== undefined ? { locationLng: dto.locationLng } : {}),
     };
 
     const updated = await this.prisma.node.update({ where: { id }, data });
@@ -263,6 +270,11 @@ export class NodesService {
         lastSeenAt: node.lastSeenAt?.toISOString() ?? null,
         overlayEndpoint: node.overlayEndpoint,
         externalIp: this.extractExternalIp(node.overlayEndpoint),
+        locationCity: node.locationCity,
+        locationCountry: node.locationCountry,
+        locationCountryCode: node.locationCountryCode,
+        locationLat: node.locationLat,
+        locationLng: node.locationLng,
         agentVersion: node.agentVersion,
         agentVersionAt: node.agentVersionAt?.toISOString() ?? null,
         mutedUntil: node.mutedUntil?.toISOString() ?? null,

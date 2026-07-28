@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsIn, IsNumber, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class UpdateNodeDto {
   @IsOptional()
@@ -27,4 +27,12 @@ export class UpdateNodeDto {
   @IsOptional()
   @IsString()
   locationCountryCode?: string | null;
+
+  @IsOptional()
+  @IsNumber()
+  locationLat?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  locationLng?: number | null;
 }

@@ -8,6 +8,8 @@ export type NodeItem = {
   locationCity?: string | null;
   locationCountry?: string | null;
   locationCountryCode?: string | null;
+  locationLat?: number | null;
+  locationLng?: number | null;
   lastSeenAt?: string | null;
   overlayEndpoint?: string | null;
   overlaySshPublicKey?: string | null;
@@ -429,6 +431,8 @@ export const api = {
         locationCity?: string | null;
         locationCountry?: string | null;
         locationCountryCode?: string | null;
+        locationLat?: number | null;
+        locationLng?: number | null;
       },
     ) =>
       request<NodeItem>(`/api/v1/nodes/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
