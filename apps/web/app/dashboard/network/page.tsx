@@ -474,6 +474,43 @@ export default function NetworkPage() {
     };
   }, [vlanStatus, mapLocationOverrides]);
 
+  // Mirrors AgentsService.reconcileOverlayForVlan's segmentation rule (apps/api/src/agents/agents.service.ts):
+  // same-region pairs (or unresolved region) stay full-mesh; cross-region pairs are only
+  // physically peered when BOTH regions have a designated gateway, and then only between
+  // those two gateway nodes — every other cross-region pair has no direct WireGuard peer at all.
+  const gatewayNodeIdByRegion = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const member of vlanStatus?.vlan.members ?? []) {
+      if (member.region && member.node?.overlayIsGateway) {
+        map.set(member.region, member.nodeId);
+      }
+    }
+    return map;
+  }, [vlanStatus]);
+  const regionByNodeId = useMemo(() => {
+    const map = new Map<string, string | null>();
+    for (const member of vlanStatus?.vlan.members ?? []) {
+      map.set(member.nodeId, member.region ?? null);
+    }
+    return map;
+  }, [vlanStatus]);
+  const isPhysicalLink = useCallback(
+    (aNodeId: string, bNodeId: string) => {
+      const regionA = regionByNodeId.get(aNodeId) ?? null;
+      const regionB = regionByNodeId.get(bNodeId) ?? null;
+      if (!regionA || !regionB || regionA === regionB) return true;
+      const gatewayA = gatewayNodeIdByRegion.get(regionA);
+      const gatewayB = gatewayNodeIdByRegion.get(regionB);
+      if (!gatewayA || !gatewayB) return true;
+      return aNodeId === gatewayA && bNodeId === gatewayB;
+    },
+    [regionByNodeId, gatewayNodeIdByRegion],
+  );
+  const physicalConnections = useMemo(
+    () => connections.filter((connection) => isPhysicalLink(connection.sourceNodeId, connection.targetNodeId)),
+    [connections, isPhysicalLink],
+  );
+
   const graph = useMemo(() => {
     if (!vlanStatus?.vlan.members?.length) {
       return { nodes: [] as GraphNode[], links: [] as GraphLink[] };
@@ -563,7 +600,7 @@ export default function NetworkPage() {
     });
 
     const bestByPair = new Map<string, GraphLink>();
-    for (const connection of connections) {
+    for (const connection of physicalConnections) {
       const pair = [connection.sourceNodeId, connection.targetNodeId].sort().join('__');
       const previous = bestByPair.get(pair);
       if (!previous || STATUS_PRIORITY[connection.status] > STATUS_PRIORITY[previous.status]) {
@@ -586,7 +623,7 @@ export default function NetworkPage() {
       nodes,
       links: Array.from(bestByPair.values()),
     };
-  }, [connections, geoByIp, geoOverrides, mapLocationOverrides, vlanStatus]);
+  }, [physicalConnections, geoByIp, geoOverrides, mapLocationOverrides, vlanStatus]);
 
   const displayedNodes = useMemo(
     () =>
@@ -706,8 +743,8 @@ export default function NetworkPage() {
     return map;
   }, [geoByIp, vlanStatus]);
   const connectionByDirection = useMemo(
-    () => new Map(connections.map((connection) => [`${connection.sourceNodeId}__${connection.targetNodeId}`, connection])),
-    [connections],
+    () => new Map(physicalConnections.map((connection) => [`${connection.sourceNodeId}__${connection.targetNodeId}`, connection])),
+    [physicalConnections],
   );
   const memberByNodeId = useMemo(
     () => new Map((vlanStatus?.vlan.members || []).map((member) => [member.nodeId, member])),
@@ -752,7 +789,7 @@ export default function NetworkPage() {
   );
   const directedFlows = useMemo(
     () =>
-      [...connections]
+      [...physicalConnections]
         .map(
           (connection) =>
             ({
@@ -769,7 +806,7 @@ export default function NetworkPage() {
             }) satisfies DirectedFlow,
         )
         .sort((a, b) => b.trafficScore - a.trafficScore),
-    [connections],
+    [physicalConnections],
   );
   const selectedFlow = useMemo(
     () => directedFlows.find((flow) => flow.key === selectedFlowKey) ?? null,
@@ -1716,6 +1753,17 @@ export default function NetworkPage() {
                           className="rounded-lg border border-dashed border-white/10 bg-zinc-900/40 px-3 py-2 text-center text-[10px] text-zinc-500"
                         >
                           même nœud
+                        </div>
+                      );
+                    }
+
+                    if (!isPhysicalLink(row.id, col.id)) {
+                      return (
+                        <div
+                          key={`cell-${row.id}-${col.id}`}
+                          className="rounded-lg border border-dashed border-white/10 bg-zinc-900/40 px-3 py-2 text-center text-[10px] text-zinc-500"
+                        >
+                          Relayé via passerelle
                         </div>
                       );
                     }
