@@ -58,6 +58,14 @@
       radial-gradient(circle at top, rgba(37, 99, 235, 0.18), transparent 22%),
       radial-gradient(circle at 80% 0%, rgba(168, 85, 247, 0.12), transparent 18%),
       linear-gradient(180deg, rgba(9, 9, 11, 0.94), rgba(9, 9, 11, 1));
+    /* Without `fixed`, the radial gradients size themselves against the full
+       scrollable body height (their default "farthest-corner" radius), so a
+       long page (e.g. a 100-row table) spreads the glow much further and
+       brighter than a short one (e.g. a capped-height console) — the exact
+       mismatch reported between the Journal page's two tabs. Pinning the
+       background to the viewport makes the glow's size viewport-based only,
+       identical no matter how tall the page's content is. */
+    background-attachment: fixed;
   }
 
   body::before {
