@@ -64,6 +64,12 @@ export class AlertRulesEvaluatorService {
     const openAlertByKey = new Map(openAlerts.map((alert) => [`${alert.ruleId}:${alert.nodeId}`, alert]));
     const now = Date.now();
 
+    // Collect breaches/recoveries while scanning, then flush with a single createMany +
+    // updateMany — a mass outage or mass-recovery (many nodes crossing a threshold at once)
+    // would otherwise mean one sequential DB round trip per (rule, node) pair in this tick.
+    const toCreate: { ruleId: string; nodeId: string; severity: typeof rules[number]['severity']; message: string }[] = [];
+    const toResolveIds: string[] = [];
+
     for (const rule of rules) {
       if (!isSupportedMetric(rule.metric)) continue;
 
@@ -82,21 +88,26 @@ export class AlertRulesEvaluatorService {
         const isBreached = breaches(value, rule.comparator, rule.threshold);
 
         if (isBreached && !openAlert) {
-          await this.prisma.alert.create({
-            data: {
-              ruleId: rule.id,
-              nodeId: node.id,
-              severity: rule.severity,
-              message: `Règle "${rule.name}" déclenchée sur ${node.name} : ${rule.metric} = ${value.toFixed(1)} (seuil ${rule.comparator} ${rule.threshold})`,
-            },
+          toCreate.push({
+            ruleId: rule.id,
+            nodeId: node.id,
+            severity: rule.severity,
+            message: `Règle "${rule.name}" déclenchée sur ${node.name} : ${rule.metric} = ${value.toFixed(1)} (seuil ${rule.comparator} ${rule.threshold})`,
           });
         } else if (!isBreached && openAlert) {
-          await this.prisma.alert.update({
-            where: { id: openAlert.id },
-            data: { status: 'resolved', resolvedAt: new Date() },
-          });
+          toResolveIds.push(openAlert.id);
         }
       }
     }
+
+    await Promise.all([
+      toCreate.length > 0 ? this.prisma.alert.createMany({ data: toCreate }) : Promise.resolve(),
+      toResolveIds.length > 0
+        ? this.prisma.alert.updateMany({
+            where: { id: { in: toResolveIds } },
+            data: { status: 'resolved', resolvedAt: new Date() },
+          })
+        : Promise.resolve(),
+    ]);
   }
 }

@@ -532,6 +532,8 @@ export const api = {
     ack: (id: string) => request(`/api/v1/alerts/${id}/ack`, { method: 'POST' }),
     resolve: (id: string) => request(`/api/v1/alerts/${id}/resolve`, { method: 'POST' }),
     remove: (id: string) => request(`/api/v1/alerts/${id}`, { method: 'DELETE' }),
+    removeMany: (ids: string[]) =>
+      request<{ count: number }>('/api/v1/alerts', { method: 'DELETE', body: JSON.stringify({ ids }) }),
   },
 
   syncJobs: {

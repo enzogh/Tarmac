@@ -76,7 +76,7 @@ const STATUS_BADGE: Record<string, { label: string; type: 'success' | 'warning' 
 
 export default function StoragePage() {
   const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
-  const { data: pools = [], mutate: refreshPools, isLoading: poolsLoading } = usePolling('pools', api.pools.list);
+  const { data: pools = [], mutate: refreshPools, isLoading: poolsLoading } = usePolling('pools', api.pools.list, { intervalMs: 20000 });
   const [wizardOpen, setWizardOpen] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState<PresetOption | null>(null);
   const [notice, setNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
@@ -107,7 +107,7 @@ export default function StoragePage() {
     }));
   };
 
-  const wizardSteps: StepConfig[] = [
+  const wizardSteps: StepConfig[] = !wizardOpen ? [] : [
     {
       id: 'choose-strategy',
       title: 'Stratégie du pool',

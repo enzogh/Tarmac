@@ -49,7 +49,7 @@ const STATUS_BADGE: Record<string, { label: string; type: 'success' | 'warning' 
 
 export default function ReplicationPage() {
   const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
-  const { data: jobs = [], mutate: refreshJobs, isLoading: jobsLoading } = usePolling('sync-jobs', api.syncJobs.list);
+  const { data: jobs = [], mutate: refreshJobs, isLoading: jobsLoading } = usePolling('sync-jobs', api.syncJobs.list, { intervalMs: 20000 });
   const [wizardOpen, setWizardOpen] = useState(false);
   const [notice, setNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
@@ -92,7 +92,7 @@ export default function ReplicationPage() {
     }
   };
 
-  const wizardSteps: StepConfig[] = [
+  const wizardSteps: StepConfig[] = !wizardOpen ? [] : [
     {
       id: 'details',
       title: 'Tâche de réplication',

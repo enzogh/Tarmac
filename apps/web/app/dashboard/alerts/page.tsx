@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Bell, Eye, CheckCircle2, AlertCircle, AlertTriangle, Circle, Trash2 } from 'lucide-react';
 import { api } from '../../../lib/api';
 import { usePolling } from '../../../lib/hooks/usePolling';
@@ -20,9 +20,12 @@ type SeverityFilter = 'all' | 'critical' | 'high' | 'medium' | 'low';
 type StatusFilter = 'all' | 'open' | 'acknowledged' | 'resolved';
 
 export default function AlertsPage() {
-  const { data: alerts = [], mutate, isLoading } = usePolling('alerts', api.alerts.list);
+  const { data: alerts = [], mutate, isLoading } = usePolling('alerts', api.alerts.list, { intervalMs: 20000 });
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleAck = async (alertId: string) => {
     await api.alerts.ack(alertId);
@@ -35,8 +38,22 @@ export default function AlertsPage() {
   };
 
   const handleDelete = async (alertId: string) => {
-    await api.alerts.remove(alertId);
-    await mutate();
+    try {
+      setError(null);
+      await api.alerts.remove(alertId);
+      await mutate();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Échec de la suppression.');
+    }
+  };
+
+  const toggleSelected = (alertId: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(alertId)) next.delete(alertId);
+      else next.add(alertId);
+      return next;
+    });
   };
 
   const getSeverityColor = (severity: string): 'success' | 'warning' | 'error' | 'info' => {
@@ -73,12 +90,56 @@ export default function AlertsPage() {
     }
   };
 
-  let filtered = alerts;
-  if (severityFilter !== 'all') filtered = filtered.filter((a) => a.severity === severityFilter);
-  if (statusFilter !== 'all') filtered = filtered.filter((a) => a.status === statusFilter);
+  const filtered = useMemo(() => {
+    let result = alerts;
+    if (severityFilter !== 'all') result = result.filter((a) => a.severity === severityFilter);
+    if (statusFilter !== 'all') result = result.filter((a) => a.status === statusFilter);
+    return result;
+  }, [alerts, severityFilter, statusFilter]);
 
-  const critical = alerts.filter((a) => a.severity === 'critical' && a.status !== 'resolved').length;
-  const warnings = alerts.filter((a) => a.severity === 'high' && a.status !== 'resolved').length;
+  const { critical, warnings } = useMemo(
+    () => ({
+      critical: alerts.filter((a) => a.severity === 'critical' && a.status !== 'resolved').length,
+      warnings: alerts.filter((a) => a.severity === 'high' && a.status !== 'resolved').length,
+    }),
+    [alerts],
+  );
+
+  const filteredIds = useMemo(() => new Set(filtered.map((a) => a.id)), [filtered]);
+  const selectedInView = useMemo(() => [...selected].filter((id) => filteredIds.has(id)), [selected, filteredIds]);
+  const allInViewSelected = filtered.length > 0 && selectedInView.length === filtered.length;
+
+  const toggleSelectAll = () => {
+    if (allInViewSelected) {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        filteredIds.forEach((id) => next.delete(id));
+        return next;
+      });
+    } else {
+      setSelected((prev) => new Set([...prev, ...filteredIds]));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedInView.length === 0) return;
+    if (!window.confirm(`Supprimer définitivement ${selectedInView.length} alerte(s) ?`)) return;
+    setIsBulkDeleting(true);
+    setError(null);
+    try {
+      await api.alerts.removeMany(selectedInView);
+      setSelected((prev) => {
+        const next = new Set(prev);
+        selectedInView.forEach((id) => next.delete(id));
+        return next;
+      });
+      await mutate();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Échec de la suppression groupée.');
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
 
   return (
     <DashboardLayout>
@@ -91,8 +152,10 @@ export default function AlertsPage() {
 
         <Callout>
           Marquez une alerte comme lue pour indiquer que vous l'avez vue, résolvez-la une fois le problème corrigé,
-          ou supprimez-la pour nettoyer l'historique.
+          ou supprimez-la pour nettoyer l'historique. Cochez plusieurs alertes pour les supprimer en une seule fois.
         </Callout>
+
+        {error && <Callout variant="danger">{error}</Callout>}
 
         <section className="space-y-4">
           <SectionLabel>Aperçu</SectionLabel>
@@ -120,6 +183,31 @@ export default function AlertsPage() {
                 <CardTitle>Liste des alertes</CardTitle>
               </div>
               <div className="flex flex-wrap items-end gap-4">
+                {!isLoading && filtered.length > 0 && (
+                  <div className="flex items-center gap-3">
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={allInViewSelected}
+                        onChange={toggleSelectAll}
+                        className="h-4 w-4 rounded"
+                      />
+                      Tout sélectionner
+                    </label>
+                    {selectedInView.length > 0 && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={handleBulkDelete}
+                        disabled={isBulkDeleting}
+                        className="text-rose-300 hover:text-rose-200"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        {isBulkDeleting ? 'Suppression…' : `Supprimer (${selectedInView.length})`}
+                      </Button>
+                    )}
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <Label className="text-xs text-muted-foreground">Sévérité</Label>
                   <Select value={severityFilter} onValueChange={(v) => setSeverityFilter(v as SeverityFilter)}>
@@ -160,6 +248,12 @@ export default function AlertsPage() {
                 className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 transition-colors hover:bg-white/[0.04]"
               >
                 <div className="flex items-start gap-4">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(alert.id)}
+                    onChange={() => toggleSelected(alert.id)}
+                    className="h-4 w-4 mt-1 flex-shrink-0 rounded"
+                  />
                   <div className="flex-shrink-0 mt-0.5">
                     {getSeverityIcon(alert.severity)}
                   </div>

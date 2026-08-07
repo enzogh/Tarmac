@@ -116,12 +116,12 @@ export class AgentTokenService {
 
   async rotateAll(): Promise<Array<{ nodeId: string; delivered: boolean }>> {
     const nodes = await this.prisma.node.findMany({ select: { id: true } });
-    const results: Array<{ nodeId: string; delivered: boolean }> = [];
-    for (const node of nodes) {
-      const { delivered } = await this.rotate(node.id);
-      results.push({ nodeId: node.id, delivered });
-    }
-    return results;
+    return Promise.all(
+      nodes.map(async (node) => {
+        const { delivered } = await this.rotate(node.id);
+        return { nodeId: node.id, delivered };
+      }),
+    );
   }
 
   @Cron(CronExpression.EVERY_HOUR)

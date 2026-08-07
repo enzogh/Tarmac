@@ -326,10 +326,12 @@ export class AgentsService implements OnModuleInit {
         },
       });
 
-      for (const node of timedOutNodes) {
-        this.logger.warn(`Node ${node.name} (${node.id}) marked offline - no heartbeat since ${node.lastSeenAt || 'startup'}`);
-        await this.prisma.node.update({
-          where: { id: node.id },
+      if (timedOutNodes.length > 0) {
+        for (const node of timedOutNodes) {
+          this.logger.warn(`Node ${node.name} (${node.id}) marked offline - no heartbeat since ${node.lastSeenAt || 'startup'}`);
+        }
+        await this.prisma.node.updateMany({
+          where: { id: { in: timedOutNodes.map((node) => node.id) } },
           data: { status: 'offline' },
         });
       }
@@ -400,15 +402,17 @@ export class AgentsService implements OnModuleInit {
         return created;
       });
 
-    // Ensure VLAN membership on every heartbeat (idempotent)
+    // Ensure VLAN membership on every heartbeat (idempotent). Single lookup reused below
+    // for the reconcile gate too, instead of two overlapping vlanMember queries per heartbeat.
+    let membership = await this.prisma.vlanMember.findFirst({ where: { nodeId } });
     try {
-      const vlanMembers = await this.prisma.vlanMember.findMany({ where: { nodeId } });
-      if (vlanMembers.length === 0) {
+      if (!membership) {
         // Ensure default VLAN exists
         await this.vlanService.getOrCreateVlan('default');
         // Then join the node if not already joined
         await this.vlanService.joinVlan(nodeId);
         this.logger.log(`✅ Node ${nodeId} joined VLAN on heartbeat`);
+        membership = await this.prisma.vlanMember.findFirst({ where: { nodeId } });
       }
     } catch (error) {
       this.logger.warn(`⚠️  Failed to ensure VLAN membership for node ${nodeId}:`, error);
@@ -440,7 +444,6 @@ export class AgentsService implements OnModuleInit {
     // trigger (membership/key changes already call reconcileOverlayForNode directly).
     // Gate on the VLAN, not the node: reconcileOverlayForNode broadcasts to every member,
     // so gating per-node still let each node's heartbeat re-trigger a full VLAN broadcast.
-    const membership = await this.prisma.vlanMember.findFirst({ where: { nodeId } });
     if (membership) {
       const lastSync = this.overlaySyncAt.get(membership.vlanId) ?? 0;
       if (Date.now() - lastSync >= OVERLAY_RECONCILE_INTERVAL_MS) {

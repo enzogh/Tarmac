@@ -178,6 +178,8 @@ model Share {
   clients    ShareClient[]
   createdAt  DateTime      @default(now())
   updatedAt  DateTime      @updatedAt
+
+  @@index([status])
 }
 
 model ShareClient {
@@ -213,6 +215,8 @@ model Mount {
   node       Node?       @relation(fields: [nodeId], references: [id])
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
+
+  @@index([status])
 }
 
 model MetricSample {
@@ -288,6 +292,7 @@ model PoolMember {
 
   @@unique([poolId, nodeId])
   @@index([nodeId])
+  @@index([status])
 }
 
 model NotificationChannel {
@@ -316,6 +321,8 @@ model AlertRule {
   node                  Node?                 @relation("NodeAlertRules", fields: [nodeId], references: [id])
   notificationChannel   NotificationChannel?  @relation(fields: [notificationChannelId], references: [id])
   alerts                Alert[]
+
+  @@index([enabled])
 }
 
 model Alert {
@@ -332,6 +339,10 @@ model Alert {
   updatedAt      DateTime     @updatedAt
   rule           AlertRule?   @relation(fields: [ruleId], references: [id], onDelete: SetNull)
   node           Node?        @relation("NodeAlerts", fields: [nodeId], references: [id], onDelete: SetNull)
+
+  @@index([triggeredAt])
+  @@index([status])
+  @@index([nodeId])
 }
 
 model SyncJob {
@@ -395,6 +406,8 @@ model MigrationTask {
   updatedAt    DateTime        @updatedAt
   sourceNode   Node?           @relation("MigrationSourceNode", fields: [sourceNodeId], references: [id], onDelete: SetNull)
   targetNode   Node?           @relation("MigrationTargetNode", fields: [targetNodeId], references: [id], onDelete: SetNull)
+
+  @@index([sourceNodeId, status])
 }
 
 model AuditLog {
@@ -515,4 +528,5 @@ model VlanConnectionSample {
   vlan         Vlan                 @relation(fields: [vlanId], references: [id], onDelete: Cascade)
 
   @@index([vlanId, sourceNodeId, targetNodeId, createdAt])
+  @@index([createdAt])
 }

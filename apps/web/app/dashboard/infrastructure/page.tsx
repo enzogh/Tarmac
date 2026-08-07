@@ -96,14 +96,12 @@ function NodeMeter({
 export default function InfrastructurePage() {
   const { data: nodes = [], mutate: refreshNodes, isLoading: nodesLoading } = usePolling('activity:1h', () => api.nodes.activity());
 
-  const topNodeIds = useMemo(
-    () =>
-      [...nodes]
-        .sort((left, right) => right.metrics.cpu - left.metrics.cpu)
-        .slice(0, 6)
-        .map((node) => node.id),
+  const sortedByCpu = useMemo(
+    () => [...nodes].sort((left, right) => right.metrics.cpu - left.metrics.cpu),
     [nodes],
   );
+  const topNodeIds = useMemo(() => sortedByCpu.slice(0, 6).map((node) => node.id), [sortedByCpu]);
+  const nodeDetailGrid = useMemo(() => sortedByCpu.slice(0, 6), [sortedByCpu]);
 
   const { data: samplesByNode = {} } = usePolling(
     topNodeIds.length > 0 ? `metrics:${topNodeIds.join(',')}:6h` : null,
@@ -379,20 +377,24 @@ export default function InfrastructurePage() {
     }
   };
 
-  const onlineNodes = nodes.filter((node) => node.status === 'online').length;
-  const degradedNodes = nodes.filter((node) => node.status === 'degraded').length;
-  const avgCpu = nodes.length ? nodes.reduce((acc, node) => acc + node.metrics.cpu, 0) / nodes.length : 0;
-  const avgRam = nodes.length ? nodes.reduce((acc, node) => acc + node.metrics.ram, 0) / nodes.length : 0;
+  const { onlineNodes, degradedNodes, avgCpu, avgRam, controlVersion, upToDateNodes, outdatedNodes, fleetVersionAligned, disksWithSmartIssues } = useMemo(() => {
+    const onlineNodes = nodes.filter((node) => node.status === 'online').length;
+    const degradedNodes = nodes.filter((node) => node.status === 'degraded').length;
+    const avgCpu = nodes.length ? nodes.reduce((acc, node) => acc + node.metrics.cpu, 0) / nodes.length : 0;
+    const avgRam = nodes.length ? nodes.reduce((acc, node) => acc + node.metrics.ram, 0) / nodes.length : 0;
 
-  const controlVersion = nodes.find((node) => node.controlVersion)?.controlVersion ?? null;
-  const upToDateNodes = nodes.filter((node) => node.agentUpToDate === true).length;
-  const outdatedNodes = nodes.filter((node) => node.agentUpToDate === false).length;
-  const fleetVersionAligned = nodes.length > 0 && outdatedNodes === 0 && upToDateNodes === nodes.length;
-  const disksWithSmartIssues = nodes.reduce(
-    (acc, node) =>
-      acc + node.storage.disks.filter((disk) => disk.smart && disk.smart.overall !== 'healthy').length,
-    0,
-  );
+    const controlVersion = nodes.find((node) => node.controlVersion)?.controlVersion ?? null;
+    const upToDateNodes = nodes.filter((node) => node.agentUpToDate === true).length;
+    const outdatedNodes = nodes.filter((node) => node.agentUpToDate === false).length;
+    const fleetVersionAligned = nodes.length > 0 && outdatedNodes === 0 && upToDateNodes === nodes.length;
+    const disksWithSmartIssues = nodes.reduce(
+      (acc, node) =>
+        acc + node.storage.disks.filter((disk) => disk.smart && disk.smart.overall !== 'healthy').length,
+      0,
+    );
+
+    return { onlineNodes, degradedNodes, avgCpu, avgRam, controlVersion, upToDateNodes, outdatedNodes, fleetVersionAligned, disksWithSmartIssues };
+  }, [nodes]);
 
   const versionBadge = (node: NodeActivityItem) => {
     if (!node.agentVersion) {
@@ -406,11 +408,15 @@ export default function InfrastructurePage() {
 
   const selectedExplorerNode = nodes.find((node) => node.id === selectedExplorerNodeId) ?? null;
   const scanMax = scanResults[0]?.sizeBytes ?? 1;
-  const nodeComparisonData = nodes.map((node) => ({
-    name: node.name,
-    cpu: Math.round(node.metrics.cpu),
-    ram: Math.round(node.metrics.ram),
-  }));
+  const nodeComparisonData = useMemo(
+    () =>
+      nodes.map((node) => ({
+        name: node.name,
+        cpu: Math.round(node.metrics.cpu),
+        ram: Math.round(node.metrics.ram),
+      })),
+    [nodes],
+  );
 
   const getExternalIp = (node: NodeActivityItem) =>
     parseHostFromEndpoint(node.externalIp || node.overlayEndpoint) ?? '-';
@@ -546,7 +552,7 @@ export default function InfrastructurePage() {
               <p className="text-xs text-muted-foreground">Triés par charge CPU décroissante, 6 nœuds les plus actifs</p>
             </div>
             <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-              {[...nodes].sort((left, right) => right.metrics.cpu - left.metrics.cpu).slice(0, 6).map((node) => (
+              {nodeDetailGrid.map((node) => (
                 <ServerTrendCard
                   key={node.id}
                   node={node}

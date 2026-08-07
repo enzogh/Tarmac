@@ -34,8 +34,8 @@ export function FleetPerformanceChart({ data }: { data: FleetPerformancePoint[] 
         <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
         <YAxis domain={[0, 100]} tickLine={false} axisLine={false} tickMargin={8} width={36} />
         <ChartTooltip content={<ChartTooltipContent valueFormatter={(v) => `${Math.round(v)}%`} />} />
-        <Area dataKey="cpu" type="monotone" stroke="var(--color-cpu)" fill="url(#fill-cpu)" strokeWidth={2} />
-        <Area dataKey="ram" type="monotone" stroke="var(--color-ram)" fill="url(#fill-ram)" strokeWidth={2} />
+        <Area dataKey="cpu" type="monotone" stroke="var(--color-cpu)" fill="url(#fill-cpu)" strokeWidth={2} isAnimationActive={false} />
+        <Area dataKey="ram" type="monotone" stroke="var(--color-ram)" fill="url(#fill-ram)" strokeWidth={2} isAnimationActive={false} />
       </AreaChart>
     </ChartContainer>
   );
@@ -156,8 +156,8 @@ export function NodeComparisonChart({ data }: { data: NodeComparisonPoint[] }) {
         <XAxis dataKey="name" tickLine={false} axisLine={false} tickMargin={8} />
         <YAxis domain={[0, 100]} tickLine={false} axisLine={false} tickMargin={8} width={36} />
         <ChartTooltip content={<ChartTooltipContent valueFormatter={(v) => `${Math.round(v)}%`} />} />
-        <Bar dataKey="cpu" fill="var(--color-cpu)" radius={[4, 4, 0, 0]} />
-        <Bar dataKey="ram" fill="var(--color-ram)" radius={[4, 4, 0, 0]} />
+        <Bar dataKey="cpu" fill="var(--color-cpu)" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+        <Bar dataKey="ram" fill="var(--color-ram)" radius={[4, 4, 0, 0]} isAnimationActive={false} />
       </BarChart>
     </ChartContainer>
   );

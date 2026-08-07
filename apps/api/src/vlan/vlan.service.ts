@@ -7,6 +7,11 @@ import { Region, resolveRegion } from './region';
 const CONNECTION_OFFLINE_TIMEOUT_MS = 60_000;
 const CONNECTION_DEGRADED_TIMEOUT_MS = 20_000;
 const CONNECTION_ALERT_COOLDOWN_MS = 10 * 60_000;
+// Heartbeats/refreshes land every 5s per pair, but the history endpoint only needs a
+// steady-ish cadence to compute uptime% and draw a trend line — sampling every heartbeat
+// makes VlanConnectionSample grow O(pairs × 1/5s), which is O(N²) in fleet size. Every real
+// status transition is still recorded immediately regardless of this throttle.
+const CONNECTION_SAMPLE_THROTTLE_MS = 30_000;
 const CONNECTION_STATUS_RANK: Record<string, number> = { healthy: 0, unknown: 0, degraded: 1, offline: 2 };
 const CONNECTION_SAMPLE_RETENTION_DAYS = 30;
 const HISTORY_RANGE_MS: Record<string, number> = {
@@ -22,6 +27,7 @@ export class VlanService implements OnModuleInit {
   private readonly VLAN_GATEWAY = '10.255.0.1';
   private readonly BASE_IP = 0x0aff0002; // 10.255.0.2 in hex
   private readonly connectionAlertCooldownAt = new Map<string, number>();
+  private readonly connectionSampleWrittenAt = new Map<string, number>();
 
   constructor(private prisma: PrismaService) {}
 
@@ -220,8 +226,8 @@ export class VlanService implements OnModuleInit {
       throw new Error(`VLAN not found: ${vlanIdOrName}`);
     }
 
-    await this.refreshVlanConnections(vlan.id);
-
+    // Freshness is maintained by the 10s refreshAllVlanConnections cron — refreshing again
+    // inline here duplicated that work on every poll from every open dashboard tab.
     return this.prisma.vlanConnection.findMany({
       where: { vlanId: vlan.id },
       include: {
@@ -258,9 +264,11 @@ export class VlanService implements OnModuleInit {
   /**
    * Single write path for both VlanConnection update sites (real link-metric
    * ingestion and the heartbeat-timeout refresh loop): records a history
-   * sample unconditionally, and raises a panel alert only on a genuine
-   * degrading transition (never on recovery — matches the failure-only
-   * convention used by the other alert producers in this codebase).
+   * sample (throttled to CONNECTION_SAMPLE_THROTTLE_MS per pair, except every
+   * real status transition is always recorded), and raises a panel alert only
+   * on a genuine degrading transition to offline (never on recovery — matches
+   * the failure-only convention used by the other alert producers in this
+   * codebase).
    */
   async recordConnectionTransition(
     vlanId: string,
@@ -274,23 +282,31 @@ export class VlanService implements OnModuleInit {
       bandwidth?: number | null;
     },
   ): Promise<void> {
-    await this.prisma.vlanConnectionSample.create({
-      data: {
-        vlanId,
-        sourceNodeId,
-        targetNodeId,
-        status: next.status,
-        latencyMs: next.latencyMs ?? null,
-        packetLoss: next.packetLoss ?? null,
-        bandwidth: next.bandwidth ?? null,
-      },
-    });
+    const pairKey = [sourceNodeId, targetNodeId].sort().join('__');
+    const statusChanged = !!previousStatus && previousStatus !== next.status;
+    const lastSampleAt = this.connectionSampleWrittenAt.get(pairKey) ?? 0;
+    if (statusChanged || Date.now() - lastSampleAt >= CONNECTION_SAMPLE_THROTTLE_MS) {
+      this.connectionSampleWrittenAt.set(pairKey, Date.now());
+      await this.prisma.vlanConnectionSample.create({
+        data: {
+          vlanId,
+          sourceNodeId,
+          targetNodeId,
+          status: next.status,
+          latencyMs: next.latencyMs ?? null,
+          packetLoss: next.packetLoss ?? null,
+          bandwidth: next.bandwidth ?? null,
+        },
+      });
+    }
 
     if (!previousStatus || previousStatus === next.status) return;
     const isDegrading = (CONNECTION_STATUS_RANK[next.status] ?? 0) > (CONNECTION_STATUS_RANK[previousStatus] ?? 0);
     if (!isDegrading) return;
+    // Only alert on a link actually going down — "degraded" transitions are too noisy
+    // (flappy latency/handshake blips) and are tracked in VlanConnectionSample history instead.
+    if (next.status !== 'offline') return;
 
-    const pairKey = [sourceNodeId, targetNodeId].sort().join('__');
     const cooldownKey = `${pairKey}:${next.status}`;
     const lastAlertAt = this.connectionAlertCooldownAt.get(cooldownKey) ?? 0;
     if (Date.now() - lastAlertAt < CONNECTION_ALERT_COOLDOWN_MS) return;
@@ -501,7 +517,8 @@ export class VlanService implements OnModuleInit {
     }
 
     const vlanId = vlanLookup.id;
-    await this.refreshVlanConnections(vlanId);
+    // Freshness is maintained by the 10s refreshAllVlanConnections cron — refreshing again
+    // inline here duplicated that work on every poll from every open dashboard tab.
 
     const [vlan, members, connections, failedTests] = await Promise.all([
       this.prisma.vlan.findUnique({
@@ -701,15 +718,17 @@ export class VlanService implements OnModuleInit {
       await this.prisma.$transaction(updates);
     }
 
-    for (const transition of transitions) {
-      await this.recordConnectionTransition(
-        vlanId,
-        transition.sourceNodeId,
-        transition.targetNodeId,
-        transition.previousStatus,
-        transition.next,
-      );
-    }
+    await Promise.all(
+      transitions.map((transition) =>
+        this.recordConnectionTransition(
+          vlanId,
+          transition.sourceNodeId,
+          transition.targetNodeId,
+          transition.previousStatus,
+          transition.next,
+        ),
+      ),
+    );
   }
 
   private isNodeReachable(

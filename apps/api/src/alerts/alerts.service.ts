@@ -69,4 +69,16 @@ export class AlertsService {
     });
     return deleted;
   }
+
+  async removeMany(ids: string[], actorUserId?: string) {
+    const uniqueIds = [...new Set(ids)];
+    const { count } = await this.prisma.alert.deleteMany({ where: { id: { in: uniqueIds } } });
+    await this.auditLogsService.log({
+      actorUserId,
+      action: 'alert.bulk_delete',
+      resourceType: 'alert',
+      details: { ids: uniqueIds, count } as unknown as Prisma.InputJsonValue,
+    });
+    return { count };
+  }
 }

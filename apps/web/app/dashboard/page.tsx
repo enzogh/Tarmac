@@ -56,18 +56,16 @@ export default function OverviewPage() {
   }, []);
 
   const { data: activities = [], isLoading: activitiesLoading } = usePolling('activity:1h', () => api.nodes.activity());
-  const { data: alerts = [], isLoading: alertsLoading } = usePolling('alerts', api.alerts.list);
-  const { data: syncJobs = [], isLoading: syncJobsLoading } = usePolling('sync-jobs', api.syncJobs.list);
-  const { data: migrations = [], isLoading: migrationsLoading } = usePolling('migrations', api.migrations.list);
+  const { data: alerts = [], isLoading: alertsLoading } = usePolling('alerts', api.alerts.list, { intervalMs: 20000 });
+  const { data: syncJobs = [], isLoading: syncJobsLoading } = usePolling('sync-jobs', api.syncJobs.list, { intervalMs: 20000 });
+  const { data: migrations = [], isLoading: migrationsLoading } = usePolling('migrations', api.migrations.list, { intervalMs: 20000 });
 
-  const topNodeIds = useMemo(
-    () =>
-      [...activities]
-        .sort((left, right) => right.metrics.cpu - left.metrics.cpu)
-        .slice(0, 4)
-        .map((node) => node.id),
+  const sortedByCpu = useMemo(
+    () => [...activities].sort((left, right) => right.metrics.cpu - left.metrics.cpu),
     [activities],
   );
+  const topNodeIds = useMemo(() => sortedByCpu.slice(0, 4).map((node) => node.id), [sortedByCpu]);
+  const spotlightNodes = useMemo(() => sortedByCpu.slice(0, 4), [sortedByCpu]);
 
   const { data: samplesByNode = {}, isLoading: samplesLoading } = usePolling(
     topNodeIds.length > 0 ? `metrics:${topNodeIds.join(',')}:6h` : null,
@@ -85,50 +83,70 @@ export default function OverviewPage() {
   const spotlightLoading = activitiesLoading || samplesLoading;
   const activityFeedLoading = syncJobsLoading || migrationsLoading;
 
-  const nodesOnline = activities.filter((node) => node.status === 'online').length;
+  const nodesOnline = useMemo(() => activities.filter((node) => node.status === 'online').length, [activities]);
   // "Actives" means not yet resolved — open (unread) and acknowledged (read
   // but still pending) both count; only resolved alerts drop off.
-  const activeAlerts = alerts.filter((a) => a.status !== 'resolved');
-  const alertsCritical = activeAlerts.filter((a) => a.severity === 'critical').length;
-  const alertsWarning = activeAlerts.filter((a) => a.severity === 'high').length;
-  const activeMigrations = migrations.filter(
-    (migration) =>
-      (migration.status === 'pending' || migration.status === 'running') && migration.progress < 100,
+  const activeAlerts = useMemo(() => alerts.filter((a) => a.status !== 'resolved'), [alerts]);
+  const alertsCritical = useMemo(
+    () => activeAlerts.filter((a) => a.severity === 'critical').length,
+    [activeAlerts],
+  );
+  const alertsWarning = useMemo(() => activeAlerts.filter((a) => a.severity === 'high').length, [activeAlerts]);
+  const activeMigrations = useMemo(
+    () =>
+      migrations.filter(
+        (migration) =>
+          (migration.status === 'pending' || migration.status === 'running') && migration.progress < 100,
+      ),
+    [migrations],
   );
   const migrationsActive = activeMigrations.length;
-  const spotlightNodes = [...activities].sort((left, right) => right.metrics.cpu - left.metrics.cpu).slice(0, 4);
 
   // Les nœuds remontent leurs mesures à des instants légèrement différents : on aligne les séries
   // par index (même paramètre `range` pour tous) plutôt que par timestamp exact, ce qui suffit pour
   // une tendance de flotte lisible sans complexifier l'agrégation.
-  const nodeSeries = Object.values(samplesByNode);
-  const seriesLength = nodeSeries.reduce((max, series) => Math.max(max, series.length), 0);
-  const alignedSamples = Array.from({ length: seriesLength }, (_, index) =>
-    nodeSeries.map((series) => series[index]).filter((sample): sample is NodeMetricSample => Boolean(sample)),
+  const alignedSamples = useMemo(() => {
+    const nodeSeries = Object.values(samplesByNode);
+    const seriesLength = nodeSeries.reduce((max, series) => Math.max(max, series.length), 0);
+    return Array.from({ length: seriesLength }, (_, index) =>
+      nodeSeries.map((series) => series[index]).filter((sample): sample is NodeMetricSample => Boolean(sample)),
+    );
+  }, [samplesByNode]);
+
+  const performanceSeries = useMemo(
+    () =>
+      alignedSamples.map((samples) => {
+        const cpu = samples.length > 0 ? samples.reduce((sum, s) => sum + s.cpu, 0) / samples.length : 0;
+        const ram = samples.length > 0 ? samples.reduce((sum, s) => sum + s.ram, 0) / samples.length : 0;
+        return { label: samples[0] ? formatTime(samples[0].createdAt) : '', cpu, ram };
+      }),
+    [alignedSamples],
   );
 
-  const performanceSeries = alignedSamples.map((samples) => {
-    const cpu = samples.length > 0 ? samples.reduce((sum, s) => sum + s.cpu, 0) / samples.length : 0;
-    const ram = samples.length > 0 ? samples.reduce((sum, s) => sum + s.ram, 0) / samples.length : 0;
-    return { label: samples[0] ? formatTime(samples[0].createdAt) : '', cpu, ram };
-  });
-
-  const networkSeries = smoothSeries(
-    alignedSamples.map((samples) => {
-      const rx = samples.length > 0 ? samples.reduce((sum, s) => sum + s.networkRx, 0) / samples.length : 0;
-      const tx = samples.length > 0 ? samples.reduce((sum, s) => sum + s.networkTx, 0) / samples.length : 0;
-      return {
-        label: samples[0] ? formatTime(samples[0].createdAt) : '',
-        rx: (rx * 8) / 1_000_000,
-        tx: (tx * 8) / 1_000_000,
-      };
-    }),
-    ['rx', 'tx'],
+  const networkSeries = useMemo(
+    () =>
+      smoothSeries(
+        alignedSamples.map((samples) => {
+          const rx = samples.length > 0 ? samples.reduce((sum, s) => sum + s.networkRx, 0) / samples.length : 0;
+          const tx = samples.length > 0 ? samples.reduce((sum, s) => sum + s.networkTx, 0) / samples.length : 0;
+          return {
+            label: samples[0] ? formatTime(samples[0].createdAt) : '',
+            rx: (rx * 8) / 1_000_000,
+            tx: (tx * 8) / 1_000_000,
+          };
+        }),
+        ['rx', 'tx'],
+      ),
+    [alignedSamples],
   );
 
-  const storageSlices = activities
-    .filter((node) => node.storage.totalUsedGb > 0)
-    .map((node) => ({ name: node.name, value: node.storage.totalUsedGb }));
+  const storageSlices = useMemo(
+    () =>
+      activities
+        .filter((node) => node.storage.totalUsedGb > 0)
+        .map((node) => ({ name: node.name, value: node.storage.totalUsedGb })),
+    [activities],
+  );
 
   return (
     <DashboardLayout>

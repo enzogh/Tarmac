@@ -26,7 +26,12 @@ import { VlanModule } from './vlan/vlan.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ThrottlerModule.forRoot({
-      throttlers: [{ ttl: 60_000, limit: 100 }],
+      // 100 req/min was tuned for a single caller. In practice this API is polled every 5s
+      // by up to ~20 dashboard widgets per open tab, and every visitor behind the same NAT/IP
+      // shares this bucket — a couple of tabs alone can exceed the old budget without any
+      // abuse, and bulk actions (e.g. deleting many alerts) made it worse. Auth still has its
+      // own tight per-route throttle (see AuthController @Throttle on /login).
+      throttlers: [{ ttl: 60_000, limit: 1200 }],
     }),
     PrismaModule,
     AuthModule,

@@ -316,10 +316,21 @@ export default function NetworkPage() {
     };
 
     void fetchData(true);
+    // Skip ticks while the tab is backgrounded — unlike usePolling (SWR, which pauses
+    // automatically when hidden), this hand-rolled interval would otherwise keep firing
+    // 3 parallel requests every 5s in every idle background tab.
     const interval = setInterval(() => {
+      if (document.hidden) return;
       void fetchData(false);
     }, 5000);
-    return () => clearInterval(interval);
+    const onVisible = () => {
+      if (!document.hidden) void fetchData(false);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, []);
 
   useEffect(() => {

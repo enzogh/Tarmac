@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards } from '@nes
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AlertsService } from './alerts.service';
+import { BulkDeleteAlertsDto } from './dto/bulk-delete-alerts.dto';
 import { CreateAlertDto } from './dto/create-alert.dto';
 
 interface AuthenticatedRequest extends Request {
@@ -31,6 +32,11 @@ export class AlertsController {
   @Post(':id/resolve')
   resolve(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.alertsService.resolve(id, req.user?.userId);
+  }
+
+  @Delete()
+  removeBulk(@Body() dto: BulkDeleteAlertsDto, @Req() req: AuthenticatedRequest) {
+    return this.alertsService.removeMany(dto.ids, req.user?.userId);
   }
 
   @Delete(':id')

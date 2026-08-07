@@ -323,6 +323,7 @@ function AgentsTab() {
   const [exportTo, setExportTo] = useState('');
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pendingLinesRef = useRef<AgentLogItem[]>([]);
+  const liveBufferRef = useRef<AgentLogItem[]>([]);
 
   const nodeName = (nodeId: string) => nodes.find((node) => node.id === nodeId)?.name ?? nodeId;
 
@@ -332,6 +333,7 @@ function AgentsTab() {
     setPaused(false);
     setPendingCount(0);
     pendingLinesRef.current = [];
+    liveBufferRef.current = [];
     void api.agentLogs
       .list({
         nodeId: nodeFilter === 'all' ? undefined : nodeFilter,
@@ -366,8 +368,20 @@ function AgentsTab() {
       setPendingCount((count) => count + 1);
       return;
     }
-    setLines((prev) => [...prev, entry].slice(-MAX_LIVE_LINES));
+    liveBufferRef.current.push(entry);
   });
+
+  // Bursts of agent activity can push many lines within milliseconds; batching
+  // into one state update per 250ms window avoids a full 500-row re-render per line.
+  useEffect(() => {
+    const flush = setInterval(() => {
+      if (liveBufferRef.current.length === 0) return;
+      const batch = liveBufferRef.current;
+      liveBufferRef.current = [];
+      setLines((prev) => [...prev, ...batch].slice(-MAX_LIVE_LINES));
+    }, 250);
+    return () => clearInterval(flush);
+  }, []);
 
   const handleScroll = () => {
     const el = scrollRef.current;

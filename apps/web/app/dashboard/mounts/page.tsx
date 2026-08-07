@@ -193,7 +193,7 @@ type WizardMode = 'mount-existing' | 'create-share';
 type Notice = { type: 'error' | 'success' | 'warning'; message: string } | null;
 
 export default function MountsPage() {
-  const { data: mounts = [], mutate: refreshMounts, isLoading: mountsLoading } = usePolling('mounts', api.mounts.list);
+  const { data: mounts = [], mutate: refreshMounts, isLoading: mountsLoading } = usePolling('mounts', api.mounts.list, { intervalMs: 20000 });
   const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
   const { data: vlanMembers = [] } = usePolling('vlan-members', async () => {
     const vlanData = await api.vlan.getAll().catch(() => ({ vlans: [] }));
@@ -212,7 +212,7 @@ export default function MountsPage() {
       arrays.forEach((arr) => members.push(...arr));
     }
     return members;
-  });
+  }, { intervalMs: 20000 });
   const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
@@ -524,7 +524,7 @@ export default function MountsPage() {
 
   // ── Wizard steps — Create NFS share ──────────────────────────────────────
 
-  const createShareSteps: StepConfig[] = [
+  const createShareSteps: StepConfig[] = !(wizardOpen && wizardMode === 'create-share') ? [] : [
     {
       id: 'preset',
       title: 'Type de partage',
@@ -779,7 +779,7 @@ export default function MountsPage() {
 
   // ── Wizard steps — Mount existing ────────────────────────────────────────
 
-  const mountExistingSteps: StepConfig[] = [
+  const mountExistingSteps: StepConfig[] = !(wizardOpen && wizardMode === 'mount-existing') ? [] : [
     {
       id: 'preset',
       title: 'Choisir un modèle',

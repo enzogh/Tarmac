@@ -203,6 +203,18 @@ func envOrDefault(key, fallback string) string {
 	return value
 }
 
+// wsWriteTimeout/wsReadTimeout/wsPingInterval bound how long the agent will
+// let a stalled control-plane connection block it. Without these, a half-open
+// TCP connection (e.g. a dead NAT mapping) can leave WriteJSON/ReadJSON
+// blocked indefinitely, so the process never notices it needs to reconnect.
+// wsPingInterval is well under wsReadTimeout so a healthy connection always
+// gets a pong (which resets the read deadline) before the deadline expires.
+const (
+	wsWriteTimeout = 10 * time.Second
+	wsReadTimeout  = 60 * time.Second
+	wsPingInterval = 25 * time.Second
+)
+
 type wsClient struct {
 	conn *websocket.Conn
 	mu   sync.Mutex
@@ -211,7 +223,20 @@ type wsClient struct {
 func (c *wsClient) send(v interface{}) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
+		return err
+	}
 	return c.conn.WriteJSON(v)
+}
+
+// ping sends a WebSocket ping control frame so the read side (and any
+// intermediate proxy/NAT) sees regular traffic even when there's nothing to
+// heartbeat about. The server is expected to reply with a pong, which
+// SetPongHandler uses to push the read deadline back out.
+func (c *wsClient) ping() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(wsWriteTimeout))
 }
 
 type logLine struct {
@@ -318,12 +343,24 @@ type overlayTrafficSnapshot struct {
 }
 
 type overlayProbeSnapshot struct {
-	latencyMs  float64
-	packetLoss float64
-	hasLatency bool
-	hasLoss    bool
-	at         time.Time
+	latencyMs           float64
+	packetLoss          float64
+	hasLatency          bool
+	hasLoss             bool
+	at                  time.Time
+	consecutiveFailures int
 }
+
+// Overlay latency/loss probing shells out to `ping`, which is relatively
+// expensive to run every 5s heartbeat tick for every peer. Results are
+// cached well beyond a single tick, and peers that keep failing to respond
+// back off to an even slower cadence so a permanently unreachable peer isn't
+// re-probed at full frequency forever.
+const (
+	overlayProbeInterval         = 25 * time.Second
+	overlayProbeBackoffInterval  = 60 * time.Second
+	overlayProbeFailureThreshold = 3
+)
 
 type collector struct {
 	lastCPU        cpuSnapshot
@@ -613,8 +650,10 @@ func probeOverlayLatency(iface, targetIP string) (*float64, *float64) {
 	var fallbackLatency *float64
 	var fallbackLoss *float64
 	for _, args := range commands {
-		cmd := exec.Command("ping", args...)
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		cmd := exec.CommandContext(pingCtx, "ping", args...)
 		output, err := cmd.CombinedOutput()
+		pingCancel()
 		latencyMs, packetLoss := parsePingStats(string(output))
 		// Ignore pure 100% loss samples without RTT: they are often probe artifacts
 		// and cause false degraded states in the dashboard.
@@ -763,7 +802,9 @@ func (c *collector) collectOverlayLinkMetrics(iface string) []overlayLinkMetric 
 	if !commandExists("wg") {
 		return nil
 	}
-	out, err := exec.Command("wg", "show", iface, "dump").Output()
+	wgCtx, wgCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	out, err := exec.CommandContext(wgCtx, "wg", "show", iface, "dump").Output()
+	wgCancel()
 	if err != nil {
 		return nil
 	}
@@ -777,6 +818,12 @@ func (c *collector) collectOverlayLinkMetrics(iface string) []overlayLinkMetric 
 
 	now := time.Now()
 	metrics := make([]overlayLinkMetric, 0, 8)
+	// cacheKeys/needProbes are indexed in lockstep with metrics so the
+	// probing phase below can write each peer's result into its own slot
+	// without any goroutine touching another peer's data or a shared map.
+	cacheKeys := make([]string, 0, 8)
+	needProbes := make([]bool, 0, 8)
+
 	scanner := bufio.NewScanner(bytes.NewReader(out))
 	lineIndex := 0
 	for scanner.Scan() {
@@ -840,39 +887,101 @@ func (c *collector) collectOverlayLinkMetrics(iface string) []overlayLinkMetric 
 				cachedLoss := cached.packetLoss
 				metric.PacketLoss = &cachedLoss
 			}
-			needProbe = now.Sub(cached.at) >= 5*time.Second
-		}
-		if needProbe && metric.TargetVlanIP != "" {
-			latencyMs, packetLoss := probeOverlayLatency(iface, metric.TargetVlanIP)
-			if latencyMs != nil || packetLoss != nil {
-				if latencyMs != nil {
-					metric.LatencyMs = latencyMs
-				}
-				if packetLoss != nil {
-					metric.PacketLoss = packetLoss
-				}
-				cachedLatency := 0.0
-				if metric.LatencyMs != nil {
-					cachedLatency = *metric.LatencyMs
-				}
-				cachedLoss := 0.0
-				if metric.PacketLoss != nil {
-					cachedLoss = *metric.PacketLoss
-				}
-				c.lastOverlayRtt[cacheKey] = overlayProbeSnapshot{
-					latencyMs:  cachedLatency,
-					packetLoss: cachedLoss,
-					hasLatency: metric.LatencyMs != nil,
-					hasLoss:    metric.PacketLoss != nil,
-					at:         now,
-				}
-			} else {
-				// Keep overlay telemetry active even when ICMP probing is unavailable.
-				_ = pokeOverlayTraffic(metric.TargetVlanIP)
+			interval := overlayProbeInterval
+			if cached.consecutiveFailures >= overlayProbeFailureThreshold {
+				interval = overlayProbeBackoffInterval
 			}
+			needProbe = now.Sub(cached.at) >= interval
+		}
+		if metric.TargetVlanIP == "" {
+			needProbe = false
 		}
 
 		metrics = append(metrics, metric)
+		cacheKeys = append(cacheKeys, cacheKey)
+		needProbes = append(needProbes, needProbe)
+	}
+
+	// Probe every peer that needs a fresh reading concurrently instead of
+	// sequentially: each probe shells out to `ping` and can take up to a few
+	// seconds (see probeOverlayLatency's timeouts), so a sequential loop over
+	// N peers could block a single heartbeat tick for up to N times that
+	// long, worse when peers are unreachable. Concurrency is bounded by a
+	// small worker pool, and each worker only ever writes to its own
+	// pre-indexed slot in results, so there's no concurrent write to a
+	// shared map or slice.
+	type probeResult struct {
+		latencyMs  *float64
+		packetLoss *float64
+		probed     bool
+	}
+	results := make([]probeResult, len(metrics))
+
+	const maxConcurrentProbes = 8
+	workers := len(metrics)
+	if workers > maxConcurrentProbes {
+		workers = maxConcurrentProbes
+	}
+	if workers > 0 {
+		sem := make(chan struct{}, workers)
+		var wg sync.WaitGroup
+		for i := range metrics {
+			if !needProbes[i] {
+				continue
+			}
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(i int, targetIP string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				latencyMs, packetLoss := probeOverlayLatency(iface, targetIP)
+				if latencyMs == nil && packetLoss == nil {
+					// Keep overlay telemetry active even when ICMP probing is unavailable.
+					_ = pokeOverlayTraffic(targetIP)
+				}
+				results[i] = probeResult{latencyMs: latencyMs, packetLoss: packetLoss, probed: true}
+			}(i, metrics[i].TargetVlanIP)
+		}
+		wg.Wait()
+	}
+
+	// Cache map writes happen sequentially, after every probe goroutine has
+	// finished, so c.lastOverlayRtt is never written concurrently.
+	for i := range metrics {
+		if !results[i].probed {
+			continue
+		}
+		cacheKey := cacheKeys[i]
+		latencyMs, packetLoss := results[i].latencyMs, results[i].packetLoss
+		if latencyMs != nil || packetLoss != nil {
+			if latencyMs != nil {
+				metrics[i].LatencyMs = latencyMs
+			}
+			if packetLoss != nil {
+				metrics[i].PacketLoss = packetLoss
+			}
+			cachedLatency := 0.0
+			if metrics[i].LatencyMs != nil {
+				cachedLatency = *metrics[i].LatencyMs
+			}
+			cachedLoss := 0.0
+			if metrics[i].PacketLoss != nil {
+				cachedLoss = *metrics[i].PacketLoss
+			}
+			c.lastOverlayRtt[cacheKey] = overlayProbeSnapshot{
+				latencyMs:           cachedLatency,
+				packetLoss:          cachedLoss,
+				hasLatency:          metrics[i].LatencyMs != nil,
+				hasLoss:             metrics[i].PacketLoss != nil,
+				at:                  now,
+				consecutiveFailures: 0,
+			}
+		} else {
+			next := c.lastOverlayRtt[cacheKey]
+			next.consecutiveFailures++
+			next.at = now
+			c.lastOverlayRtt[cacheKey] = next
+		}
 	}
 
 	return metrics
@@ -947,6 +1056,46 @@ func resolvePhysicalDisks(device string) []string {
 	return physical
 }
 
+// diskTopology holds the slow-changing device metadata that inferDiskType
+// (rotational vs. SSD/NVMe, via /sys/block/<dev>/queue/rotational) and
+// resolvePhysicalDisks (RAID member mapping, via /sys/block/mdX/slaves)
+// compute. Both come from disk/RAID topology that essentially never changes
+// at runtime, so results are cached and refreshed on a much slower cadence
+// than the 5s heartbeat ticker (and 20s state-report ticker) that call
+// collectDisks. This mirrors the smartCache pattern used for SMART data
+// below. The real-time capacity/usage numbers (syscall.Statfs) are NOT
+// cached here and are still computed fresh on every call.
+const diskTopologyRefreshInterval = 60 * time.Second
+
+type diskTopology struct {
+	diskType      string
+	physicalDisks []string
+}
+
+var diskTopologyCache = struct {
+	mu          sync.Mutex
+	byDevice    map[string]diskTopology
+	collectedAt time.Time
+}{}
+
+func getDiskTopology(device string) diskTopology {
+	diskTopologyCache.mu.Lock()
+	defer diskTopologyCache.mu.Unlock()
+	if diskTopologyCache.byDevice == nil || time.Since(diskTopologyCache.collectedAt) >= diskTopologyRefreshInterval {
+		diskTopologyCache.byDevice = make(map[string]diskTopology)
+		diskTopologyCache.collectedAt = time.Now()
+	}
+	if cached, ok := diskTopologyCache.byDevice[device]; ok {
+		return cached
+	}
+	topo := diskTopology{
+		diskType:      inferDiskType(device),
+		physicalDisks: resolvePhysicalDisks(device),
+	}
+	diskTopologyCache.byDevice[device] = topo
+	return topo
+}
+
 func collectDisks() []diskState {
 	mountsContent, err := os.ReadFile("/proc/mounts")
 	if err != nil {
@@ -995,14 +1144,15 @@ func collectDisks() []diskState {
 			continue
 		}
 
+		topo := getDiskTopology(device)
 		disks = append(disks, diskState{
 			Name:          filepath.Base(device),
 			MountPath:     mountPath,
-			Type:          inferDiskType(device),
+			Type:          topo.diskType,
 			Health:        "unknown",
 			CapacityGb:    capacityGb,
 			UsedGb:        usedGb,
-			PhysicalDisks: resolvePhysicalDisks(device),
+			PhysicalDisks: topo.physicalDisks,
 		})
 	}
 
@@ -1277,9 +1427,31 @@ type sshIdentity struct {
 	user      string
 }
 
+// commandExistsCache memoizes exec.LookPath results: binary presence on the
+// host can't change while the agent process is running, but commandExists is
+// called once per heartbeat tick and once per overlay peer, so re-scanning
+// $PATH every time is wasted work on a host that shares resources with real
+// workloads.
+var (
+	commandExistsMu    sync.Mutex
+	commandExistsCache = make(map[string]bool)
+)
+
 func commandExists(name string) bool {
+	commandExistsMu.Lock()
+	if cached, ok := commandExistsCache[name]; ok {
+		commandExistsMu.Unlock()
+		return cached
+	}
+	commandExistsMu.Unlock()
+
 	_, err := exec.LookPath(name)
-	return err == nil
+	exists := err == nil
+
+	commandExistsMu.Lock()
+	commandExistsCache[name] = exists
+	commandExistsMu.Unlock()
+	return exists
 }
 
 func ensureOverlayIdentity() (*overlayIdentity, error) {
@@ -3207,7 +3379,7 @@ func parseProgressPercent(line string) (int, bool) {
 	return percent, true
 }
 
-func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progress int, message string)) (string, error) {
+func runRsyncWithProgress(sessionCtx context.Context, payload map[string]interface{}, onProgress func(progress int, message string)) (string, error) {
 	if !commandExists("rsync") {
 		return "", errors.New("rsync not found on agent")
 	}
@@ -3321,7 +3493,13 @@ func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progre
 		}
 	}
 
-	baseCtx, cancel := context.WithCancel(context.Background())
+	// Rooting baseCtx in the caller's sessionCtx (the current session's
+	// context) means an in-flight rsync is cancelled both by an explicit
+	// stop_rsync command (via registerRsyncExecution's cancel) and, without
+	// any extra bookkeeping, by the session ending (reconnect/shutdown) —
+	// rsync has no timeout by default, so without this it could otherwise
+	// run forever past a dead connection.
+	baseCtx, cancel := context.WithCancel(sessionCtx)
 	registerRsyncExecution(key, cancel)
 	defer func() {
 		unregisterRsyncExecution(key)
@@ -3401,8 +3579,13 @@ func runRsyncWithProgress(payload map[string]interface{}, onProgress func(progre
 	return "rsync completed", nil
 }
 
-func handleCommand(cmd commandPayload, onProgress func(progress commandProgress)) commandResult {
+func handleCommand(ctx context.Context, cmd commandPayload, onProgress func(progress commandProgress)) commandResult {
 	result := commandResult{Success: true, Message: "ok"}
+	if err := ctx.Err(); err != nil {
+		result.Success = false
+		result.Message = "command not run: session ended before it could start"
+		return result
+	}
 	switch cmd.Type {
 	case "command.apply_export":
 		result.Command = "apply_export"
@@ -3454,7 +3637,7 @@ func handleCommand(cmd commandPayload, onProgress func(progress commandProgress)
 		if result.ResourceID == "" {
 			result.ResourceID = readString(cmd.Payload, "runId")
 		}
-		message, err := runRsyncWithProgress(cmd.Payload, func(progress int, msg string) {
+		message, err := runRsyncWithProgress(ctx, cmd.Payload, func(progress int, msg string) {
 			onProgress(commandProgress{
 				Command:      "run_rsync",
 				ResourceType: result.ResourceType,
@@ -3644,7 +3827,27 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 	}
 	defer conn.Close()
 
+	// Bound how long a stalled read can block: if nothing (not even a pong)
+	// arrives within wsReadTimeout, ReadJSON below returns an error and the
+	// existing reconnect loop in main() takes over. Every pong pushes the
+	// deadline back out, so a healthy connection never trips it.
+	if err := conn.SetReadDeadline(time.Now().Add(wsReadTimeout)); err != nil {
+		return err
+	}
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
+	})
+
 	client := &wsClient{conn: conn}
+
+	// sessionCtx is cancelled as soon as runSession returns (by any path:
+	// clean shutdown, read/write error, etc.), independent of the longer-
+	// lived ctx passed in from main (which only cancels on process
+	// shutdown). It's threaded into handleCommand so an in-flight command
+	// is cancelled the moment its session ends instead of continuing to run
+	// past a reconnect with nothing left to report its result to.
+	sessionCtx, sessionCancel := context.WithCancel(ctx)
+	defer sessionCancel()
 	logForwarder := newWsLogForwarder(client, nodeID)
 	log.SetOutput(io.MultiWriter(os.Stderr, logForwarder))
 	defer func() {
@@ -3693,7 +3896,7 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 			command := cmd
 			go func() {
 				log.Printf("command received: %s", command.Type)
-				result := handleCommand(command, func(progress commandProgress) {
+				result := handleCommand(sessionCtx, command, func(progress commandProgress) {
 					if err := client.send(envelope{Type: "command_progress", Payload: progress}); err != nil {
 						log.Printf("failed to send command_progress: %v", err)
 					}
@@ -3741,8 +3944,10 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 
 	heartbeatTicker := time.NewTicker(5 * time.Second)
 	stateTicker := time.NewTicker(20 * time.Second)
+	pingTicker := time.NewTicker(wsPingInterval)
 	defer heartbeatTicker.Stop()
 	defer stateTicker.Stop()
+	defer pingTicker.Stop()
 
 	if err := sendReport(); err != nil {
 		return err
@@ -3757,6 +3962,10 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 			return nil
 		case err := <-readDone:
 			return err
+		case <-pingTicker.C:
+			if err := client.ping(); err != nil {
+				return err
+			}
 		case <-heartbeatTicker.C:
 			disks := collectDisks()
 			metrics := c.collectMetrics(disks)
@@ -3816,17 +4025,27 @@ func main() {
 		cancel()
 	}()
 
-	backoff := 2 * time.Second
+	const initialReconnectBackoff = 2 * time.Second
+	// A session that stayed up at least this long is considered healthy: the
+	// backoff is reset so a later, unrelated blip doesn't inherit a delay
+	// that only made sense during an earlier bad patch of reconnects.
+	const healthySessionThreshold = 60 * time.Second
+
+	backoff := initialReconnectBackoff
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
+			sessionStart := time.Now()
 			err := runSession(ctx, u.String(), nodeID)
 			if err == nil || ctx.Err() != nil {
 				return
 			}
 			log.Printf("connection dropped: %v", err)
+			if time.Since(sessionStart) >= healthySessionThreshold {
+				backoff = initialReconnectBackoff
+			}
 			time.Sleep(backoff)
 			if backoff < 30*time.Second {
 				backoff *= 2

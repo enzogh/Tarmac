@@ -154,7 +154,7 @@ function RemoteEndpointFields({
 }
 
 export default function MigrationsPage() {
-  const { data: migrations = [], mutate: refreshMigrations, isLoading: migrationsLoading } = usePolling('migrations', api.migrations.list);
+  const { data: migrations = [], mutate: refreshMigrations, isLoading: migrationsLoading } = usePolling('migrations', api.migrations.list, { intervalMs: 20000 });
   const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
   const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -269,7 +269,10 @@ export default function MigrationsPage() {
     }
     const nextBasePath = defaultBrowsePath(formData.sourceKind);
     setSourceBrowsePath(nextBasePath);
-    void loadDirectories('source', nextBasePath);
+    // Seedbox host/user are free-text fields — debounce so we don't open a live
+    // SFTP session to the remote endpoint on every keystroke.
+    const timer = setTimeout(() => void loadDirectories('source', nextBasePath), 600);
+    return () => clearTimeout(timer);
   }, [
     formData.sourceKind,
     formData.sourceNodeId,
@@ -291,7 +294,8 @@ export default function MigrationsPage() {
     }
     const nextBasePath = defaultBrowsePath(formData.targetKind);
     setTargetBrowsePath(nextBasePath);
-    void loadDirectories('target', nextBasePath);
+    const timer = setTimeout(() => void loadDirectories('target', nextBasePath), 600);
+    return () => clearTimeout(timer);
   }, [
     formData.targetKind,
     formData.targetNodeId,
@@ -527,7 +531,10 @@ export default function MigrationsPage() {
     }
   };
 
-  const wizardSteps: StepConfig[] = [
+  // Only built while the wizard is actually open — this JSX tree closes over most of the
+  // component's state and was previously rebuilt on every render (every 20s poll tick) even
+  // when the dialog was closed and none of it rendered.
+  const wizardSteps: StepConfig[] = !wizardOpen ? [] : [
     {
       id: 'choose-preset',
       title: 'Raison de la migration',
