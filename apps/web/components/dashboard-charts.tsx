@@ -34,8 +34,8 @@ export function FleetPerformanceChart({ data }: { data: FleetPerformancePoint[] 
         <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
         <YAxis domain={[0, 100]} tickLine={false} axisLine={false} tickMargin={8} width={36} />
         <ChartTooltip content={<ChartTooltipContent valueFormatter={(v) => `${Math.round(v)}%`} />} />
-        <Area dataKey="cpu" type="monotone" stroke="var(--color-cpu)" fill="url(#fill-cpu)" strokeWidth={2} isAnimationActive={false} />
-        <Area dataKey="ram" type="monotone" stroke="var(--color-ram)" fill="url(#fill-ram)" strokeWidth={2} isAnimationActive={false} />
+        <Area dataKey="cpu" type="monotone" stroke="var(--color-cpu)" fill="url(#fill-cpu)" strokeWidth={2} animationDuration={400} animationEasing="ease-out" />
+        <Area dataKey="ram" type="monotone" stroke="var(--color-ram)" fill="url(#fill-ram)" strokeWidth={2} animationDuration={400} animationEasing="ease-out" />
       </AreaChart>
     </ChartContainer>
   );
@@ -76,7 +76,8 @@ export function NetworkThroughputChart({ data }: { data: NetworkPoint[] }) {
           stroke="var(--color-rx)"
           fill="url(#fill-rx)"
           strokeWidth={2}
-          isAnimationActive={false}
+          animationDuration={400}
+          animationEasing="ease-out"
         />
         <Area
           dataKey="tx"
@@ -84,7 +85,8 @@ export function NetworkThroughputChart({ data }: { data: NetworkPoint[] }) {
           stroke="var(--color-tx)"
           fill="url(#fill-tx)"
           strokeWidth={2}
-          isAnimationActive={false}
+          animationDuration={400}
+          animationEasing="ease-out"
         />
       </AreaChart>
     </ChartContainer>

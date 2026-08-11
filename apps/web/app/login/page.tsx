@@ -42,6 +42,7 @@ function LoginPageContent() {
   const searchParams = useSearchParams();
   const [state, setState] = useState<ViewState>({ kind: 'checking' });
   const [entering, setEntering] = useState(false);
+  const [avatarFailed, setAvatarFailed] = useState(false);
 
   useEffect(() => {
     const sso = searchParams.get('sso');
@@ -55,7 +56,10 @@ function LoginPageContent() {
       // done without a real navigation (third-party cookies are blocked).
       api.profile
         .get()
-        .then((profile) => setState({ kind: 'welcome-back', profile }))
+        .then((profile) => {
+          setAvatarFailed(false);
+          setState({ kind: 'welcome-back', profile });
+        })
         .catch(() => {
           window.location.href = api.sso.silentUrl();
         });
@@ -65,7 +69,10 @@ function LoginPageContent() {
     if (sso === 'ready') {
       api.profile
         .get()
-        .then((profile) => setState({ kind: 'welcome-back', profile }))
+        .then((profile) => {
+          setAvatarFailed(false);
+          setState({ kind: 'welcome-back', profile });
+        })
         .catch(() => setState({ kind: 'idle' }));
       return;
     }
@@ -172,11 +179,12 @@ function LoginPageContent() {
                     transition={{ type: 'spring', stiffness: 260, damping: 18, delay: 0.05 }}
                     className="relative"
                   >
-                    {state.profile.avatarUrl ? (
+                    {state.profile.avatarUrl && !avatarFailed ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={state.profile.avatarUrl}
                         alt=""
+                        onError={() => setAvatarFailed(true)}
                         className="h-20 w-20 rounded-full border-2 border-violet-500/40 object-cover shadow-glow"
                       />
                     ) : (

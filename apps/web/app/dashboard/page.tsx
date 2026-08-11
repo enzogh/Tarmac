@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowRightLeft,
   Bell,
@@ -66,9 +67,16 @@ export default function OverviewPage() {
   );
   const topNodeIds = useMemo(() => sortedByCpu.slice(0, 4).map((node) => node.id), [sortedByCpu]);
   const spotlightNodes = useMemo(() => sortedByCpu.slice(0, 4), [sortedByCpu]);
+  // Sorted independently of the CPU ranking above: the *set* of top-4 nodes
+  // rarely changes, but their relative CPU order shuffles almost every poll.
+  // Keying on the unsorted order turned every reshuffle into a brand-new SWR
+  // cache key (fresh "loading" state -> chart/skeleton flash every few
+  // seconds). Keying on the sorted set instead only changes when a node
+  // actually enters/leaves the top 4.
+  const topNodeIdsKey = useMemo(() => [...topNodeIds].sort().join(','), [topNodeIds]);
 
   const { data: samplesByNode = {}, isLoading: samplesLoading } = usePolling(
-    topNodeIds.length > 0 ? `metrics:${topNodeIds.join(',')}:6h` : null,
+    topNodeIds.length > 0 ? `metrics:${topNodeIdsKey}:6h` : null,
     async () => {
       const histories = await Promise.all(
         topNodeIds.map(async (id) => [id, await api.nodes.metrics(id, '6h')] as const),
@@ -296,14 +304,24 @@ export default function OverviewPage() {
             <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14] animate-fade-in">
               <CardContent className="pt-6">
                 <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                  {spotlightNodes.map((node) => (
-                    <ServerTrendCard
-                      key={node.id}
-                      node={node}
-                      samples={samplesByNode[node.id] ?? []}
-                      labels={nodeLabels[node.id] ?? []}
-                    />
-                  ))}
+                  <AnimatePresence initial={false}>
+                    {spotlightNodes.map((node) => (
+                      <motion.div
+                        key={node.id}
+                        layout
+                        initial={{ opacity: 0, scale: 0.96 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.96 }}
+                        transition={{ duration: 0.25, ease: 'easeOut' }}
+                      >
+                        <ServerTrendCard
+                          node={node}
+                          samples={samplesByNode[node.id] ?? []}
+                          labels={nodeLabels[node.id] ?? []}
+                        />
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
                   {spotlightNodes.length === 0 && (
                     <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
                       Aucun serveur n’a encore remonté d’activité.

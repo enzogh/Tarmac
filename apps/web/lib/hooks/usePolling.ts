@@ -19,6 +19,12 @@ export function usePolling<T>(
   const { data, error, mutate, isLoading, isValidating } = useSWR<T>(key, fetcher, {
     refreshInterval: intervalMs,
     revalidateOnFocus: true,
+    // Background polls (and key changes, e.g. a re-sorted node list) keep
+    // showing the last known data instead of falling back to `undefined` —
+    // that's what stops `isLoading` from flipping back to true and gating
+    // consumers into unmounting their chart/list behind a skeleton on every
+    // refresh. Data still updates in place once the new fetch resolves.
+    keepPreviousData: true,
     ...swrOptions,
   });
 

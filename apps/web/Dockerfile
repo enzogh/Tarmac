@@ -11,13 +11,12 @@ COPY packages/shared/package.json packages/shared/package.json
 RUN --mount=type=cache,target=/root/.npm npm ci
 COPY . .
 RUN npm --workspace @tarmac/shared run build
+# .git is excluded from the build context (see .dockerignore), so the git
+# SHA can't be detected in-container anymore — it must be passed in via the
+# NEXT_PUBLIC_APP_VERSION build arg, computed on the host (docker/deploy.sh
+# does this from the real .git checkout, outside Docker entirely).
 RUN --mount=type=cache,target=/app/apps/web/.next/cache \
-    BUILD_GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo dev-local)" && \
-    echo "$BUILD_GIT_SHA" > /app/.git-version && \
-    if [ -z "$NEXT_PUBLIC_APP_VERSION" ] || [ "$NEXT_PUBLIC_APP_VERSION" = "dev-local" ]; then \
-      NEXT_PUBLIC_APP_VERSION="$BUILD_GIT_SHA"; \
-    fi && \
-    NEXT_PUBLIC_APP_VERSION="$NEXT_PUBLIC_APP_VERSION" npm --workspace @tarmac/web run build
+    npm --workspace @tarmac/web run build
 
 FROM node:20-bookworm
 WORKDIR /app
