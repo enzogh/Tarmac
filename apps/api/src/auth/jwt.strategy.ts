@@ -4,7 +4,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import type { Request } from 'express';
 import * as jwt from 'jsonwebtoken';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-import { AUTH_COOKIE_NAME } from './auth.controller';
+import { AUTH_COOKIE_NAME } from './auth-cookie';
 import { getCandidateJwtSecrets } from './jwt-secrets';
 
 function cookieExtractor(req: Request): string | null {

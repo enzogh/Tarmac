@@ -68,12 +68,70 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException('Identifiants invalides');
     }
 
+    if (!user.isSuperuser) {
+      throw new UnauthorizedException('Accès réservé aux administrateurs');
+    }
+
+    return this.issueSession(user);
+  }
+
+  async issueSession(user: User) {
     const access_token = await this.jwtService.signAsync({
       sub: user.id,
       email: user.email,
     });
 
     return { access_token };
+  }
+
+  // Called after a successful Authentik OIDC callback. Links the SSO
+  // identity to an existing local user by ssoSubject first (stable across
+  // email changes), then by email (so a pre-existing local admin account
+  // gets upgraded rather than duplicated), else creates a fresh SSO-only
+  // user. Callers must have already verified the `is_superuser` claim.
+  async findOrCreateSsoUser(claims: {
+    sub: string;
+    email: string;
+    name?: string | null;
+    avatarUrl?: string | null;
+  }): Promise<User> {
+    const email = claims.email.trim().toLowerCase();
+
+    const existingBySubject = await this.prisma.user.findUnique({ where: { ssoSubject: claims.sub } });
+    if (existingBySubject) {
+      return this.prisma.user.update({
+        where: { id: existingBySubject.id },
+        data: {
+          email,
+          name: claims.name ?? existingBySubject.name,
+          avatarUrl: claims.avatarUrl ?? existingBySubject.avatarUrl,
+          isSuperuser: true,
+        },
+      });
+    }
+
+    const existingByEmail = await this.prisma.user.findUnique({ where: { email } });
+    if (existingByEmail) {
+      return this.prisma.user.update({
+        where: { id: existingByEmail.id },
+        data: {
+          ssoSubject: claims.sub,
+          name: claims.name ?? existingByEmail.name,
+          avatarUrl: claims.avatarUrl ?? existingByEmail.avatarUrl,
+          isSuperuser: true,
+        },
+      });
+    }
+
+    return this.prisma.user.create({
+      data: {
+        email,
+        ssoSubject: claims.sub,
+        name: claims.name,
+        avatarUrl: claims.avatarUrl,
+        isSuperuser: true,
+      },
+    });
   }
 
   async getProfile(userId?: string) {
@@ -83,7 +141,15 @@ export class AuthService implements OnModuleInit {
 
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, createdAt: true, updatedAt: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        avatarUrl: true,
+        isSuperuser: true,
+        createdAt: true,
+        updatedAt: true,
+      },
     });
     if (!user) {
       throw new UnauthorizedException('Utilisateur introuvable');
@@ -132,7 +198,15 @@ export class AuthService implements OnModuleInit {
       const updated = await this.prisma.user.update({
         where: { id: user.id },
         data,
-        select: { id: true, email: true, createdAt: true, updatedAt: true },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          avatarUrl: true,
+          isSuperuser: true,
+          createdAt: true,
+          updatedAt: true,
+        },
       });
       return updated;
     } catch (error) {
@@ -183,7 +257,7 @@ export class AuthService implements OnModuleInit {
     if (defaultAdmin) {
       await this.prisma.user.update({
         where: { id: defaultAdmin.id },
-        data: { passwordHash },
+        data: { passwordHash, isSuperuser: true },
       });
       return true;
     }
@@ -194,12 +268,15 @@ export class AuthService implements OnModuleInit {
     }
 
     await this.prisma.user.create({
-      data: { email, passwordHash },
+      data: { email, passwordHash, isSuperuser: true },
     });
     return true;
   }
 
   private async verifyPassword(plainPassword: string, user: User) {
+    if (!user.passwordHash) {
+      return false;
+    }
     try {
       return await bcrypt.compare(plainPassword, user.passwordHash);
     } catch (error) {

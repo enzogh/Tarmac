@@ -38,6 +38,12 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       ENABLE_DEFAULT_ADMIN: ${ENABLE_DEFAULT_ADMIN:-true}
       PORT: 3001
+      FRONTEND_URL: ${FRONTEND_URL:-https://tarmac.casterot.com}
+      AUTHENTIK_ISSUER_URL: ${AUTHENTIK_ISSUER_URL:-https://auth.casterot.com/application/o/tarmac/}
+      AUTHENTIK_CLIENT_ID: ${AUTHENTIK_CLIENT_ID:-}
+      AUTHENTIK_CLIENT_SECRET: ${AUTHENTIK_CLIENT_SECRET:-}
+      AUTHENTIK_REDIRECT_URI: ${AUTHENTIK_REDIRECT_URI:-https://tarmac.casterot.com/api/v1/auth/sso/callback}
+      AUTHENTIK_SCOPES: ${AUTHENTIK_SCOPES:-openid profile email tarmac}
     ports:
       - "${VRACK_IP:?VRACK_IP must be set}:3001:3001"
     depends_on:

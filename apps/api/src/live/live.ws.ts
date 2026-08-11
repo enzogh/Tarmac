@@ -5,7 +5,7 @@ import { Socket } from 'net';
 import { parse } from 'url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { AuthService } from '../auth/auth.service';
-import { AUTH_COOKIE_NAME } from '../auth/auth.controller';
+import { AUTH_COOKIE_NAME } from '../auth/auth-cookie';
 
 function extractCookie(header: string | undefined, name: string): string | null {
   if (!header) return null;

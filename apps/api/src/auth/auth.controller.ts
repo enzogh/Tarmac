@@ -1,22 +1,11 @@
 import { Body, Controller, Get, HttpCode, Patch, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
+import { AUTH_COOKIE_MAX_AGE_MS, AUTH_COOKIE_NAME, authCookieOptions } from './auth-cookie';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { UpdateProfileDto } from './dto/update-profile.dto';
-
-export const AUTH_COOKIE_NAME = 'tarmac_token';
-const AUTH_COOKIE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-
-function authCookieOptions() {
-  return {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax' as const,
-    path: '/',
-  };
-}
 
 @Controller('auth')
 export class AuthController {

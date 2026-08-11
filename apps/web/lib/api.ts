@@ -366,6 +366,9 @@ export type PagedResult<T> = { items: T[]; nextCursor: string | null };
 export type AdminProfile = {
   id: string;
   email: string;
+  name?: string | null;
+  avatarUrl?: string | null;
+  isSuperuser: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -415,6 +418,11 @@ export const api = {
       method: 'POST',
       credentials: 'include',
     }),
+
+  sso: {
+    silentUrl: () => `${API_BASE}/api/v1/auth/sso/silent`,
+    loginUrl: () => `${API_BASE}/api/v1/auth/sso/login`,
+  },
 
   profile: {
     get: () => request<AdminProfile>('/api/v1/auth/profile'),
