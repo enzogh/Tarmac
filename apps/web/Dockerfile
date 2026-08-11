@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM node:20-bookworm AS builder
 ARG NEXT_PUBLIC_API_URL=http://localhost:3001
 ARG NEXT_PUBLIC_APP_VERSION=dev-local
@@ -7,10 +8,11 @@ COPY package.json package-lock.json* ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/shared/package.json packages/shared/package.json
-RUN npm install
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY . .
 RUN npm --workspace @tarmac/shared run build
-RUN BUILD_GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo dev-local)" && \
+RUN --mount=type=cache,target=/app/apps/web/.next/cache \
+    BUILD_GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo dev-local)" && \
     echo "$BUILD_GIT_SHA" > /app/.git-version && \
     if [ -z "$NEXT_PUBLIC_APP_VERSION" ] || [ "$NEXT_PUBLIC_APP_VERSION" = "dev-local" ]; then \
       NEXT_PUBLIC_APP_VERSION="$BUILD_GIT_SHA"; \

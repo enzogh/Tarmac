@@ -32,6 +32,11 @@ function initials(name?: string | null, email?: string) {
   return letters.toUpperCase() || source[0].toUpperCase();
 }
 
+function firstName(name?: string | null, email?: string) {
+  const source = name?.trim() || email?.split('@')[0] || '';
+  return source.split(/\s+/)[0] || source;
+}
+
 function LoginPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -183,6 +188,9 @@ function LoginPageContent() {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.15, duration: 0.3 }}
                   >
+                    <p className="text-sm text-muted-foreground">
+                      Bonjour, {firstName(state.profile.name, state.profile.email)} 👋
+                    </p>
                     <p className="text-lg font-semibold text-foreground">
                       {state.profile.name || state.profile.email}
                     </p>

@@ -1,0 +1,17 @@
+.git
+node_modules
+**/node_modules
+.next
+**/.next
+dist
+**/dist
+apps/agent
+docker/data
+docker/*.env
+.env
+.env.*
+!.env.example
+*.log
+npm-debug.log*
+.DS_Store
+.claude

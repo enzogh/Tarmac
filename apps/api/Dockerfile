@@ -1,10 +1,11 @@
+# syntax=docker/dockerfile:1
 FROM node:20-bookworm AS builder
 WORKDIR /app
 COPY package.json package-lock.json* ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/shared/package.json packages/shared/package.json
-RUN npm install
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY . .
 RUN npm --workspace @tarmac/shared run build
 RUN npm --workspace @tarmac/api run prisma:generate
