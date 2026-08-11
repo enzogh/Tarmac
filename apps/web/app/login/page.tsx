@@ -47,7 +47,18 @@ function LoginPageContent() {
     const sso = searchParams.get('sso');
 
     if (!sso) {
-      window.location.href = api.sso.silentUrl();
+      // Async, no-navigation check: do we already have a valid Tarmac
+      // session (e.g. from earlier this browsing session)? If so, skip
+      // Authentik entirely — no redirect needed. Only falls back to the
+      // silent Authentik round-trip when that local session is absent/expired,
+      // since checking an Authentik session from a different origin can't be
+      // done without a real navigation (third-party cookies are blocked).
+      api.profile
+        .get()
+        .then((profile) => setState({ kind: 'welcome-back', profile }))
+        .catch(() => {
+          window.location.href = api.sso.silentUrl();
+        });
       return;
     }
 
