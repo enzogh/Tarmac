@@ -2180,7 +2180,7 @@ func applyOverlay(payload map[string]interface{}) (string, error) {
 	if err := applyOverlayIPForward(readBool(payload, "ipForward")); err != nil {
 		return "", err
 	}
-	if err := applyOverlayForwardFirewallRule(readBool(payload, "ipForward")); err != nil {
+	if err := applyOverlayForwardFirewallRule(readBool(payload, "ipForward"), iface); err != nil {
 		return "", err
 	}
 
@@ -2231,14 +2231,23 @@ const overlayForwardRuleComment = "tarmac-overlay-forward"
 // unconditionally flips to DROP (and inserts its own DOCKER-USER chain ahead
 // of it) as soon as it's installed, regardless of ufw's state. Without an
 // explicit ACCEPT here, cross-region traffic relayed through this node's two
-// WireGuard tunnels on tarmacwg0 is silently dropped even though wg/sysctl
-// both report everything as configured correctly.
-func applyOverlayForwardFirewallRule(enabled bool) error {
+// WireGuard tunnels on the overlay interface is silently dropped even though
+// wg/sysctl both report everything as configured correctly.
+//
+// iface must match the interface actually passed to applyOverlay - every
+// node today still only ever runs a single "tarmacwg0" interface (one
+// workspace per node), but hardcoding that name here regardless of the
+// caller's actual interface would silently do nothing (or worse, touch the
+// wrong interface) the day a node ever runs a second named overlay.
+func applyOverlayForwardFirewallRule(enabled bool, iface string) error {
 	if !commandExists("iptables") {
 		return nil
 	}
+	if iface == "" {
+		iface = "tarmacwg0"
+	}
 
-	spec := []string{"-i", "tarmacwg0", "-o", "tarmacwg0", "-j", "ACCEPT", "-m", "comment", "--comment", overlayForwardRuleComment}
+	spec := []string{"-i", iface, "-o", iface, "-j", "ACCEPT", "-m", "comment", "--comment", overlayForwardRuleComment}
 	chains := []string{"FORWARD"}
 	// DOCKER-USER is consulted before the plain FORWARD chain whenever Docker
 	// manages iptables, and — unlike FORWARD — Docker never rewrites rules

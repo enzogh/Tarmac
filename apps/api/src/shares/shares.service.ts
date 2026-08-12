@@ -119,7 +119,10 @@ export class SharesService {
   }
 
   findPending() {
-    return this.prisma.share.findMany({ where: { status: 'pending' } });
+    return this.prisma.share.findMany({
+      where: { status: 'pending' },
+      include: { node: { select: { workspaceId: true } } },
+    });
   }
 
   setStatus(id: string, status: 'pending' | 'active' | 'error') {

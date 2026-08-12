@@ -16,11 +16,6 @@ export class VlanController {
     @Inject(forwardRef(() => AgentsService)) private agentsService: AgentsService,
   ) {}
 
-  // getOrCreateVlan/joinVlan are still single-mesh ('default') internally -
-  // real per-workspace meshes are Phase 2. This check is what actually
-  // enforces isolation today: a member of a non-Default workspace simply
-  // sees no VLAN at all (correct - they have no mesh yet) rather than
-  // leaking the Default workspace's mesh.
   private async assertVlanInScope(vlanId: string, scope: WorkspaceScope) {
     const vlan = await this.prisma.vlan.findFirst({
       where: { OR: [{ id: vlanId }, { name: vlanId }], workspaceId: scope.workspaceId },
@@ -34,11 +29,8 @@ export class VlanController {
   @Get()
   async getAllVlans(@CurrentWorkspace() scope: WorkspaceScope) {
     try {
-      // Try to get or create default VLAN on first request
-      const vlan = await this.vlanService.getOrCreateVlan('default');
-      if (vlan.workspaceId !== scope.workspaceId) {
-        return { vlans: [] };
-      }
+      // Get or create this workspace's own VLAN (one per workspace).
+      const vlan = await this.vlanService.getOrCreateVlan(scope.workspaceId as string);
       this.logger.log('✅ VLAN created/retrieved via API');
       return {
         vlans: [vlan],
@@ -53,7 +45,7 @@ export class VlanController {
   }
 
   @Post('join')
-  async joinVlan(@Body() body: { nodeId: string; vlanName?: string }, @CurrentWorkspace() scope: WorkspaceScope) {
+  async joinVlan(@Body() body: { nodeId: string }, @CurrentWorkspace() scope: WorkspaceScope) {
     const node = await this.prisma.node.findFirst({
       where: { id: body.nodeId, workspaceId: scope.workspaceId },
       select: { id: true },
@@ -62,7 +54,7 @@ export class VlanController {
       throw new HttpException('Node not found', HttpStatus.NOT_FOUND);
     }
     try {
-      const membership = await this.vlanService.joinVlan(body.nodeId, body.vlanName);
+      const membership = await this.vlanService.joinVlan(body.nodeId, scope.workspaceId);
       return {
         success: true,
         membership,

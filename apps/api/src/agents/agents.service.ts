@@ -397,15 +397,14 @@ export class AgentsService implements OnModuleInit {
         
     // Auto-join VLAN when agent starts (with guaranteed VLAN creation)
     try {
-      // Ensure default VLAN exists first
-      await this.vlanService.getOrCreateVlan('default');
-      // Then join the agent to it
-      await this.vlanService.joinVlan(nodeId);
+      // Ensure the workspace's VLAN exists first, then join the agent to it
+      await this.vlanService.getOrCreateVlan(created.workspaceId);
+      await this.vlanService.joinVlan(nodeId, created.workspaceId);
       this.logger.log(`✅ Node ${nodeId} created and joined VLAN`);
     } catch (error) {
       this.logger.warn(`⚠️  Failed to create VLAN or join node ${nodeId}:`, error);
     }
-        
+
         return created;
       });
 
@@ -414,10 +413,9 @@ export class AgentsService implements OnModuleInit {
     let membership = await this.prisma.vlanMember.findFirst({ where: { nodeId } });
     try {
       if (!membership) {
-        // Ensure default VLAN exists
-        await this.vlanService.getOrCreateVlan('default');
-        // Then join the node if not already joined
-        await this.vlanService.joinVlan(nodeId);
+        // Ensure the node's own workspace VLAN exists, then join if not already joined
+        await this.vlanService.getOrCreateVlan(node.workspaceId);
+        await this.vlanService.joinVlan(nodeId, node.workspaceId);
         this.logger.log(`✅ Node ${nodeId} joined VLAN on heartbeat`);
         membership = await this.prisma.vlanMember.findFirst({ where: { nodeId } });
       }

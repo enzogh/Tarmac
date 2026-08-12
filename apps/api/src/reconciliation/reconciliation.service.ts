@@ -43,13 +43,14 @@ export class ReconciliationService implements OnModuleInit {
 
     for (const share of pendingShares) {
       if (!this.agentsService.isConnected(share.nodeId)) continue;
+      const allowedCidr = await this.vlanService.getVlanSubnet(share.node?.workspaceId ?? share.workspaceId);
       this.agentsService.sendCommand(share.nodeId!, {
         type: 'command.apply_export',
         payload: {
           shareId: share.id,
           name: share.name,
           path: share.path,
-          allowedCidr: this.vlanService.getVlanSubnet(),
+          allowedCidr,
         },
       });
       this.logger.debug(`Sent export command for share ${share.id}`);

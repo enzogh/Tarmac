@@ -3,13 +3,20 @@ import { Prisma } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceScope } from '../auth/workspace.guard';
+import { VlanService } from '../vlan/vlan.service';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
+
+// 10.16.0.0/16 .. 10.31.0.0/16 - see vlan.service.ts's WORKSPACE_SUBNET_BASE_OCTET,
+// which must stay in sync with this cap.
+const MAX_WORKSPACE_SUBNETS = 16;
+const MAX_SUBNET_ALLOCATION_ATTEMPTS = 5;
 
 @Injectable()
 export class WorkspacesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditLogsService: AuditLogsService,
+    private readonly vlanService: VlanService,
   ) {}
 
   // Always the caller's full accessible set, regardless of which workspace
@@ -30,33 +37,74 @@ export class WorkspacesService {
       .replace(/^-+|-+$/g, '');
   }
 
-  // Subnet/Vlan provisioning (real network isolation) is Phase 2 - this
-  // creates a workspace shell only. subnetIndex/ssoGroupClaim stay null
-  // until that lands.
+  // Allocates the next free subnetIndex (1..MAX_WORKSPACE_SUBNETS) and
+  // creates the workspace, then eagerly provisions its Vlan (subnet
+  // reserved from creation time, before any node ever joins). Concurrent
+  // creations racing for the same index are resolved via the unique
+  // constraint on Workspace.subnetIndex + a bounded retry - Postgres's
+  // default Read Committed isolation doesn't prevent two transactions
+  // computing the same "next" index, so this can't rely on a plain
+  // SELECT MAX + INSERT being atomic.
   async create(dto: CreateWorkspaceDto, actorUserId?: string) {
     const slug = dto.slug ? this.slugify(dto.slug) : this.slugify(dto.name);
     if (!slug) {
       throw new BadRequestException('Unable to derive a slug from the provided name');
     }
 
-    try {
-      const created = await this.prisma.workspace.create({
-        data: { name: dto.name, slug },
-      });
-      await this.auditLogsService.log({
-        actorUserId,
-        action: 'workspace.create',
-        resourceType: 'workspace',
-        resourceId: created.id,
-        details: { name: created.name, slug: created.slug },
-      });
-      return created;
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ConflictException('A workspace with this slug already exists');
+    let created: Prisma.WorkspaceGetPayload<Record<string, never>> | undefined;
+    for (let attempt = 0; attempt < MAX_SUBNET_ALLOCATION_ATTEMPTS; attempt++) {
+      const subnetIndex = await this.nextSubnetIndex();
+      try {
+        created = await this.prisma.workspace.create({
+          data: { name: dto.name, slug, subnetIndex },
+        });
+        break;
+      } catch (error) {
+        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+          throw error;
+        }
+        const target = (error.meta?.target as string[] | undefined) ?? [];
+        if (target.includes('slug')) {
+          throw new ConflictException('A workspace with this slug already exists');
+        }
+        if (target.includes('subnetIndex') && attempt < MAX_SUBNET_ALLOCATION_ATTEMPTS - 1) {
+          continue; // another workspace grabbed this index concurrently - retry with a fresh one
+        }
+        throw error;
       }
-      throw error;
     }
+    if (!created) {
+      throw new ConflictException('Could not allocate a subnet for this workspace, please retry');
+    }
+
+    await this.auditLogsService.log({
+      actorUserId,
+      action: 'workspace.create',
+      resourceType: 'workspace',
+      resourceId: created.id,
+      details: { name: created.name, slug: created.slug, subnetIndex: created.subnetIndex },
+    });
+
+    // Provision the mesh now so the workspace has a reserved subnet/Vlan row
+    // even before its first node joins.
+    await this.vlanService.getOrCreateVlan(created.id);
+
+    return created;
+  }
+
+  private async nextSubnetIndex(): Promise<number> {
+    const taken = await this.prisma.workspace.findMany({
+      where: { subnetIndex: { not: null } },
+      select: { subnetIndex: true },
+      orderBy: { subnetIndex: 'asc' },
+    });
+    const takenSet = new Set(taken.map((w) => w.subnetIndex));
+    for (let index = 1; index <= MAX_WORKSPACE_SUBNETS; index++) {
+      if (!takenSet.has(index)) return index;
+    }
+    throw new ConflictException(
+      `No subnet available - all ${MAX_WORKSPACE_SUBNETS} workspace subnet slots are in use`,
+    );
   }
 
   async listMembers(workspaceId: string) {

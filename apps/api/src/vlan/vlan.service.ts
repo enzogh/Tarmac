@@ -1,9 +1,51 @@
-import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleInit, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import { Region, resolveRegion } from './region';
+
+// The Default workspace permanently keeps this exact range - it's what every
+// already-deployed node's vlanIp/vlanMac was derived from before workspaces
+// existed, and re-deriving it from a parsed CIDR (see parseBaseIp) must
+// reproduce it byte-for-byte. Never change this constant.
+const DEFAULT_SUBNET_CIDR = '10.255.0.0/16';
+// New (non-Default) workspaces are carved out of a disjoint /12 block so they
+// can never collide with the Default range above: 10.16.0.0/16 (index 1)
+// through 10.31.0.0/16 (index 16), assigned via Workspace.subnetIndex.
+const WORKSPACE_SUBNET_BASE_OCTET = 16;
+
+function cidrForSubnetIndex(subnetIndex: number): string {
+  const secondOctet = WORKSPACE_SUBNET_BASE_OCTET + subnetIndex - 1;
+  if (secondOctet < WORKSPACE_SUBNET_BASE_OCTET || secondOctet > 31) {
+    throw new Error(`subnetIndex ${subnetIndex} is out of the allocatable range (max 16 workspaces)`);
+  }
+  return `10.${secondOctet}.0.0/16`;
+}
+
+// Inverse of the ip-string math below: parse a "10.x.0.0/16" CIDR's network
+// address into the same 32-bit int shape as the old hardcoded BASE_IP
+// constant (+2 to skip the .0 network address and .1 gateway, exactly as
+// BASE_IP = 0x0aff0002 already did for 10.255.0.0/16).
+function parseBaseIp(cidr: string): number {
+  const [address] = cidr.split('/');
+  const octets = address.split('.').map((part) => Number.parseInt(part, 10));
+  if (octets.length !== 4 || octets.some((n) => !Number.isFinite(n) || n < 0 || n > 255)) {
+    throw new Error(`Invalid subnet CIDR: ${cidr}`);
+  }
+  const networkAddress = ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+  return networkAddress + 2;
+}
+
+type SubnetWorkspace = { isDefault: boolean; subnetIndex: number | null };
+
+function resolveSubnetCidr(workspace: SubnetWorkspace): string {
+  if (workspace.isDefault) return DEFAULT_SUBNET_CIDR;
+  if (workspace.subnetIndex == null) {
+    throw new Error('Non-default workspace is missing a subnetIndex - cannot provision its VLAN');
+  }
+  return cidrForSubnetIndex(workspace.subnetIndex);
+}
 
 const CONNECTION_OFFLINE_TIMEOUT_MS = 60_000;
 const CONNECTION_DEGRADED_TIMEOUT_MS = 20_000;
@@ -24,16 +66,22 @@ const HISTORY_RANGE_MS: Record<string, number> = {
 @Injectable()
 export class VlanService implements OnModuleInit {
   private readonly logger = new Logger(VlanService.name);
-  private readonly VLAN_SUBNET = '10.255.0.0/16';
-  private readonly VLAN_GATEWAY = '10.255.0.1';
-  private readonly BASE_IP = 0x0aff0002; // 10.255.0.2 in hex
   private readonly connectionAlertCooldownAt = new Map<string, number>();
   private readonly connectionSampleWrittenAt = new Map<string, number>();
 
   constructor(private prisma: PrismaService) {}
 
-  getVlanSubnet() {
-    return this.VLAN_SUBNET;
+  // Used to compute an NFS export's allowedCidr - must match the actual
+  // subnet of the requesting node's own workspace mesh, not always Default's.
+  async getVlanSubnet(workspaceId: string): Promise<string> {
+    const workspace = await this.prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { isDefault: true, subnetIndex: true },
+    });
+    if (!workspace) {
+      throw new NotFoundException(`Workspace not found: ${workspaceId}`);
+    }
+    return resolveSubnetCidr(workspace);
   }
 
   onModuleInit() {
@@ -62,10 +110,21 @@ export class VlanService implements OnModuleInit {
     );
   }
 
-  async getOrCreateVlan(name: string = 'default'): Promise<any> {
+  // One Vlan per workspace - `workspace.slug` doubles as the Vlan's unique
+  // `name` (the Default workspace's slug is literally 'default', so this
+  // reproduces the pre-workspace row/name exactly, no data migration needed).
+  async getOrCreateVlan(workspaceId: string): Promise<any> {
     try {
-      let vlan = await this.prisma.vlan.findUnique({
-        where: { name },
+      const workspace = await this.prisma.workspace.findUnique({
+        where: { id: workspaceId },
+        select: { id: true, slug: true, isDefault: true, subnetIndex: true },
+      });
+      if (!workspace) {
+        throw new NotFoundException(`Workspace not found: ${workspaceId}`);
+      }
+
+      let vlan = await this.prisma.vlan.findFirst({
+        where: { workspaceId },
         include: { members: true, connections: true },
       });
 
@@ -73,17 +132,17 @@ export class VlanService implements OnModuleInit {
         try {
           vlan = await this.prisma.vlan.create({
             data: {
-              workspaceId: DEFAULT_WORKSPACE_ID,
-              name,
-              subnetCidr: this.VLAN_SUBNET,
-              description: `Automated VLAN for cluster ${name}`,
+              workspaceId,
+              name: workspace.slug,
+              subnetCidr: resolveSubnetCidr(workspace),
+              description: `Automated VLAN for workspace ${workspace.slug}`,
             },
             include: { members: true, connections: true },
           });
         } catch (error) {
           if (this.isUniqueConstraintError(error)) {
-            vlan = await this.prisma.vlan.findUnique({
-              where: { name },
+            vlan = await this.prisma.vlan.findFirst({
+              where: { workspaceId },
               include: { members: true, connections: true },
             });
             if (vlan) return vlan;
@@ -99,22 +158,22 @@ export class VlanService implements OnModuleInit {
     }
   }
 
-  async joinVlan(nodeId: string, vlanName: string = 'default'): Promise<any> {
-    const vlan = await this.getOrCreateVlan(vlanName);
-    this.logger.error(`joinVlan START: vlan=${vlan.id} name=${vlan.name} nodeId=${nodeId}`);
-    
+  async joinVlan(nodeId: string, workspaceId: string = DEFAULT_WORKSPACE_ID): Promise<any> {
+    const vlan = await this.getOrCreateVlan(workspaceId);
+
     const existingMember = await this.prisma.vlanMember.findFirst({
       where: { nodeId, vlanId: vlan.id },
     });
 
     if (existingMember) {
-      this.logger.error(`joinVlan: member already exists ${existingMember.id}`);
       return existingMember;
     }
 
-    // Check if Node already has a stored VLAN IP from previous join
+    // Check if Node already has a stored VLAN IP from previous join - always
+    // reused as-is (never re-derived) so an already-deployed node's address
+    // never moves, regardless of how the generation formula below evolves.
     const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
-    const vlanIp = node?.vlanIp || this.generateDeterministicVlanIp(nodeId);
+    const vlanIp = node?.vlanIp || this.generateDeterministicVlanIp(nodeId, vlan.subnetCidr);
     const vlanMac = node?.vlanMac || this.generateVlanMac(nodeId);
     this.logger.error(`joinVlan: creating member vlanId=${vlan.id} vlanIp=${vlanIp} vlanMac=${vlanMac}`);
 
@@ -566,8 +625,8 @@ export class VlanService implements OnModuleInit {
     return { ...member, region: resolveRegion(member.node?.locationCountryCode) };
   }
 
-  private generateVlanIp(index: number): string {
-    const ipNum = this.BASE_IP + index;
+  private generateVlanIp(index: number, baseIp: number): string {
+    const ipNum = baseIp + index;
     return [
       (ipNum >>> 24) & 0xff,
       (ipNum >>> 16) & 0xff,
@@ -576,7 +635,12 @@ export class VlanService implements OnModuleInit {
     ].join('.');
   }
 
-  private generateDeterministicVlanIp(nodeId: string): string {
+  // subnetCidr must be the joining node's own workspace's Vlan.subnetCidr -
+  // for the Default workspace this parses back to the exact same BASE_IP
+  // (0x0aff0002) the old hardcoded constant used, so already-deployed nodes'
+  // addresses are unaffected (verified byte-for-byte against production data
+  // before this went out - see the Phase 2 rollout notes).
+  private generateDeterministicVlanIp(nodeId: string, subnetCidr: string): string {
     // Hash nodeId to get deterministic offset (ensures same IP on restart)
     let hash = 0;
     for (let i = 0; i < nodeId.length; i++) {
@@ -585,7 +649,7 @@ export class VlanService implements OnModuleInit {
     }
     // Map hash to index 1-253 (skip 0=gateway, 254=broadcast)
     const index = (Math.abs(hash) % 253) + 1;
-    return this.generateVlanIp(index);
+    return this.generateVlanIp(index, parseBaseIp(subnetCidr));
   }
 
   private generateVlanMac(nodeId: string): string {
