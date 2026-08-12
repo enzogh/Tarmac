@@ -14,6 +14,7 @@ import {
   Loader2,
   MapPin,
   Plus,
+  RefreshCcw,
   ScrollText,
   Server,
   ShieldCheck,
@@ -427,6 +428,19 @@ export default function DnsPage() {
     }
   };
 
+  const reapplyZone = async (zone: DnsZoneItem) => {
+    setBusyKey(`zone-reapply-${zone.id}`);
+    try {
+      await api.dns.zones.reapply(zone.id);
+      setNotice({ type: 'success', message: `Ré-application de « ${zone.name} » programmée.` });
+      await refreshZones();
+    } catch {
+      setNotice({ type: 'error', message: 'Erreur lors de la relance de la zone.' });
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
   const openRecordDialog = (zoneId: string, existing?: DnsRecordItem) => {
     setRecordDialogZoneId(zoneId);
     if (existing) {
@@ -758,6 +772,17 @@ export default function DnsPage() {
                               {expandedLogKey === `zone:${zone.id}` ? 'Masquer' : 'Journal'}
                             </Button>
                           )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="gap-1"
+                            disabled={busyKey === `zone-reapply-${zone.id}`}
+                            onClick={() => reapplyZone(zone)}
+                            title="Force une ré-application complète de la zone au prochain cycle de réconciliation (~15s)"
+                          >
+                            <RefreshCcw className="h-3.5 w-3.5" />
+                            Réappliquer
+                          </Button>
                           <Button variant="ghost" size="sm" onClick={() => openDelegation(zone)} className="gap-1">
                             <KeyRound className="h-3.5 w-3.5" />
                             Délégation

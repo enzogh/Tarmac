@@ -278,6 +278,24 @@ export class DnsService {
     return this.prisma.dnsZone.update({ where: { id: zoneId }, data: { status: 'pending' } });
   }
 
+  // Forces a zone that's already "active" back to "pending" so the next
+  // reconcile tick resends the full apply_dns_zone snapshot - e.g. after an
+  // agent-side bug fix that only takes effect on the next apply, with no
+  // record actually changing to trigger one on its own.
+  async reapplyZone(id: string, scope: WorkspaceScope, actorUserId?: string) {
+    const zone = await this.assertZoneOwned(id, scope);
+    const updated = await this.markZonePending(id);
+    await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
+      actorUserId,
+      action: 'dns.zone.reapply',
+      resourceType: 'dns_zone',
+      resourceId: id,
+      details: { name: zone.name },
+    });
+    return updated;
+  }
+
   // Whole-zone snapshot push (like apply_overlay's full peer-list push) -
   // any change to a zone's records marks the whole zone pending again, and
   // the reconcile tick re-applies the complete record set, not a diff.

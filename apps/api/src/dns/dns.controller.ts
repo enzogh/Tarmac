@@ -107,6 +107,11 @@ export class DnsController {
     return this.dnsService.createZone(dto, scope, req.user?.userId);
   }
 
+  @Post('zones/:id/reapply')
+  reapplyZone(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.dnsService.reapplyZone(id, scope, req.user?.userId);
+  }
+
   @Delete('zones/:id')
   deleteZone(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
     return this.dnsService.deleteZone(id, scope, req.user?.userId);

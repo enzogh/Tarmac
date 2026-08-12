@@ -3020,7 +3020,23 @@ func applyDnsZone(payload map[string]interface{}) (string, error) {
 		}
 	}
 
-	rrsets := make([]map[string]interface{}, 0, len(records))
+	// PowerDNS auto-creates an SOA on zone creation using its
+	// "default-soa-content" template, which is literally
+	// "a.misconfigured.dns.server.invalid hostmaster.@ ..." until something
+	// overwrites it - so every zone was serving that placeholder as its
+	// primary nameserver to every resolver on the internet. Always PATCH a
+	// real SOA (using the same ns1.<zone> convention already shown in the
+	// delegation panel) so this happens on every apply, not just the first.
+	rrsets := []map[string]interface{}{{
+		"name":       fqdn,
+		"type":       "SOA",
+		"ttl":        3600,
+		"changetype": "REPLACE",
+		"records": []map[string]interface{}{{
+			"content":  fmt.Sprintf("ns1.%s. hostmaster.%s. %s 10800 3600 604800 3600", zoneName, zoneName, time.Now().Format("20060102")+"00"),
+			"disabled": false,
+		}},
+	}}
 	for _, record := range records {
 		var pdnsRecords []map[string]interface{}
 		rrsetType := record.Type
