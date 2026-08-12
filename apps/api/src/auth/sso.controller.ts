@@ -143,7 +143,7 @@ export class SsoController {
     try {
       const client = await this.authentik.getClient();
       const redirectUri = this.configService.getOrThrow<string>('AUTHENTIK_REDIRECT_URI');
-      const scope = this.configService.get<string>('AUTHENTIK_SCOPES', 'openid profile email tarmac groups');
+      const scope = this.configService.get<string>('AUTHENTIK_SCOPES', 'openid profile email tarmac');
 
       const codeVerifier = this.authentik.generators.codeVerifier();
       const codeChallenge = this.authentik.generators.codeChallenge(codeVerifier);
