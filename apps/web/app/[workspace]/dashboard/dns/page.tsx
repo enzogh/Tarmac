@@ -22,6 +22,7 @@ import {
 import {
   api,
   DnsNodeRecordRef,
+  DnsPortConflict,
   DnsRecordItem,
   DnsRecordType,
   DnsServerGroupItem,
@@ -29,6 +30,7 @@ import {
   NodeItem,
 } from '../../../../lib/api';
 import { usePolling } from '../../../../lib/hooks/usePolling';
+import { useLiveSocket } from '../../../../lib/hooks/useLiveSocket';
 import { PageHeader } from '../../../../components/PageHeader';
 import { Callout } from '../../../../components/Callout';
 import { SectionLabel } from '../../../../components/SectionLabel';
@@ -73,18 +75,66 @@ const emptyValueDraft = (): RecordValueDraft => ({ content: '', nodeId: '', prio
 export default function DnsPage() {
   const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
   const {
-    data: groups = [],
+    data: groupsRaw,
     mutate: refreshGroups,
     isLoading: groupsLoading,
   } = usePolling('dns-groups', api.dns.groups.list, { intervalMs: 15000 });
   const {
-    data: zones = [],
+    data: zonesRaw,
     mutate: refreshZones,
     isLoading: zonesLoading,
   } = usePolling('dns-zones', () => api.dns.zones.list(), { intervalMs: 15000 });
+  const groups = groupsRaw ?? [];
+  const zones = zonesRaw ?? [];
 
   const [notice, setNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+
+  // Patches a group member's / zone's status the instant the agent's
+  // command result lands server-side (see agents.service.ts onCommandResult
+  // -> live.broadcast('dns.group_member.status'/'dns.zone.status')), instead
+  // of waiting for the next 15s poll tick - same pattern as node.heartbeat
+  // on the infrastructure page. Bails until the first real poll has landed
+  // (groupsRaw/zonesRaw defined) - patching `undefined` would poison the
+  // SWR cache permanently (see infrastructure/page.tsx for the same guard).
+  useLiveSocket((message) => {
+    if (message.type === 'dns.group_member.status') {
+      if (!groupsRaw) return;
+      const update = message.payload as {
+        groupId: string;
+        nodeId: string;
+        status: 'pending' | 'active' | 'error';
+        conflictDetail: DnsPortConflict | null;
+      };
+      void refreshGroups(
+        (current) =>
+          current?.map((group) =>
+            group.id === update.groupId
+              ? {
+                  ...group,
+                  members: group.members.map((member) =>
+                    member.nodeId === update.nodeId
+                      ? { ...member, status: update.status, conflictDetail: update.conflictDetail }
+                      : member,
+                  ),
+                }
+              : group,
+          ) ?? current,
+        { revalidate: false },
+      );
+      return;
+    }
+
+    if (message.type === 'dns.zone.status') {
+      if (!zonesRaw) return;
+      const update = message.payload as { zoneId: string; status: 'pending' | 'active' | 'error' };
+      void refreshZones(
+        (current) =>
+          current?.map((zone) => (zone.id === update.zoneId ? { ...zone, status: update.status } : zone)) ?? current,
+        { revalidate: false },
+      );
+    }
+  });
 
   // Group creation dialog
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);

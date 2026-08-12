@@ -2250,11 +2250,72 @@ func knownPort53Services(processName string) []string {
 	}
 }
 
+// permanentlyDisableService stops, disables AND masks a systemd unit so it
+// can never come back - `disable` alone only removes the normal boot-time
+// enablement symlink, it does NOT stop the unit from being pulled back in by
+// socket activation (systemd-resolved ships a .socket unit) or by another
+// unit's `Requires=`/`Wants=`. `mask` symlinks the unit to /dev/null, which
+// is the only thing systemd honors as "never start this, by any mechanism,
+// ever" - including across a reboot.
+func permanentlyDisableService(ctx context.Context, unit string) error {
+	if out, err := exec.CommandContext(ctx, "systemctl", "stop", unit).CombinedOutput(); err != nil {
+		return fmt.Errorf("systemctl stop %s failed: %s", unit, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.CommandContext(ctx, "systemctl", "disable", unit).CombinedOutput(); err != nil {
+		log.Printf("dns: systemctl disable %s failed (continuing, mask alone is sufficient): %s", unit, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.CommandContext(ctx, "systemctl", "mask", unit).CombinedOutput(); err != nil {
+		return fmt.Errorf("systemctl mask %s failed: %s", unit, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+const resolvConfPath = "/etc/resolv.conf"
+
+// fixResolvConfAfterDisablingSystemdResolved replaces /etc/resolv.conf with
+// a static file once systemd-resolved is masked. On resolved-managed
+// systems that path is a symlink to resolved's own generated stub file
+// (/run/systemd/resolve/stub-resolv.conf, 127.0.0.53) - once resolved is
+// masked that file stops being regenerated, so the symlink goes stale and
+// this node loses its own outbound DNS resolution (PowerDNS itself doesn't
+// help here: it's an authoritative server, not a recursive resolver for the
+// node's own queries). Only touches the file if it's actually a
+// resolved-owned symlink - a real file (already managed some other way) is
+// left untouched.
+func fixResolvConfAfterDisablingSystemdResolved() error {
+	info, err := os.Lstat(resolvConfPath)
+	if err != nil {
+		return nil
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return nil
+	}
+	target, err := os.Readlink(resolvConfPath)
+	if err != nil || !strings.Contains(target, "systemd/resolve") {
+		return nil
+	}
+
+	if err := os.Remove(resolvConfPath); err != nil {
+		return fmt.Errorf("cannot remove stale resolv.conf symlink: %w", err)
+	}
+	content := "# Written by tarmac-agent after permanently disabling systemd-resolved so\n" +
+		"# PowerDNS could bind port 53. Public resolvers used since no other\n" +
+		"# resolver config was available to inherit from at the time.\n" +
+		"nameserver 1.1.1.1\nnameserver 9.9.9.9\n"
+	if err := os.WriteFile(resolvConfPath, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("cannot write static resolv.conf: %w", err)
+	}
+	return nil
+}
+
 // resolveDnsPortConflict only frees the port - it deliberately does not
 // re-run applyDnsServerGroup itself. The API already flips the member back
 // to "pending" as soon as it dispatches this command (see
 // DnsService.resolvePortConflict), so the next 15s reconcile tick sends a
 // fresh apply_dns_server_group with the full payload once the port is free.
+// When the culprit is a known service (systemd-resolved, bind9/named,
+// dnsmasq), it's permanently disabled (see permanentlyDisableService) rather
+// than just killed once, so it doesn't come back on the next reboot either.
 func resolveDnsPortConflict(ctx context.Context) (string, error) {
 	conflict := probeDnsPortConflict()
 	if conflict == nil {
@@ -2264,14 +2325,21 @@ func resolveDnsPortConflict(ctx context.Context) (string, error) {
 	stoppedService := false
 	if commandExists("systemctl") {
 		for _, unit := range knownPort53Services(conflict.ProcessName) {
-			if out, err := exec.CommandContext(ctx, "systemctl", "stop", unit).CombinedOutput(); err == nil {
-				exec.CommandContext(ctx, "systemctl", "disable", unit).Run()
-				stoppedService = true
-				log.Printf("dns: stopped and disabled %s to free port %d/%s", unit, conflict.Port, conflict.Protocol)
-				break
-			} else {
-				log.Printf("dns: systemctl stop %s failed: %s", unit, strings.TrimSpace(string(out)))
+			if err := permanentlyDisableService(ctx, unit); err != nil {
+				log.Printf("dns: could not permanently disable %s: %v", unit, err)
+				continue
 			}
+			stoppedService = true
+			log.Printf(
+				"dns: stopped, disabled and masked %s to free port %d/%s - it will not start again, including after a reboot",
+				unit, conflict.Port, conflict.Protocol,
+			)
+			if unit == "systemd-resolved" {
+				if err := fixResolvConfAfterDisablingSystemdResolved(); err != nil {
+					log.Printf("dns: could not fix /etc/resolv.conf after disabling systemd-resolved: %v", err)
+				}
+			}
+			break
 		}
 	}
 

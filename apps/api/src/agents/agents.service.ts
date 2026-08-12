@@ -733,11 +733,21 @@ export class AgentsService implements OnModuleInit {
       }
 
       const portConflict = result.data?.portConflict;
+      const memberStatus = result.success ? 'active' : 'error';
       await this.dnsService.setGroupMemberStatus(
         groupId,
         memberNodeId,
-        result.success ? 'active' : 'error',
+        memberStatus,
         portConflict ? (portConflict as unknown as Prisma.InputJsonValue) : null,
+      );
+      // Lets the DNS page patch a member's status/conflict banner the
+      // instant a command result lands, instead of waiting for its next
+      // 15s poll tick - same "live.broadcast alongside the DB write"
+      // pattern as node.heartbeat above.
+      this.live.broadcast(
+        'dns.group_member.status',
+        { groupId, nodeId: memberNodeId, status: memberStatus, conflictDetail: portConflict ?? null },
+        callingWorkspaceId,
       );
 
       if (result.success && result.data?.dnsTsigKeySecret) {
@@ -771,7 +781,9 @@ export class AgentsService implements OnModuleInit {
         this.logCrossWorkspaceAttempt(nodeId, result.resourceType, result.resourceId);
         return;
       }
-      await this.dnsService.setZoneStatus(result.resourceId, result.success ? 'active' : 'error');
+      const zoneStatus = result.success ? 'active' : 'error';
+      await this.dnsService.setZoneStatus(result.resourceId, zoneStatus);
+      this.live.broadcast('dns.zone.status', { zoneId: result.resourceId, status: zoneStatus }, callingWorkspaceId);
       if (!result.success) {
         this.logger.error(`DNS zone ${result.resourceId} apply failed: ${this.normalizeFailureMessage(result.message)}`);
       }
