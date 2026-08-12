@@ -12,6 +12,13 @@ import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 const MAX_WORKSPACE_SUBNETS = 16;
 const MAX_SUBNET_ALLOCATION_ATTEMPTS = 5;
 
+// Every workspace's pages live under /<slug>/dashboard/... (see the web
+// app's app/[workspace] route) - a slug matching one of the frontend's own
+// top-level static routes would be permanently unreachable (shadowed by the
+// real route) or would shadow that route for everyone, depending on
+// Next.js's resolution order. Kept in sync by hand with apps/web/app/*.
+const RESERVED_WORKSPACE_SLUGS = new Set(['login', 'docs', 'workspaces', 'api']);
+
 @Injectable()
 export class WorkspacesService {
   constructor(
@@ -71,6 +78,9 @@ export class WorkspacesService {
     if (!slug) {
       throw new BadRequestException('Unable to derive a slug from the provided name');
     }
+    if (RESERVED_WORKSPACE_SLUGS.has(slug)) {
+      throw new ConflictException(`"${slug}" is a reserved slug and can't be used for a workspace`);
+    }
 
     let created: Prisma.WorkspaceGetPayload<Record<string, never>> | undefined;
     for (let attempt = 0; attempt < MAX_SUBNET_ALLOCATION_ATTEMPTS; attempt++) {
@@ -99,6 +109,7 @@ export class WorkspacesService {
     }
 
     await this.auditLogsService.log({
+      workspaceId: created.id,
       actorUserId,
       action: 'workspace.create',
       resourceType: 'workspace',
@@ -143,9 +154,12 @@ export class WorkspacesService {
   // name/ssoGroupClaim only - renaming a workspace or (re)pointing it at an
   // Authentik group is safe post-creation; subnetIndex/slug are not editable
   // here since changing them after nodes/agents already depend on them would
-  // require the same careful rollout as initial provisioning.
-  async update(workspaceId: string, dto: UpdateWorkspaceDto, actorUserId?: string) {
+  // require the same careful rollout as initial provisioning. Owners can
+  // rename/reconfigure their own workspace, same authority tier as member
+  // management - only workspace *creation* stays platform-admin-only.
+  async update(workspaceId: string, dto: UpdateWorkspaceDto, scope: WorkspaceScope, actorUserId?: string) {
     await this.assertExists(workspaceId);
+    await this.assertCanManageMembers(workspaceId, scope, actorUserId);
     if (dto.name === undefined && dto.ssoGroupClaim === undefined) {
       throw new BadRequestException('Nothing to update');
     }
@@ -159,6 +173,7 @@ export class WorkspacesService {
         },
       });
       await this.auditLogsService.log({
+        workspaceId,
         actorUserId,
         action: 'workspace.update',
         resourceType: 'workspace',
@@ -235,6 +250,7 @@ export class WorkspacesService {
       include: { user: { select: { id: true, email: true, name: true, avatarUrl: true } } },
     });
     await this.auditLogsService.log({
+      workspaceId,
       actorUserId,
       action: 'workspace.member.invite',
       resourceType: 'workspace',
@@ -257,6 +273,7 @@ export class WorkspacesService {
       update: {},
     });
     await this.auditLogsService.log({
+      workspaceId,
       actorUserId,
       action: 'workspace.member.add',
       resourceType: 'workspace',
@@ -269,13 +286,91 @@ export class WorkspacesService {
   async removeMember(workspaceId: string, userId: string, scope: WorkspaceScope, actorUserId?: string) {
     await this.assertExists(workspaceId);
     await this.assertCanManageMembers(workspaceId, scope, actorUserId);
+
+    // An owner can't remove themselves - doing so would either orphan the
+    // workspace (no one left who can manage it without platform-admin
+    // intervention) or silently lock the owner out of something they still
+    // administer. Deleting the whole workspace (see deleteWorkspace below)
+    // is the deliberate, explicit way to walk away from it entirely.
+    if (userId === actorUserId) {
+      const actorMembership = await this.prisma.workspaceMembership.findUnique({
+        where: { workspaceId_userId: { workspaceId, userId: actorUserId } },
+      });
+      if (actorMembership?.role === 'owner') {
+        throw new ForbiddenException(
+          "Un propriétaire ne peut pas se retirer lui-même. Supprimez le workspace ou transférez d'abord la propriété.",
+        );
+      }
+    }
+
     await this.prisma.workspaceMembership.deleteMany({ where: { workspaceId, userId } });
     await this.auditLogsService.log({
+      workspaceId,
       actorUserId,
       action: 'workspace.member.remove',
       resourceType: 'workspace',
       resourceId: workspaceId,
       details: { userId },
+    });
+    return { success: true };
+  }
+
+  // Deletable only once genuinely empty - every workspace-scoped resource
+  // besides Vlan (infra scaffolding provisioned automatically at creation,
+  // safe to tear down here) has an onDelete: Restrict FK to Workspace by
+  // design (see schema.prisma), so this fails loudly and explicitly rather
+  // than silently cascading away a fleet's nodes/pools/alerts. The caller
+  // must explicitly remove real resources first - this mirrors how cloud
+  // providers refuse to delete a VPC/resource-group that still has things
+  // in it.
+  async deleteWorkspace(workspaceId: string, scope: WorkspaceScope, actorUserId?: string) {
+    const workspace = await this.assertExists(workspaceId);
+    await this.assertCanManageMembers(workspaceId, scope, actorUserId);
+
+    if (workspace.isDefault) {
+      throw new ForbiddenException('Le workspace par défaut ne peut pas être supprimé.');
+    }
+
+    const [nodes, shares, mounts, pools, notificationChannels, alertRules, alerts, syncJobs, migrationTasks] =
+      await Promise.all([
+        this.prisma.node.count({ where: { workspaceId } }),
+        this.prisma.share.count({ where: { workspaceId } }),
+        this.prisma.mount.count({ where: { workspaceId } }),
+        this.prisma.pool.count({ where: { workspaceId } }),
+        this.prisma.notificationChannel.count({ where: { workspaceId } }),
+        this.prisma.alertRule.count({ where: { workspaceId } }),
+        this.prisma.alert.count({ where: { workspaceId } }),
+        this.prisma.syncJob.count({ where: { workspaceId } }),
+        this.prisma.migrationTask.count({ where: { workspaceId } }),
+      ]);
+    const remaining: string[] = [];
+    if (nodes > 0) remaining.push(`${nodes} nœud(s)`);
+    if (shares > 0) remaining.push(`${shares} partage(s)`);
+    if (mounts > 0) remaining.push(`${mounts} montage(s)`);
+    if (pools > 0) remaining.push(`${pools} pool(s) de stockage`);
+    if (syncJobs > 0) remaining.push(`${syncJobs} job(s) de réplication`);
+    if (migrationTasks > 0) remaining.push(`${migrationTasks} migration(s)`);
+    if (alertRules > 0) remaining.push(`${alertRules} règle(s) d'alerte`);
+    if (alerts > 0) remaining.push(`${alerts} alerte(s)`);
+    if (notificationChannels > 0) remaining.push(`${notificationChannels} canal/canaux de notification`);
+    if (remaining.length > 0) {
+      throw new ConflictException(
+        `Ce workspace contient encore : ${remaining.join(', ')}. Supprimez-les d'abord.`,
+      );
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.vlan.deleteMany({ where: { workspaceId } }),
+      this.prisma.workspace.delete({ where: { id: workspaceId } }),
+    ]);
+
+    await this.auditLogsService.log({
+      workspaceId,
+      actorUserId,
+      action: 'workspace.delete',
+      resourceType: 'workspace',
+      resourceId: workspaceId,
+      details: { name: workspace.name, slug: workspace.slug },
     });
     return { success: true };
   }

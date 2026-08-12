@@ -1,5 +1,5 @@
 import { Controller, Get } from '@nestjs/common';
-import { getControlPlaneVersion } from '../common/build-info';
+import { getControlPlaneVersion, isKnownControlPlaneVersion } from '../common/build-info';
 
 // Deliberately unguarded - the control-plane version isn't sensitive, and
 // the frontend's global version badge (and the infra page's agent-version
@@ -10,6 +10,10 @@ import { getControlPlaneVersion } from '../common/build-info';
 export class SystemController {
   @Get('version')
   version() {
-    return { version: getControlPlaneVersion() };
+    const version = getControlPlaneVersion();
+    // null (not the raw "unknown" sentinel) when it genuinely couldn't be
+    // determined, so the frontend shows a deliberate "not available" message
+    // instead of leaking an untranslated internal fallback token.
+    return { version: isKnownControlPlaneVersion(version) ? version : null };
   }
 }

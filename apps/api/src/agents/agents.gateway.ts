@@ -38,14 +38,19 @@ export class AgentsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  // Every handler is passed client.data.nodeId (the handshake-verified
+  // identity), never anything from the message payload itself - same reason
+  // as AgentsWsServer (the actual transport the Go agent uses); this
+  // socket.io gateway is kept in sync defensively even though it appears
+  // unused in practice.
   @SubscribeMessage('agent.heartbeat')
-  async onHeartbeat(@MessageBody() payload: HeartbeatPayload) {
-    await this.agentsService.onHeartbeat(payload);
+  async onHeartbeat(@ConnectedSocket() client: Socket, @MessageBody() payload: HeartbeatPayload) {
+    await this.agentsService.onHeartbeat(client.data.nodeId as string, payload);
   }
 
   @SubscribeMessage('agent.state_report')
-  async onStateReport(@MessageBody() payload: StateReportPayload) {
-    await this.agentsService.onStateReport(payload);
+  async onStateReport(@ConnectedSocket() client: Socket, @MessageBody() payload: StateReportPayload) {
+    await this.agentsService.onStateReport(client.data.nodeId as string, payload);
   }
 
   @SubscribeMessage('command_result')
@@ -58,9 +63,9 @@ export class AgentsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @SubscribeMessage('command_progress')
   async onCommandProgress(
-    @ConnectedSocket() _client: Socket,
+    @ConnectedSocket() client: Socket,
     @MessageBody() payload: CommandProgressPayload,
   ) {
-    await this.agentsService.onCommandProgress(payload);
+    await this.agentsService.onCommandProgress(client.data.nodeId as string, payload);
   }
 }

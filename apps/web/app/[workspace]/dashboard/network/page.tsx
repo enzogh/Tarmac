@@ -20,11 +20,10 @@ import { api, VlanConnection, VlanConnectionHistory, VlanConnectionTest, VlanSta
 import { ConnectionHistoryChart } from '@/components/dashboard-charts';
 import { GeoInfo, flagFromCountryCode, geocodeCity, getGeoInfo, normalizeCountryCode, parseHostFromEndpoint } from '@/lib/geo';
 import { countryCentroid } from '@/lib/country-centroids';
-import { readNodeLabels } from '../../../lib/node-labels';
-import { DashboardLayout } from '@/components/DashboardLayout';
-import { PageHeader } from '../../../components/PageHeader';
-import { SectionLabel } from '../../../components/SectionLabel';
-import { Callout } from '../../../components/Callout';
+import { readNodeLabels } from '../../../../lib/node-labels';
+import { PageHeader } from '../../../../components/PageHeader';
+import { SectionLabel } from '../../../../components/SectionLabel';
+import { Callout } from '../../../../components/Callout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -1996,7 +1995,6 @@ export default function NetworkPage() {
   );
 
   return (
-    <DashboardLayout>
       <div className="space-y-6">
         <PageHeader
           icon={Network}
@@ -2006,6 +2004,5 @@ export default function NetworkPage() {
 
         {content}
       </div>
-    </DashboardLayout>
   );
 }

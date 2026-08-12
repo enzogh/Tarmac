@@ -18,24 +18,23 @@ import {
   KeyRound,
   Settings2,
 } from 'lucide-react';
-import { api, MountItem, NodeItem, VlanMember } from '../../../lib/api';
-import { usePolling } from '../../../lib/hooks/usePolling';
-import { DashboardLayout } from '../../../components/DashboardLayout';
-import { PageHeader } from '../../../components/PageHeader';
-import { Callout } from '../../../components/Callout';
-import { Card, CardContent } from '../../../components/ui/card';
-import { Button } from '../../../components/ui/button';
-import { Alert, AlertDescription } from '../../../components/ui/alert';
-import { Input } from '../../../components/ui/input';
-import { Label } from '../../../components/ui/label';
-import { Badge } from '../../../components/ui/badge';
+import { api, MountItem, NodeItem, VlanMember } from '../../../../lib/api';
+import { usePolling } from '../../../../lib/hooks/usePolling';
+import { PageHeader } from '../../../../components/PageHeader';
+import { Callout } from '../../../../components/Callout';
+import { Card, CardContent } from '../../../../components/ui/card';
+import { Button } from '../../../../components/ui/button';
+import { Alert, AlertDescription } from '../../../../components/ui/alert';
+import { Input } from '../../../../components/ui/input';
+import { Label } from '../../../../components/ui/label';
+import { Badge } from '../../../../components/ui/badge';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '../../../components/ui/select';
+} from '../../../../components/ui/select';
 import {
   WizardDialog,
   PresetSelector,
@@ -45,7 +44,7 @@ import {
   AdvancedOptions,
   PresetOption,
   StepConfig,
-} from '../../../components/ui/wizard';
+} from '../../../../components/ui/wizard';
 import {
   Dialog,
   DialogContent,
@@ -53,12 +52,12 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-} from '../../../components/ui/dialog';
-import { DirectoryBrowser } from '../../../components/ui/directory-browser';
-import { NodeLabelBadges, StatCard } from '../../../components/ui';
-import { CardListSkeleton, StatCardSkeleton } from '../../../components/ui/skeleton';
-import { SectionLabel } from '../../../components/SectionLabel';
-import { readNodeLabels } from '../../../lib/node-labels';
+} from '../../../../components/ui/dialog';
+import { DirectoryBrowser } from '../../../../components/ui/directory-browser';
+import { NodeLabelBadges, StatCard } from '../../../../components/ui';
+import { CardListSkeleton, StatCardSkeleton } from '../../../../components/ui/skeleton';
+import { SectionLabel } from '../../../../components/SectionLabel';
+import { readNodeLabels } from '../../../../lib/node-labels';
 
 // ─── Presets ────────────────────────────────────────────────────────────────
 
@@ -1083,7 +1082,7 @@ export default function MountsPage() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <DashboardLayout>
+    <>
       <div className="space-y-8">
         {notice && (
           <Alert variant={notice.type === 'error' ? 'destructive' : notice.type === 'warning' ? 'warning' : 'success'}>
@@ -1354,6 +1353,6 @@ export default function MountsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </DashboardLayout>
+    </>
   );
 }

@@ -70,12 +70,16 @@ export class AgentsWsServer implements OnModuleInit {
     ws.on('message', async (raw) => {
       try {
         const msg = JSON.parse(raw.toString()) as AgentWsMessage;
+        // Every handler below is passed the handshake-verified `nodeId`
+        // (never anything from msg.payload) - see AgentsService.onHeartbeat
+        // et al. for why trusting a payload-supplied nodeId would let a
+        // compromised agent write data under any other node/workspace.
         if (msg.type === 'agent.heartbeat' && msg.payload) {
-          await this.agentsService.onHeartbeat(msg.payload as HeartbeatPayload);
+          await this.agentsService.onHeartbeat(nodeId, msg.payload as HeartbeatPayload);
         }
 
         if (msg.type === 'agent.state_report' && msg.payload) {
-          await this.agentsService.onStateReport(msg.payload as StateReportPayload);
+          await this.agentsService.onStateReport(nodeId, msg.payload as StateReportPayload);
         }
 
         if (msg.type === 'command_result' && msg.payload) {
@@ -83,11 +87,11 @@ export class AgentsWsServer implements OnModuleInit {
         }
 
         if (msg.type === 'command_progress' && msg.payload) {
-          await this.agentsService.onCommandProgress(msg.payload as CommandProgressPayload);
+          await this.agentsService.onCommandProgress(nodeId, msg.payload as CommandProgressPayload);
         }
 
         if (msg.type === 'agent.log' && msg.payload) {
-          await this.agentsService.onAgentLog(msg.payload as AgentLogPayload);
+          await this.agentsService.onAgentLog(nodeId, msg.payload as AgentLogPayload);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'unknown parse error';

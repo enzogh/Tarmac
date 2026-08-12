@@ -4,7 +4,7 @@ import { AgentTokenService } from '../agents/agent-token.service';
 import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { scopeWhere, scopeWhereViaNode, WorkspaceScope } from '../auth/workspace.guard';
-import { getControlPlaneVersion } from '../common/build-info';
+import { getControlPlaneVersion, isKnownControlPlaneVersion } from '../common/build-info';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNodeDto } from './dto/create-node.dto';
 import { UpdateNodeDto } from './dto/update-node.dto';
@@ -94,6 +94,7 @@ export class NodesService {
     });
 
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'node.create',
       resourceType: 'node',
@@ -129,6 +130,7 @@ export class NodesService {
     const updated = await this.prisma.node.update({ where: { id }, data });
 
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'node.update',
       resourceType: 'node',
@@ -149,6 +151,7 @@ export class NodesService {
     }
 
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'node.delete',
       resourceType: 'node',
@@ -164,6 +167,7 @@ export class NodesService {
     const updated = await this.prisma.node.update({ where: { id }, data: { mutedUntil } });
 
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'node.mute',
       resourceType: 'node',
@@ -179,6 +183,7 @@ export class NodesService {
     const updated = await this.prisma.node.update({ where: { id }, data: { mutedUntil: null } });
 
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'node.unmute',
       resourceType: 'node',
@@ -196,6 +201,7 @@ export class NodesService {
     }
 
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'node.rotate_agent_token',
       resourceType: 'node',
@@ -210,6 +216,7 @@ export class NodesService {
     const results = await this.agentTokenService.rotateAll(scopeWhere(scope));
 
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'node.rotate_agent_token_all',
       resourceType: 'node',
@@ -269,7 +276,14 @@ export class NodesService {
       smartReportsByNode.set(report.nodeId, list);
     }
 
-    const controlVersion = getControlPlaneVersion();
+    const rawControlVersion = getControlPlaneVersion();
+    const controlVersionKnown = isKnownControlPlaneVersion(rawControlVersion);
+    // Exposed as null (never the raw "unknown" sentinel) when the control
+    // plane's own version couldn't be determined - see build-info.ts. An
+    // agent can't meaningfully be "up to date" or "obsolete" relative to a
+    // reference the server itself doesn't know, so agentUpToDate stays null
+    // (unknown) rather than comparing against the sentinel string.
+    const controlVersion = controlVersionKnown ? rawControlVersion : null;
 
     return nodes.map((node) => {
       const sample = sampleByNode.get(node.id);
@@ -295,7 +309,7 @@ export class NodesService {
         agentVersionAt: node.agentVersionAt?.toISOString() ?? null,
         mutedUntil: node.mutedUntil?.toISOString() ?? null,
         controlVersion,
-        agentUpToDate: node.agentVersion ? node.agentVersion === controlVersion : null,
+        agentUpToDate: node.agentVersion && controlVersion ? node.agentVersion === controlVersion : null,
         metrics: sample
           ? {
               cpu: sample.cpu,

@@ -36,6 +36,7 @@ export class SharesService {
 
     const created = await this.prisma.share.create({ data, include: { clients: true } });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'share.create',
       resourceType: 'share',
@@ -56,6 +57,7 @@ export class SharesService {
 
     const updated = await this.prisma.share.update({ where: { id }, data, include: { clients: true } });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'share.update',
       resourceType: 'share',
@@ -69,6 +71,7 @@ export class SharesService {
     await this.assertOwned(id, scope);
     const deleted = await this.prisma.share.delete({ where: { id } });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'share.delete',
       resourceType: 'share',
@@ -91,6 +94,7 @@ export class SharesService {
     });
 
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'share.client.upsert',
       resourceType: 'share_client',
@@ -108,6 +112,7 @@ export class SharesService {
     });
 
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'share.client.delete',
       resourceType: 'share_client',
@@ -138,6 +143,7 @@ export class SharesService {
     });
 
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'share.reapply',
       resourceType: 'share',

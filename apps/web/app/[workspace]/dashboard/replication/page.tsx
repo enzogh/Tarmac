@@ -18,18 +18,17 @@ import {
   History,
   Clock,
 } from 'lucide-react';
-import { api, API_BASE, NodeItem, SyncJobItem, SyncJobRunItem } from '../../../lib/api';
-import { usePolling } from '../../../lib/hooks/usePolling';
-import { DashboardLayout } from '../../../components/DashboardLayout';
-import { PageHeader } from '../../../components/PageHeader';
-import { Callout } from '../../../components/Callout';
-import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
-import { Button } from '../../../components/ui/button';
-import { Alert, AlertDescription } from '../../../components/ui/alert';
-import { Badge, StatCard } from '../../../components/ui';
-import { CardListSkeleton, StatCardSkeleton } from '../../../components/ui/skeleton';
-import { SectionLabel } from '../../../components/SectionLabel';
-import { HelpText, InfoBox, StepConfig, WizardDialog } from '../../../components/ui/wizard';
+import { api, API_BASE, NodeItem, SyncJobItem, SyncJobRunItem } from '../../../../lib/api';
+import { usePolling } from '../../../../lib/hooks/usePolling';
+import { PageHeader } from '../../../../components/PageHeader';
+import { Callout } from '../../../../components/Callout';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../../components/ui/card';
+import { Button } from '../../../../components/ui/button';
+import { Alert, AlertDescription } from '../../../../components/ui/alert';
+import { Badge, StatCard } from '../../../../components/ui';
+import { CardListSkeleton, StatCardSkeleton } from '../../../../components/ui/skeleton';
+import { SectionLabel } from '../../../../components/SectionLabel';
+import { HelpText, InfoBox, StepConfig, WizardDialog } from '../../../../components/ui/wizard';
 import {
   Dialog,
   DialogContent,
@@ -37,8 +36,8 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-} from '../../../components/ui/dialog';
-import { readNodeLabels } from '../../../lib/node-labels';
+} from '../../../../components/ui/dialog';
+import { readNodeLabels } from '../../../../lib/node-labels';
 
 const STATUS_BADGE: Record<string, { label: string; type: 'success' | 'warning' | 'error' | 'info' }> = {
   success: { label: 'Réussi', type: 'success' },
@@ -401,7 +400,7 @@ export default function ReplicationPage() {
   const failedJobs = jobs.filter((job) => job.status === 'failed').length;
 
   return (
-    <DashboardLayout>
+    <>
       <div className="space-y-8">
         {notice && (
           <Alert variant={notice.type === 'error' ? 'destructive' : 'success'}>
@@ -801,6 +800,6 @@ export default function ReplicationPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </DashboardLayout>
+    </>
   );
 }

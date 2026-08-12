@@ -92,7 +92,7 @@ function LoginPageContent() {
 
   const enterDashboard = () => {
     setEntering(true);
-    router.push('/dashboard');
+    router.push('/workspaces');
   };
 
   return (

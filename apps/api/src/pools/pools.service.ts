@@ -30,6 +30,7 @@ export class PoolsService {
   async create(dto: CreatePoolDto, scope: WorkspaceScope, actorUserId?: string) {
     const created = await this.prisma.pool.create({ data: { ...dto, workspaceId: scope.workspaceId as string } });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'pool.create',
       resourceType: 'pool',
@@ -43,6 +44,7 @@ export class PoolsService {
     await this.assertOwned(id, scope);
     const updated = await this.prisma.pool.update({ where: { id }, data: dto });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'pool.update',
       resourceType: 'pool',
@@ -56,6 +58,7 @@ export class PoolsService {
     await this.assertOwned(id, scope);
     const deleted = await this.prisma.pool.delete({ where: { id } });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'pool.delete',
       resourceType: 'pool',
@@ -74,6 +77,7 @@ export class PoolsService {
     });
     await this.recomputePoolStatus(poolId);
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'pool.member.upsert',
       resourceType: 'pool_member',
@@ -88,6 +92,7 @@ export class PoolsService {
     const deleted = await this.prisma.poolMember.delete({ where: { poolId_nodeId: { poolId, nodeId } } });
     await this.recomputePoolStatus(poolId);
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'pool.member.delete',
       resourceType: 'pool_member',

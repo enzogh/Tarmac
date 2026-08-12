@@ -15,33 +15,32 @@ import {
   Server,
   Trash2,
 } from 'lucide-react';
-import { api, MigrationItem, NodeItem } from '../../../lib/api';
-import { usePolling } from '../../../lib/hooks/usePolling';
-import { DashboardLayout } from '../../../components/DashboardLayout';
-import { PageHeader } from '../../../components/PageHeader';
-import { SectionLabel } from '../../../components/SectionLabel';
-import { Callout } from '../../../components/Callout';
-import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
-import { Progress } from '../../../components/ui/progress';
-import { Button } from '../../../components/ui/button';
-import { Alert, AlertDescription } from '../../../components/ui/alert';
-import { Badge, StatCard } from '../../../components/ui';
-import { Input } from '../../../components/ui/input';
-import { Label } from '../../../components/ui/label';
+import { api, MigrationItem, NodeItem } from '../../../../lib/api';
+import { usePolling } from '../../../../lib/hooks/usePolling';
+import { PageHeader } from '../../../../components/PageHeader';
+import { SectionLabel } from '../../../../components/SectionLabel';
+import { Callout } from '../../../../components/Callout';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../../components/ui/card';
+import { Progress } from '../../../../components/ui/progress';
+import { Button } from '../../../../components/ui/button';
+import { Alert, AlertDescription } from '../../../../components/ui/alert';
+import { Badge, StatCard } from '../../../../components/ui';
+import { Input } from '../../../../components/ui/input';
+import { Label } from '../../../../components/ui/label';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '../../../components/ui/select';
+} from '../../../../components/ui/select';
 import {
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '../../../components/ui/dialog';
+} from '../../../../components/ui/dialog';
 import {
   Table,
   TableBody,
@@ -49,7 +48,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '../../../components/ui/table';
+} from '../../../../components/ui/table';
 import {
   WizardDialog,
   PresetSelector,
@@ -58,10 +57,10 @@ import {
   InfoBox,
   PresetOption,
   StepConfig,
-} from '../../../components/ui/wizard';
-import { DirectoryBrowser } from '../../../components/ui/directory-browser';
-import { readNodeLabels } from '../../../lib/node-labels';
-import { CardListSkeleton, StatCardSkeleton, TableRowSkeleton } from '../../../components/ui/skeleton';
+} from '../../../../components/ui/wizard';
+import { DirectoryBrowser } from '../../../../components/ui/directory-browser';
+import { readNodeLabels } from '../../../../lib/node-labels';
+import { CardListSkeleton, StatCardSkeleton, TableRowSkeleton } from '../../../../components/ui/skeleton';
 
 const MIGRATION_PRESETS: PresetOption[] = [
   {
@@ -875,7 +874,7 @@ export default function MigrationsPage() {
   ];
 
   return (
-    <DashboardLayout>
+    <>
       <div className="space-y-8">
         {notice && (
           <Alert variant={notice.type === 'error' ? 'destructive' : 'success'}>
@@ -1205,6 +1204,6 @@ export default function MigrationsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </DashboardLayout>
+    </>
   );
 }

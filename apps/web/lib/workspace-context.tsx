@@ -11,7 +11,9 @@ type WorkspaceContextValue = {
   isLoading: boolean;
   // Switching workspace changes what every API call returns - since this app
   // has no shared query cache to invalidate, the simplest correct way to get
-  // every open page's data back in sync is a full reload.
+  // every open page's data back in sync is a hard navigation to the target
+  // workspace's own URL (rather than reloading the current one), which also
+  // keeps the address bar correct for the workspace now in view.
   switchWorkspace: (workspaceId: string) => void;
 };
 
@@ -63,7 +65,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       switchWorkspace: (workspaceId: string) => {
         if (workspaceId === currentWorkspaceId) return;
         setCurrentWorkspaceId(workspaceId);
-        window.location.reload();
+        const target = workspaces.find((w) => w.id === workspaceId);
+        window.location.href = target ? `/${target.slug}/dashboard` : '/workspaces';
       },
     }),
     [workspaces, currentWorkspaceId, isPlatformAdmin, isLoading],

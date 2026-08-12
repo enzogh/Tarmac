@@ -102,6 +102,7 @@ export class SyncJobsService {
       },
     });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'sync_job.create',
       resourceType: 'sync_job',
@@ -116,6 +117,7 @@ export class SyncJobsService {
     await this.assertOwned(id, scope);
     const updated = await this.prisma.syncJob.update({ where: { id }, data: dto });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'sync_job.update',
       resourceType: 'sync_job',
@@ -129,6 +131,7 @@ export class SyncJobsService {
     await this.assertOwned(id, scope);
     const deleted = await this.prisma.syncJob.delete({ where: { id } });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'sync_job.delete',
       resourceType: 'sync_job',
@@ -201,6 +204,10 @@ export class SyncJobsService {
     }
 
     await this.auditLogsService.log({
+      // job.workspaceId, not scope?.workspaceId - scope is undefined for the
+      // unauthenticated /trigger route (see triggerViaToken), but the job's
+      // own workspace is always known once it's fetched above.
+      workspaceId: job.workspaceId,
       actorUserId,
       action: 'sync_job.run',
       resourceType: 'sync_job_run',
@@ -231,6 +238,7 @@ export class SyncJobsService {
     const triggerToken = await this.syncJobTriggerService.rotate(id);
 
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'sync_job.rotate_trigger_token',
       resourceType: 'sync_job',

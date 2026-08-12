@@ -30,6 +30,7 @@ export class NotificationChannelsService {
       data: { ...dto, workspaceId: scope.workspaceId as string },
     });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'notification_channel.create',
       resourceType: 'notification_channel',
@@ -43,6 +44,7 @@ export class NotificationChannelsService {
     await this.assertOwned(id, scope);
     const updated = await this.prisma.notificationChannel.update({ where: { id }, data: dto });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'notification_channel.update',
       resourceType: 'notification_channel',
@@ -56,6 +58,7 @@ export class NotificationChannelsService {
     await this.assertOwned(id, scope);
     const deleted = await this.prisma.notificationChannel.delete({ where: { id } });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'notification_channel.delete',
       resourceType: 'notification_channel',
@@ -68,6 +71,7 @@ export class NotificationChannelsService {
     await this.assertOwned(id, scope);
     const channel = await this.prisma.notificationChannel.findUniqueOrThrow({ where: { id } });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'notification_channel.test',
       resourceType: 'notification_channel',

@@ -38,7 +38,7 @@ export class WorkspacesController {
 
   // name and ssoGroupClaim (the Authentik group that auto-grants membership
   // on SSO login) only - see WorkspacesService.update for what's deliberately
-  // not editable here.
+  // not editable here. Owner-or-platform-admin, enforced inside the service.
   @Patch(':id')
   update(
     @Param('id') id: string,
@@ -46,8 +46,7 @@ export class WorkspacesController {
     @CurrentWorkspace() scope: WorkspaceScope,
     @Req() req: AuthenticatedRequest,
   ) {
-    assertPlatformAdmin(scope);
-    return this.workspacesService.update(id, dto, req.user?.userId);
+    return this.workspacesService.update(id, dto, scope, req.user?.userId);
   }
 
   // Lets a platform admin find a userId to pass to addMember() below -
@@ -99,5 +98,16 @@ export class WorkspacesController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.workspacesService.removeMember(id, userId, scope, req.user?.userId);
+  }
+
+  // Owner-or-platform-admin, and only once genuinely empty - see
+  // WorkspacesService.deleteWorkspace.
+  @Delete(':id')
+  deleteWorkspace(
+    @Param('id') id: string,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.workspacesService.deleteWorkspace(id, scope, req.user?.userId);
   }
 }

@@ -38,6 +38,13 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       ENABLE_DEFAULT_ADMIN: ${ENABLE_DEFAULT_ADMIN:-true}
       PORT: 3001
+      # .git is excluded from the build context (see ../.dockerignore), so
+      # getControlPlaneVersion() can't detect the commit in-container and
+      # falls back to a bare "unknown" - reusing the same GITHUB_SHA that
+      # deploy.sh computes on the host for the web app's NEXT_PUBLIC_APP_VERSION
+      # below keeps the agent-version comparison and the footer badge showing
+      # the exact same commit instead of two independently-drifting values.
+      TARMAC_CONTROL_VERSION: ${GITHUB_SHA:-dev-local}
       FRONTEND_URL: ${FRONTEND_URL:-https://tarmac.casterot.com}
       AUTHENTIK_ISSUER_URL: ${AUTHENTIK_ISSUER_URL:-https://auth.casterot.com/application/o/tarmac/}
       AUTHENTIK_CLIENT_ID: ${AUTHENTIK_CLIENT_ID:-}

@@ -1,13 +1,32 @@
 'use client';
 
-import { Building2 } from 'lucide-react';
+import Link from 'next/link';
 import { useWorkspace } from '../lib/workspace-context';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/select';
 
-// Renders as a plain label for the common case (exactly one accessible
-// workspace) so nothing changes visually for most users - a real dropdown
-// only appears once there's something to switch between (platform admins,
-// or a future non-admin member of more than one workspace).
+function initials(name: string): string {
+  const letters = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase() ?? '')
+    .join('');
+  return letters || '?';
+}
+
+function WorkspaceTile({ name }: { name: string }) {
+  return (
+    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600/90 to-indigo-600/90 text-[11px] font-semibold text-white shadow-glow">
+      {initials(name)}
+    </span>
+  );
+}
+
+// Renders as a small "current workspace" identity card in the sidebar
+// header, not a bare dropdown - always shows the active workspace's name
+// prominently since every page is now scoped under it (/<slug>/dashboard/...).
+// A single-workspace account still gets the card (just non-interactive,
+// linking to the picker) so the visual weight is consistent either way.
 export function WorkspaceSwitcher() {
   const { workspaces, currentWorkspace, currentWorkspaceId, switchWorkspace, isLoading } = useWorkspace();
 
@@ -15,21 +34,32 @@ export function WorkspaceSwitcher() {
     return null;
   }
 
+  const activeName = currentWorkspace?.name ?? workspaces[0].name;
+
   if (workspaces.length === 1) {
     return (
-      <div className="mt-3 flex items-center gap-1.5 text-[11px] text-zinc-500">
-        <Building2 className="h-3 w-3" />
-        <span className="truncate">{currentWorkspace?.name ?? workspaces[0].name}</span>
-      </div>
+      <Link
+        href="/workspaces"
+        className="mt-3 flex items-center gap-2.5 rounded-xl border border-white/[0.06] bg-white/[0.02] px-2.5 py-2 transition-colors hover:border-white/[0.12] hover:bg-white/[0.05]"
+      >
+        <WorkspaceTile name={activeName} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-xs font-medium text-zinc-200">{activeName}</span>
+          <span className="block text-[10px] text-zinc-500">Workspace actif</span>
+        </span>
+      </Link>
     );
   }
 
   return (
     <div className="mt-3">
       <Select value={currentWorkspaceId ?? undefined} onValueChange={switchWorkspace}>
-        <SelectTrigger className="h-8 gap-1.5 border-white/[0.06] bg-white/[0.03] px-2.5 text-xs">
-          <Building2 className="h-3 w-3 shrink-0 text-zinc-500" />
-          <SelectValue placeholder="Workspace" />
+        <SelectTrigger className="h-auto w-full gap-2.5 rounded-xl border-white/[0.06] bg-white/[0.02] px-2.5 py-2 hover:border-white/[0.12] hover:bg-white/[0.05] [&>span]:line-clamp-none">
+          <WorkspaceTile name={activeName} />
+          <span className="min-w-0 flex-1 text-left">
+            <span className="block truncate text-xs font-medium text-zinc-200">{activeName}</span>
+            <span className="block text-[10px] text-zinc-500">Changer de workspace</span>
+          </span>
         </SelectTrigger>
         <SelectContent>
           {workspaces.map((workspace) => (

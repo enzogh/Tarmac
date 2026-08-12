@@ -14,18 +14,17 @@ import {
   RefreshCcw,
   Server,
 } from 'lucide-react';
-import { api, NodeMetricSample } from '../../lib/api';
-import { usePolling } from '../../lib/hooks/usePolling';
-import { DashboardLayout } from '../../components/DashboardLayout';
-import { PageHeader } from '../../components/PageHeader';
-import { ServerTrendCard } from '../../components/ServerTrendCard';
-import { FleetPerformanceChart, NetworkThroughputChart, StorageBreakdownChart } from '../../components/dashboard-charts';
-import { StatCard, Badge } from '../../components/ui';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
-import { Progress } from '../../components/ui/progress';
-import { CardListSkeleton, ChartCardSkeleton, ListSkeleton, StatCardSkeleton } from '../../components/ui/skeleton';
-import { readNodeLabels } from '../../lib/node-labels';
-import { SectionLabel } from '../../components/SectionLabel';
+import { api, NodeMetricSample } from '../../../lib/api';
+import { usePolling } from '../../../lib/hooks/usePolling';
+import { PageHeader } from '../../../components/PageHeader';
+import { ServerTrendCard } from '../../../components/ServerTrendCard';
+import { FleetPerformanceChart, NetworkThroughputChart, StorageBreakdownChart } from '../../../components/dashboard-charts';
+import { StatCard, Badge } from '../../../components/ui';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Progress } from '../../../components/ui/progress';
+import { CardListSkeleton, ChartCardSkeleton, ListSkeleton, StatCardSkeleton } from '../../../components/ui/skeleton';
+import { readNodeLabels } from '../../../lib/node-labels';
+import { SectionLabel } from '../../../components/SectionLabel';
 
 const formatTime = (iso: string) => new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
@@ -157,7 +156,6 @@ export default function OverviewPage() {
   );
 
   return (
-    <DashboardLayout>
       <div className="space-y-10">
         <PageHeader
           icon={LayoutDashboard}
@@ -415,6 +413,5 @@ export default function OverviewPage() {
           )}
         </section>
       </div>
-    </DashboardLayout>
   );
 }

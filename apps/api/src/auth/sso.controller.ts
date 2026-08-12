@@ -128,7 +128,7 @@ export class SsoController {
 
       return silent
         ? res.redirect(this.loginRedirect({ sso: 'ready' }))
-        : res.redirect(`${this.frontendUrl()}/dashboard`);
+        : res.redirect(`${this.frontendUrl()}/workspaces`);
     } catch (error) {
       this.logger.warn(`Authentik SSO callback failed: ${error instanceof Error ? error.message : error}`);
       return res.redirect(this.loginRedirect({ sso: 'error', reason: 'callback_failed' }));

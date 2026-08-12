@@ -233,6 +233,7 @@ export class MigrationsService {
       include: { sourceNode: true, targetNode: true },
     });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'migration.create',
       resourceType: 'migration',
@@ -329,6 +330,7 @@ export class MigrationsService {
       include: { sourceNode: true, targetNode: true },
     });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'migration.update',
       resourceType: 'migration',
@@ -498,6 +500,7 @@ export class MigrationsService {
     }
 
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'migration.start',
       resourceType: 'migration',
@@ -538,6 +541,7 @@ export class MigrationsService {
       },
     });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'migration.retry',
       resourceType: 'migration',
@@ -583,6 +587,7 @@ export class MigrationsService {
     });
 
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'migration.stop',
       resourceType: 'migration',
@@ -604,6 +609,7 @@ export class MigrationsService {
 
     await this.prisma.migrationTask.delete({ where: { id } });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'migration.delete',
       resourceType: 'migration',

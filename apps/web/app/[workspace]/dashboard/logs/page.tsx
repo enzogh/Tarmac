@@ -3,36 +3,37 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Download, History, PauseCircle, PlayCircle, ScrollText, Search, Server } from 'lucide-react';
 import Link from 'next/link';
-import { api, AgentLogItem, AuditLogItem } from '../../../lib/api';
-import { usePolling } from '../../../lib/hooks/usePolling';
-import { useLiveSocket } from '../../../lib/hooks/useLiveSocket';
-import { DashboardLayout } from '../../../components/DashboardLayout';
-import { PageHeader } from '../../../components/PageHeader';
-import { Callout } from '../../../components/Callout';
-import { SectionLabel } from '../../../components/SectionLabel';
-import { Badge } from '../../../components/ui';
-import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
-import { Button } from '../../../components/ui/button';
-import { Input } from '../../../components/ui/input';
-import { Label } from '../../../components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
-import { ListSkeleton } from '../../../components/ui/skeleton';
+import { useParams } from 'next/navigation';
+import { api, AgentLogItem, AuditLogItem } from '../../../../lib/api';
+import { usePolling } from '../../../../lib/hooks/usePolling';
+import { useLiveSocket } from '../../../../lib/hooks/useLiveSocket';
+import { PageHeader } from '../../../../components/PageHeader';
+import { Callout } from '../../../../components/Callout';
+import { SectionLabel } from '../../../../components/SectionLabel';
+import { Badge } from '../../../../components/ui';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../../components/ui/card';
+import { Button } from '../../../../components/ui/button';
+import { Input } from '../../../../components/ui/input';
+import { Label } from '../../../../components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../../components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../../components/ui/tabs';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../../components/ui/table';
+import { ListSkeleton } from '../../../../components/ui/skeleton';
 
-// resourceType -> where an audit entry's affected resource can be reviewed.
-// notification_channel and share_client have no dedicated page yet.
+// resourceType -> where an audit entry's affected resource can be reviewed,
+// relative to the active workspace's /<slug>/dashboard root (see usage
+// below). notification_channel and share_client have no dedicated page yet.
 const RESOURCE_ROUTES: Record<string, string> = {
-  node: '/dashboard/infrastructure',
-  migration: '/dashboard/migrations',
-  mount: '/dashboard/mounts',
-  share: '/dashboard/mounts',
-  pool: '/dashboard/storage',
-  pool_member: '/dashboard/storage',
-  sync_job: '/dashboard/replication',
-  sync_job_run: '/dashboard/replication',
-  alert: '/dashboard/alerts',
-  alert_rule: '/dashboard/alerts',
+  node: '/infrastructure',
+  migration: '/migrations',
+  mount: '/mounts',
+  share: '/mounts',
+  pool: '/storage',
+  pool_member: '/storage',
+  sync_job: '/replication',
+  sync_job_run: '/replication',
+  alert: '/alerts',
+  alert_rule: '/alerts',
 };
 
 const LEVEL_TEXT_CLASS: Record<string, string> = {
@@ -84,6 +85,8 @@ function matchesAuditFilters(entry: AuditLogItem, filters: AuditFilters) {
 }
 
 function ActionsTab() {
+  const params = useParams<{ workspace: string }>();
+  const slug = params.workspace;
   const [items, setItems] = useState<AuditLogItem[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -241,7 +244,8 @@ function ActionsTab() {
                 </TableHeader>
                 <TableBody>
                   {items.map((entry) => {
-                    const route = RESOURCE_ROUTES[entry.resourceType];
+                    const routeSuffix = RESOURCE_ROUTES[entry.resourceType];
+                    const route = routeSuffix ? `/${slug}/dashboard${routeSuffix}` : null;
                     return (
                       <Fragment key={entry.id}>
                         <TableRow>
@@ -562,7 +566,6 @@ function AgentsTab() {
 
 export default function LogsPage() {
   return (
-    <DashboardLayout>
       <div className="space-y-8">
         <PageHeader
           icon={ScrollText}
@@ -596,6 +599,5 @@ export default function LogsPage() {
           </TabsContent>
         </Tabs>
       </div>
-    </DashboardLayout>
   );
 }

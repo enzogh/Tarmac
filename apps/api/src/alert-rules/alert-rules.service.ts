@@ -29,6 +29,7 @@ export class AlertRulesService {
   async create(dto: CreateAlertRuleDto, scope: WorkspaceScope, actorUserId?: string) {
     const created = await this.prisma.alertRule.create({ data: { ...dto, workspaceId: scope.workspaceId as string } });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'alert_rule.create',
       resourceType: 'alert_rule',
@@ -42,6 +43,7 @@ export class AlertRulesService {
     await this.assertOwned(id, scope);
     const updated = await this.prisma.alertRule.update({ where: { id }, data: dto });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'alert_rule.update',
       resourceType: 'alert_rule',
@@ -55,6 +57,7 @@ export class AlertRulesService {
     await this.assertOwned(id, scope);
     const deleted = await this.prisma.alertRule.delete({ where: { id } });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'alert_rule.delete',
       resourceType: 'alert_rule',

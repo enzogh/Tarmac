@@ -32,6 +32,7 @@ export class AlertsService {
       include: { node: true, rule: true },
     });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'alert.create',
       resourceType: 'alert',
@@ -48,6 +49,7 @@ export class AlertsService {
       data: { status: 'acknowledged', acknowledgedAt: new Date() },
     });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'alert.ack',
       resourceType: 'alert',
@@ -63,6 +65,7 @@ export class AlertsService {
       data: { status: 'resolved', resolvedAt: new Date() },
     });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'alert.resolve',
       resourceType: 'alert',
@@ -75,6 +78,7 @@ export class AlertsService {
     await this.assertOwned(id, scope);
     const deleted = await this.prisma.alert.delete({ where: { id } });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'alert.delete',
       resourceType: 'alert',
@@ -89,6 +93,7 @@ export class AlertsService {
       where: { id: { in: uniqueIds }, ...scopeWhere(scope) },
     });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'alert.bulk_delete',
       resourceType: 'alert',

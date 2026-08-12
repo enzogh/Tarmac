@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { Search, type LucideIcon } from 'lucide-react';
 import { HardDrive, Layers, Server } from 'lucide-react';
 import { api } from '../lib/api';
-import { NAV_ITEMS } from '../lib/nav-items';
+import { buildNavItems } from '../lib/nav-items';
 import { Dialog, DialogContent } from './ui/dialog';
 
 type PaletteResult = {
@@ -16,16 +16,21 @@ type PaletteResult = {
   icon: LucideIcon;
 };
 
-const NAV_RESULTS: PaletteResult[] = NAV_ITEMS.map((item) => ({
-  key: `nav:${item.href}`,
-  label: item.label,
-  sublabel: 'Page',
-  href: item.href,
-  icon: item.icon,
-}));
-
 export function CommandPalette() {
   const router = useRouter();
+  const params = useParams<{ workspace: string }>();
+  const slug = params.workspace;
+  const navResults = useMemo<PaletteResult[]>(
+    () =>
+      buildNavItems(slug).map((item) => ({
+        key: `nav:${item.href}`,
+        label: item.label,
+        sublabel: 'Page',
+        href: item.href,
+        icon: item.icon,
+      })),
+    [slug],
+  );
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -65,21 +70,21 @@ export function CommandPalette() {
             key: `node:${node.id}`,
             label: node.name,
             sublabel: `Nœud · ${node.role}`,
-            href: '/dashboard/infrastructure',
+            href: `/${slug}/dashboard/infrastructure`,
             icon: Server,
           })),
           ...mounts.map((mount) => ({
             key: `mount:${mount.id}`,
             label: mount.name,
             sublabel: `Montage · ${mount.targetPath}`,
-            href: '/dashboard/mounts',
+            href: `/${slug}/dashboard/mounts`,
             icon: HardDrive,
           })),
           ...pools.map((pool) => ({
             key: `pool:${pool.id}`,
             label: pool.name,
             sublabel: `Pool · ${pool.strategy}`,
-            href: '/dashboard/storage',
+            href: `/${slug}/dashboard/storage`,
             icon: Layers,
           })),
         ]);
@@ -92,11 +97,11 @@ export function CommandPalette() {
   }, [open, loaded]);
 
   const results = useMemo(() => {
-    const all = [...NAV_RESULTS, ...entityResults];
+    const all = [...navResults, ...entityResults];
     const q = query.trim().toLowerCase();
     if (!q) return all.slice(0, 8);
     return all.filter((item) => item.label.toLowerCase().includes(q) || item.sublabel?.toLowerCase().includes(q)).slice(0, 8);
-  }, [query, entityResults]);
+  }, [query, entityResults, navResults]);
 
   const go = (result: PaletteResult) => {
     setOpen(false);

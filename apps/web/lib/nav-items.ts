@@ -9,51 +9,60 @@ import {
   Network,
   HardDrive,
   ScrollText,
-  UserCog,
+  Activity,
+  Settings,
   type LucideIcon,
 } from 'lucide-react';
 
 export type NavItem = { href: string; label: string; icon: LucideIcon; exact?: boolean };
 // A null label renders as an ungrouped, non-collapsible top-level item
-// (e.g. "Vue d'ensemble"); a real label renders as a collapsible section
-// (see NavGroupSection in DashboardLayout.tsx).
-export type NavGroup = { label: string | null; items: NavItem[] };
+// (e.g. "Vue d'ensemble"); a real label (plus its own `icon`) renders as a
+// collapsible section (see NavGroupSection in DashboardLayout.tsx).
+export type NavGroup = { label: string | null; icon?: LucideIcon; items: NavItem[] };
 
-export const NAV_GROUPS: NavGroup[] = [
-  {
-    label: null,
-    items: [
-      { href: '/workspaces', label: 'Mes workspaces', icon: LayoutGrid },
-      { href: '/dashboard', label: "Vue d'ensemble", icon: LayoutDashboard, exact: true },
-    ],
-  },
-  {
-    label: 'Infrastructure',
-    items: [
-      { href: '/dashboard/infrastructure', label: 'Nœuds', icon: Server },
-      { href: '/dashboard/network', label: 'Réseau', icon: Network },
-    ],
-  },
-  {
-    label: 'Stockage',
-    items: [
-      { href: '/dashboard/storage', label: 'Stockage', icon: Database },
-      { href: '/dashboard/mounts', label: 'Montages', icon: HardDrive },
-      { href: '/dashboard/replication', label: 'Réplication', icon: RefreshCw },
-      { href: '/dashboard/migrations', label: 'Migrations', icon: ArrowRightLeft },
-    ],
-  },
-  {
-    label: 'Supervision',
-    items: [
-      { href: '/dashboard/alerts', label: 'Alertes', icon: Bell },
-      { href: '/dashboard/logs', label: 'Journal', icon: ScrollText },
-    ],
-  },
-  {
-    label: 'Compte',
-    items: [{ href: '/dashboard/profile', label: 'Profil admin', icon: UserCog }],
-  },
-];
+// Every dashboard page now lives under /<workspace-slug>/dashboard/... - the
+// nav is built per-render from the active workspace's slug so links always
+// point at the workspace currently open, instead of a fixed global path.
+export function buildNavGroups(slug: string): NavGroup[] {
+  const base = `/${slug}/dashboard`;
+  return [
+    {
+      label: null,
+      items: [
+        { href: '/workspaces', label: 'Mes workspaces', icon: LayoutGrid },
+        { href: base, label: "Vue d'ensemble", icon: LayoutDashboard, exact: true },
+        { href: `${base}/settings`, label: 'Paramètres', icon: Settings },
+      ],
+    },
+    {
+      label: 'Infrastructure',
+      icon: Server,
+      items: [
+        { href: `${base}/infrastructure`, label: 'Nœuds', icon: Server },
+        { href: `${base}/network`, label: 'Réseau', icon: Network },
+      ],
+    },
+    {
+      label: 'Stockage',
+      icon: Database,
+      items: [
+        { href: `${base}/storage`, label: 'Stockage', icon: Database },
+        { href: `${base}/mounts`, label: 'Montages', icon: HardDrive },
+        { href: `${base}/replication`, label: 'Réplication', icon: RefreshCw },
+        { href: `${base}/migrations`, label: 'Migrations', icon: ArrowRightLeft },
+      ],
+    },
+    {
+      label: 'Supervision',
+      icon: Activity,
+      items: [
+        { href: `${base}/alerts`, label: 'Alertes', icon: Bell },
+        { href: `${base}/logs`, label: 'Journal', icon: ScrollText },
+      ],
+    },
+  ];
+}
 
-export const NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap((group) => group.items);
+export function buildNavItems(slug: string): NavItem[] {
+  return buildNavGroups(slug).flatMap((group) => group.items);
+}

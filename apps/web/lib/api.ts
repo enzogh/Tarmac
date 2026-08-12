@@ -19,7 +19,7 @@ export type NodeItem = {
   externalIp?: string | null;
   agentVersion?: string | null;
   agentVersionAt?: string | null;
-  controlVersion?: string;
+  controlVersion?: string | null;
   agentUpToDate?: boolean | null;
   mutedUntil?: string | null;
   overlayIsGateway?: boolean;
@@ -828,9 +828,10 @@ export const api = {
       }),
     removeMember: (id: string, userId: string) =>
       request<{ success: boolean }>(`/api/v1/workspaces/${id}/members/${userId}`, { method: 'DELETE' }),
+    delete: (id: string) => request<{ success: boolean }>(`/api/v1/workspaces/${id}`, { method: 'DELETE' }),
   },
 
   system: {
-    version: () => request<{ version: string }>('/api/v1/system/version'),
+    version: () => request<{ version: string | null }>('/api/v1/system/version'),
   },
 };

@@ -13,15 +13,6 @@ export class AuditLogsService {
     private readonly live: LiveWsServer,
   ) {}
 
-  // NOTE: log() below does not yet stamp workspaceId on new rows (it stays
-  // null - AuditLog.workspaceId is deliberately nullable in the Phase 0
-  // schema for exactly this reason). The Phase 0 migration backfilled every
-  // *pre-existing* row into the Default workspace, so historical entries are
-  // correctly scoped, but entries logged between the Phase 0 and Phase 1
-  // deploys - and any future ones, until a follow-up threads a workspace id
-  // through this service's ~40 call sites across the codebase - will have a
-  // null workspaceId and so be invisible to non-admin members (safe: no
-  // cross-tenant leak, just an incomplete view for now).
   async list(
     params: {
       before?: Date;
@@ -52,7 +43,7 @@ export class AuditLogsService {
                 ],
               }
             : {},
-          scope.isPlatformAdmin ? {} : { workspaceId: scope.workspaceId },
+          { workspaceId: scope.workspaceId },
         ],
       },
       orderBy: { createdAt: 'desc' },
@@ -69,14 +60,21 @@ export class AuditLogsService {
     return this.prisma.auditLog.findMany({
       where: {
         createdAt: { gte: params.from, lte: params.to },
-        ...(scope.isPlatformAdmin ? {} : { workspaceId: scope.workspaceId }),
+        workspaceId: scope.workspaceId,
       },
       orderBy: { createdAt: 'asc' },
       take: EXPORT_ROW_CAP,
     });
   }
 
+  // workspaceId is required (not inferred from a WorkspaceScope here) since
+  // several callers log actions with no scope in context at all - a
+  // webhook-triggered sync job run, for instance - so every call site
+  // passes it explicitly from whatever it already has on hand (a resource's
+  // own workspaceId, or scope.workspaceId when a human request is what
+  // triggered the action).
   async log(input: {
+    workspaceId: string;
     actorUserId?: string;
     action: string;
     resourceType: string;

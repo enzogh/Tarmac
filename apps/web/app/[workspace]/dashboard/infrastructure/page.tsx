@@ -21,37 +21,36 @@ import {
   Thermometer,
   Trash2,
 } from 'lucide-react';
-import { api, DirectoryScanEntry, NodeActivityItem, NodeMetricSample, SmartHistoryPoint } from '../../../lib/api';
-import { usePolling } from '../../../lib/hooks/usePolling';
-import { CardListSkeleton, ChartCardSkeleton, StatCardSkeleton } from '../../../components/ui/skeleton';
-import { GeoInfo, flagFromCountryCode, getGeoInfo, normalizeCountryCode, parseHostFromEndpoint } from '../../../lib/geo';
-import { readNodeLabels, writeNodeLabels } from '../../../lib/node-labels';
-import { meterTone } from '../../../lib/utils';
-import { DashboardLayout } from '../../../components/DashboardLayout';
-import { PageHeader } from '../../../components/PageHeader';
-import { Callout } from '../../../components/Callout';
-import { SmartTrendChart } from '../../../components/dashboard-charts';
-import { ServerTrendCard } from '../../../components/ServerTrendCard';
-import { NodeComparisonChart } from '../../../components/dashboard-charts';
-import { StatCard, Badge, NodeLabelBadges } from '../../../components/ui';
-import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
-import { Button } from '../../../components/ui/button';
-import { Input } from '../../../components/ui/input';
-import { Label } from '../../../components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
-import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
+import { api, DirectoryScanEntry, NodeActivityItem, NodeMetricSample, SmartHistoryPoint } from '../../../../lib/api';
+import { usePolling } from '../../../../lib/hooks/usePolling';
+import { CardListSkeleton, ChartCardSkeleton, StatCardSkeleton } from '../../../../components/ui/skeleton';
+import { GeoInfo, flagFromCountryCode, getGeoInfo, normalizeCountryCode, parseHostFromEndpoint } from '../../../../lib/geo';
+import { readNodeLabels, writeNodeLabels } from '../../../../lib/node-labels';
+import { meterTone } from '../../../../lib/utils';
+import { PageHeader } from '../../../../components/PageHeader';
+import { Callout } from '../../../../components/Callout';
+import { SmartTrendChart } from '../../../../components/dashboard-charts';
+import { ServerTrendCard } from '../../../../components/ServerTrendCard';
+import { NodeComparisonChart } from '../../../../components/dashboard-charts';
+import { StatCard, Badge, NodeLabelBadges } from '../../../../components/ui';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../../components/ui/card';
+import { Button } from '../../../../components/ui/button';
+import { Input } from '../../../../components/ui/input';
+import { Label } from '../../../../components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../../components/ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../../components/ui/tabs';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from '../../../components/ui/dialog';
-import { NodeOnboardingModal } from '../../../components/NodeOnboardingModal';
-import { Progress } from '../../../components/ui/progress';
-import { DirectoryBrowser } from '../../../components/ui/directory-browser';
-import { SectionLabel } from '../../../components/SectionLabel';
+} from '../../../../components/ui/dialog';
+import { NodeOnboardingModal } from '../../../../components/NodeOnboardingModal';
+import { Progress } from '../../../../components/ui/progress';
+import { DirectoryBrowser } from '../../../../components/ui/directory-browser';
+import { SectionLabel } from '../../../../components/SectionLabel';
 
 const formatMbps = (value: number) => `${((value * 8) / 1_000_000).toFixed(2)} MB/s`;
 
@@ -100,7 +99,10 @@ export default function InfrastructurePage() {
   // "réf. inconnue" string) - this is the exact same value the bottom-right
   // global version badge shows (see VersionBadge.tsx), so the two can never
   // disagree about what "the current version" is.
-  const { data: systemVersion } = usePolling('system:version', api.system.version, { intervalMs: 300000, redirectOnError: false });
+  const { data: systemVersion, isLoading: systemVersionLoading } = usePolling('system:version', api.system.version, {
+    intervalMs: 300000,
+    redirectOnError: false,
+  });
   const controlVersion = systemVersion?.version ?? null;
 
   const sortedByCpu = useMemo(
@@ -444,7 +446,6 @@ export default function InfrastructurePage() {
   };
 
   return (
-    <DashboardLayout>
       <div className="space-y-8">
         <PageHeader
           icon={Server}
@@ -709,7 +710,7 @@ export default function InfrastructurePage() {
                   </TooltipTrigger>
                   <TooltipContent>
                     Recompile + redémarre l’agent sur chaque nœud en ligne dont la version diffère du contrôleur
-                    ({controlVersion ? `réf. ${controlVersion}` : 'chargement de la référence…'})
+                    ({controlVersion ? `réf. ${controlVersion}` : systemVersionLoading ? 'chargement de la référence…' : 'référence indisponible sur ce contrôleur'})
                   </TooltipContent>
                 </Tooltip>
                 <NodeOnboardingModal onCreated={refreshNodes} />
@@ -1195,6 +1196,5 @@ export default function InfrastructurePage() {
           </DialogContent>
         </Dialog>
       </div>
-    </DashboardLayout>
   );
 }

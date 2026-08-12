@@ -348,17 +348,24 @@ export class AgentsService implements OnModuleInit {
     }
   }
 
-  onAgentLog(payload: AgentLogPayload) {
-    if (!payload.nodeId || !payload.message) return;
+  // `nodeId` is the identity the WebSocket connection authenticated as
+  // (verified against that node's own token at handshake time - see
+  // AgentsWsServer.attachClient) - NOT payload.nodeId, which is attacker-
+  // controlled: a compromised agent could otherwise claim to be any other
+  // node (in any workspace) simply by putting a different nodeId in the
+  // message body. Any `nodeId` field still present in the payload itself is
+  // ignored on purpose.
+  onAgentLog(nodeId: string, payload: AgentLogPayload) {
+    if (!payload.message) return;
     return this.agentLogsService.create({
-      nodeId: payload.nodeId,
+      nodeId,
       level: payload.level || 'info',
       message: payload.message,
     });
   }
 
-  async onHeartbeat(payload: HeartbeatPayload) {
-    const { nodeId, metrics, overlay, linkMetrics, version } = payload;
+  async onHeartbeat(nodeId: string, payload: HeartbeatPayload) {
+    const { metrics, overlay, linkMetrics, version } = payload;
     const now = new Date();
     const versionFields = version ? { agentVersion: version, agentVersionAt: now } : {};
 
@@ -458,10 +465,10 @@ export class AgentsService implements OnModuleInit {
     }
   }
 
-  async onStateReport(payload: StateReportPayload) {
+  async onStateReport(nodeId: string, payload: StateReportPayload) {
     for (const disk of payload.disks) {
       await this.prisma.disk.upsert({
-        where: { nodeId_name: { nodeId: payload.nodeId, name: disk.name } },
+        where: { nodeId_name: { nodeId, name: disk.name } },
         update: {
           mountPath: disk.mountPath,
           type: disk.type,
@@ -471,7 +478,7 @@ export class AgentsService implements OnModuleInit {
           physicalDisks: disk.physicalDisks ?? [],
         },
         create: {
-          nodeId: payload.nodeId,
+          nodeId,
           name: disk.name,
           mountPath: disk.mountPath,
           type: disk.type,
@@ -488,7 +495,7 @@ export class AgentsService implements OnModuleInit {
     if (payload.disks.length > 0) {
       await this.prisma.disk.deleteMany({
         where: {
-          nodeId: payload.nodeId,
+          nodeId,
           name: { notIn: payload.disks.map((disk) => disk.name) },
         },
       });
@@ -497,7 +504,7 @@ export class AgentsService implements OnModuleInit {
     if (payload.smartReports.length > 0) {
       await this.prisma.smartReport.createMany({
         data: payload.smartReports.map((report) => ({
-          nodeId: payload.nodeId,
+          nodeId,
           diskName: report.diskName,
           temperatureC: report.temperatureC,
           reallocatedSectors: report.reallocatedSectors,
@@ -510,7 +517,7 @@ export class AgentsService implements OnModuleInit {
       for (const report of payload.smartReports) {
         if (report.overall !== 'warning' && report.overall !== 'critical') continue;
         await this.createSmartHealthAlert({
-          nodeId: payload.nodeId,
+          nodeId,
           diskName: report.diskName,
           overall: report.overall,
           temperatureC: report.temperatureC,
@@ -519,6 +526,29 @@ export class AgentsService implements OnModuleInit {
         });
       }
     }
+  }
+
+  // `result.resourceId`/`progress.resourceId` are attacker-controlled (an
+  // agent chooses what it reports finishing) - unlike heartbeat/state_report/
+  // log above, `command_result`/`command_progress` DO already use the
+  // handshake-verified `nodeId` for the calling node's own identity, but
+  // several branches then blindly `update()` a share/mount/pool
+  // member/sync job/migration purely by that attacker-supplied id, with no
+  // check that the resource actually belongs to the calling node's
+  // workspace. A compromised agent could otherwise flip the status of (or
+  // attach a fabricated failure/log message to) any resource in any other
+  // workspace just by guessing/knowing its id. This resolves the calling
+  // node's own workspace once so each branch below can verify the target
+  // resource is actually theirs before mutating it.
+  private async resolveCallingNodeWorkspace(nodeId: string): Promise<string | null> {
+    const node = await this.prisma.node.findUnique({ where: { id: nodeId }, select: { workspaceId: true } });
+    return node?.workspaceId ?? null;
+  }
+
+  private logCrossWorkspaceAttempt(nodeId: string, resourceType: string, resourceId: string) {
+    this.logger.warn(
+      `Node ${nodeId} sent a command_result for ${resourceType}/${resourceId} outside its own workspace - ignored`,
+    );
   }
 
   async onCommandResult(nodeId: string, result: CommandResultPayload) {
@@ -540,13 +570,34 @@ export class AgentsService implements OnModuleInit {
       }${result.message ? ` — ${result.message}` : ''}`,
     });
     const status = result.success ? 'active' : 'error';
+    const callingWorkspaceId = await this.resolveCallingNodeWorkspace(nodeId);
+    if (!callingWorkspaceId) {
+      this.logger.warn(`Command result from unknown node ${nodeId} - ignored`);
+      return;
+    }
 
     if (result.resourceType === 'share') {
+      const share = await this.prisma.share.findUnique({
+        where: { id: result.resourceId },
+        select: { workspaceId: true },
+      });
+      if (!share || share.workspaceId !== callingWorkspaceId) {
+        this.logCrossWorkspaceAttempt(nodeId, result.resourceType, result.resourceId);
+        return;
+      }
       await this.sharesService.setStatus(result.resourceId, status);
       return;
     }
 
     if (result.resourceType === 'mount') {
+      const mount = await this.prisma.mount.findUnique({
+        where: { id: result.resourceId },
+        select: { workspaceId: true },
+      });
+      if (!mount || mount.workspaceId !== callingWorkspaceId) {
+        this.logCrossWorkspaceAttempt(nodeId, result.resourceType, result.resourceId);
+        return;
+      }
       const updatedMount = await this.mountsService.setStatus(result.resourceId, status, result.message);
       if (!result.success) {
         const errorMessage = this.normalizeFailureMessage(result.message);
@@ -578,14 +629,28 @@ export class AgentsService implements OnModuleInit {
     }
 
     if (result.resourceType === 'pool_member') {
-      const [poolId, nodeId] = result.resourceId.split(':');
-      if (poolId && nodeId) {
-        await this.poolsService.setMemberStatus(poolId, nodeId, result.success ? 'active' : 'error');
+      // resourceId is "<poolId>:<nodeId>" - the node segment must be the
+      // calling node itself, not just any node in the same workspace, since
+      // a pool member's status can only legitimately be reported by that
+      // exact member.
+      const [poolId, memberNodeId] = result.resourceId.split(':');
+      if (poolId && memberNodeId === nodeId) {
+        await this.poolsService.setMemberStatus(poolId, memberNodeId, result.success ? 'active' : 'error');
+      } else if (poolId && memberNodeId) {
+        this.logCrossWorkspaceAttempt(nodeId, result.resourceType, result.resourceId);
       }
       return;
     }
 
     if (result.resourceType === 'sync_job_run') {
+      const existingRun = await this.prisma.syncJobRun.findUnique({
+        where: { id: result.resourceId },
+        select: { syncJob: { select: { workspaceId: true } } },
+      });
+      if (!existingRun || existingRun.syncJob.workspaceId !== callingWorkspaceId) {
+        this.logCrossWorkspaceAttempt(nodeId, result.resourceType, result.resourceId);
+        return;
+      }
       const run = await this.prisma.syncJobRun.update({
         where: { id: result.resourceId },
         data: {
@@ -616,7 +681,10 @@ export class AgentsService implements OnModuleInit {
 
     if (result.resourceType === 'directory_list') {
       const pending = this.pendingDirectoryRequests.get(result.resourceId);
-      if (!pending) return;
+      if (!pending || pending.nodeId !== nodeId) {
+        if (pending) this.logCrossWorkspaceAttempt(nodeId, result.resourceType, result.resourceId);
+        return;
+      }
 
       clearTimeout(pending.timeout);
       this.pendingDirectoryRequests.delete(result.resourceId);
@@ -636,7 +704,10 @@ export class AgentsService implements OnModuleInit {
 
     if (result.resourceType === 'directory_scan') {
       const pending = this.pendingDirectoryScanRequests.get(result.resourceId);
-      if (!pending) return;
+      if (!pending || pending.nodeId !== nodeId) {
+        if (pending) this.logCrossWorkspaceAttempt(nodeId, result.resourceType, result.resourceId);
+        return;
+      }
 
       clearTimeout(pending.timeout);
       this.pendingDirectoryScanRequests.delete(result.resourceId);
@@ -665,7 +736,10 @@ export class AgentsService implements OnModuleInit {
 
     if (result.resourceType === 'traceroute') {
       const pending = this.pendingTracerouteRequests.get(result.resourceId);
-      if (!pending) return;
+      if (!pending || pending.nodeId !== nodeId) {
+        if (pending) this.logCrossWorkspaceAttempt(nodeId, result.resourceType, result.resourceId);
+        return;
+      }
 
       clearTimeout(pending.timeout);
       this.pendingTracerouteRequests.delete(result.resourceId);
@@ -696,6 +770,14 @@ export class AgentsService implements OnModuleInit {
 
     if (result.resourceType === 'migration') {
       if (result.command === 'stop_rsync') {
+        return;
+      }
+      const existingMigration = await this.prisma.migrationTask.findUnique({
+        where: { id: result.resourceId },
+        select: { workspaceId: true },
+      });
+      if (!existingMigration || existingMigration.workspaceId !== callingWorkspaceId) {
+        this.logCrossWorkspaceAttempt(nodeId, result.resourceType, result.resourceId);
         return;
       }
       const updatedMigration = await this.prisma.migrationTask.update({
@@ -733,10 +815,23 @@ export class AgentsService implements OnModuleInit {
     }
   }
 
-  async onCommandProgress(progress: CommandProgressPayload) {
+  async onCommandProgress(nodeId: string, progress: CommandProgressPayload) {
     const normalized = Math.max(0, Math.min(100, Math.round(progress.progress)));
+    const callingWorkspaceId = await this.resolveCallingNodeWorkspace(nodeId);
+    if (!callingWorkspaceId) {
+      this.logger.warn(`Command progress from unknown node ${nodeId} - ignored`);
+      return;
+    }
 
     if (progress.resourceType === 'sync_job_run') {
+      const existingRun = await this.prisma.syncJobRun.findUnique({
+        where: { id: progress.resourceId },
+        select: { syncJob: { select: { workspaceId: true } } },
+      });
+      if (!existingRun || existingRun.syncJob.workspaceId !== callingWorkspaceId) {
+        this.logCrossWorkspaceAttempt(nodeId, progress.resourceType, progress.resourceId);
+        return;
+      }
       await this.prisma.syncJobRun.update({
         where: { id: progress.resourceId },
         data: { bytesTransferred: normalized * 5_000_000 },
@@ -745,6 +840,14 @@ export class AgentsService implements OnModuleInit {
     }
 
     if (progress.resourceType === 'migration') {
+      const existingMigration = await this.prisma.migrationTask.findUnique({
+        where: { id: progress.resourceId },
+        select: { workspaceId: true },
+      });
+      if (!existingMigration || existingMigration.workspaceId !== callingWorkspaceId) {
+        this.logCrossWorkspaceAttempt(nodeId, progress.resourceType, progress.resourceId);
+        return;
+      }
       await this.prisma.migrationTask.update({
         where: { id: progress.resourceId },
         data: {

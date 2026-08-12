@@ -18,7 +18,10 @@ export function VersionBadge({ fallback }: { fallback: string }) {
     api.system
       .version()
       .then((res) => {
-        if (!cancelled) setVersion(res.version);
+        // A null version means the control plane genuinely couldn't
+        // determine its own commit (see build-info.ts) - keep the build-time
+        // fallback rather than overwriting it with nothing.
+        if (!cancelled && res.version) setVersion(res.version);
       })
       .catch(() => {
         // Keep the build-time fallback.

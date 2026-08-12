@@ -15,6 +15,16 @@ function findGitRoot(startDir: string): string | null {
 
 let cachedVersion: string | null = null;
 
+// Internal sentinel for "couldn't determine a real version" (no .git dir -
+// e.g. inside the API's Docker image, see .dockerignore - and no
+// TARMAC_CONTROL_VERSION env var set either). This must never be shown to a
+// user verbatim - it's an untranslated English fallback that reads as
+// broken/garbled (e.g. "réf. unknown") once dropped into a French UI string,
+// and easy to misread as an actual value instead of "no data". Callers that
+// expose this to the frontend should check isKnownControlPlaneVersion()
+// first and substitute a real "not available" message instead.
+const UNKNOWN_CONTROL_VERSION = 'unknown';
+
 /**
  * Short git commit SHA the running API was built from. Resolved once at
  * runtime from the repository checked out on disk (or TARMAC_CONTROL_VERSION
@@ -41,6 +51,10 @@ export function getControlPlaneVersion(): string {
     }
   }
 
-  cachedVersion = envVersion || 'unknown';
+  cachedVersion = envVersion || UNKNOWN_CONTROL_VERSION;
   return cachedVersion;
+}
+
+export function isKnownControlPlaneVersion(version: string): boolean {
+  return version !== UNKNOWN_CONTROL_VERSION;
 }

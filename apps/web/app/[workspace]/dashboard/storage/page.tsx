@@ -16,18 +16,17 @@ import {
   Layers,
   Server,
 } from 'lucide-react';
-import { api, NodeItem, PoolItem } from '../../../lib/api';
-import { usePolling } from '../../../lib/hooks/usePolling';
-import { DashboardLayout } from '../../../components/DashboardLayout';
-import { PageHeader } from '../../../components/PageHeader';
-import { Callout } from '../../../components/Callout';
-import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
-import { Button } from '../../../components/ui/button';
-import { Alert, AlertDescription } from '../../../components/ui/alert';
-import { Badge, NodeLabelBadges, StatCard } from '../../../components/ui';
-import { CardListSkeleton, StatCardSkeleton } from '../../../components/ui/skeleton';
-import { readNodeLabels } from '../../../lib/node-labels';
-import { SectionLabel } from '../../../components/SectionLabel';
+import { api, NodeItem, PoolItem } from '../../../../lib/api';
+import { usePolling } from '../../../../lib/hooks/usePolling';
+import { PageHeader } from '../../../../components/PageHeader';
+import { Callout } from '../../../../components/Callout';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../../components/ui/card';
+import { Button } from '../../../../components/ui/button';
+import { Alert, AlertDescription } from '../../../../components/ui/alert';
+import { Badge, NodeLabelBadges, StatCard } from '../../../../components/ui';
+import { CardListSkeleton, StatCardSkeleton } from '../../../../components/ui/skeleton';
+import { readNodeLabels } from '../../../../lib/node-labels';
+import { SectionLabel } from '../../../../components/SectionLabel';
 import {
   WizardDialog,
   PresetSelector,
@@ -35,7 +34,7 @@ import {
   InfoBox,
   PresetOption,
   StepConfig,
-} from '../../../components/ui/wizard';
+} from '../../../../components/ui/wizard';
 
 const POOL_PRESETS: PresetOption[] = [
   {
@@ -268,7 +267,7 @@ export default function StoragePage() {
   const nodesInPools = new Set(pools.flatMap((pool) => pool.members.map((member) => member.nodeId))).size;
 
   return (
-    <DashboardLayout>
+    <>
       <div className="space-y-8">
         {notice && (
           <Alert variant={notice.type === 'error' ? 'destructive' : 'success'}>
@@ -444,6 +443,6 @@ export default function StoragePage() {
           completeButtonLabel="Créer le pool"
         />
       )}
-    </DashboardLayout>
+    </>
   );
 }

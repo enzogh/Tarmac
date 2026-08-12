@@ -2,19 +2,18 @@
 
 import { useMemo, useState } from 'react';
 import { Bell, Eye, CheckCircle2, AlertCircle, AlertTriangle, Circle, Trash2 } from 'lucide-react';
-import { api } from '../../../lib/api';
-import { usePolling } from '../../../lib/hooks/usePolling';
-import { DashboardLayout } from '../../../components/DashboardLayout';
-import { PageHeader } from '../../../components/PageHeader';
-import { Callout } from '../../../components/Callout';
-import { Badge, StatCard } from '../../../components/ui';
-import { SectionLabel } from '../../../components/SectionLabel';
-import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
-import { Button } from '../../../components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
-import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
-import { Label } from '../../../components/ui/label';
-import { ListSkeleton, StatCardSkeleton } from '../../../components/ui/skeleton';
+import { api } from '../../../../lib/api';
+import { usePolling } from '../../../../lib/hooks/usePolling';
+import { PageHeader } from '../../../../components/PageHeader';
+import { Callout } from '../../../../components/Callout';
+import { Badge, StatCard } from '../../../../components/ui';
+import { SectionLabel } from '../../../../components/SectionLabel';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../../components/ui/card';
+import { Button } from '../../../../components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../../components/ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
+import { Label } from '../../../../components/ui/label';
+import { ListSkeleton, StatCardSkeleton } from '../../../../components/ui/skeleton';
 
 type SeverityFilter = 'all' | 'critical' | 'high' | 'medium' | 'low';
 type StatusFilter = 'all' | 'open' | 'acknowledged' | 'resolved';
@@ -142,7 +141,6 @@ export default function AlertsPage() {
   };
 
   return (
-    <DashboardLayout>
       <div className="space-y-8">
         <PageHeader
           icon={Bell}
@@ -338,6 +336,5 @@ export default function AlertsPage() {
           </CardContent>
         </Card>
       </div>
-    </DashboardLayout>
   );
 }

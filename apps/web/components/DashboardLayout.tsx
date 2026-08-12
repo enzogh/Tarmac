@@ -1,11 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
-import { ReactNode, useEffect, useState } from 'react';
+import { usePathname, useParams, useRouter } from 'next/navigation';
+import { ReactNode, useEffect, useMemo, useState } from 'react';
 import { LogOut, Layers, BookOpen, ChevronDown, Search, Menu, ShieldAlert, X } from 'lucide-react';
 import { api } from '../lib/api';
-import { NAV_GROUPS, NAV_ITEMS, NavItem } from '../lib/nav-items';
+import { buildNavGroups, buildNavItems, NavItem } from '../lib/nav-items';
 import { CommandPalette } from './CommandPalette';
 import { Button } from './ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
@@ -26,6 +26,10 @@ const NAV_GROUP_COLLAPSE_KEY_PREFIX = 'tarmac.navGroupCollapsed.';
 function DashboardLayoutInner({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const params = useParams<{ workspace: string }>();
+  const slug = params.workspace;
+  const navGroups = useMemo(() => buildNavGroups(slug), [slug]);
+  const navItems = useMemo(() => buildNavItems(slug), [slug]);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   // Starts empty (all groups expanded) so server and first client render
   // match, then hydrates from localStorage right after mount - a group's
@@ -39,11 +43,14 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const initial: Record<string, boolean> = {};
-    for (const group of NAV_GROUPS) {
+    for (const group of navGroups) {
       if (!group.label) continue;
       initial[group.label] = localStorage.getItem(`${NAV_GROUP_COLLAPSE_KEY_PREFIX}${group.label}`) === '1';
     }
     setCollapsedGroups(initial);
+    // navGroups is recomputed per-slug but its group labels are static -
+    // only needs to run once, not on every slug change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleGroup = (label: string) => {
@@ -62,11 +69,12 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
     }
   };
 
+  const isNavItemActive = (item: NavItem) =>
+    item.exact ? pathname === item.href : pathname === item.href || pathname.startsWith(item.href + '/');
+
   const renderNavLink = (item: NavItem) => {
     const Icon = item.icon;
-    const isActive = item.exact
-      ? pathname === item.href
-      : pathname === item.href || pathname.startsWith(item.href + '/');
+    const isActive = isNavItemActive(item);
     return (
       <Link
         key={item.href}
@@ -103,17 +111,16 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
             mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
           )}
         >
-          {/* Logo */}
-          <div className="border-b border-white/[0.06] px-5 py-5">
+          {/* Logo - compact, since WorkspaceSwitcher right below now carries
+              the "which workspace am I in" identity that used to sit here as
+              a generic "Storage dashboard" subtitle. */}
+          <div className="border-b border-white/[0.06] px-5 py-4">
             <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 shadow-glow">
-                  <Layers className="h-4 w-4 text-white" />
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600 to-indigo-600 shadow-glow">
+                  <Layers className="h-3.5 w-3.5 text-white" />
                 </div>
-                <div>
-                  <h1 className="text-base font-semibold tracking-tight text-foreground">Tarmac</h1>
-                  <p className="text-[11px] text-muted-foreground">Storage dashboard</p>
-                </div>
+                <h1 className="text-sm font-semibold tracking-tight text-foreground">Tarmac</h1>
               </div>
               <button
                 type="button"
@@ -131,24 +138,38 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
               intrinsic height inside the flex column so overflow-y-auto
               actually activates internal scrolling, instead of growing the
               whole <aside> (and pushing the footer below the fold). */}
-          <nav className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4">
-            {NAV_GROUPS.map((group, groupIndex) => {
+          <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-4">
+            {navGroups.map((group, groupIndex) => {
               if (!group.label) {
                 return (
-                  <div key={`group-${groupIndex}`} className="space-y-0.5">
+                  <div key={`group-${groupIndex}`} className="space-y-0.5 pb-3">
                     {group.items.map(renderNavLink)}
                   </div>
                 );
               }
               const isCollapsed = collapsedGroups[group.label];
+              const GroupIcon = group.icon;
+              const groupIsActive = group.items.some(isNavItemActive);
               return (
-                <div key={group.label} className="space-y-0.5">
+                <div
+                  key={group.label}
+                  className={cn(
+                    'space-y-0.5 border-t border-white/[0.04] pt-3',
+                    groupIsActive && isCollapsed && 'rounded-lg bg-white/[0.02]'
+                  )}
+                >
                   <button
                     type="button"
                     onClick={() => toggleGroup(group.label as string)}
-                    className="flex w-full items-center justify-between rounded-lg px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-600 transition-colors hover:text-zinc-400"
+                    className={cn(
+                      'flex w-full items-center justify-between gap-2 rounded-lg px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider transition-colors',
+                      groupIsActive ? 'text-violet-400' : 'text-zinc-600 hover:text-zinc-400'
+                    )}
                   >
-                    {group.label}
+                    <span className="flex items-center gap-2">
+                      {GroupIcon && <GroupIcon className="h-3.5 w-3.5" />}
+                      {group.label}
+                    </span>
                     <ChevronDown className={cn('h-3 w-3 transition-transform', isCollapsed && '-rotate-90')} />
                   </button>
                   {!isCollapsed && group.items.map(renderNavLink)}
@@ -207,12 +228,7 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
               <span className="hidden text-sm font-medium text-foreground sm:inline">Tarmac</span>
               <span className="hidden text-sm text-zinc-600 sm:inline">/</span>
               <span className="truncate text-sm text-muted-foreground">
-                {NAV_ITEMS.find(
-                  (n) =>
-                    n.exact
-                      ? pathname === n.href
-                      : pathname === n.href || pathname.startsWith(n.href + '/')
-                )?.label ?? 'Dashboard'}
+                {navItems.find(isNavItemActive)?.label ?? 'Dashboard'}
               </span>
             </div>
             <div className="flex shrink-0 items-center gap-2">

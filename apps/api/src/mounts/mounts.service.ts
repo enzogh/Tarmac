@@ -42,6 +42,7 @@ export class MountsService {
 
     const created = await this.prisma.mount.create({ data });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'mount.create',
       resourceType: 'mount',
@@ -69,6 +70,7 @@ export class MountsService {
 
     const updated = await this.prisma.mount.update({ where: { id }, data });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'mount.update',
       resourceType: 'mount',
@@ -100,6 +102,7 @@ export class MountsService {
 
     const deleted = await this.prisma.mount.delete({ where: { id } });
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'mount.delete',
       resourceType: 'mount',
@@ -122,6 +125,7 @@ export class MountsService {
     });
 
     await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
       actorUserId,
       action: 'mount.remount',
       resourceType: 'mount',
