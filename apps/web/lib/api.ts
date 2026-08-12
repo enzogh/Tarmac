@@ -363,6 +363,13 @@ export type AgentLogItem = {
 
 export type PagedResult<T> = { items: T[]; nextCursor: string | null };
 
+export type WorkspaceSummary = {
+  id: string;
+  name: string;
+  slug: string;
+  isDefault: boolean;
+};
+
 export type AdminProfile = {
   id: string;
   email: string;
@@ -371,14 +378,36 @@ export type AdminProfile = {
   isSuperuser: boolean;
   createdAt: string;
   updatedAt: string;
+  workspaces: WorkspaceSummary[];
 };
 
+const CURRENT_WORKSPACE_STORAGE_KEY = 'tarmac.currentWorkspaceId';
+
+// Read fresh on every request rather than cached in a module variable, so a
+// switcher-driven change (see workspace-context.tsx) takes effect on the
+// very next API call without needing to thread state through every caller.
+export function getCurrentWorkspaceId(): string | null {
+  if (typeof window === 'undefined') return null;
+  return window.localStorage.getItem(CURRENT_WORKSPACE_STORAGE_KEY);
+}
+
+export function setCurrentWorkspaceId(workspaceId: string | null) {
+  if (typeof window === 'undefined') return;
+  if (workspaceId) {
+    window.localStorage.setItem(CURRENT_WORKSPACE_STORAGE_KEY, workspaceId);
+  } else {
+    window.localStorage.removeItem(CURRENT_WORKSPACE_STORAGE_KEY);
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const workspaceId = getCurrentWorkspaceId();
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
+      ...(workspaceId ? { 'X-Workspace-Id': workspaceId } : {}),
       ...(init?.headers ?? {}),
     },
   });
@@ -738,5 +767,14 @@ export const api = {
       if (params.nodeId) query.set('nodeId', params.nodeId);
       return `${API_BASE}/api/v1/agent-logs/export?${query.toString()}`;
     },
+  },
+
+  workspaces: {
+    list: () => request<WorkspaceSummary[]>('/api/v1/workspaces'),
+    create: (payload: { name: string; slug?: string }) =>
+      request<WorkspaceSummary>('/api/v1/workspaces', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
   },
 };

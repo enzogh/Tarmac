@@ -1,23 +1,44 @@
-import { Controller, Get, Post, Param, Body, Query, UseGuards, HttpException, HttpStatus, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, Query, UseGuards, HttpException, HttpStatus, Logger, Inject, forwardRef, ForbiddenException } from '@nestjs/common';
 import { VlanService } from './vlan.service';
 import { AgentsService } from '../agents/agents.service';
-import { AuthGuard } from '@nestjs/passport';
+import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Controller('vlan')
-@UseGuards(AuthGuard('jwt'))
+@UseGuards(JwtAuthGuard, WorkspaceGuard)
 export class VlanController {
   private readonly logger = new Logger(VlanController.name);
 
   constructor(
     private vlanService: VlanService,
+    private readonly prisma: PrismaService,
     @Inject(forwardRef(() => AgentsService)) private agentsService: AgentsService,
   ) {}
 
+  // getOrCreateVlan/joinVlan are still single-mesh ('default') internally -
+  // real per-workspace meshes are Phase 2. This check is what actually
+  // enforces isolation today: a member of a non-Default workspace simply
+  // sees no VLAN at all (correct - they have no mesh yet) rather than
+  // leaking the Default workspace's mesh.
+  private async assertVlanInScope(vlanId: string, scope: WorkspaceScope) {
+    const vlan = await this.prisma.vlan.findFirst({
+      where: { OR: [{ id: vlanId }, { name: vlanId }], workspaceId: scope.workspaceId },
+      select: { id: true },
+    });
+    if (!vlan) {
+      throw new ForbiddenException('This VLAN is not part of your workspace');
+    }
+  }
+
   @Get()
-  async getAllVlans() {
+  async getAllVlans(@CurrentWorkspace() scope: WorkspaceScope) {
     try {
       // Try to get or create default VLAN on first request
       const vlan = await this.vlanService.getOrCreateVlan('default');
+      if (vlan.workspaceId !== scope.workspaceId) {
+        return { vlans: [] };
+      }
       this.logger.log('✅ VLAN created/retrieved via API');
       return {
         vlans: [vlan],
@@ -32,7 +53,14 @@ export class VlanController {
   }
 
   @Post('join')
-  async joinVlan(@Body() body: { nodeId: string; vlanName?: string }) {
+  async joinVlan(@Body() body: { nodeId: string; vlanName?: string }, @CurrentWorkspace() scope: WorkspaceScope) {
+    const node = await this.prisma.node.findFirst({
+      where: { id: body.nodeId, workspaceId: scope.workspaceId },
+      select: { id: true },
+    });
+    if (!node) {
+      throw new HttpException('Node not found', HttpStatus.NOT_FOUND);
+    }
     try {
       const membership = await this.vlanService.joinVlan(body.nodeId, body.vlanName);
       return {
@@ -46,7 +74,8 @@ export class VlanController {
   }
 
   @Get(':vlanId/members')
-  async getMembers(@Param('vlanId') vlanId: string) {
+  async getMembers(@Param('vlanId') vlanId: string, @CurrentWorkspace() scope: WorkspaceScope) {
+    await this.assertVlanInScope(vlanId, scope);
     try {
       const members = await this.vlanService.getVlanMembers(vlanId);
       return { members };
@@ -57,7 +86,8 @@ export class VlanController {
   }
 
   @Get(':vlanId/connections')
-  async getConnections(@Param('vlanId') vlanId: string) {
+  async getConnections(@Param('vlanId') vlanId: string, @CurrentWorkspace() scope: WorkspaceScope) {
+    await this.assertVlanInScope(vlanId, scope);
     try {
       const connections = await this.vlanService.getVlanConnections(vlanId);
       return { connections };
@@ -68,7 +98,8 @@ export class VlanController {
   }
 
   @Get(':vlanId/status')
-  async getStatus(@Param('vlanId') vlanId: string) {
+  async getStatus(@Param('vlanId') vlanId: string, @CurrentWorkspace() scope: WorkspaceScope) {
+    await this.assertVlanInScope(vlanId, scope);
     try {
       const status = await this.vlanService.getVlanStatus(vlanId);
       return status;
@@ -83,8 +114,10 @@ export class VlanController {
     @Param('vlanId') vlanId: string,
     @Query('source') source: string,
     @Query('target') target: string,
-    @Query('range') range?: string,
+    @Query('range') range: string | undefined,
+    @CurrentWorkspace() scope: WorkspaceScope,
   ) {
+    await this.assertVlanInScope(vlanId, scope);
     try {
       if (!source || !target) {
         throw new HttpException('Les paramètres source et target sont requis', HttpStatus.BAD_REQUEST);
@@ -98,7 +131,8 @@ export class VlanController {
   }
 
   @Get(':vlanId/tests')
-  async getConnectionTests(@Param('vlanId') vlanId: string) {
+  async getConnectionTests(@Param('vlanId') vlanId: string, @CurrentWorkspace() scope: WorkspaceScope) {
+    await this.assertVlanInScope(vlanId, scope);
     try {
       const tests = await this.vlanService.getRecentConnectionTests(vlanId);
       return { tests };
@@ -117,7 +151,9 @@ export class VlanController {
       targetNodeId: string;
       testType: 'ping' | 'traceroute';
     },
+    @CurrentWorkspace() scope: WorkspaceScope,
   ) {
+    await this.assertVlanInScope(vlanId, scope);
     try {
       const members = await this.vlanService.getVlanMembers(vlanId);
       const initiator = members.find((member: any) => member.nodeId === body.initiatorNodeId);
@@ -223,7 +259,9 @@ export class VlanController {
     @Param('vlanId') vlanId: string,
     @Param('nodeId') nodeId: string,
     @Body() body: { enabled: boolean },
+    @CurrentWorkspace() scope: WorkspaceScope,
   ) {
+    await this.assertVlanInScope(vlanId, scope);
     try {
       const result = await this.vlanService.setGateway(vlanId, nodeId, Boolean(body.enabled));
       await this.agentsService.reconcileOverlayForVlan(vlanId);
@@ -243,7 +281,14 @@ export class VlanController {
   }
 
   @Post('heartbeat')
-  async heartbeat(@Body() body: { nodeId: string; vlanId?: string }) {
+  async heartbeat(@Body() body: { nodeId: string; vlanId?: string }, @CurrentWorkspace() scope: WorkspaceScope) {
+    const node = await this.prisma.node.findFirst({
+      where: { id: body.nodeId, workspaceId: scope.workspaceId },
+      select: { id: true },
+    });
+    if (!node) {
+      throw new HttpException('Node not found', HttpStatus.NOT_FOUND);
+    }
     try {
       const result = await this.vlanService.heartbeat(body.nodeId, body.vlanId);
       return {

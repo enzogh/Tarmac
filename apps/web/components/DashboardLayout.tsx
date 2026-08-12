@@ -9,9 +9,19 @@ import { NAV_GROUPS, NAV_ITEMS } from '../lib/nav-items';
 import { CommandPalette } from './CommandPalette';
 import { Button } from './ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
+import { WorkspaceProvider } from '../lib/workspace-context';
+import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { cn } from '../lib/utils';
 
 export function DashboardLayout({ children }: { children: ReactNode }) {
+  return (
+    <WorkspaceProvider>
+      <DashboardLayoutInner>{children}</DashboardLayoutInner>
+    </WorkspaceProvider>
+  );
+}
+
+function DashboardLayoutInner({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -68,6 +78,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
                 <X className="h-5 w-5" />
               </button>
             </div>
+            <WorkspaceSwitcher />
           </div>
 
           {/* Navigation */}

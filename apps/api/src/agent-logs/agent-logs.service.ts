@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { LiveWsServer } from '../live/live.ws';
+import { WorkspaceScope } from '../auth/workspace.guard';
 import { PrismaService } from '../prisma/prisma.service';
 
 // Raw agent log lines are high-volume (potentially dozens per node per
@@ -25,8 +26,21 @@ export class AgentLogsService {
     return entry;
   }
 
-  async list(params: { nodeId?: string; level?: string; before?: Date; from?: Date; limit?: number }) {
+  // AgentLog has no direct workspaceId column (see schema comment) - scoped
+  // via a subquery on Node ids in the caller's workspace rather than a
+  // relational `where: { node: {...} } }` join, since AgentLog has no FK to
+  // Node (nodeId is only indexed, not constrained - see schema.prisma).
+  private async scopedNodeIds(scope: WorkspaceScope): Promise<string[]> {
+    const nodes = await this.prisma.node.findMany({ where: { workspaceId: scope.workspaceId }, select: { id: true } });
+    return nodes.map((n) => n.id);
+  }
+
+  async list(
+    params: { nodeId?: string; level?: string; before?: Date; from?: Date; limit?: number },
+    scope: WorkspaceScope,
+  ) {
     const limit = Math.min(Math.max(params.limit ?? 200, 1), 500);
+    const scopedNodeIds = await this.scopedNodeIds(scope);
     const items = await this.prisma.agentLog.findMany({
       where: {
         AND: [
@@ -34,6 +48,7 @@ export class AgentLogsService {
           params.level ? { level: params.level } : {},
           params.before ? { createdAt: { lt: params.before } } : {},
           params.from ? { createdAt: { gte: params.from } } : {},
+          scopedNodeIds ? { nodeId: { in: scopedNodeIds } } : {},
         ],
       },
       orderBy: { createdAt: 'desc' },
@@ -46,10 +61,15 @@ export class AgentLogsService {
     };
   }
 
-  exportRange(params: { from: Date; to: Date; nodeId?: string }) {
+  async exportRange(params: { from: Date; to: Date; nodeId?: string }, scope: WorkspaceScope) {
+    const scopedNodeIds = await this.scopedNodeIds(scope);
     return this.prisma.agentLog.findMany({
       where: {
-        AND: [{ createdAt: { gte: params.from, lte: params.to } }, params.nodeId ? { nodeId: params.nodeId } : {}],
+        AND: [
+          { createdAt: { gte: params.from, lte: params.to } },
+          params.nodeId ? { nodeId: params.nodeId } : {},
+          scopedNodeIds ? { nodeId: { in: scopedNodeIds } } : {},
+        ],
       },
       orderBy: { createdAt: 'asc' },
       take: EXPORT_ROW_CAP,

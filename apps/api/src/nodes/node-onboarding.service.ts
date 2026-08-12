@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { Client, ConnectConfig } from 'ssh2';
 import { AgentTokenService } from '../agents/agent-token.service';
+import { WorkspaceScope } from '../auth/workspace.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNodeDto } from './dto/create-node.dto';
 import { StartNodeOnboardingDto } from './dto/start-node-onboarding.dto';
@@ -46,7 +47,7 @@ export class NodeOnboardingService {
     private readonly prisma: PrismaService,
   ) {}
 
-  async startOnboarding(dto: StartNodeOnboardingDto, actorUserId?: string) {
+  async startOnboarding(dto: StartNodeOnboardingDto, scope: WorkspaceScope, actorUserId?: string) {
     const controlPlaneWs = dto.controlPlaneWs?.trim() || this.configService.get<string>('AGENT_CONTROL_PLANE_WS');
     if (!controlPlaneWs) {
       throw new BadRequestException('controlPlaneWs manquant');
@@ -56,7 +57,7 @@ export class NodeOnboardingService {
       name: dto.name,
       role: dto.role,
     };
-    const node = await this.nodesService.create(createNodeDto, actorUserId);
+    const node = await this.nodesService.create(createNodeDto, scope, actorUserId);
 
     const agentToken = this.agentTokenService.generate();
     await this.prisma.node.update({

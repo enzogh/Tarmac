@@ -12,11 +12,15 @@ import { PrismaService } from '../prisma/prisma.service';
 const WORKSPACE_HEADER = 'x-workspace-id';
 
 export interface WorkspaceScope {
+  // Only controls WHICH workspaces this caller may select into (every
+  // workspace, vs. just their own memberships) and whether platform-admin-
+  // only endpoints (e.g. creating a workspace) are allowed. It does NOT mean
+  // "unfiltered access to every workspace's data at once" - resource queries
+  // always filter by workspaceId below, for admins and members alike.
   isPlatformAdmin: boolean;
-  // Present on both platform-admin and member scopes: the workspace the
-  // request should act on. For a platform admin with no explicit
-  // X-Workspace-Id header, this is undefined and callers must treat an
-  // absent workspaceId as "no filter" (see isPlatformAdmin).
+  // The workspace this request acts on (resolved from X-Workspace-Id, or a
+  // sensible default otherwise - see WorkspaceGuard). Only undefined in the
+  // pathological case where zero Workspace rows exist at all.
   workspaceId?: string;
   // All workspace ids the caller may switch into (platform admins get every
   // workspace; members get only their own memberships).
@@ -28,11 +32,9 @@ interface RequestWithWorkspaceScope extends Request {
   workspaceScope?: WorkspaceScope;
 }
 
-// Not yet mounted on any controller - Phase 1 adds
-// `@UseGuards(JwtAuthGuard, WorkspaceGuard)` + `@CurrentWorkspace()` to each
-// resource controller and does the actual per-query filtering. This guard is
-// written and unit-testable now so that wiring it up later is a small,
-// reviewable diff instead of a from-scratch addition.
+// Mounted via `@UseGuards(JwtAuthGuard, WorkspaceGuard)` on every
+// workspace-scoped controller, paired with `@CurrentWorkspace()` to read the
+// resolved scope back out in the handler.
 @Injectable()
 export class WorkspaceGuard implements CanActivate {
   constructor(private readonly prisma: PrismaService) {}
@@ -55,10 +57,21 @@ export class WorkspaceGuard implements CanActivate {
     const requestedWorkspaceId = firstHeaderValue(request.headers[WORKSPACE_HEADER]);
 
     if (user.isSuperuser) {
-      const allWorkspaceIds = (await this.prisma.workspace.findMany({ select: { id: true } })).map((w) => w.id);
+      const workspaces = await this.prisma.workspace.findMany({
+        select: { id: true, isDefault: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      const allWorkspaceIds = workspaces.map((w) => w.id);
+      if (requestedWorkspaceId && !allWorkspaceIds.includes(requestedWorkspaceId)) {
+        throw new ForbiddenException('Unknown workspace');
+      }
+      // No X-Workspace-Id header (e.g. a caller that predates the frontend
+      // switcher) falls back to the Default workspace so single-tenant
+      // behavior is unchanged rather than stamping an undefined workspaceId.
+      const fallbackWorkspaceId = workspaces.find((w) => w.isDefault)?.id ?? allWorkspaceIds[0];
       request.workspaceScope = {
         isPlatformAdmin: true,
-        workspaceId: requestedWorkspaceId ?? undefined,
+        workspaceId: requestedWorkspaceId ?? fallbackWorkspaceId,
         allowedWorkspaceIds: allWorkspaceIds,
       };
       return true;
@@ -91,8 +104,26 @@ function firstHeaderValue(value: string | string[] | undefined): string | undefi
   return value || undefined;
 }
 
-// Usage (Phase 1, once mounted): `list(@CurrentWorkspace() scope: WorkspaceScope)`
-// then filter with `scope.isPlatformAdmin && !scope.workspaceId ? {} : { workspaceId: scope.workspaceId }`.
+// For models with a direct `workspaceId` column: spread into a Prisma
+// `where` clause. Always filters to the caller's currently-selected
+// workspace (scope.workspaceId), for members AND platform admins alike -
+// isPlatformAdmin only controls *which* workspaces a caller may select into
+// (see WorkspaceGuard), never "see every workspace's data merged together".
+// A platform admin who wants a different workspace's data switches into it
+// (X-Workspace-Id) exactly like a member would; GET /workspaces is the one
+// deliberate exception that lists across all of them.
+export function scopeWhere(scope: WorkspaceScope): { workspaceId?: string } {
+  return { workspaceId: scope.workspaceId };
+}
+
+// Same, for models scoped only via their (mandatory, cascade-deleted) Node
+// relation - MetricSample, Disk, SmartReport, AgentLog, VlanMember, etc.
+export function scopeWhereViaNode(scope: WorkspaceScope): { node?: { workspaceId: string } } {
+  return { node: { workspaceId: scope.workspaceId as string } };
+}
+
+// Usage: `list(@CurrentWorkspace() scope: WorkspaceScope)`, then filter with
+// `scopeWhere(scope)` / `scopeWhereViaNode(scope)` above.
 export const CurrentWorkspace = createParamDecorator((_: unknown, context: ExecutionContext): WorkspaceScope => {
   const request = context.switchToHttp().getRequest<RequestWithWorkspaceScope>();
   if (!request.workspaceScope) {

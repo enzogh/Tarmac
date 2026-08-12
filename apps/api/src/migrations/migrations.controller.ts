@@ -1,5 +1,6 @@
 import { BadRequestException, Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
+import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateMigrationDto } from './dto/create-migration.dto';
 import { ListRemoteDirectoriesDto } from './dto/list-remote-directories.dto';
@@ -10,29 +11,34 @@ interface AuthenticatedRequest extends Request {
   user?: { userId?: string };
 }
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, WorkspaceGuard)
 @Controller('migrations')
 export class MigrationsController {
   constructor(private readonly migrationsService: MigrationsService) {}
 
   @Get()
-  list() {
-    return this.migrationsService.list();
+  list(@CurrentWorkspace() scope: WorkspaceScope) {
+    return this.migrationsService.list(scope);
   }
 
   @Get('directories')
-  listDirectories(@Query('nodeId') nodeId?: string, @Query('basePath') basePath?: string) {
+  listDirectories(
+    @Query('nodeId') nodeId: string | undefined,
+    @Query('basePath') basePath: string | undefined,
+    @CurrentWorkspace() scope: WorkspaceScope,
+  ) {
     if (!nodeId) {
       throw new BadRequestException('nodeId is required');
     }
-    return this.migrationsService.listDirectories(nodeId, basePath || '/');
+    return this.migrationsService.listDirectories(nodeId, basePath || '/', scope);
   }
 
   @Get('directories/scan')
   scanDirectories(
-    @Query('nodeId') nodeId?: string,
-    @Query('basePath') basePath?: string,
-    @Query('maxEntries') maxEntries?: string,
+    @Query('nodeId') nodeId: string | undefined,
+    @Query('basePath') basePath: string | undefined,
+    @Query('maxEntries') maxEntries: string | undefined,
+    @CurrentWorkspace() scope: WorkspaceScope,
   ) {
     if (!nodeId) {
       throw new BadRequestException('nodeId is required');
@@ -42,55 +48,65 @@ export class MigrationsController {
       nodeId,
       basePath || '/',
       Number.isFinite(parsedMaxEntries) ? parsedMaxEntries : 20,
+      scope,
     );
   }
 
   @Post('directories/remote')
-  listRemoteDirectories(@Body() dto: ListRemoteDirectoriesDto) {
+  listRemoteDirectories(@Body() dto: ListRemoteDirectoriesDto, @CurrentWorkspace() scope: WorkspaceScope) {
     const parsedPort = dto.port ? Number.parseInt(dto.port, 10) : undefined;
-    return this.migrationsService.listRemoteDirectories(dto.nodeId, {
-      host: dto.host,
-      username: dto.username,
-      password: dto.password,
-      port: Number.isFinite(parsedPort) ? parsedPort : undefined,
-      basePath: dto.basePath,
-      endpointType: dto.endpointType,
-    });
+    return this.migrationsService.listRemoteDirectories(
+      dto.nodeId,
+      {
+        host: dto.host,
+        username: dto.username,
+        password: dto.password,
+        port: Number.isFinite(parsedPort) ? parsedPort : undefined,
+        basePath: dto.basePath,
+        endpointType: dto.endpointType,
+      },
+      scope,
+    );
   }
 
   @Post()
-  create(@Body() dto: CreateMigrationDto, @Req() req: AuthenticatedRequest) {
-    return this.migrationsService.create(dto, req.user?.userId);
+  create(@Body() dto: CreateMigrationDto, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.migrationsService.create(dto, scope, req.user?.userId);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateMigrationDto, @Req() req: AuthenticatedRequest) {
-    return this.migrationsService.update(id, dto, req.user?.userId);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateMigrationDto,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.migrationsService.update(id, dto, scope, req.user?.userId);
   }
 
   @Post(':id/start')
-  start(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.migrationsService.start(id, req.user?.userId);
+  start(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.migrationsService.start(id, scope, req.user?.userId);
   }
 
   @Post(':id/retry')
-  retry(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.migrationsService.retry(id, req.user?.userId);
+  retry(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.migrationsService.retry(id, scope, req.user?.userId);
   }
 
   @Post(':id/stop')
-  stop(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.migrationsService.stop(id, req.user?.userId);
+  stop(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.migrationsService.stop(id, scope, req.user?.userId);
   }
 
   @Post(':id/complete')
-  complete(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.migrationsService.update(id, { status: 'completed' }, req.user?.userId);
+  complete(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.migrationsService.update(id, { status: 'completed' }, scope, req.user?.userId);
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    await this.migrationsService.removePending(id, req.user?.userId);
+  async remove(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    await this.migrationsService.removePending(id, scope, req.user?.userId);
   }
 }

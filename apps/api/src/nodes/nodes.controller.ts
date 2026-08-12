@@ -12,6 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Request } from 'express';
+import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CompleteNodeOnboardingDto } from './dto/complete-node-onboarding.dto';
 import { CreateNodeDto } from './dto/create-node.dto';
@@ -25,7 +26,7 @@ interface AuthenticatedRequest extends Request {
   user?: { userId?: string };
 }
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, WorkspaceGuard)
 @Controller('nodes')
 export class NodesController {
   constructor(
@@ -34,17 +35,21 @@ export class NodesController {
   ) {}
 
   @Get()
-  list() {
-    return this.nodesService.list();
+  list(@CurrentWorkspace() scope: WorkspaceScope) {
+    return this.nodesService.list(scope);
   }
 
   @Post()
-  create(@Body() dto: CreateNodeDto, @Req() req: AuthenticatedRequest) {
-    return this.nodesService.create(dto, req.user?.userId);
+  create(@Body() dto: CreateNodeDto, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.nodesService.create(dto, scope, req.user?.userId);
   }
 
   @Post('onboarding/start')
-  startOnboarding(@Body() dto: StartNodeOnboardingDto, @Req() req: AuthenticatedRequest) {
+  startOnboarding(
+    @Body() dto: StartNodeOnboardingDto,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
     const forwardedProto = req.headers['x-forwarded-proto'];
     const rawProto = Array.isArray(forwardedProto)
       ? forwardedProto[0]
@@ -61,6 +66,7 @@ export class NodesController {
         ...dto,
         controlPlaneWs,
       },
+      scope,
       req.user?.userId,
     );
   }
@@ -74,47 +80,61 @@ export class NodesController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateNodeDto, @Req() req: AuthenticatedRequest) {
-    return this.nodesService.update(id, dto, req.user?.userId);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateNodeDto,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.nodesService.update(id, dto, scope, req.user?.userId);
   }
 
   @Delete(':id')
-  delete(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.nodesService.delete(id, req.user?.userId);
+  delete(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.nodesService.delete(id, scope, req.user?.userId);
   }
 
   @Post(':id/rotate-token')
-  rotateAgentToken(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.nodesService.rotateAgentToken(id, req.user?.userId);
+  rotateAgentToken(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.nodesService.rotateAgentToken(id, scope, req.user?.userId);
   }
 
   @Post('rotate-tokens')
-  rotateAllAgentTokens(@Req() req: AuthenticatedRequest) {
-    return this.nodesService.rotateAllAgentTokens(req.user?.userId);
+  rotateAllAgentTokens(@CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.nodesService.rotateAllAgentTokens(scope, req.user?.userId);
   }
 
   @Post(':id/mute')
-  mute(@Param('id') id: string, @Body() dto: MuteNodeDto, @Req() req: AuthenticatedRequest) {
-    return this.nodesService.mute(id, dto.minutes, req.user?.userId);
+  mute(
+    @Param('id') id: string,
+    @Body() dto: MuteNodeDto,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.nodesService.mute(id, dto.minutes, scope, req.user?.userId);
   }
 
   @Post(':id/unmute')
-  unmute(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.nodesService.unmute(id, req.user?.userId);
+  unmute(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.nodesService.unmute(id, scope, req.user?.userId);
   }
 
   @Get('activity')
-  activity(@Query('range') range = '1h') {
-    return this.nodesService.activity(range);
+  activity(@Query('range') range = '1h', @CurrentWorkspace() scope: WorkspaceScope) {
+    return this.nodesService.activity(range, scope);
   }
 
   @Get(':id/metrics')
-  metrics(@Param('id') id: string, @Query('range') range = '1h') {
-    return this.nodesService.metrics(id, range);
+  metrics(@Param('id') id: string, @Query('range') range = '1h', @CurrentWorkspace() scope: WorkspaceScope) {
+    return this.nodesService.metrics(id, range, scope);
   }
 
   @Get(':id/disks/:diskName/smart-history')
-  smartHistory(@Param('id') id: string, @Param('diskName') diskName: string) {
-    return this.nodesService.smartHistory(id, diskName);
+  smartHistory(
+    @Param('id') id: string,
+    @Param('diskName') diskName: string,
+    @CurrentWorkspace() scope: WorkspaceScope,
+  ) {
+    return this.nodesService.smartHistory(id, diskName, scope);
   }
 }

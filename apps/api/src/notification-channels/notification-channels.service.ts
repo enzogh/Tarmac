@@ -1,8 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
 import { PrismaService } from '../prisma/prisma.service';
-import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import { CreateNotificationChannelDto } from './dto/create-notification-channel.dto';
 import { UpdateNotificationChannelDto } from './dto/update-notification-channel.dto';
 
@@ -13,12 +13,22 @@ export class NotificationChannelsService {
     private readonly auditLogsService: AuditLogsService,
   ) {}
 
-  list() {
-    return this.prisma.notificationChannel.findMany({ orderBy: { createdAt: 'desc' } });
+  list(scope: WorkspaceScope) {
+    return this.prisma.notificationChannel.findMany({ where: scopeWhere(scope), orderBy: { createdAt: 'desc' } });
   }
 
-  async create(dto: CreateNotificationChannelDto, actorUserId?: string) {
-    const created = await this.prisma.notificationChannel.create({ data: { ...dto, workspaceId: DEFAULT_WORKSPACE_ID } });
+  private async assertOwned(id: string, scope: WorkspaceScope) {
+    const channel = await this.prisma.notificationChannel.findFirst({
+      where: { id, workspaceId: scope.workspaceId },
+      select: { id: true },
+    });
+    if (!channel) throw new NotFoundException('notification channel not found');
+  }
+
+  async create(dto: CreateNotificationChannelDto, scope: WorkspaceScope, actorUserId?: string) {
+    const created = await this.prisma.notificationChannel.create({
+      data: { ...dto, workspaceId: scope.workspaceId as string },
+    });
     await this.auditLogsService.log({
       actorUserId,
       action: 'notification_channel.create',
@@ -29,7 +39,8 @@ export class NotificationChannelsService {
     return created;
   }
 
-  async update(id: string, dto: UpdateNotificationChannelDto, actorUserId?: string) {
+  async update(id: string, dto: UpdateNotificationChannelDto, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const updated = await this.prisma.notificationChannel.update({ where: { id }, data: dto });
     await this.auditLogsService.log({
       actorUserId,
@@ -41,7 +52,8 @@ export class NotificationChannelsService {
     return updated;
   }
 
-  async delete(id: string, actorUserId?: string) {
+  async delete(id: string, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const deleted = await this.prisma.notificationChannel.delete({ where: { id } });
     await this.auditLogsService.log({
       actorUserId,
@@ -52,7 +64,8 @@ export class NotificationChannelsService {
     return deleted;
   }
 
-  async test(id: string, actorUserId?: string) {
+  async test(id: string, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const channel = await this.prisma.notificationChannel.findUniqueOrThrow({ where: { id } });
     await this.auditLogsService.log({
       actorUserId,

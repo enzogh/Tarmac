@@ -1,9 +1,9 @@
-import { forwardRef, Inject, Injectable } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { MountStatus, Prisma } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { AgentsService } from '../agents/agents.service';
+import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
 import { PrismaService } from '../prisma/prisma.service';
-import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import { CreateMountDto } from './dto/create-mount.dto';
 import { UpdateMountDto } from './dto/update-mount.dto';
 
@@ -16,13 +16,18 @@ export class MountsService {
     private readonly agentsService: AgentsService,
   ) {}
 
-  list() {
-    return this.prisma.mount.findMany({ orderBy: { createdAt: 'desc' }, include: { node: true } });
+  list(scope: WorkspaceScope) {
+    return this.prisma.mount.findMany({ where: scopeWhere(scope), orderBy: { createdAt: 'desc' }, include: { node: true } });
   }
 
-  async create(dto: CreateMountDto, actorUserId?: string) {
+  private async assertOwned(id: string, scope: WorkspaceScope) {
+    const mount = await this.prisma.mount.findFirst({ where: { id, workspaceId: scope.workspaceId }, select: { id: true } });
+    if (!mount) throw new NotFoundException('mount not found');
+  }
+
+  async create(dto: CreateMountDto, scope: WorkspaceScope, actorUserId?: string) {
     const data: Prisma.MountCreateInput = {
-      workspace: { connect: { id: DEFAULT_WORKSPACE_ID } },
+      workspace: { connect: { id: scope.workspaceId } },
       name: dto.name,
       sourcePath: dto.sourcePath,
       additionalSources: dto.additionalSources ?? [],
@@ -46,7 +51,8 @@ export class MountsService {
     return created;
   }
 
-  async update(id: string, dto: UpdateMountDto, actorUserId?: string) {
+  async update(id: string, dto: UpdateMountDto, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const data: Prisma.MountUpdateInput = {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
       ...(dto.sourcePath !== undefined ? { sourcePath: dto.sourcePath } : {}),
@@ -72,7 +78,8 @@ export class MountsService {
     return updated;
   }
 
-  async delete(id: string, actorUserId?: string) {
+  async delete(id: string, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const mount = await this.prisma.mount.findUnique({ where: { id } });
     if (!mount) {
       return this.prisma.mount.delete({ where: { id } });
@@ -106,7 +113,8 @@ export class MountsService {
     return deleted;
   }
 
-  async remount(id: string, actorUserId?: string) {
+  async remount(id: string, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const updated = await this.prisma.mount.update({
       where: { id },
       data: { status: 'pending', lastError: null },

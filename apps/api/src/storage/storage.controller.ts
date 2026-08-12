@@ -1,19 +1,20 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { StorageService } from './storage.service';
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, WorkspaceGuard)
 @Controller('storage')
 export class StorageController {
   constructor(private readonly storageService: StorageService) {}
 
   @Get('forecast')
-  forecast(@Query('nodeId') nodeId?: string) {
-    return this.storageService.forecast(nodeId);
+  forecast(@CurrentWorkspace() scope: WorkspaceScope, @Query('nodeId') nodeId?: string) {
+    return this.storageService.forecast(nodeId, scope);
   }
 
   @Get('overview')
-  overview(@Query('nodeId') nodeId?: string) {
-    return this.storageService.overview(nodeId);
+  overview(@CurrentWorkspace() scope: WorkspaceScope, @Query('nodeId') nodeId?: string) {
+    return this.storageService.overview(nodeId, scope);
   }
 }

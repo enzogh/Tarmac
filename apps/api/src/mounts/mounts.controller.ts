@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Request } from 'express';
+import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateMountDto } from './dto/create-mount.dto';
 import { UpdateMountDto } from './dto/update-mount.dto';
@@ -19,33 +20,38 @@ interface AuthenticatedRequest extends Request {
   user?: { userId?: string };
 }
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, WorkspaceGuard)
 @Controller('mounts')
 export class MountsController {
   constructor(private readonly mountsService: MountsService) {}
 
   @Get()
-  list() {
-    return this.mountsService.list();
+  list(@CurrentWorkspace() scope: WorkspaceScope) {
+    return this.mountsService.list(scope);
   }
 
   @Post()
-  create(@Body() dto: CreateMountDto, @Req() req: AuthenticatedRequest) {
-    return this.mountsService.create(dto, req.user?.userId);
+  create(@Body() dto: CreateMountDto, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.mountsService.create(dto, scope, req.user?.userId);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateMountDto, @Req() req: AuthenticatedRequest) {
-    return this.mountsService.update(id, dto, req.user?.userId);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateMountDto,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.mountsService.update(id, dto, scope, req.user?.userId);
   }
 
   @Post(':id/remount')
-  remount(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.mountsService.remount(id, req.user?.userId);
+  remount(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.mountsService.remount(id, scope, req.user?.userId);
   }
 
   @Delete(':id')
-  delete(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.mountsService.delete(id, req.user?.userId);
+  delete(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.mountsService.delete(id, scope, req.user?.userId);
   }
 }

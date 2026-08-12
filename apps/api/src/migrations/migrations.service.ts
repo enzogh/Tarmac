@@ -10,6 +10,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import { CreateMigrationDto } from './dto/create-migration.dto';
@@ -193,8 +194,9 @@ export class MigrationsService {
     };
   }
 
-  async list() {
+  async list(scope: WorkspaceScope) {
     const migrations = await this.prisma.migrationTask.findMany({
+      where: scopeWhere(scope),
       orderBy: { createdAt: 'desc' },
       include: { sourceNode: true, targetNode: true },
       take: 200,
@@ -202,10 +204,26 @@ export class MigrationsService {
     return migrations.map((migration) => this.withMetadata(migration));
   }
 
-  async create(dto: CreateMigrationDto, actorUserId?: string) {
+  private async assertOwned(id: string, scope: WorkspaceScope): Promise<void> {
+    const task = await this.prisma.migrationTask.findFirst({
+      where: { id, workspaceId: scope.workspaceId },
+      select: { id: true },
+    });
+    if (!task) throw new NotFoundException('migration not found');
+  }
+
+  private async assertNodeOwned(nodeId: string, scope: WorkspaceScope): Promise<void> {
+    const node = await this.prisma.node.findFirst({
+      where: { id: nodeId, workspaceId: scope.workspaceId },
+      select: { id: true },
+    });
+    if (!node) throw new NotFoundException('node not found');
+  }
+
+  async create(dto: CreateMigrationDto, scope: WorkspaceScope, actorUserId?: string) {
     const created = await this.prisma.migrationTask.create({
       data: {
-        workspaceId: DEFAULT_WORKSPACE_ID,
+        workspaceId: scope.workspaceId as string,
         name: dto.name,
         shareId: dto.shareId,
         sourceNodeId: dto.sourceNodeId,
@@ -238,12 +256,18 @@ export class MigrationsService {
     });
     if (existing) return null;
 
-    const [sourceNode, candidateNodes, disks] = await Promise.all([
-      this.prisma.node.findUnique({ where: { id: params.nodeId } }),
-      this.prisma.node.findMany({ where: { status: 'online', id: { not: params.nodeId } } }),
-      this.prisma.disk.findMany(),
+    const sourceNode = await this.prisma.node.findUnique({ where: { id: params.nodeId } });
+    if (!sourceNode) return null;
+
+    // Never suggest migrating a critical disk's data across a workspace
+    // boundary - candidates are restricted to the source node's own workspace.
+    const [candidateNodes, disks] = await Promise.all([
+      this.prisma.node.findMany({
+        where: { status: 'online', id: { not: params.nodeId }, workspaceId: sourceNode.workspaceId },
+      }),
+      this.prisma.disk.findMany({ where: { node: { workspaceId: sourceNode.workspaceId } } }),
     ]);
-    if (!sourceNode || candidateNodes.length === 0) return null;
+    if (candidateNodes.length === 0) return null;
 
     const freeGbByNode = new Map<string, number>();
     for (const disk of disks) {
@@ -256,21 +280,24 @@ export class MigrationsService {
       .sort((a, b) => b.freeGb - a.freeGb)[0]?.node;
     if (!targetNode) return null;
 
-    return this.create({
-      name: `${AUTO_REMEDIATION_PREFIX} sécurisation disque "${params.diskName}" (${sourceNode.name})`,
-      sourceNodeId: params.nodeId,
-      targetNodeId: targetNode.id,
-      sourcePath: params.mountPath,
-      targetPath: params.mountPath,
-      reason: 'Disque en échec SMART critique : sécurisation préventive des données avant perte.',
-      sourceKind: 'node',
-      targetKind: 'node',
-    });
+    return this.create(
+      {
+        name: `${AUTO_REMEDIATION_PREFIX} sécurisation disque "${params.diskName}" (${sourceNode.name})`,
+        sourceNodeId: params.nodeId,
+        targetNodeId: targetNode.id,
+        sourcePath: params.mountPath,
+        targetPath: params.mountPath,
+        reason: 'Disque en échec SMART critique : sécurisation préventive des données avant perte.',
+        sourceKind: 'node',
+        targetKind: 'node',
+      },
+      { isPlatformAdmin: false, workspaceId: sourceNode.workspaceId, allowedWorkspaceIds: [sourceNode.workspaceId] },
+    );
   }
 
-  async update(id: string, dto: UpdateMigrationDto, actorUserId?: string) {
+  async update(id: string, dto: UpdateMigrationDto, scope: WorkspaceScope, actorUserId?: string) {
     const existing = await this.prisma.migrationTask.findUnique({ where: { id } });
-    if (!existing) {
+    if (!existing || existing.workspaceId !== scope.workspaceId) {
       throw new NotFoundException('migration not found');
     }
 
@@ -311,7 +338,8 @@ export class MigrationsService {
     return this.withMetadata(updated);
   }
 
-  async listDirectories(nodeId: string, basePath = '/') {
+  async listDirectories(nodeId: string, basePath = '/', scope: WorkspaceScope) {
+    await this.assertNodeOwned(nodeId, scope);
     try {
       return await this.agentsService.requestDirectories(nodeId, basePath);
     } catch (error) {
@@ -319,7 +347,8 @@ export class MigrationsService {
     }
   }
 
-  async scanDirectories(nodeId: string, basePath = '/', maxEntries = 20) {
+  async scanDirectories(nodeId: string, basePath = '/', maxEntries = 20, scope: WorkspaceScope) {
+    await this.assertNodeOwned(nodeId, scope);
     try {
       return await this.agentsService.requestDirectoryScan(nodeId, basePath, maxEntries);
     } catch (error) {
@@ -337,7 +366,9 @@ export class MigrationsService {
       basePath?: string;
       endpointType?: RemoteEndpointType;
     },
+    scope: WorkspaceScope,
   ) {
+    await this.assertNodeOwned(nodeId, scope);
     try {
       const endpointType = payload.endpointType === 'storagebox' ? 'storagebox' : 'seedbox';
       return await this.agentsService.requestRemoteDirectories(nodeId, {
@@ -353,7 +384,8 @@ export class MigrationsService {
     }
   }
 
-  async start(id: string, actorUserId?: string) {
+  async start(id: string, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const migration = await this.prisma.migrationTask.findUniqueOrThrow({
       where: { id },
       include: { sourceNode: true, targetNode: true },
@@ -487,9 +519,9 @@ export class MigrationsService {
     return this.withMetadata(updated);
   }
 
-  async retry(id: string, actorUserId?: string) {
+  async retry(id: string, scope: WorkspaceScope, actorUserId?: string) {
     const existing = await this.prisma.migrationTask.findUnique({ where: { id } });
-    if (!existing) {
+    if (!existing || existing.workspaceId !== scope.workspaceId) {
       throw new NotFoundException('migration not found');
     }
     if (existing.status !== 'failed') {
@@ -512,15 +544,15 @@ export class MigrationsService {
       resourceId: id,
       details: { previousStatus: existing.status } as Prisma.InputJsonValue,
     });
-    return this.start(id, actorUserId);
+    return this.start(id, scope, actorUserId);
   }
 
-  async stop(id: string, actorUserId?: string) {
+  async stop(id: string, scope: WorkspaceScope, actorUserId?: string) {
     const existing = await this.prisma.migrationTask.findUnique({
       where: { id },
       include: { sourceNode: true, targetNode: true },
     });
-    if (!existing) {
+    if (!existing || existing.workspaceId !== scope.workspaceId) {
       throw new NotFoundException('migration not found');
     }
     if (existing.status !== 'running') {
@@ -561,9 +593,9 @@ export class MigrationsService {
     return this.withMetadata(updated);
   }
 
-  async removePending(id: string, actorUserId?: string) {
+  async removePending(id: string, scope: WorkspaceScope, actorUserId?: string) {
     const existing = await this.prisma.migrationTask.findUnique({ where: { id } });
-    if (!existing) {
+    if (!existing || existing.workspaceId !== scope.workspaceId) {
       throw new NotFoundException('migration not found');
     }
     if (existing.status !== 'pending') {

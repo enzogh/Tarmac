@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { scopeWhereViaNode, WorkspaceScope } from '../auth/workspace.guard';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -28,9 +29,9 @@ export class StorageService {
     };
   }
 
-  async forecast(nodeId?: string) {
+  async forecast(nodeId: string | undefined, scope: WorkspaceScope) {
     const disks = await this.prisma.disk.findMany({
-      where: nodeId ? { nodeId } : undefined,
+      where: { ...(nodeId ? { nodeId } : {}), ...scopeWhereViaNode(scope) },
       orderBy: { updatedAt: 'desc' },
     });
 
@@ -41,10 +42,10 @@ export class StorageService {
     };
   }
 
-  async overview(nodeId?: string) {
+  async overview(nodeId: string | undefined, scope: WorkspaceScope) {
     const [disks, latestSamples] = await Promise.all([
       this.prisma.disk.findMany({
-        where: nodeId ? { nodeId } : undefined,
+        where: { ...(nodeId ? { nodeId } : {}), ...scopeWhereViaNode(scope) },
         include: { node: true },
         orderBy: [{ nodeId: 'asc' }, { mountPath: 'asc' }],
       }),
@@ -52,6 +53,7 @@ export class StorageService {
         where: {
           ...(nodeId ? { nodeId } : {}),
           createdAt: { gte: new Date(Date.now() - 10 * 60_000) },
+          ...scopeWhereViaNode(scope),
         },
         orderBy: [{ nodeId: 'asc' }, { createdAt: 'desc' }],
         distinct: ['nodeId'],

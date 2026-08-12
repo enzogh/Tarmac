@@ -1,16 +1,18 @@
 import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
+import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { toCsv } from '../common/csv';
 import { AuditLogsService } from './audit-logs.service';
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, WorkspaceGuard)
 @Controller('audit-logs')
 export class AuditLogsController {
   constructor(private readonly auditLogsService: AuditLogsService) {}
 
   @Get()
   list(
+    @CurrentWorkspace() scope: WorkspaceScope,
     @Query('before') before?: string,
     @Query('from') from?: string,
     @Query('limit') limit?: string,
@@ -19,25 +21,29 @@ export class AuditLogsController {
     @Query('resourceType') resourceType?: string,
     @Query('q') q?: string,
   ) {
-    return this.auditLogsService.list({
-      before: before ? new Date(before) : undefined,
-      from: from ? new Date(from) : undefined,
-      limit: limit ? Number(limit) : undefined,
-      actorUserId,
-      action,
-      resourceType,
-      q,
-    });
+    return this.auditLogsService.list(
+      {
+        before: before ? new Date(before) : undefined,
+        from: from ? new Date(from) : undefined,
+        limit: limit ? Number(limit) : undefined,
+        actorUserId,
+        action,
+        resourceType,
+        q,
+      },
+      scope,
+    );
   }
 
   @Get('export')
   async export(
     @Res({ passthrough: true }) res: Response,
+    @CurrentWorkspace() scope: WorkspaceScope,
     @Query('from') from: string,
     @Query('to') to: string,
     @Query('format') format: 'csv' | 'json' = 'json',
   ) {
-    const rows = await this.auditLogsService.exportRange({ from: new Date(from), to: new Date(to) });
+    const rows = await this.auditLogsService.exportRange({ from: new Date(from), to: new Date(to) }, scope);
 
     if (format === 'csv') {
       res.setHeader('Content-Type', 'text/csv');

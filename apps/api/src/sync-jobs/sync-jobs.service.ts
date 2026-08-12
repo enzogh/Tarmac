@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { Prisma, SyncJobStatus } from '@prisma/client';
 import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
 import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
+import { PrismaService } from '../prisma/prisma.service';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { UpdateSyncJobDto } from './dto/update-sync-job.dto';
 import { SyncJobTriggerService } from './sync-job-trigger.service';
@@ -62,32 +63,40 @@ export class SyncJobsService {
     });
   }
 
-  list() {
+  list(scope: WorkspaceScope) {
     return this.prisma.syncJob.findMany({
+      where: scopeWhere(scope),
       orderBy: { createdAt: 'desc' },
       include: { node: true, runs: { orderBy: { startedAt: 'desc' }, take: 5 } },
       take: 200,
     });
   }
 
-  listRuns(syncJobId: string) {
+  private async assertOwned(id: string, scope: WorkspaceScope) {
+    const job = await this.prisma.syncJob.findFirst({ where: { id, workspaceId: scope.workspaceId }, select: { id: true } });
+    if (!job) throw new NotFoundException('sync job not found');
+  }
+
+  async listRuns(syncJobId: string, scope: WorkspaceScope) {
+    await this.assertOwned(syncJobId, scope);
     return this.prisma.syncJobRun.findMany({ where: { syncJobId }, orderBy: { startedAt: 'desc' } });
   }
 
-  listAllRuns() {
+  listAllRuns(scope: WorkspaceScope) {
     return this.prisma.syncJobRun.findMany({
+      where: { syncJob: { workspaceId: scope.workspaceId } },
       orderBy: { startedAt: 'desc' },
       include: { syncJob: true },
       take: 300,
     });
   }
 
-  async create(dto: CreateSyncJobDto, actorUserId?: string) {
+  async create(dto: CreateSyncJobDto, scope: WorkspaceScope, actorUserId?: string) {
     const triggerToken = this.syncJobTriggerService.generate();
     const created = await this.prisma.syncJob.create({
       data: {
         ...dto,
-        workspaceId: DEFAULT_WORKSPACE_ID,
+        workspaceId: scope.workspaceId as string,
         triggerTokenHash: this.syncJobTriggerService.hash(triggerToken),
         triggerTokenRotatedAt: new Date(),
       },
@@ -103,7 +112,8 @@ export class SyncJobsService {
     return { ...created, triggerToken };
   }
 
-  async update(id: string, dto: UpdateSyncJobDto, actorUserId?: string) {
+  async update(id: string, dto: UpdateSyncJobDto, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const updated = await this.prisma.syncJob.update({ where: { id }, data: dto });
     await this.auditLogsService.log({
       actorUserId,
@@ -115,7 +125,8 @@ export class SyncJobsService {
     return updated;
   }
 
-  async delete(id: string, actorUserId?: string) {
+  async delete(id: string, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const deleted = await this.prisma.syncJob.delete({ where: { id } });
     await this.auditLogsService.log({
       actorUserId,
@@ -140,7 +151,12 @@ export class SyncJobsService {
     actorUserId?: string,
     trigger: 'manual' | 'webhook' = 'manual',
     relativePath?: string,
+    scope?: WorkspaceScope,
   ) {
+    // scope is omitted for the unauthenticated /trigger route - the presented
+    // per-job trigger token (verified by the caller before reaching here) is
+    // itself the authorization proof in that case.
+    if (scope) await this.assertOwned(id, scope);
     const job = await this.prisma.syncJob.findUniqueOrThrow({ where: { id } });
     const safeRelativePath = this.resolveRelativePath(relativePath);
     const sourcePath = safeRelativePath ? this.joinPath(job.sourcePath, safeRelativePath) : job.sourcePath;
@@ -209,7 +225,8 @@ export class SyncJobsService {
     return this.run(id, undefined, 'webhook', relativePath);
   }
 
-  async rotateTriggerToken(id: string, actorUserId?: string) {
+  async rotateTriggerToken(id: string, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     await this.prisma.syncJob.findUniqueOrThrow({ where: { id } });
     const triggerToken = await this.syncJobTriggerService.rotate(id);
 

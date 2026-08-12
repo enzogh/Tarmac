@@ -3,9 +3,9 @@ import { NodeStatus, Prisma } from '@prisma/client';
 import { AgentTokenService } from '../agents/agent-token.service';
 import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { scopeWhere, scopeWhereViaNode, WorkspaceScope } from '../auth/workspace.guard';
 import { getControlPlaneVersion } from '../common/build-info';
 import { PrismaService } from '../prisma/prisma.service';
-import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import { CreateNodeDto } from './dto/create-node.dto';
 import { UpdateNodeDto } from './dto/update-node.dto';
 
@@ -74,14 +74,19 @@ export class NodesService {
     private readonly agentTokenService: AgentTokenService,
   ) {}
 
-  list() {
-    return this.prisma.node.findMany({ orderBy: { createdAt: 'desc' } });
+  list(scope: WorkspaceScope) {
+    return this.prisma.node.findMany({ where: scopeWhere(scope), orderBy: { createdAt: 'desc' } });
   }
 
-  async create(dto: CreateNodeDto, actorUserId?: string) {
+  private async assertOwned(id: string, scope: WorkspaceScope) {
+    const node = await this.prisma.node.findFirst({ where: { id, workspaceId: scope.workspaceId }, select: { id: true } });
+    if (!node) throw new NotFoundException('node not found');
+  }
+
+  async create(dto: CreateNodeDto, scope: WorkspaceScope, actorUserId?: string) {
     const created = await this.prisma.node.create({
       data: {
-        workspaceId: DEFAULT_WORKSPACE_ID,
+        workspaceId: scope.workspaceId as string,
         name: dto.name,
         role: dto.role,
         status: (dto.status as NodeStatus | undefined) ?? 'offline',
@@ -99,7 +104,8 @@ export class NodesService {
     return created;
   }
 
-  async update(id: string, dto: UpdateNodeDto, actorUserId?: string) {
+  async update(id: string, dto: UpdateNodeDto, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const locationCountryCode =
       dto.locationCountryCode === undefined
         ? undefined
@@ -133,7 +139,8 @@ export class NodesService {
     return updated;
   }
 
-  async delete(id: string, actorUserId?: string) {
+  async delete(id: string, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const deleted = await this.prisma.node.delete({ where: { id } });
 
     const uninstall = this.agentsService.triggerAgentUninstall(id);
@@ -151,7 +158,8 @@ export class NodesService {
     return { ...deleted, agentUninstallQueued: uninstall.queued };
   }
 
-  async mute(id: string, minutes: number, actorUserId?: string) {
+  async mute(id: string, minutes: number, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const mutedUntil = new Date(Date.now() + minutes * 60_000);
     const updated = await this.prisma.node.update({ where: { id }, data: { mutedUntil } });
 
@@ -166,7 +174,8 @@ export class NodesService {
     return updated;
   }
 
-  async unmute(id: string, actorUserId?: string) {
+  async unmute(id: string, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const updated = await this.prisma.node.update({ where: { id }, data: { mutedUntil: null } });
 
     await this.auditLogsService.log({
@@ -179,7 +188,8 @@ export class NodesService {
     return updated;
   }
 
-  async rotateAgentToken(id: string, actorUserId?: string) {
+  async rotateAgentToken(id: string, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const { rotated, delivered } = await this.agentTokenService.rotate(id);
     if (!rotated) {
       throw new NotFoundException('node not found');
@@ -196,8 +206,8 @@ export class NodesService {
     return { delivered };
   }
 
-  async rotateAllAgentTokens(actorUserId?: string) {
-    const results = await this.agentTokenService.rotateAll();
+  async rotateAllAgentTokens(scope: WorkspaceScope, actorUserId?: string) {
+    const results = await this.agentTokenService.rotateAll(scopeWhere(scope));
 
     await this.auditLogsService.log({
       actorUserId,
@@ -209,7 +219,7 @@ export class NodesService {
     return results;
   }
 
-  async activity(range: string) {
+  async activity(range: string, scope: WorkspaceScope) {
     const now = Date.now();
     const ranges: Record<string, number> = {
       '1h': 60 * 60 * 1000,
@@ -219,17 +229,19 @@ export class NodesService {
     const ms = ranges[range] ?? ranges['1h'];
 
     const [nodes, latestSamples, disks, smartReports] = (await Promise.all([
-      this.prisma.node.findMany({ orderBy: { createdAt: 'desc' } }),
+      this.prisma.node.findMany({ where: scopeWhere(scope), orderBy: { createdAt: 'desc' } }),
       this.prisma.metricSample.findMany({
-        where: { createdAt: { gte: new Date(now - ms) } },
+        where: { createdAt: { gte: new Date(now - ms) }, ...scopeWhereViaNode(scope) },
         orderBy: [{ nodeId: 'asc' }, { createdAt: 'desc' }],
         distinct: ['nodeId'],
       }),
       this.prisma.disk.findMany({
+        where: scopeWhereViaNode(scope),
         include: { node: true },
         orderBy: [{ nodeId: 'asc' }, { mountPath: 'asc' }],
       }),
       this.prisma.smartReport.findMany({
+        where: scopeWhereViaNode(scope),
         orderBy: [{ nodeId: 'asc' }, { diskName: 'asc' }, { collectedAt: 'desc' }],
         distinct: ['nodeId', 'diskName'],
       }),
@@ -347,7 +359,8 @@ export class NodesService {
     });
   }
 
-  async smartHistory(nodeId: string, diskName: string) {
+  async smartHistory(nodeId: string, diskName: string, scope: WorkspaceScope) {
+    await this.assertOwned(nodeId, scope);
     const reports = await this.prisma.smartReport.findMany({
       where: { nodeId, diskName },
       orderBy: { collectedAt: 'desc' },
@@ -391,7 +404,8 @@ export class NodesService {
     }
   }
 
-  metrics(id: string, range: string) {
+  async metrics(id: string, range: string, scope: WorkspaceScope) {
+    await this.assertOwned(id, scope);
     const now = Date.now();
     const ranges: Record<string, number> = {
       '1h': 60 * 60 * 1000,

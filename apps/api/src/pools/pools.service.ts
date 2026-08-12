@@ -1,8 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PoolMemberStatus, Prisma } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
 import { PrismaService } from '../prisma/prisma.service';
-import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import { CreatePoolDto } from './dto/create-pool.dto';
 import { UpdatePoolDto } from './dto/update-pool.dto';
 import { UpsertPoolMemberDto } from './dto/upsert-pool-member.dto';
@@ -14,15 +14,21 @@ export class PoolsService {
     private readonly auditLogsService: AuditLogsService,
   ) {}
 
-  list() {
+  list(scope: WorkspaceScope) {
     return this.prisma.pool.findMany({
+      where: scopeWhere(scope),
       orderBy: { createdAt: 'desc' },
       include: { members: { include: { node: true }, orderBy: { createdAt: 'asc' } } },
     });
   }
 
-  async create(dto: CreatePoolDto, actorUserId?: string) {
-    const created = await this.prisma.pool.create({ data: { ...dto, workspaceId: DEFAULT_WORKSPACE_ID } });
+  private async assertOwned(id: string, scope: WorkspaceScope) {
+    const pool = await this.prisma.pool.findFirst({ where: { id, workspaceId: scope.workspaceId }, select: { id: true } });
+    if (!pool) throw new NotFoundException('pool not found');
+  }
+
+  async create(dto: CreatePoolDto, scope: WorkspaceScope, actorUserId?: string) {
+    const created = await this.prisma.pool.create({ data: { ...dto, workspaceId: scope.workspaceId as string } });
     await this.auditLogsService.log({
       actorUserId,
       action: 'pool.create',
@@ -33,7 +39,8 @@ export class PoolsService {
     return created;
   }
 
-  async update(id: string, dto: UpdatePoolDto, actorUserId?: string) {
+  async update(id: string, dto: UpdatePoolDto, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const updated = await this.prisma.pool.update({ where: { id }, data: dto });
     await this.auditLogsService.log({
       actorUserId,
@@ -45,7 +52,8 @@ export class PoolsService {
     return updated;
   }
 
-  async delete(id: string, actorUserId?: string) {
+  async delete(id: string, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const deleted = await this.prisma.pool.delete({ where: { id } });
     await this.auditLogsService.log({
       actorUserId,
@@ -56,7 +64,8 @@ export class PoolsService {
     return deleted;
   }
 
-  async upsertMember(poolId: string, dto: UpsertPoolMemberDto, actorUserId?: string) {
+  async upsertMember(poolId: string, dto: UpsertPoolMemberDto, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(poolId, scope);
     const member = await this.prisma.poolMember.upsert({
       where: { poolId_nodeId: { poolId, nodeId: dto.nodeId } },
       update: { role: dto.role, status: dto.status },
@@ -74,7 +83,8 @@ export class PoolsService {
     return member;
   }
 
-  async removeMember(poolId: string, nodeId: string, actorUserId?: string) {
+  async removeMember(poolId: string, nodeId: string, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(poolId, scope);
     const deleted = await this.prisma.poolMember.delete({ where: { poolId_nodeId: { poolId, nodeId } } });
     await this.recomputePoolStatus(poolId);
     await this.auditLogsService.log({

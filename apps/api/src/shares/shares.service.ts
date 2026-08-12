@@ -1,8 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, ShareClientAccess, ShareStatus } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
 import { PrismaService } from '../prisma/prisma.service';
-import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import { CreateShareDto } from './dto/create-share.dto';
 import { UpdateShareDto } from './dto/update-share.dto';
 
@@ -13,16 +13,22 @@ export class SharesService {
     private readonly auditLogsService: AuditLogsService,
   ) {}
 
-  list() {
+  list(scope: WorkspaceScope) {
     return this.prisma.share.findMany({
+      where: scopeWhere(scope),
       orderBy: { createdAt: 'desc' },
       include: { node: true, clients: true },
     });
   }
 
-  async create(dto: CreateShareDto, actorUserId?: string) {
+  private async assertOwned(id: string, scope: WorkspaceScope) {
+    const share = await this.prisma.share.findFirst({ where: { id, workspaceId: scope.workspaceId }, select: { id: true } });
+    if (!share) throw new NotFoundException('share not found');
+  }
+
+  async create(dto: CreateShareDto, scope: WorkspaceScope, actorUserId?: string) {
     const data: Prisma.ShareCreateInput = {
-      workspace: { connect: { id: DEFAULT_WORKSPACE_ID } },
+      workspace: { connect: { id: scope.workspaceId } },
       name: dto.name,
       path: dto.path,
       ...(dto.nodeId ? { node: { connect: { id: dto.nodeId } } } : {}),
@@ -39,7 +45,8 @@ export class SharesService {
     return created;
   }
 
-  async update(id: string, dto: UpdateShareDto, actorUserId?: string) {
+  async update(id: string, dto: UpdateShareDto, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const data: Prisma.ShareUpdateInput = {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
       ...(dto.path !== undefined ? { path: dto.path } : {}),
@@ -58,7 +65,8 @@ export class SharesService {
     return updated;
   }
 
-  async delete(id: string, actorUserId?: string) {
+  async delete(id: string, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const deleted = await this.prisma.share.delete({ where: { id } });
     await this.auditLogsService.log({
       actorUserId,
@@ -69,11 +77,13 @@ export class SharesService {
     return deleted;
   }
 
-  listClients(shareId: string) {
+  async listClients(shareId: string, scope: WorkspaceScope) {
+    await this.assertOwned(shareId, scope);
     return this.prisma.shareClient.findMany({ where: { shareId }, orderBy: { createdAt: 'desc' } });
   }
 
-  async upsertClient(shareId: string, clientId: string, access: ShareClientAccess, actorUserId?: string) {
+  async upsertClient(shareId: string, clientId: string, access: ShareClientAccess, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(shareId, scope);
     const item = await this.prisma.shareClient.upsert({
       where: { shareId_clientId: { shareId, clientId } },
       update: { access },
@@ -91,7 +101,8 @@ export class SharesService {
     return item;
   }
 
-  async removeClient(shareId: string, clientId: string, actorUserId?: string) {
+  async removeClient(shareId: string, clientId: string, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(shareId, scope);
     const item = await this.prisma.shareClient.delete({
       where: { shareId_clientId: { shareId, clientId } },
     });
@@ -115,7 +126,8 @@ export class SharesService {
     return this.prisma.share.update({ where: { id }, data: { status } });
   }
 
-  async reapply(id: string, actorUserId?: string) {
+  async reapply(id: string, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertOwned(id, scope);
     const updated = await this.prisma.share.update({
       where: { id },
       data: { status: 'pending' },

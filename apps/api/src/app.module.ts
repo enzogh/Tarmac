@@ -21,6 +21,7 @@ import { StorageModule } from './storage/storage.module';
 import { SyncJobsModule } from './sync-jobs/sync-jobs.module';
 import { TopologyModule } from './topology/topology.module';
 import { VlanModule } from './vlan/vlan.module';
+import { WorkspacesModule } from './workspaces/workspaces.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { VlanModule } from './vlan/vlan.module';
     AgentLogsModule,
     ReconciliationModule,
     VlanModule,
+    WorkspacesModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

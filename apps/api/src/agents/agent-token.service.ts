@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { Prisma } from '@prisma/client';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AgentsService } from './agents.service';
@@ -114,8 +115,8 @@ export class AgentTokenService {
     return { rotated: true, delivered };
   }
 
-  async rotateAll(): Promise<Array<{ nodeId: string; delivered: boolean }>> {
-    const nodes = await this.prisma.node.findMany({ select: { id: true } });
+  async rotateAll(where?: Prisma.NodeWhereInput): Promise<Array<{ nodeId: string; delivered: boolean }>> {
+    const nodes = await this.prisma.node.findMany({ where, select: { id: true } });
     return Promise.all(
       nodes.map(async (node) => {
         const { delivered } = await this.rotate(node.id);

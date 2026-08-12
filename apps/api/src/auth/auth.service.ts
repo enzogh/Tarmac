@@ -155,7 +155,22 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException('Utilisateur introuvable');
     }
 
-    return user;
+    // Platform admins can switch into any workspace; regular members only
+    // ever see the ones they belong to (WorkspaceGuard enforces the same
+    // set server-side - this list just drives the frontend switcher).
+    const workspaces = user.isSuperuser
+      ? await this.prisma.workspace.findMany({
+          select: { id: true, name: true, slug: true, isDefault: true },
+          orderBy: { createdAt: 'asc' },
+        })
+      : await this.prisma.workspace
+          .findMany({
+            where: { memberships: { some: { userId } } },
+            select: { id: true, name: true, slug: true, isDefault: true },
+            orderBy: { createdAt: 'asc' },
+          });
+
+    return { ...user, workspaces };
   }
 
   async updateProfile(userId: string | undefined, dto: UpdateProfileDto) {

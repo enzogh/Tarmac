@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Request } from 'express';
+import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateShareDto } from './dto/create-share.dto';
 import { UpdateShareClientDto } from './dto/update-share-client.dto';
@@ -21,48 +22,54 @@ interface AuthenticatedRequest extends Request {
   user?: { userId?: string };
 }
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, WorkspaceGuard)
 @Controller('shares')
 export class SharesController {
   constructor(private readonly sharesService: SharesService) {}
 
   @Get()
-  list() {
-    return this.sharesService.list();
+  list(@CurrentWorkspace() scope: WorkspaceScope) {
+    return this.sharesService.list(scope);
   }
 
   @Post()
-  create(@Body() dto: CreateShareDto, @Req() req: AuthenticatedRequest) {
-    return this.sharesService.create(dto, req.user?.userId);
+  create(@Body() dto: CreateShareDto, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.sharesService.create(dto, scope, req.user?.userId);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateShareDto, @Req() req: AuthenticatedRequest) {
-    return this.sharesService.update(id, dto, req.user?.userId);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateShareDto,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.sharesService.update(id, dto, scope, req.user?.userId);
   }
 
   @Delete(':id')
-  delete(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.sharesService.delete(id, req.user?.userId);
+  delete(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.sharesService.delete(id, scope, req.user?.userId);
   }
 
   @Post(':id/reapply')
-  reapply(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.sharesService.reapply(id, req.user?.userId);
+  reapply(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.sharesService.reapply(id, scope, req.user?.userId);
   }
 
   @Get(':id/clients')
-  listClients(@Param('id') id: string) {
-    return this.sharesService.listClients(id);
+  listClients(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope) {
+    return this.sharesService.listClients(id, scope);
   }
 
   @Post(':id/clients')
   addClient(
     @Param('id') id: string,
     @Body() dto: UpsertShareClientDto,
+    @CurrentWorkspace() scope: WorkspaceScope,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.sharesService.upsertClient(id, dto.clientId, dto.access, req.user?.userId);
+    return this.sharesService.upsertClient(id, dto.clientId, dto.access, scope, req.user?.userId);
   }
 
   @Patch(':id/clients/:clientId')
@@ -70,17 +77,19 @@ export class SharesController {
     @Param('id') id: string,
     @Param('clientId') clientId: string,
     @Body() dto: UpdateShareClientDto,
+    @CurrentWorkspace() scope: WorkspaceScope,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.sharesService.upsertClient(id, clientId, dto.access, req.user?.userId);
+    return this.sharesService.upsertClient(id, clientId, dto.access, scope, req.user?.userId);
   }
 
   @Delete(':id/clients/:clientId')
   removeClient(
     @Param('id') id: string,
     @Param('clientId') clientId: string,
+    @CurrentWorkspace() scope: WorkspaceScope,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.sharesService.removeClient(id, clientId, req.user?.userId);
+    return this.sharesService.removeClient(id, clientId, scope, req.user?.userId);
   }
 }
