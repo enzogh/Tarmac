@@ -68,6 +68,7 @@ export interface CommandPayload {
     | 'command.rotate_token'
     | 'command.apply_dns_server_group'
     | 'command.apply_dns_zone'
+    | 'command.apply_dns_zone_slave'
     | 'command.remove_dns_zone'
     | 'command.dns_get_zone_keys'
     | 'command.dns_resolve_port_conflict';
@@ -93,6 +94,7 @@ export interface CommandResultPayload {
     | 'rotate_token'
     | 'apply_dns_server_group'
     | 'apply_dns_zone'
+    | 'apply_dns_zone_slave'
     | 'remove_dns_zone'
     | 'dns_get_zone_keys'
     | 'dns_resolve_port_conflict';
@@ -110,6 +112,7 @@ export interface CommandResultPayload {
     | 'agent'
     | 'dns_server_group_member'
     | 'dns_zone'
+    | 'dns_zone_slave'
     | 'dns_zone_keys';
   resourceId: string;
   success: boolean;

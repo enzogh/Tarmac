@@ -2817,16 +2817,16 @@ func applyDnsServerGroup(ctx context.Context, payload map[string]interface{}) (s
 				log.Printf("dns: TSIG key import failed (%s), zone transfers stay IP-restricted via allow-axfr-ips only", strings.TrimSpace(string(out)))
 			}
 		}
-		// Auto-provisions slave zones on NOTIFY from the primary via
-		// PowerDNS's "supermaster" feature, so Tarmac never has to
-		// pre-create every zone on every secondary. Wiring the TSIG key
-		// into each zone's AXFR-MASTER-TSIG metadata (for signed, not just
-		// IP-restricted, transfers) is left for a follow-up pass - same
-		// spirit as apply_pool's existing "simulated" stub.
-		if out, err := exec.CommandContext(ctx, "pdnsutil", "add-supermaster", primaryVlanIp, "ns1.tarmac.local", groupID).CombinedOutput(); err != nil &&
-			!strings.Contains(strings.ToLower(string(out)), "already") {
-			log.Printf("dns: add-supermaster failed: %s", strings.TrimSpace(string(out)))
-		}
+		// Zones themselves are provisioned explicitly per zone via
+		// command.apply_dns_zone_slave (dispatched by the control plane's
+		// reconciliation loop for every zone in this group), not via
+		// PowerDNS's "supermaster" auto-provisioning - that relied on a
+		// NOTIFY's claimed nameserver hostname matching one of the zone's
+		// real NS records, and the placeholder used here never did, so
+		// secondaries silently never picked up any zone at all (confirmed:
+		// they answered REFUSED for a zone that had been active on the
+		// primary for days). Explicit per-zone Slave creation has no such
+		// hidden matching requirement.
 	}
 
 	if err := os.MkdirAll(filepath.Dir(dnsMarkerPath), 0o755); err == nil {
@@ -2883,6 +2883,51 @@ func (c *pdnsClient) createZone(ctx context.Context, fqdn string) error {
 	}
 	if status >= 300 {
 		return fmt.Errorf("cannot create zone %s: %s", fqdn, strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}
+
+// createSlaveZone explicitly registers this node as authoritative-via-AXFR
+// for fqdn, with masterIp as the zone's master - deterministic, no
+// dependency on a NOTIFY's claimed nameserver matching anything (unlike
+// the supermaster auto-provisioning this replaced, see applyDnsServerGroup).
+func (c *pdnsClient) createSlaveZone(ctx context.Context, fqdn, masterIp string) error {
+	body := map[string]interface{}{"name": fqdn, "kind": "Slave", "masters": []string{masterIp}}
+	respBody, status, err := c.request(ctx, http.MethodPost, "/zones", body)
+	if err != nil {
+		return fmt.Errorf("cannot create slave zone %s: %w", fqdn, err)
+	}
+	if status >= 300 {
+		return fmt.Errorf("cannot create slave zone %s: %s", fqdn, strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}
+
+// triggerAxfrRetrieve asks PowerDNS to pull the zone from its master right
+// away, instead of waiting for the SOA refresh timer (up to 3 hours away
+// with the refresh value applyDnsZone writes into the SOA).
+func (c *pdnsClient) triggerAxfrRetrieve(ctx context.Context, fqdn string) error {
+	respBody, status, err := c.request(ctx, http.MethodPut, "/zones/"+url.PathEscape(fqdn)+"/axfr-retrieve", nil)
+	if err != nil {
+		return err
+	}
+	if status >= 300 {
+		return fmt.Errorf("unexpected status %d: %s", status, strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}
+
+// setZoneMetadata is used to point a slave zone at the TSIG key it should
+// use to authenticate its AXFR pulls (metadata kind "AXFR-MASTER-TSIG"),
+// upgrading transfers from IP-restricted-only to TSIG-signed.
+func (c *pdnsClient) setZoneMetadata(ctx context.Context, fqdn, kind string, values []string) error {
+	body := map[string]interface{}{"kind": kind, "metadata": values}
+	respBody, status, err := c.request(ctx, http.MethodPut, "/zones/"+url.PathEscape(fqdn)+"/metadata/"+kind, body)
+	if err != nil {
+		return err
+	}
+	if status >= 300 {
+		return fmt.Errorf("unexpected status %d: %s", status, strings.TrimSpace(string(respBody)))
 	}
 	return nil
 }
@@ -3110,6 +3155,52 @@ func applyDnsZone(payload map[string]interface{}) (string, error) {
 	}
 
 	return fmt.Sprintf("applied %d record(s) to zone %s", len(rrsets), zoneName), nil
+}
+
+// applyDnsZoneSlave explicitly ensures this (secondary) node has the zone
+// configured as a Slave of the primary. Idempotent - if the zone already
+// exists here (as Slave from a previous apply), it's a no-op; actual data
+// sync happens over native AXFR between PowerDNS instances afterwards, not
+// through Tarmac. Best-effort forces an immediate transfer and TSIG
+// association rather than failing the whole apply if either doesn't work,
+// since the zone is still correctly configured either way (via
+// allow-axfr-ips) and will pick up on the next natural SOA refresh.
+func applyDnsZoneSlave(payload map[string]interface{}) (string, error) {
+	zoneName := readString(payload, "zoneName")
+	primaryVlanIp := readString(payload, "primaryVlanIp")
+	groupID := readString(payload, "groupId")
+	if zoneName == "" || primaryVlanIp == "" {
+		return "", errors.New("apply_dns_zone_slave payload must include zoneName and primaryVlanIp")
+	}
+	fqdn := zoneName + "."
+
+	apiKey, err := ensurePdnsApiKey()
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	client := &pdnsClient{apiKey: apiKey}
+
+	if client.zoneExists(ctx, fqdn) {
+		return fmt.Sprintf("zone %s already configured as slave", zoneName), nil
+	}
+
+	if err := client.createSlaveZone(ctx, fqdn, primaryVlanIp); err != nil {
+		return "", err
+	}
+
+	if groupID != "" {
+		if err := client.setZoneMetadata(ctx, fqdn, "AXFR-MASTER-TSIG", []string{tsigKeyName(groupID)}); err != nil {
+			log.Printf("dns: could not associate TSIG key with slave zone %s, transfer stays IP-restricted via allow-axfr-ips only: %v", zoneName, err)
+		}
+	}
+
+	if err := client.triggerAxfrRetrieve(ctx, fqdn); err != nil {
+		log.Printf("dns: could not trigger immediate AXFR for %s, it will still transfer on the next SOA refresh: %v", zoneName, err)
+	}
+
+	return fmt.Sprintf("zone %s configured as slave of %s", zoneName, primaryVlanIp), nil
 }
 
 func removeDnsZone(payload map[string]interface{}) (string, error) {
@@ -4921,6 +5012,17 @@ func handleCommand(ctx context.Context, cmd commandPayload, onProgress func(prog
 		result.ResourceType = "dns_zone"
 		result.ResourceID = readString(cmd.Payload, "zoneId")
 		message, err := applyDnsZone(cmd.Payload)
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Message = message
+		}
+	case "command.apply_dns_zone_slave":
+		result.Command = "apply_dns_zone_slave"
+		result.ResourceType = "dns_zone_slave"
+		result.ResourceID = readString(cmd.Payload, "zoneId")
+		message, err := applyDnsZoneSlave(cmd.Payload)
 		if err != nil {
 			result.Success = false
 			result.Message = err.Error()

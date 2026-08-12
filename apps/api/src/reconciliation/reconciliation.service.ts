@@ -157,6 +157,22 @@ export class ReconciliationService implements OnModuleInit {
         },
       });
       this.logger.debug(`Sent DNS zone command for zone ${zone.id}`);
+
+      // Zone transfer between primary/secondary is native DNS (AXFR), not
+      // something Tarmac pushes - but each secondary still needs to be
+      // explicitly told the zone exists and who its master is, or its
+      // PowerDNS has nothing to transfer at all and answers REFUSED for a
+      // zone it's never heard of (confirmed in production: supermaster
+      // auto-provisioning silently never worked - see applyDnsServerGroup).
+      if (!primary.node.vlanIp) continue;
+      for (const secondary of zone.group.members) {
+        if (secondary.role === 'primary' || !this.agentsService.isConnected(secondary.nodeId)) continue;
+        this.agentsService.sendCommand(secondary.nodeId, {
+          type: 'command.apply_dns_zone_slave',
+          payload: { zoneId: zone.id, zoneName: zone.name, primaryVlanIp: primary.node.vlanIp, groupId: zone.groupId },
+        });
+        this.logger.debug(`Sent DNS zone slave command for zone ${zone.id} to secondary ${secondary.nodeId}`);
+      }
     }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown error';
