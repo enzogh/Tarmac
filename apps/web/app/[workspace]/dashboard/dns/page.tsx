@@ -11,8 +11,10 @@ import {
   Globe,
   KeyRound,
   Layers,
+  Loader2,
   MapPin,
   Plus,
+  ScrollText,
   Server,
   ShieldCheck,
   Trash2,
@@ -21,6 +23,7 @@ import {
 } from 'lucide-react';
 import {
   api,
+  AgentLogItem,
   DnsNodeRecordRef,
   DnsPortConflict,
   DnsRecordItem,
@@ -65,6 +68,20 @@ const STATUS_BADGE: Record<string, { label: string; type: 'success' | 'warning' 
   pending: { label: 'En attente', type: 'warning' },
   error: { label: 'Erreur', type: 'error' },
 };
+
+// A bare "En attente" badge reads as stuck, not in-progress - the spinner
+// makes it visually obvious the agent is actively working on it (config
+// push, package install, service restart...) rather than waiting on the
+// user for something.
+function StatusIndicator({ status }: { status: 'pending' | 'active' | 'error' }) {
+  const badge = STATUS_BADGE[status] ?? STATUS_BADGE.pending;
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {status === 'pending' && <Loader2 className="h-3 w-3 animate-spin text-amber-400" />}
+      <Badge label={badge.label} type={badge.type} />
+    </span>
+  );
+}
 
 const RECORD_TYPES: DnsRecordType[] = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'CAA', 'SRV', 'PTR'];
 
@@ -133,8 +150,45 @@ export default function DnsPage() {
           current?.map((zone) => (zone.id === update.zoneId ? { ...zone, status: update.status } : zone)) ?? current,
         { revalidate: false },
       );
+      return;
+    }
+
+    // Live-appends to whichever node's log panel is currently open, so a
+    // user watching a "En attente" row can see exactly what the agent is
+    // doing (package install, config write, service start...) instead of
+    // just staring at a spinner - and if it fails, see why immediately
+    // instead of guessing from a bare "Erreur" badge.
+    if (message.type === 'agent-log.new') {
+      const entry = message.payload as AgentLogItem;
+      if (!expandedLogNodeId || entry.nodeId !== expandedLogNodeId) return;
+      if (!/dns/i.test(entry.message)) return;
+      setLogsByNode((prev) => ({ ...prev, [entry.nodeId]: [entry, ...(prev[entry.nodeId] ?? [])].slice(0, 50) }));
     }
   });
+
+  // Journal panel: shows recent DNS-related agent-log entries for a node,
+  // toggled per group-member/zone row (mirrors the SMART-history expand
+  // pattern on the infrastructure page). Only one open at a time.
+  const [expandedLogNodeId, setExpandedLogNodeId] = useState<string | null>(null);
+  const [logsByNode, setLogsByNode] = useState<Record<string, AgentLogItem[]>>({});
+  const [logsLoadingNodeId, setLogsLoadingNodeId] = useState<string | null>(null);
+
+  const toggleLogs = async (nodeId: string) => {
+    if (expandedLogNodeId === nodeId) {
+      setExpandedLogNodeId(null);
+      return;
+    }
+    setExpandedLogNodeId(nodeId);
+    setLogsLoadingNodeId(nodeId);
+    try {
+      const { items } = await api.agentLogs.list({ nodeId, limit: 30 });
+      setLogsByNode((prev) => ({ ...prev, [nodeId]: items.filter((entry) => /dns/i.test(entry.message)) }));
+    } catch {
+      setLogsByNode((prev) => ({ ...prev, [nodeId]: [] }));
+    } finally {
+      setLogsLoadingNodeId(null);
+    }
+  };
 
   // Group creation dialog
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
@@ -212,6 +266,31 @@ export default function DnsPage() {
 
   const nodeName = (nodeId: string) => nodes.find((n) => n.id === nodeId)?.name ?? nodeId;
   const nodeExternalIp = (nodeId: string) => nodes.find((n) => n.id === nodeId)?.externalIp ?? '';
+
+  const renderLogPanel = (nodeId: string) => {
+    if (expandedLogNodeId !== nodeId) return null;
+    const entries = logsByNode[nodeId];
+    return (
+      <div className="mt-2 max-h-56 space-y-1.5 overflow-y-auto rounded-lg border border-white/[0.08] bg-zinc-950/70 p-2.5 font-mono text-xs">
+        {logsLoadingNodeId === nodeId ? (
+          <p className="text-muted-foreground">Chargement…</p>
+        ) : !entries || entries.length === 0 ? (
+          <p className="text-muted-foreground">Aucun log DNS pour ce nœud pour l'instant.</p>
+        ) : (
+          entries.map((entry) => (
+            <div key={entry.id} className="flex gap-2">
+              <span className="shrink-0 text-muted-foreground">
+                {new Date(entry.createdAt).toLocaleTimeString('fr-FR')}
+              </span>
+              <span className={entry.level === 'error' || entry.level === 'critical' ? 'text-rose-300' : 'text-zinc-300'}>
+                {entry.message}
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+    );
+  };
 
   const resetGroupForm = () => {
     setGroupName('');
@@ -488,7 +567,6 @@ export default function DnsPage() {
           ) : (
             <div className="grid gap-4 animate-fade-in">
               {groups.map((group) => {
-                const statusBadge = STATUS_BADGE[group.status] ?? STATUS_BADGE.pending;
                 return (
                   <Card key={group.id} className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
                     <CardHeader>
@@ -498,7 +576,7 @@ export default function DnsPage() {
                           {group.name}
                         </CardTitle>
                         <div className="flex flex-wrap items-center gap-2">
-                          <Badge label={statusBadge.label} type={statusBadge.type} />
+                          <StatusIndicator status={group.status} />
                           <Button
                             variant="ghost"
                             size="sm"
@@ -517,7 +595,6 @@ export default function DnsPage() {
                         <p className="text-sm text-muted-foreground">Aucun serveur dans ce groupe.</p>
                       )}
                       {group.members.map((member) => {
-                        const memberStatus = STATUS_BADGE[member.status] ?? STATUS_BADGE.pending;
                         return (
                           <div key={member.nodeId} className="space-y-2">
                             <div className="flex items-center justify-between rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-sm">
@@ -531,7 +608,11 @@ export default function DnsPage() {
                                 <span className="text-xs text-muted-foreground">({member.role})</span>
                               </span>
                               <div className="flex items-center gap-2">
-                                <Badge label={memberStatus.label} type={memberStatus.type} />
+                                <StatusIndicator status={member.status} />
+                                <Button variant="ghost" size="sm" className="gap-1" onClick={() => toggleLogs(member.nodeId)}>
+                                  <ScrollText className="h-3.5 w-3.5" />
+                                  {expandedLogNodeId === member.nodeId ? 'Masquer' : 'Journal'}
+                                </Button>
                                 <Button
                                   variant="ghost"
                                   size="sm"
@@ -543,6 +624,7 @@ export default function DnsPage() {
                                 </Button>
                               </div>
                             </div>
+                            {renderLogPanel(member.nodeId)}
                             {member.conflictDetail && (
                               <Alert variant="destructive" className="ml-1">
                                 <AlertTriangle className="h-4 w-4" />
@@ -604,8 +686,8 @@ export default function DnsPage() {
           ) : (
             <div className="grid gap-4 animate-fade-in">
               {zones.map((zone) => {
-                const statusBadge = STATUS_BADGE[zone.status] ?? STATUS_BADGE.pending;
                 const group = groups.find((g) => g.id === zone.groupId);
+                const primaryNodeId = group?.members.find((m) => m.role === 'primary')?.nodeId;
                 return (
                   <Card key={zone.id} className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
                     <CardHeader>
@@ -617,7 +699,13 @@ export default function DnsPage() {
                         <div className="flex flex-wrap items-center gap-2">
                           {group && <Badge label={group.name} type="info" />}
                           {zone.dnssecEnabled && <Badge label="DNSSEC" type="success" />}
-                          <Badge label={statusBadge.label} type={statusBadge.type} />
+                          <StatusIndicator status={zone.status} />
+                          {primaryNodeId && (
+                            <Button variant="ghost" size="sm" className="gap-1" onClick={() => toggleLogs(primaryNodeId)}>
+                              <ScrollText className="h-3.5 w-3.5" />
+                              {expandedLogNodeId === primaryNodeId ? 'Masquer' : 'Journal'}
+                            </Button>
+                          )}
                           <Button variant="ghost" size="sm" onClick={() => openDelegation(zone)} className="gap-1">
                             <KeyRound className="h-3.5 w-3.5" />
                             Délégation
@@ -639,13 +727,13 @@ export default function DnsPage() {
                           </Button>
                         </div>
                       </div>
+                      {primaryNodeId && renderLogPanel(primaryNodeId)}
                     </CardHeader>
                     <CardContent className="space-y-2">
                       {zone.records.length === 0 && (
                         <p className="text-sm text-muted-foreground">Aucun enregistrement pour cette zone.</p>
                       )}
                       {zone.records.map((record) => {
-                        const recordStatus = STATUS_BADGE[record.status] ?? STATUS_BADGE.pending;
                         return (
                           <div
                             key={record.id}
@@ -661,7 +749,7 @@ export default function DnsPage() {
                               </span>
                             </span>
                             <div className="flex items-center gap-2">
-                              <Badge label={recordStatus.label} type={recordStatus.type} />
+                              <StatusIndicator status={record.status} />
                               <Button variant="ghost" size="sm" onClick={() => openRecordDialog(zone.id, record)}>
                                 Modifier
                               </Button>

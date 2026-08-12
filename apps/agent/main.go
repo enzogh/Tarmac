@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -2097,6 +2098,7 @@ const (
 	pdnsConfigPath   = "/etc/powerdns/pdns.conf"
 	pdnsApiKeyPath   = "/etc/powerdns/tarmac-api-key"
 	pdnsApiBaseURL   = "http://127.0.0.1:8081/api/v1/servers/localhost"
+	pdnsSqliteDbPath = "/var/lib/powerdns/pdns.sqlite3"
 	dnsMarkerPath    = "/etc/tarmac-agent/dns-enabled"
 	geoipConfPath    = "/etc/GeoIP.conf"
 	geoipDatabaseDir = "/usr/share/GeoIP"
@@ -2417,13 +2419,94 @@ func ensurePdnsApiKey() (string, error) {
 	return key, nil
 }
 
+// pdnsSqliteSchemaCandidates covers the schema file paths shipped by
+// pdns-backend-sqlite3 across Debian/Ubuntu releases - the package moved it
+// from /usr/share/doc (older) to a dedicated /usr/share/pdns-backend-sqlite3
+// directory (newer), and older builds ship it gzipped.
+var pdnsSqliteSchemaCandidates = []string{
+	"/usr/share/pdns-backend-sqlite3/schema/schema.sqlite3.sql",
+	"/usr/share/doc/pdns-backend-sqlite3/schema.sqlite3.sql",
+	"/usr/share/doc/pdns-backend-sqlite3/schema.sqlite3.sql.gz",
+}
+
+func findPdnsSqliteSchema() (string, error) {
+	for _, candidate := range pdnsSqliteSchemaCandidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("powerdns sqlite schema file not found (checked: %s)", strings.Join(pdnsSqliteSchemaCandidates, ", "))
+}
+
+// ensurePdnsSqliteDatabase creates and initializes the gsqlite3 backend's
+// database file the first time this node applies a DNS server group.
+// PowerDNS doesn't create its own schema on first run - an empty/missing
+// database file makes pdns_server fail to start - so this loads the schema
+// SQL shipped by the pdns-backend-sqlite3 package before pdns is ever
+// started. No-op if the file already exists (idempotent across re-applies).
+func ensurePdnsSqliteDatabase(ctx context.Context) error {
+	if _, err := os.Stat(pdnsSqliteDbPath); err == nil {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(pdnsSqliteDbPath), 0o755); err != nil {
+		return fmt.Errorf("cannot create powerdns database dir: %w", err)
+	}
+	if !commandExists("sqlite3") {
+		if _, err := ensureAgentSystemPackages(ctx, []string{"sqlite3"}); err != nil {
+			return fmt.Errorf("cannot install sqlite3: %w", err)
+		}
+	}
+
+	schemaPath, err := findPdnsSqliteSchema()
+	if err != nil {
+		return err
+	}
+	schemaSQL, err := os.ReadFile(schemaPath)
+	if err != nil {
+		return fmt.Errorf("cannot read powerdns schema file: %w", err)
+	}
+	if strings.HasSuffix(schemaPath, ".gz") {
+		gz, err := gzip.NewReader(bytes.NewReader(schemaSQL))
+		if err != nil {
+			return fmt.Errorf("cannot decompress powerdns schema file: %w", err)
+		}
+		defer gz.Close()
+		if schemaSQL, err = io.ReadAll(gz); err != nil {
+			return fmt.Errorf("cannot read decompressed powerdns schema: %w", err)
+		}
+	}
+
+	cmd := exec.CommandContext(ctx, "sqlite3", pdnsSqliteDbPath)
+	cmd.Stdin = bytes.NewReader(schemaSQL)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		_ = os.Remove(pdnsSqliteDbPath) // don't leave a half-initialized db behind for the next attempt to trip over
+		return fmt.Errorf("cannot load powerdns schema into %s: %s", pdnsSqliteDbPath, strings.TrimSpace(string(out)))
+	}
+
+	// pdns_server runs as the "pdns" system user (created by the
+	// pdns-server package's postinst) - it needs write access to both the
+	// db file and its directory (sqlite writes -wal/-shm files alongside
+	// it once opened for read-write).
+	if commandExists("chown") {
+		if out, err := exec.CommandContext(ctx, "chown", "-R", "pdns:pdns", filepath.Dir(pdnsSqliteDbPath)).CombinedOutput(); err != nil {
+			log.Printf("dns: chown pdns:pdns %s failed (pdns_server may fail to start if it can't write here): %s", filepath.Dir(pdnsSqliteDbPath), strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
+}
+
 func writePdnsConfig(apiKey string, allowAxfrIps []string) error {
 	if err := os.MkdirAll(filepath.Dir(pdnsConfigPath), 0o755); err != nil {
 		return fmt.Errorf("cannot create powerdns config dir: %w", err)
 	}
+	// No global "dnssec"/"default-ksk-algorithm" setting here on purpose -
+	// PowerDNS Authoritative has no such global toggle (that was a mistaken
+	// guess that crashed pdns_server outright: "Fatal error: Trying to set
+	// unknown setting 'dnssec'"). DNSSEC is enabled per zone instead, via
+	// the POST .../cryptokeys call already made in applyDnsZone.
 	lines := []string{
 		"launch=gsqlite3",
-		"gsqlite3-database=/var/lib/powerdns/pdns.sqlite3",
+		"gsqlite3-database=" + pdnsSqliteDbPath,
 		"local-address=0.0.0.0",
 		"local-port=53",
 		"api=yes",
@@ -2432,8 +2515,6 @@ func writePdnsConfig(apiKey string, allowAxfrIps []string) error {
 		"webserver-address=127.0.0.1",
 		"webserver-port=8081",
 		"webserver-allow-from=127.0.0.1",
-		"dnssec=yes",
-		"default-ksk-algorithm=ecdsa256",
 		"enable-lua-records=yes",
 		"allow-axfr-ips=" + strings.Join(append([]string{"127.0.0.1"}, allowAxfrIps...), ","),
 	}
@@ -2486,6 +2567,10 @@ func applyDnsServerGroup(ctx context.Context, payload map[string]interface{}) (s
 
 	if _, err := ensureAgentSystemPackages(ctx, []string{"pdns-server", "pdns-backend-sqlite3"}); err != nil {
 		return "", nil, fmt.Errorf("cannot install PowerDNS: %w", err)
+	}
+
+	if err := ensurePdnsSqliteDatabase(ctx); err != nil {
+		return "", nil, err
 	}
 
 	if conflict := probeDnsPortConflict(); conflict != nil {
