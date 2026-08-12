@@ -1,8 +1,9 @@
-import { Body, Controller, ForbiddenException, Get, Param, Post, Delete, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Param, Patch, Post, Delete, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
+import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 import { WorkspacesService } from './workspaces.service';
 
 interface AuthenticatedRequest extends Request {
@@ -32,6 +33,28 @@ export class WorkspacesController {
   create(@Body() dto: CreateWorkspaceDto, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
     assertPlatformAdmin(scope);
     return this.workspacesService.create(dto, req.user?.userId);
+  }
+
+  // name and ssoGroupClaim (the Authentik group that auto-grants membership
+  // on SSO login) only - see WorkspacesService.update for what's deliberately
+  // not editable here.
+  @Patch(':id')
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateWorkspaceDto,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    assertPlatformAdmin(scope);
+    return this.workspacesService.update(id, dto, req.user?.userId);
+  }
+
+  // Lets a platform admin find a userId to pass to addMember() below -
+  // there's no dedicated users module/list endpoint anywhere else yet.
+  @Get('users')
+  listAllUsers(@CurrentWorkspace() scope: WorkspaceScope) {
+    assertPlatformAdmin(scope);
+    return this.workspacesService.listAllUsers();
   }
 
   @Get(':id/members')

@@ -90,21 +90,35 @@ export class SsoController {
       });
 
       const claims = tokenSet.claims();
-      if (!claims.is_superuser) {
-        return res.redirect(this.loginRedirect({ sso: 'forbidden' }));
-      }
 
       const email = typeof claims.email === 'string' ? claims.email : null;
       if (!email) {
         return res.redirect(this.loginRedirect({ sso: 'error', reason: 'no_email_claim' }));
       }
 
+      // groups is read defensively (never thrown on) since a misconfigured
+      // or absent claim must degrade to "no new workspace granted this
+      // login", not an error - see AuthService.syncWorkspaceMembershipsFromSso.
+      const groups = Array.isArray(claims.groups)
+        ? claims.groups.filter((g): g is string => typeof g === 'string')
+        : [];
+
       const user = await this.authService.findOrCreateSsoUser({
         sub: claims.sub,
         email,
         name: typeof claims.name === 'string' ? claims.name : null,
         avatarUrl: typeof claims.picture === 'string' ? claims.picture : null,
+        isSuperuser: claims.is_superuser === true,
       });
+
+      await this.authService.syncWorkspaceMembershipsFromSso(user.id, groups);
+
+      // Preserves today's fail-closed behavior for genuinely unrecognized
+      // identities while opening the door to legitimate workspace members
+      // who aren't platform admins.
+      if (!user.isSuperuser && !(await this.authService.hasAnyWorkspaceMembership(user.id))) {
+        return res.redirect(this.loginRedirect({ sso: 'forbidden' }));
+      }
 
       const { access_token } = await this.authService.issueSession(user);
       res.cookie(AUTH_COOKIE_NAME, access_token, {
@@ -129,7 +143,7 @@ export class SsoController {
     try {
       const client = await this.authentik.getClient();
       const redirectUri = this.configService.getOrThrow<string>('AUTHENTIK_REDIRECT_URI');
-      const scope = this.configService.get<string>('AUTHENTIK_SCOPES', 'openid profile email tarmac');
+      const scope = this.configService.get<string>('AUTHENTIK_SCOPES', 'openid profile email tarmac groups');
 
       const codeVerifier = this.authentik.generators.codeVerifier();
       const codeChallenge = this.authentik.generators.codeChallenge(codeVerifier);

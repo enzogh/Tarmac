@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceScope } from '../auth/workspace.guard';
 import { VlanService } from '../vlan/vlan.service';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
+import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 
 // 10.16.0.0/16 .. 10.31.0.0/16 - see vlan.service.ts's WORKSPACE_SUBNET_BASE_OCTET,
 // which must stay in sync with this cap.
@@ -105,6 +106,50 @@ export class WorkspacesService {
     throw new ConflictException(
       `No subnet available - all ${MAX_WORKSPACE_SUBNETS} workspace subnet slots are in use`,
     );
+  }
+
+  // name/ssoGroupClaim only - renaming a workspace or (re)pointing it at an
+  // Authentik group is safe post-creation; subnetIndex/slug are not editable
+  // here since changing them after nodes/agents already depend on them would
+  // require the same careful rollout as initial provisioning.
+  async update(workspaceId: string, dto: UpdateWorkspaceDto, actorUserId?: string) {
+    await this.assertExists(workspaceId);
+    if (dto.name === undefined && dto.ssoGroupClaim === undefined) {
+      throw new BadRequestException('Nothing to update');
+    }
+
+    try {
+      const updated = await this.prisma.workspace.update({
+        where: { id: workspaceId },
+        data: {
+          ...(dto.name !== undefined ? { name: dto.name } : {}),
+          ...(dto.ssoGroupClaim !== undefined ? { ssoGroupClaim: dto.ssoGroupClaim || null } : {}),
+        },
+      });
+      await this.auditLogsService.log({
+        actorUserId,
+        action: 'workspace.update',
+        resourceType: 'workspace',
+        resourceId: workspaceId,
+        details: dto as unknown as Prisma.InputJsonValue,
+      });
+      return updated;
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('Another workspace is already mapped to this Authentik group');
+      }
+      throw error;
+    }
+  }
+
+  // There's no dedicated users module/list endpoint anywhere in the API yet -
+  // without this, a platform admin has no way to find a userId to pass to
+  // addMember() short of querying the database directly.
+  listAllUsers() {
+    return this.prisma.user.findMany({
+      select: { id: true, email: true, name: true, isSuperuser: true },
+      orderBy: { email: 'asc' },
+    });
   }
 
   async listMembers(workspaceId: string) {

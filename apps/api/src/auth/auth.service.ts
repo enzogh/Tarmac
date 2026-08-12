@@ -88,12 +88,23 @@ export class AuthService implements OnModuleInit {
   // identity to an existing local user by ssoSubject first (stable across
   // email changes), then by email (so a pre-existing local admin account
   // gets upgraded rather than duplicated), else creates a fresh SSO-only
-  // user. Callers must have already verified the `is_superuser` claim.
+  // user.
+  //
+  // isSuperuser mirrors the claim honestly - it must NEVER be hardcoded true
+  // here. Before Phase 3, every caller of this method had already rejected
+  // non-superuser claims upstream, so hardcoding true was a no-op; now that
+  // ordinary workspace members can complete this same flow, doing so would
+  // silently grant every new SSO-provisioned workspace member full platform-
+  // admin rights. Demotion (a previously-true isSuperuser going false) is
+  // deliberately NOT applied here even when the claim says false - treat
+  // that as a possibly-transient IdP/claim-mapping issue and require a
+  // manual platform-admin action to actually revoke platform-admin status.
   async findOrCreateSsoUser(claims: {
     sub: string;
     email: string;
     name?: string | null;
     avatarUrl?: string | null;
+    isSuperuser: boolean;
   }): Promise<User> {
     const email = claims.email.trim().toLowerCase();
 
@@ -105,7 +116,7 @@ export class AuthService implements OnModuleInit {
           email,
           name: claims.name ?? existingBySubject.name,
           avatarUrl: claims.avatarUrl ?? existingBySubject.avatarUrl,
-          isSuperuser: true,
+          isSuperuser: existingBySubject.isSuperuser || claims.isSuperuser,
         },
       });
     }
@@ -118,7 +129,7 @@ export class AuthService implements OnModuleInit {
           ssoSubject: claims.sub,
           name: claims.name ?? existingByEmail.name,
           avatarUrl: claims.avatarUrl ?? existingByEmail.avatarUrl,
-          isSuperuser: true,
+          isSuperuser: existingByEmail.isSuperuser || claims.isSuperuser,
         },
       });
     }
@@ -129,9 +140,46 @@ export class AuthService implements OnModuleInit {
         ssoSubject: claims.sub,
         name: claims.name,
         avatarUrl: claims.avatarUrl,
-        isSuperuser: true,
+        isSuperuser: claims.isSuperuser,
       },
     });
+  }
+
+  // Grants workspace membership from Authentik group claims on every SSO
+  // login. Deliberately additive-only - never removes a membership, even one
+  // whose group is absent from this login's claims. An incomplete or
+  // misconfigured `groups` claim (missing scope, a not-yet-provisioned
+  // group, a bad Authentik property-mapping expression) is easy to hit in
+  // practice, and the failure mode must be "doesn't grant a new workspace
+  // this time", never "silently revokes a workspace the user already had".
+  // Revocation is an explicit platform-admin action (see
+  // WorkspacesService.removeMember) instead. `source: 'sso'` tags rows this
+  // method creates so a future opt-in full add+revoke sync mode can be
+  // scoped to only ever touch what it itself granted, never a manually
+  // ('manual') added membership.
+  async syncWorkspaceMembershipsFromSso(userId: string, groupClaims: string[]): Promise<void> {
+    if (groupClaims.length === 0) return;
+
+    const matchingWorkspaces = await this.prisma.workspace.findMany({
+      where: { ssoGroupClaim: { in: groupClaims } },
+      select: { id: true },
+    });
+    if (matchingWorkspaces.length === 0) return;
+
+    await Promise.all(
+      matchingWorkspaces.map((workspace) =>
+        this.prisma.workspaceMembership.upsert({
+          where: { workspaceId_userId: { workspaceId: workspace.id, userId } },
+          create: { workspaceId: workspace.id, userId, source: 'sso' },
+          update: {},
+        }),
+      ),
+    );
+  }
+
+  async hasAnyWorkspaceMembership(userId: string): Promise<boolean> {
+    const count = await this.prisma.workspaceMembership.count({ where: { userId } });
+    return count > 0;
   }
 
   async getProfile(userId?: string) {

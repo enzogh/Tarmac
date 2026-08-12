@@ -3,13 +3,13 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { ReactNode, useEffect, useState } from 'react';
-import { LogOut, Layers, BookOpen, Search, Menu, X } from 'lucide-react';
+import { LogOut, Layers, BookOpen, Search, Menu, ShieldAlert, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { NAV_GROUPS, NAV_ITEMS } from '../lib/nav-items';
 import { CommandPalette } from './CommandPalette';
 import { Button } from './ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
-import { WorkspaceProvider } from '../lib/workspace-context';
+import { useWorkspace, WorkspaceProvider } from '../lib/workspace-context';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { cn } from '../lib/utils';
 
@@ -191,10 +191,36 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
 
           {/* Content */}
           <main className="flex-1 overflow-auto">
-            <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">{children}</div>
+            <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+              <NoWorkspaceAccessGate>{children}</NoWorkspaceAccessGate>
+            </div>
           </main>
         </div>
       </div>
     </TooltipProvider>
   );
+}
+
+// Shouldn't normally be reachable - the SSO callback already rejects a login
+// with no workspace membership and no platform-admin claim (see
+// sso.controller.ts) - but a membership can be revoked while a session's JWT
+// (valid up to 12h) is still live, so every page falls back to this instead
+// of a blank screen full of failed API calls.
+function NoWorkspaceAccessGate({ children }: { children: ReactNode }) {
+  const { workspaces, isPlatformAdmin, isLoading } = useWorkspace();
+
+  if (!isLoading && !isPlatformAdmin && workspaces.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.02] px-6 py-16 text-center">
+        <ShieldAlert className="h-8 w-8 text-amber-400" />
+        <h2 className="text-base font-semibold text-foreground">Aucun accès workspace</h2>
+        <p className="max-w-md text-sm text-muted-foreground">
+          Votre compte n&apos;est actuellement rattaché à aucun workspace. Contactez un administrateur pour qu&apos;il
+          vous y ajoute.
+        </p>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
 }

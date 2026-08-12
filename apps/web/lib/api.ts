@@ -370,6 +370,35 @@ export type WorkspaceSummary = {
   isDefault: boolean;
 };
 
+export type WorkspaceDetail = {
+  id: string;
+  name: string;
+  slug: string;
+  ssoGroupClaim: string | null;
+  isDefault: boolean;
+  subnetIndex: number | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WorkspaceMember = {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  role: string;
+  source: 'manual' | 'sso';
+  createdAt: string;
+  updatedAt: string;
+  user: { id: string; email: string; name?: string | null; avatarUrl?: string | null };
+};
+
+export type WorkspaceUserOption = {
+  id: string;
+  email: string;
+  name?: string | null;
+  isSuperuser: boolean;
+};
+
 export type AdminProfile = {
   id: string;
   email: string;
@@ -770,11 +799,22 @@ export const api = {
   },
 
   workspaces: {
-    list: () => request<WorkspaceSummary[]>('/api/v1/workspaces'),
+    list: () => request<WorkspaceDetail[]>('/api/v1/workspaces'),
     create: (payload: { name: string; slug?: string }) =>
-      request<WorkspaceSummary>('/api/v1/workspaces', {
+      request<WorkspaceDetail>('/api/v1/workspaces', {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
+    update: (id: string, payload: { name?: string; ssoGroupClaim?: string }) =>
+      request<WorkspaceDetail>(`/api/v1/workspaces/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      }),
+    listUsers: () => request<WorkspaceUserOption[]>('/api/v1/workspaces/users'),
+    listMembers: (id: string) => request<WorkspaceMember[]>(`/api/v1/workspaces/${id}/members`),
+    addMember: (id: string, userId: string) =>
+      request<WorkspaceMember>(`/api/v1/workspaces/${id}/members/${userId}`, { method: 'POST' }),
+    removeMember: (id: string, userId: string) =>
+      request<{ success: boolean }>(`/api/v1/workspaces/${id}/members/${userId}`, { method: 'DELETE' }),
   },
 };
