@@ -101,14 +101,27 @@ function NodeMeter({
 }
 
 export default function InfrastructurePage() {
-  const { data: nodes = [], mutate: refreshNodes, isLoading: nodesLoading } = usePolling('activity:1h', () => api.nodes.activity());
+  const { data: nodesRaw, mutate: refreshNodes, isLoading: nodesLoading } = usePolling('activity:1h', () => api.nodes.activity());
+  const nodes = nodesRaw ?? [];
 
   // Patches the polled activity cache the instant a heartbeat arrives
   // instead of waiting up to 5s for the next poll tick - see
   // AgentsService.onHeartbeat's 'node.heartbeat' broadcast. Polling keeps
   // running as the source of truth/fallback; this is purely additive.
+  //
+  // Bails out entirely if the first real poll hasn't landed yet (nodesRaw
+  // still undefined) - calling mutate() with an updater that can produce
+  // `undefined` (current?.map(...) short-circuits to undefined when current
+  // is undefined) sets the SWR cache to undefined, and with several nodes
+  // heartbeating every ~5s a live message reliably arrives before the very
+  // first fetch resolves. That poisoned the cache permanently: every
+  // subsequent poll response lost SWR's in-flight-vs-mutated race against
+  // the next (more frequent) heartbeat, so real data never stuck and the
+  // page showed 0 nodes forever despite the API and the socket both
+  // working correctly.
   useLiveSocket((message) => {
     if (message.type !== 'node.heartbeat') return;
+    if (!nodesRaw) return;
     const update = message.payload as NodeHeartbeatLiveEvent;
     void refreshNodes(
       (current) =>
@@ -121,7 +134,7 @@ export default function InfrastructurePage() {
                 metrics: { ...update.metrics, sampledAt: update.lastSeenAt },
               }
             : node,
-        ),
+        ) ?? current,
       { revalidate: false },
     );
   });
