@@ -1,10 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Layers, LogOut, Mail, Plus, Search, ShieldCheck, Trash2, Users } from 'lucide-react';
-import { api, getCurrentWorkspaceId, setCurrentWorkspaceId, WorkspaceListItem, WorkspaceMember } from '../../lib/api';
+import { ArrowRight, Layers, LogOut, Plus, Search, ShieldCheck, Users } from 'lucide-react';
+import { api, setCurrentWorkspaceId, WorkspaceListItem } from '../../lib/api';
 import { usePolling } from '../../lib/hooks/usePolling';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '../../components/ui/card';
@@ -43,14 +42,21 @@ function hashString(value: string): number {
   return hash;
 }
 
+// Two letters, always - a single stray capital in a tile reads as a broken
+// image placeholder rather than a deliberate monogram. Multi-word names use
+// the first letter of each of the first two words ("Acme Corp" -> "AC");
+// a single-word name falls back to its own first two letters ("Intraced" ->
+// "IN") instead of just "I".
 function initials(name: string): string {
-  const letters = name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word[0]?.toUpperCase() ?? '')
-    .join('');
-  return letters || '?';
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length >= 2) {
+    return (words[0][0] + words[1][0]).toUpperCase();
+  }
+  if (words.length === 1) {
+    const word = words[0];
+    return word.length >= 2 ? word.slice(0, 2).toUpperCase() : (word[0] + word[0]).toUpperCase();
+  }
+  return '??';
 }
 
 function WorkspaceTile({ id, name }: { id: string; name: string }) {
@@ -70,11 +76,9 @@ export default function WorkspacesHomePage() {
   const { data: workspaces, isLoading, mutate } = usePolling('workspaces', api.workspaces.list, { intervalMs: 15000 });
 
   const isSuperuser = profile?.isSuperuser ?? false;
-  const currentWorkspaceSlug = workspaces?.find((w) => w.id === getCurrentWorkspaceId())?.slug ?? null;
 
   const [query, setQuery] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
-  const [managingWorkspace, setManagingWorkspace] = useState<WorkspaceListItem | null>(null);
 
   const filtered = useMemo(() => {
     const list = workspaces ?? [];
@@ -83,9 +87,14 @@ export default function WorkspacesHomePage() {
     return list.filter((w) => w.name.toLowerCase().includes(q) || w.slug.toLowerCase().includes(q));
   }, [workspaces, query]);
 
+  // Hard navigation, not router.push - every page's data hooks are cached by
+  // a plain string key (see usePolling), so a soft client-side transition
+  // between two workspaces could briefly render the previous workspace's
+  // cached data before revalidating. A full page load guarantees a clean
+  // slate.
   const enterWorkspace = (workspace: WorkspaceListItem) => {
     setCurrentWorkspaceId(workspace.id);
-    router.push(`/${workspace.slug}/dashboard`);
+    window.location.href = `/${workspace.slug}/dashboard`;
   };
 
   const handleLogout = async () => {
@@ -113,11 +122,6 @@ export default function WorkspacesHomePage() {
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              {currentWorkspaceSlug && (
-                <Button variant="ghost" size="sm" asChild>
-                  <Link href={`/${currentWorkspaceSlug}/dashboard`}>Retour au tableau de bord</Link>
-                </Button>
-              )}
               <Button variant="ghost" size="sm" onClick={() => void handleLogout()} className="gap-2">
                 <LogOut className="h-4 w-4" />
                 Déconnexion
@@ -173,7 +177,6 @@ export default function WorkspacesHomePage() {
         {!isLoading && filtered.length > 0 && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 animate-fade-in">
             {filtered.map((workspace) => {
-              const canManage = isSuperuser || workspace.myRole === 'owner';
               return (
                 <Card key={workspace.id} className="flex flex-col transition-colors hover:border-white/[0.14]">
                   <CardHeader className="flex-row items-start justify-between gap-3 space-y-0">
@@ -209,12 +212,6 @@ export default function WorkspacesHomePage() {
                       Entrer
                       <ArrowRight className="h-4 w-4" />
                     </Button>
-                    {canManage && (
-                      <Button variant="outline" className="gap-2" onClick={() => setManagingWorkspace(workspace)}>
-                        <Users className="h-4 w-4" />
-                        Membres
-                      </Button>
-                    )}
                   </CardFooter>
                 </Card>
               );
@@ -230,14 +227,6 @@ export default function WorkspacesHomePage() {
           setCreateOpen(false);
           void mutate();
         }}
-      />
-
-      <ManageMembersDialog
-        workspace={managingWorkspace}
-        onOpenChange={(open) => {
-          if (!open) setManagingWorkspace(null);
-        }}
-        onMembershipChanged={() => void mutate()}
       />
     </div>
   );
@@ -315,165 +304,5 @@ function CreateWorkspaceDialog({
         </form>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function ManageMembersDialog({
-  workspace,
-  onOpenChange,
-  onMembershipChanged,
-}: {
-  workspace: WorkspaceListItem | null;
-  onOpenChange: (open: boolean) => void;
-  onMembershipChanged: () => void;
-}) {
-  const [members, setMembers] = useState<WorkspaceMember[] | null>(null);
-  const [membersError, setMembersError] = useState<string | null>(null);
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteLoading, setInviteLoading] = useState(false);
-  const [inviteError, setInviteError] = useState<string | null>(null);
-  const [memberToRemove, setMemberToRemove] = useState<WorkspaceMember | null>(null);
-
-  const refreshMembers = async (workspaceId: string) => {
-    try {
-      const data = await api.workspaces.listMembers(workspaceId);
-      setMembers(data);
-    } catch {
-      setMembersError("Impossible de charger les membres de ce workspace.");
-    }
-  };
-
-  useEffect(() => {
-    setMembers(null);
-    setMembersError(null);
-    setInviteEmail('');
-    setInviteError(null);
-    if (workspace) void refreshMembers(workspace.id);
-  }, [workspace]);
-
-  const submitInvite = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!workspace) return;
-    setInviteLoading(true);
-    setInviteError(null);
-    try {
-      await api.workspaces.invite(workspace.id, inviteEmail.trim());
-      setInviteEmail('');
-      await refreshMembers(workspace.id);
-      onMembershipChanged();
-    } catch {
-      setInviteError(
-        "Aucun compte trouvé pour cet email. Cette personne doit d'abord se connecter une fois via SSO, puis réessaie.",
-      );
-    } finally {
-      setInviteLoading(false);
-    }
-  };
-
-  const removeMember = async (member: WorkspaceMember) => {
-    if (!workspace) return;
-    try {
-      await api.workspaces.removeMember(workspace.id, member.userId);
-      setMemberToRemove(null);
-      await refreshMembers(workspace.id);
-      onMembershipChanged();
-    } catch {
-      setMembersError("Impossible de retirer ce membre.");
-    }
-  };
-
-  return (
-    <>
-      <Dialog open={!!workspace} onOpenChange={onOpenChange}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Membres de « {workspace?.name} »</DialogTitle>
-          </DialogHeader>
-
-          <form onSubmit={submitInvite} className="space-y-2">
-            <Label htmlFor="invite-email">Inviter par email</Label>
-            <div className="flex gap-2">
-              <Input
-                id="invite-email"
-                type="email"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                placeholder="personne@exemple.com"
-                required
-              />
-              <Button type="submit" disabled={inviteLoading} className="shrink-0 gap-2">
-                <Mail className="h-4 w-4" />
-                {inviteLoading ? 'Envoi…' : 'Inviter'}
-              </Button>
-            </div>
-            {inviteError && (
-              <Alert variant="destructive" className="mt-2">
-                <AlertDescription>{inviteError}</AlertDescription>
-              </Alert>
-            )}
-          </form>
-
-          <div className="mt-5 space-y-2">
-            {membersError && (
-              <Alert variant="destructive">
-                <AlertDescription>{membersError}</AlertDescription>
-              </Alert>
-            )}
-            {members === null && !membersError && <p className="text-sm text-muted-foreground">Chargement…</p>}
-            {members?.map((member) => (
-              <div
-                key={member.id}
-                className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm text-foreground">{member.user.name || member.user.email}</p>
-                  <p className="truncate text-xs text-muted-foreground">{member.user.email}</p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  {member.role === 'owner' && (
-                    <Badge variant="info" className="gap-1">
-                      <ShieldCheck className="h-3 w-3" />
-                      Propriétaire
-                    </Badge>
-                  )}
-                  <Badge variant="outline">{member.source === 'sso' ? 'SSO' : 'Manuel'}</Badge>
-                  <Button variant="ghost" size="icon" onClick={() => setMemberToRemove(member)} title="Retirer">
-                    <Trash2 className="h-4 w-4 text-rose-400" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={!!memberToRemove}
-        onOpenChange={(open) => {
-          if (!open) setMemberToRemove(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Retirer ce membre ?</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            {memberToRemove?.user.email} perdra l&apos;accès à ce workspace immédiatement.
-          </p>
-          <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => setMemberToRemove(null)}>
-              Annuler
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              onClick={() => memberToRemove && void removeMember(memberToRemove)}
-            >
-              Retirer
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
   );
 }

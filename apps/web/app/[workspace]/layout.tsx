@@ -2,7 +2,7 @@
 
 import { ReactNode, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { api, getCurrentWorkspaceId, setCurrentWorkspaceId, WorkspaceListItem } from '../../lib/api';
+import { ApiError, api, getCurrentWorkspaceId, setCurrentWorkspaceId, WorkspaceListItem } from '../../lib/api';
 import { DashboardLayout } from '../../components/DashboardLayout';
 
 // Resolves the `[workspace]` URL segment (slug or id, either is a valid
@@ -19,25 +19,44 @@ export default function WorkspaceLayout({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+    let attempt = 0;
     setReady(false);
 
-    api.workspaces
-      .list()
-      .then((workspaces: WorkspaceListItem[]) => {
-        if (cancelled) return;
-        const match = workspaces.find((w) => w.slug === params.workspace || w.id === params.workspace);
-        if (!match) {
-          router.replace('/workspaces');
-          return;
-        }
-        if (getCurrentWorkspaceId() !== match.id) {
-          setCurrentWorkspaceId(match.id);
-        }
-        setReady(true);
-      })
-      .catch(() => {
-        if (!cancelled) router.replace('/login');
-      });
+    const resolve = () => {
+      api.workspaces
+        .list()
+        .then((workspaces: WorkspaceListItem[]) => {
+          if (cancelled) return;
+          const match = workspaces.find((w) => w.slug === params.workspace || w.id === params.workspace);
+          if (!match) {
+            router.replace('/workspaces');
+            return;
+          }
+          if (getCurrentWorkspaceId() !== match.id) {
+            setCurrentWorkspaceId(match.id);
+          }
+          setReady(true);
+        })
+        .catch((error: unknown) => {
+          if (cancelled) return;
+          // Only a real 401 means the session itself is invalid - a
+          // network blip, an aborted request from fast navigation, or a
+          // brief workspace-scope race isn't "logged out", so retry a
+          // couple of times with backoff before giving up to /workspaces
+          // (never straight to /login for those).
+          if (error instanceof ApiError && error.status === 401) {
+            router.replace('/login');
+            return;
+          }
+          if (attempt < 3) {
+            attempt += 1;
+            setTimeout(resolve, 500 * attempt);
+          } else {
+            router.replace('/workspaces');
+          }
+        });
+    };
+    resolve();
 
     return () => {
       cancelled = true;

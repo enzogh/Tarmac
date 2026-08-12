@@ -4,14 +4,20 @@ import Link from 'next/link';
 import { useWorkspace } from '../lib/workspace-context';
 import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/select';
 
+// Two letters, always - a single stray capital reads as a broken image
+// placeholder rather than a deliberate monogram. Multi-word names use the
+// first letter of each of the first two words; a single-word name falls
+// back to its own first two letters ("Intraced" -> "IN", not just "I").
 function initials(name: string): string {
-  const letters = name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word[0]?.toUpperCase() ?? '')
-    .join('');
-  return letters || '?';
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length >= 2) {
+    return (words[0][0] + words[1][0]).toUpperCase();
+  }
+  if (words.length === 1) {
+    const word = words[0];
+    return word.length >= 2 ? word.slice(0, 2).toUpperCase() : (word[0] + word[0]).toUpperCase();
+  }
+  return '??';
 }
 
 function WorkspaceTile({ name }: { name: string }) {

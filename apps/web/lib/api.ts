@@ -1,5 +1,20 @@
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
+// Carries the HTTP status alongside the message so callers (usePolling,
+// [workspace]/layout.tsx) can tell "your session is actually invalid" (401)
+// apart from a transient network blip, an aborted in-flight request from
+// fast navigation, or a workspace-scope mismatch (403) - none of which mean
+// the user is logged out, so none of them should bounce them to /login.
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 export type NodeItem = {
   id: string;
   name: string;
@@ -460,7 +475,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // keep fallback message
     }
-    throw new Error(message);
+    throw new ApiError(message, res.status);
   }
 
   return res.json() as Promise<T>;

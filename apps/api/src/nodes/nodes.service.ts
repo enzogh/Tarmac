@@ -1,4 +1,5 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { NodeStatus, Prisma } from '@prisma/client';
 import { AgentTokenService } from '../agents/agent-token.service';
 import { AgentsService } from '../agents/agents.service';
@@ -418,6 +419,17 @@ export class NodesService {
     }
   }
 
+  // Always the most recent samples in range, downsampled server-side so the
+  // full requested window is represented at a manageable point count instead
+  // of either (a) shipping thousands of raw 5s-cadence rows for a 24h range,
+  // or (b) silently truncating to a slice of the window. A prior version
+  // here used `orderBy: 'asc', take: 500`, which for any range wider than
+  // ~42min (500 samples * 5s) returned the OLDEST 500 samples in the window
+  // - so 6h/24h charts were frozen on data up to hours stale even though
+  // fresh samples were being written every 5s.
+  private static readonly METRICS_TARGET_POINTS = 180;
+  private static readonly METRICS_FETCH_CAP = 2000;
+
   async metrics(id: string, range: string, scope: WorkspaceScope) {
     await this.assertOwned(id, scope);
     const now = Date.now();
@@ -428,10 +440,44 @@ export class NodesService {
     };
     const ms = ranges[range] ?? ranges['1h'];
 
-    return this.prisma.metricSample.findMany({
+    const samples = await this.prisma.metricSample.findMany({
       where: { nodeId: id, createdAt: { gte: new Date(now - ms) } },
-      orderBy: { createdAt: 'asc' },
-      take: 500,
+      orderBy: { createdAt: 'desc' },
+      take: NodesService.METRICS_FETCH_CAP,
     });
+    samples.reverse(); // chronological order, as the frontend expects
+
+    if (samples.length <= NodesService.METRICS_TARGET_POINTS) {
+      return samples;
+    }
+
+    const bucketSize = Math.ceil(samples.length / NodesService.METRICS_TARGET_POINTS);
+    const numericKeys = ['cpu', 'ram', 'disk', 'networkRx', 'networkTx', 'ioRead', 'ioWrite'] as const;
+    const buckets: (typeof samples)[number][] = [];
+    for (let i = 0; i < samples.length; i += bucketSize) {
+      const chunk = samples.slice(i, i + bucketSize);
+      const last = chunk[chunk.length - 1];
+      const averaged = { ...last };
+      for (const key of numericKeys) {
+        averaged[key] = chunk.reduce((sum, sample) => sum + sample[key], 0) / chunk.length;
+      }
+      buckets.push(averaged);
+    }
+    return buckets;
+  }
+
+  // One row per node per 5s heartbeat with no retention would grow forever
+  // (~17,280 rows/node/day) - same problem AgentLog already solved with its
+  // own daily pruning cron (see agent-logs.service.ts's pruneOldLogs), just
+  // mirrored here. 3 days gives headroom past the longest UI range (24h).
+  private static readonly METRIC_SAMPLE_RETENTION_DAYS = 3;
+
+  @Cron(CronExpression.EVERY_HOUR)
+  async pruneOldMetricSamples() {
+    const cutoff = new Date(Date.now() - NodesService.METRIC_SAMPLE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const { count } = await this.prisma.metricSample.deleteMany({ where: { createdAt: { lt: cutoff } } });
+    if (count > 0) {
+      this.logger.log(`Pruned ${count} metric sample(s) older than ${NodesService.METRIC_SAMPLE_RETENTION_DAYS} days`);
+    }
   }
 }

@@ -890,7 +890,14 @@ export default function NetworkPage() {
     return () => {
       cancelled = true;
     };
-  }, [vlanStatus, historyPair, historyRange]);
+    // vlanStatus/historyPair are new object references every ~5s poll tick
+    // (see the hand-rolled interval above) even when nothing meaningfully
+    // changed - depending on their stable identifiers instead of the
+    // objects themselves stops this effect (and its 2 HTTP requests) from
+    // re-firing on every single tick regardless of whether the selected
+    // vlan/pair actually changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vlanStatus?.vlan.id, historyPair?.key, historyRange]);
 
   const toHistoryChartData = (history: VlanConnectionHistory | null) =>
     (history?.samples ?? []).map((sample) => ({

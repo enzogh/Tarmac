@@ -1444,37 +1444,46 @@ export class AgentsService implements OnModuleInit {
         existingConnections.map((connection) => [`${connection.sourceNodeId}:${connection.targetNodeId}`, connection.status]),
       );
 
-      for (const update of sortedUpdates) {
-        await this.retryWithExponentialBackoff(
-          () =>
-            this.prisma.vlanConnection.upsert({
-              where: {
-                vlanId_sourceNodeId_targetNodeId: {
+      // Concurrent, not sequential: this runs on every 5s heartbeat from
+      // every node, and each pair is an independent row (unique per
+      // vlanId+sourceNodeId+targetNodeId) with no ordering dependency on any
+      // other pair - awaiting them one at a time here meant total DB
+      // round-trips scaled with fleet size per heartbeat (O(N) per node,
+      // ~O(N^2) fleet-wide every 5s in a full-mesh VLAN). Promise.all turns
+      // that into one concurrent batch regardless of N.
+      await Promise.all(
+        sortedUpdates.map(async (update) => {
+          await this.retryWithExponentialBackoff(
+            () =>
+              this.prisma.vlanConnection.upsert({
+                where: {
+                  vlanId_sourceNodeId_targetNodeId: {
+                    vlanId: sourceMembership.vlanId,
+                    sourceNodeId: update.sourceNodeId,
+                    targetNodeId: update.targetNodeId,
+                  },
+                },
+                update: update.data,
+                create: {
                   vlanId: sourceMembership.vlanId,
                   sourceNodeId: update.sourceNodeId,
                   targetNodeId: update.targetNodeId,
+                  ...update.data,
                 },
-              },
-              update: update.data,
-              create: {
-                vlanId: sourceMembership.vlanId,
-                sourceNodeId: update.sourceNodeId,
-                targetNodeId: update.targetNodeId,
-                ...update.data,
-              },
-            }),
-          `upsert vlanConnection ${update.sourceNodeId}->${update.targetNodeId}`,
-        );
+              }),
+            `upsert vlanConnection ${update.sourceNodeId}->${update.targetNodeId}`,
+          );
 
-        const previousStatus = previousStatusByPair.get(`${update.sourceNodeId}:${update.targetNodeId}`);
-        await this.vlanService.recordConnectionTransition(
-          sourceMembership.vlanId,
-          update.sourceNodeId,
-          update.targetNodeId,
-          previousStatus,
-          update.data,
-        );
-      }
+          const previousStatus = previousStatusByPair.get(`${update.sourceNodeId}:${update.targetNodeId}`);
+          await this.vlanService.recordConnectionTransition(
+            sourceMembership.vlanId,
+            update.sourceNodeId,
+            update.targetNodeId,
+            previousStatus,
+            update.data,
+          );
+        }),
+      );
     }
   }
 }

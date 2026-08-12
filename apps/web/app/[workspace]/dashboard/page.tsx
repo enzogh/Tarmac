@@ -82,6 +82,11 @@ export default function OverviewPage() {
       );
       return Object.fromEntries(histories) as Record<string, NodeMetricSample[]>;
     },
+    // A 6h trend chart doesn't need sub-20s freshness, and this is the
+    // heaviest poll on the page (up to 4 nodes' full history per tick) -
+    // the default 5s interval was mostly re-fetching data that hadn't
+    // meaningfully changed since the last tick.
+    { intervalMs: 20000 },
   );
 
   const overviewLoading = activitiesLoading || alertsLoading || migrationsLoading;

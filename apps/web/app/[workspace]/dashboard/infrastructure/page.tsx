@@ -120,6 +120,9 @@ export default function InfrastructurePage() {
       );
       return Object.fromEntries(histories) as Record<string, NodeMetricSample[]>;
     },
+    // A 6h trend chart doesn't need sub-20s freshness, and this is the
+    // heaviest poll on the page (up to 6 nodes' full history per tick).
+    { intervalMs: 20000 },
   );
 
   const [editNode, setEditNode] = useState<NodeActivityItem | null>(null);
