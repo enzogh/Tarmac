@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { AgentsService } from '../agents/agents.service';
 import { DnsService } from '../dns/dns.service';
 import { MountsService } from '../mounts/mounts.service';
+import { extractExternalIp } from '../nodes/extract-external-ip';
 import { PoolsService } from '../pools/pools.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SharesService } from '../shares/shares.service';
@@ -137,16 +138,27 @@ export class ReconciliationService implements OnModuleInit {
     for (const zone of pendingDnsZones) {
       const primary = zone.group.members.find((member) => member.role === 'primary');
       if (!primary || !this.agentsService.isConnected(primary.nodeId)) continue;
+      // Vanity nameserver hostnames the agent writes as the zone's own NS
+      // records - one per group member, same ns1./ns2./... ordering
+      // (primary first) already shown in the delegation panel.
+      const nameservers = zone.group.members.map((_, index) => `ns${index + 1}.${zone.name}`);
+      // In-bailiwick nameservers (ns1.<zone> etc. living inside the zone
+      // they serve) need an A record for themselves inside the zone, not
+      // just glue at the registrar - otherwise a resolver that reaches the
+      // zone's own authoritative server has no way to answer "what's the
+      // address of ns1.<zone>?" (confirmed in production: PowerDNS replied
+      // NXDOMAIN for that exact query even though delegation itself worked).
+      const nsGlue = zone.group.members
+        .map((member, index) => ({ host: nameservers[index], ip: extractExternalIp(member.node.overlayEndpoint) }))
+        .filter((entry): entry is { host: string; ip: string } => Boolean(entry.ip));
       this.agentsService.sendCommand(primary.nodeId, {
         type: 'command.apply_dns_zone',
         payload: {
           zoneId: zone.id,
           zoneName: zone.name,
           dnssecEnabled: zone.dnssecEnabled,
-          // Vanity nameserver hostnames the agent writes as the zone's own
-          // NS records - one per group member, same ns1./ns2./... ordering
-          // (primary first) already shown in the delegation panel.
-          nameservers: zone.group.members.map((_, index) => `ns${index + 1}.${zone.name}`),
+          nameservers,
+          nsGlue,
           records: zone.records.map((record) => ({
             name: record.name,
             type: record.type,

@@ -1377,6 +1377,36 @@ func readStringSlice(payload map[string]interface{}, key string) []string {
 	return result
 }
 
+type dnsGlueEntry struct {
+	Host string
+	IP   string
+}
+
+func readGlueEntries(payload map[string]interface{}, key string) []dnsGlueEntry {
+	raw, ok := payload[key]
+	if !ok {
+		return nil
+	}
+	entries, ok := raw.([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]dnsGlueEntry, 0, len(entries))
+	for _, entry := range entries {
+		entryMap, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		host := readString(entryMap, "host")
+		ip := readString(entryMap, "ip")
+		if host == "" || ip == "" {
+			continue
+		}
+		result = append(result, dnsGlueEntry{Host: host, IP: ip})
+	}
+	return result
+}
+
 func readInt(payload map[string]interface{}, key string, fallback int) int {
 	raw, ok := payload[key]
 	if !ok {
@@ -3109,6 +3139,28 @@ func applyDnsZone(payload map[string]interface{}) (string, error) {
 		"changetype": "REPLACE",
 		"records":    nsRecords,
 	})
+
+	// In-bailiwick nameservers (ns1.<zone>, ns2.<zone>, ... living inside the
+	// zone they serve) need an A/AAAA record for themselves inside the zone
+	// itself, in addition to glue registered at the registrar - a resolver
+	// that reaches this zone's own authoritative server still needs to
+	// resolve "what's the address of ns1.<zone>?" from zone data, otherwise
+	// it gets NXDOMAIN even though delegation works (confirmed in
+	// production). One rrset per glue entry, keyed by whether the address
+	// is IPv4 or IPv6.
+	for _, glue := range readGlueEntries(payload, "nsGlue") {
+		rrType := "A"
+		if parsed := net.ParseIP(glue.IP); parsed != nil && parsed.To4() == nil {
+			rrType = "AAAA"
+		}
+		rrsets = append(rrsets, map[string]interface{}{
+			"name":       glue.Host + ".",
+			"type":       rrType,
+			"ttl":        3600,
+			"changetype": "REPLACE",
+			"records":    []map[string]interface{}{{"content": glue.IP, "disabled": false}},
+		})
+	}
 
 	for _, record := range records {
 		var pdnsRecords []map[string]interface{}
