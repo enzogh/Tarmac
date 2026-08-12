@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -22,12 +22,32 @@ export class WorkspacesService {
 
   // Always the caller's full accessible set, regardless of which workspace
   // is currently selected via X-Workspace-Id - this is what populates the
-  // switcher, not a single-workspace-scoped read.
-  list(scope: WorkspaceScope) {
-    return this.prisma.workspace.findMany({
+  // switcher, not a single-workspace-scoped read. Also annotates each
+  // workspace with the caller's own role (so the frontend can decide whether
+  // to show member-management actions) and a member count.
+  async list(scope: WorkspaceScope, userId?: string) {
+    const workspaces = await this.prisma.workspace.findMany({
       where: scope.isPlatformAdmin ? {} : { id: { in: scope.allowedWorkspaceIds } },
       orderBy: { createdAt: 'asc' },
+      include: { _count: { select: { memberships: true } } },
     });
+
+    const roleByWorkspaceId = new Map<string, string>();
+    if (userId) {
+      const memberships = await this.prisma.workspaceMembership.findMany({
+        where: { userId, workspaceId: { in: workspaces.map((w) => w.id) } },
+        select: { workspaceId: true, role: true },
+      });
+      for (const membership of memberships) {
+        roleByWorkspaceId.set(membership.workspaceId, membership.role);
+      }
+    }
+
+    return workspaces.map(({ _count, ...workspace }) => ({
+      ...workspace,
+      memberCount: _count.memberships,
+      myRole: scope.isPlatformAdmin ? 'owner' : (roleByWorkspaceId.get(workspace.id) ?? null),
+    }));
   }
 
   private slugify(name: string): string {
@@ -85,6 +105,18 @@ export class WorkspacesService {
       resourceId: created.id,
       details: { name: created.name, slug: created.slug, subnetIndex: created.subnetIndex },
     });
+
+    // The creator becomes this workspace's owner so they can manage its
+    // members without also needing to be a platform admin - without this,
+    // a non-superuser who somehow creates a workspace would have no
+    // membership row at all and couldn't access what they just made.
+    if (actorUserId) {
+      await this.prisma.workspaceMembership.upsert({
+        where: { workspaceId_userId: { workspaceId: created.id, userId: actorUserId } },
+        create: { workspaceId: created.id, userId: actorUserId, role: 'owner', source: 'manual' },
+        update: { role: 'owner' },
+      });
+    }
 
     // Provision the mesh now so the workspace has a reserved subnet/Vlan row
     // even before its first node joins.
@@ -152,13 +184,64 @@ export class WorkspacesService {
     });
   }
 
-  async listMembers(workspaceId: string) {
+  // Platform admins can manage any workspace's members; otherwise the caller
+  // must hold an 'owner' membership row for this specific workspace. Unlike
+  // platform-admin gating, this is workspace-scoped - being an owner of one
+  // workspace grants nothing for another.
+  private async assertCanManageMembers(workspaceId: string, scope: WorkspaceScope, userId?: string) {
+    if (scope.isPlatformAdmin) return;
+    if (userId) {
+      const membership = await this.prisma.workspaceMembership.findUnique({
+        where: { workspaceId_userId: { workspaceId, userId } },
+      });
+      if (membership?.role === 'owner') return;
+    }
+    throw new ForbiddenException('Workspace owner or platform admin access required');
+  }
+
+  async listMembers(workspaceId: string, scope: WorkspaceScope, userId?: string) {
     await this.assertExists(workspaceId);
+    await this.assertCanManageMembers(workspaceId, scope, userId);
     return this.prisma.workspaceMembership.findMany({
       where: { workspaceId },
       include: { user: { select: { id: true, email: true, name: true, avatarUrl: true } } },
       orderBy: { createdAt: 'asc' },
     });
+  }
+
+  // Adds an existing user (looked up by email) to a workspace. There's no
+  // outbound-email infrastructure in this API, so this only works for users
+  // who have already logged into Tarmac at least once via SSO - even a
+  // first SSO attempt that gets bounced for lacking workspace access still
+  // creates the User row (see AuthService.findOrCreateSsoUser), so this
+  // covers "invite someone brand new" as long as they've tried logging in
+  // once first.
+  async inviteByEmail(workspaceId: string, email: string, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertExists(workspaceId);
+    await this.assertCanManageMembers(workspaceId, scope, actorUserId);
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await this.prisma.user.findUnique({ where: { email: normalizedEmail } });
+    if (!user) {
+      throw new NotFoundException(
+        "Aucun compte trouvé pour cet email. Cette personne doit d'abord se connecter une fois via SSO, puis réessayez.",
+      );
+    }
+
+    const membership = await this.prisma.workspaceMembership.upsert({
+      where: { workspaceId_userId: { workspaceId, userId: user.id } },
+      create: { workspaceId, userId: user.id, role: 'member', source: 'manual' },
+      update: {},
+      include: { user: { select: { id: true, email: true, name: true, avatarUrl: true } } },
+    });
+    await this.auditLogsService.log({
+      actorUserId,
+      action: 'workspace.member.invite',
+      resourceType: 'workspace',
+      resourceId: workspaceId,
+      details: { userId: user.id, email: user.email },
+    });
+    return membership;
   }
 
   async addMember(workspaceId: string, userId: string, actorUserId?: string) {
@@ -183,8 +266,9 @@ export class WorkspacesService {
     return membership;
   }
 
-  async removeMember(workspaceId: string, userId: string, actorUserId?: string) {
+  async removeMember(workspaceId: string, userId: string, scope: WorkspaceScope, actorUserId?: string) {
     await this.assertExists(workspaceId);
+    await this.assertCanManageMembers(workspaceId, scope, actorUserId);
     await this.prisma.workspaceMembership.deleteMany({ where: { workspaceId, userId } });
     await this.auditLogsService.log({
       actorUserId,

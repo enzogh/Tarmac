@@ -19,6 +19,7 @@ import { ReconciliationModule } from './reconciliation/reconciliation.module';
 import { SharesModule } from './shares/shares.module';
 import { StorageModule } from './storage/storage.module';
 import { SyncJobsModule } from './sync-jobs/sync-jobs.module';
+import { SystemModule } from './system/system.module';
 import { TopologyModule } from './topology/topology.module';
 import { VlanModule } from './vlan/vlan.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
@@ -54,6 +55,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     ReconciliationModule,
     VlanModule,
     WorkspacesModule,
+    SystemModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

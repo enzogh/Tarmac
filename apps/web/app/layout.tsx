@@ -1,6 +1,7 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import { getAppVersion } from '../lib/app-version';
+import { VersionBadge } from '../components/VersionBadge';
 
 export const metadata: Metadata = {
   title: 'Tarmac — Stockage NFS interconnecté',
@@ -14,9 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="fr">
       <body>
         {children}
-        <div className="pointer-events-none fixed bottom-3 right-3 z-50 rounded-md border border-white/10 bg-zinc-950/90 px-2.5 py-1 text-xs text-zinc-300 shadow-lg">
-          Version {appVersion}
-        </div>
+        <VersionBadge fallback={appVersion} />
       </body>
     </html>
   );

@@ -3,9 +3,9 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { ReactNode, useEffect, useState } from 'react';
-import { LogOut, Layers, BookOpen, Search, Menu, ShieldAlert, X } from 'lucide-react';
+import { LogOut, Layers, BookOpen, ChevronDown, Search, Menu, ShieldAlert, X } from 'lucide-react';
 import { api } from '../lib/api';
-import { NAV_GROUPS, NAV_ITEMS } from '../lib/nav-items';
+import { NAV_GROUPS, NAV_ITEMS, NavItem } from '../lib/nav-items';
 import { CommandPalette } from './CommandPalette';
 import { Button } from './ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
@@ -21,14 +21,38 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
   );
 }
 
+const NAV_GROUP_COLLAPSE_KEY_PREFIX = 'tarmac.navGroupCollapsed.';
+
 function DashboardLayoutInner({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // Starts empty (all groups expanded) so server and first client render
+  // match, then hydrates from localStorage right after mount - a group's
+  // collapsed state is a per-user UI preference, not something that should
+  // ever flash or cause a hydration mismatch.
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     setMobileNavOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    const initial: Record<string, boolean> = {};
+    for (const group of NAV_GROUPS) {
+      if (!group.label) continue;
+      initial[group.label] = localStorage.getItem(`${NAV_GROUP_COLLAPSE_KEY_PREFIX}${group.label}`) === '1';
+    }
+    setCollapsedGroups(initial);
+  }, []);
+
+  const toggleGroup = (label: string) => {
+    setCollapsedGroups((prev) => {
+      const collapsed = !prev[label];
+      localStorage.setItem(`${NAV_GROUP_COLLAPSE_KEY_PREFIX}${label}`, collapsed ? '1' : '0');
+      return { ...prev, [label]: collapsed };
+    });
+  };
 
   const handleLogout = async () => {
     try {
@@ -36,6 +60,28 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
     } finally {
       router.push('/login');
     }
+  };
+
+  const renderNavLink = (item: NavItem) => {
+    const Icon = item.icon;
+    const isActive = item.exact
+      ? pathname === item.href
+      : pathname === item.href || pathname.startsWith(item.href + '/');
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        className={cn(
+          'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150',
+          isActive
+            ? 'bg-violet-600/15 text-violet-300 shadow-[inset_0_0_0_1px_rgba(139,92,246,0.2)]'
+            : 'text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-100'
+        )}
+      >
+        <Icon className={cn('h-4 w-4 shrink-0', isActive ? 'text-violet-400' : 'text-zinc-500')} />
+        {item.label}
+      </Link>
+    );
   };
 
   return (
@@ -53,7 +99,7 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
         {/* Sidebar */}
         <aside
           className={cn(
-            'fixed inset-y-0 left-0 z-30 flex w-64 flex-col border-r border-white/[0.06] bg-zinc-950/95 backdrop-blur-2xl transition-transform duration-200 lg:relative lg:z-10 lg:translate-x-0 lg:bg-zinc-950/80',
+            'fixed inset-y-0 left-0 z-30 flex w-64 flex-col border-r border-white/[0.06] bg-zinc-950/95 backdrop-blur-2xl transition-transform duration-200 lg:sticky lg:top-0 lg:z-10 lg:h-screen lg:translate-x-0 lg:self-start lg:bg-zinc-950/80',
             mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
           )}
         >
@@ -81,44 +127,41 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
             <WorkspaceSwitcher />
           </div>
 
-          {/* Navigation */}
-          <nav className="flex-1 space-y-4 overflow-y-auto px-3 py-4">
-            {NAV_GROUPS.map((group, groupIndex) => (
-              <div key={group.label ?? `group-${groupIndex}`} className="space-y-0.5">
-                {group.label && (
-                  <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
+          {/* Navigation - min-h-0 lets this shrink below its content's
+              intrinsic height inside the flex column so overflow-y-auto
+              actually activates internal scrolling, instead of growing the
+              whole <aside> (and pushing the footer below the fold). */}
+          <nav className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4">
+            {NAV_GROUPS.map((group, groupIndex) => {
+              if (!group.label) {
+                return (
+                  <div key={`group-${groupIndex}`} className="space-y-0.5">
+                    {group.items.map(renderNavLink)}
+                  </div>
+                );
+              }
+              const isCollapsed = collapsedGroups[group.label];
+              return (
+                <div key={group.label} className="space-y-0.5">
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(group.label as string)}
+                    className="flex w-full items-center justify-between rounded-lg px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-600 transition-colors hover:text-zinc-400"
+                  >
                     {group.label}
-                  </p>
-                )}
-                {group.items.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = item.exact
-                    ? pathname === item.href
-                    : pathname === item.href || pathname.startsWith(item.href + '/');
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className={cn(
-                        'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150',
-                        isActive
-                          ? 'bg-violet-600/15 text-violet-300 shadow-[inset_0_0_0_1px_rgba(139,92,246,0.2)]'
-                          : 'text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-100'
-                      )}
-                    >
-                      <Icon
-                        className={cn('h-4 w-4 shrink-0', isActive ? 'text-violet-400' : 'text-zinc-500')}
-                      />
-                      {item.label}
-                    </Link>
-                  );
-                })}
-              </div>
-            ))}
+                    <ChevronDown className={cn('h-3 w-3 transition-transform', isCollapsed && '-rotate-90')} />
+                  </button>
+                  {!isCollapsed && group.items.map(renderNavLink)}
+                </div>
+              );
+            })}
           </nav>
 
-          {/* Footer */}
-          <div className="space-y-1 border-t border-white/[0.06] p-3">
+          {/* Footer - shrink-0 keeps it at its natural height even though
+              <aside> is now locked to viewport height (lg:h-screen above),
+              so Documentation/Déconnexion are always visible without
+              scrolling, no matter how many nav items exist. */}
+          <div className="shrink-0 space-y-1 border-t border-white/[0.06] p-3">
             <Tooltip>
               <TooltipTrigger asChild>
                 <Link

@@ -95,6 +95,13 @@ function NodeMeter({
 
 export default function InfrastructurePage() {
   const { data: nodes = [], mutate: refreshNodes, isLoading: nodesLoading } = usePolling('activity:1h', () => api.nodes.activity());
+  // Fetched directly rather than derived from `nodes` (which used to leave
+  // it null whenever the fleet was empty, falling back to a confusing
+  // "réf. inconnue" string) - this is the exact same value the bottom-right
+  // global version badge shows (see VersionBadge.tsx), so the two can never
+  // disagree about what "the current version" is.
+  const { data: systemVersion } = usePolling('system:version', api.system.version, { intervalMs: 300000, redirectOnError: false });
+  const controlVersion = systemVersion?.version ?? null;
 
   const sortedByCpu = useMemo(
     () => [...nodes].sort((left, right) => right.metrics.cpu - left.metrics.cpu),
@@ -377,13 +384,12 @@ export default function InfrastructurePage() {
     }
   };
 
-  const { onlineNodes, degradedNodes, avgCpu, avgRam, controlVersion, upToDateNodes, outdatedNodes, fleetVersionAligned, disksWithSmartIssues } = useMemo(() => {
+  const { onlineNodes, degradedNodes, avgCpu, avgRam, upToDateNodes, outdatedNodes, fleetVersionAligned, disksWithSmartIssues } = useMemo(() => {
     const onlineNodes = nodes.filter((node) => node.status === 'online').length;
     const degradedNodes = nodes.filter((node) => node.status === 'degraded').length;
     const avgCpu = nodes.length ? nodes.reduce((acc, node) => acc + node.metrics.cpu, 0) / nodes.length : 0;
     const avgRam = nodes.length ? nodes.reduce((acc, node) => acc + node.metrics.ram, 0) / nodes.length : 0;
 
-    const controlVersion = nodes.find((node) => node.controlVersion)?.controlVersion ?? null;
     const upToDateNodes = nodes.filter((node) => node.agentUpToDate === true).length;
     const outdatedNodes = nodes.filter((node) => node.agentUpToDate === false).length;
     const fleetVersionAligned = nodes.length > 0 && outdatedNodes === 0 && upToDateNodes === nodes.length;
@@ -393,7 +399,7 @@ export default function InfrastructurePage() {
       0,
     );
 
-    return { onlineNodes, degradedNodes, avgCpu, avgRam, controlVersion, upToDateNodes, outdatedNodes, fleetVersionAligned, disksWithSmartIssues };
+    return { onlineNodes, degradedNodes, avgCpu, avgRam, upToDateNodes, outdatedNodes, fleetVersionAligned, disksWithSmartIssues };
   }, [nodes]);
 
   const versionBadge = (node: NodeActivityItem) => {
@@ -703,7 +709,7 @@ export default function InfrastructurePage() {
                   </TooltipTrigger>
                   <TooltipContent>
                     Recompile + redémarre l’agent sur chaque nœud en ligne dont la version diffère du contrôleur
-                    ({controlVersion ?? 'réf. inconnue'})
+                    ({controlVersion ? `réf. ${controlVersion}` : 'chargement de la référence…'})
                   </TooltipContent>
                 </Tooltip>
                 <NodeOnboardingModal onCreated={refreshNodes} />

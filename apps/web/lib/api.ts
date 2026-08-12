@@ -381,6 +381,13 @@ export type WorkspaceDetail = {
   updatedAt: string;
 };
 
+// list() additionally annotates each workspace with the caller's own role
+// and member count - create()/update() return a plain WorkspaceDetail.
+export type WorkspaceListItem = WorkspaceDetail & {
+  memberCount: number;
+  myRole: 'owner' | 'member' | null;
+};
+
 export type WorkspaceMember = {
   id: string;
   workspaceId: string;
@@ -799,7 +806,7 @@ export const api = {
   },
 
   workspaces: {
-    list: () => request<WorkspaceDetail[]>('/api/v1/workspaces'),
+    list: () => request<WorkspaceListItem[]>('/api/v1/workspaces'),
     create: (payload: { name: string; slug?: string }) =>
       request<WorkspaceDetail>('/api/v1/workspaces', {
         method: 'POST',
@@ -814,7 +821,16 @@ export const api = {
     listMembers: (id: string) => request<WorkspaceMember[]>(`/api/v1/workspaces/${id}/members`),
     addMember: (id: string, userId: string) =>
       request<WorkspaceMember>(`/api/v1/workspaces/${id}/members/${userId}`, { method: 'POST' }),
+    invite: (id: string, email: string) =>
+      request<WorkspaceMember>(`/api/v1/workspaces/${id}/invite`, {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      }),
     removeMember: (id: string, userId: string) =>
       request<{ success: boolean }>(`/api/v1/workspaces/${id}/members/${userId}`, { method: 'DELETE' }),
+  },
+
+  system: {
+    version: () => request<{ version: string }>('/api/v1/system/version'),
   },
 };

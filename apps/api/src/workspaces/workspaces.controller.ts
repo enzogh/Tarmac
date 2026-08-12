@@ -3,6 +3,7 @@ import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
+import { InviteMemberDto } from './dto/invite-member.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 import { WorkspacesService } from './workspaces.service';
 
@@ -22,8 +23,8 @@ export class WorkspacesController {
   constructor(private readonly workspacesService: WorkspacesService) {}
 
   @Get()
-  list(@CurrentWorkspace() scope: WorkspaceScope) {
-    return this.workspacesService.list(scope);
+  list(@CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.workspacesService.list(scope, req.user?.userId);
   }
 
   // Workspace membership/roles are single-tier in v1 (member = full access) -
@@ -57,10 +58,13 @@ export class WorkspacesController {
     return this.workspacesService.listAllUsers();
   }
 
+  // Platform-admin-only listMembers/removeMember gating is gone - workspace
+  // owners now manage their own workspace's members too, enforced inside
+  // WorkspacesService.assertCanManageMembers (workspace-scoped, unlike
+  // assertPlatformAdmin above which is platform-wide).
   @Get(':id/members')
-  listMembers(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope) {
-    assertPlatformAdmin(scope);
-    return this.workspacesService.listMembers(id);
+  listMembers(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.workspacesService.listMembers(id, scope, req.user?.userId);
   }
 
   @Post(':id/members/:userId')
@@ -74,6 +78,19 @@ export class WorkspacesController {
     return this.workspacesService.addMember(id, userId, req.user?.userId);
   }
 
+  // Adds an existing user by email - the self-service invite path for
+  // workspace owners (no outbound-email infra exists to send a real
+  // invitation, see WorkspacesService.inviteByEmail).
+  @Post(':id/invite')
+  invite(
+    @Param('id') id: string,
+    @Body() dto: InviteMemberDto,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.workspacesService.inviteByEmail(id, dto.email, scope, req.user?.userId);
+  }
+
   @Delete(':id/members/:userId')
   removeMember(
     @Param('id') id: string,
@@ -81,7 +98,6 @@ export class WorkspacesController {
     @CurrentWorkspace() scope: WorkspaceScope,
     @Req() req: AuthenticatedRequest,
   ) {
-    assertPlatformAdmin(scope);
-    return this.workspacesService.removeMember(id, userId, req.user?.userId);
+    return this.workspacesService.removeMember(id, userId, scope, req.user?.userId);
   }
 }

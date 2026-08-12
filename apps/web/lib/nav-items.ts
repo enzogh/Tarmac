@@ -1,5 +1,6 @@
 import {
   LayoutDashboard,
+  LayoutGrid,
   Server,
   Database,
   RefreshCw,
@@ -13,12 +14,18 @@ import {
 } from 'lucide-react';
 
 export type NavItem = { href: string; label: string; icon: LucideIcon; exact?: boolean };
+// A null label renders as an ungrouped, non-collapsible top-level item
+// (e.g. "Vue d'ensemble"); a real label renders as a collapsible section
+// (see NavGroupSection in DashboardLayout.tsx).
 export type NavGroup = { label: string | null; items: NavItem[] };
 
 export const NAV_GROUPS: NavGroup[] = [
   {
     label: null,
-    items: [{ href: '/dashboard', label: "Vue d'ensemble", icon: LayoutDashboard, exact: true }],
+    items: [
+      { href: '/workspaces', label: 'Mes workspaces', icon: LayoutGrid },
+      { href: '/dashboard', label: "Vue d'ensemble", icon: LayoutDashboard, exact: true },
+    ],
   },
   {
     label: 'Infrastructure',
