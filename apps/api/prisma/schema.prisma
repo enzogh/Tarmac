@@ -302,6 +302,11 @@ model MetricSample {
   node      Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
 
   @@index([nodeId, createdAt])
+  // Supports NodesService.pruneOldMetricSamples' retention cron, which
+  // filters on createdAt alone - the composite index above doesn't help a
+  // query that doesn't also filter on nodeId (same pattern as AgentLog,
+  // which has both for exactly this reason).
+  @@index([createdAt])
 }
 
 model Disk {

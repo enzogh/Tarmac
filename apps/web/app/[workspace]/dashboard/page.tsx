@@ -14,8 +14,9 @@ import {
   RefreshCcw,
   Server,
 } from 'lucide-react';
-import { api, NodeMetricSample } from '../../../lib/api';
+import { api, NodeActivityItem, NodeHeartbeatLiveEvent, NodeMetricSample } from '../../../lib/api';
 import { usePolling } from '../../../lib/hooks/usePolling';
+import { useLiveSocket } from '../../../lib/hooks/useLiveSocket';
 import { PageHeader } from '../../../components/PageHeader';
 import { ServerTrendCard } from '../../../components/ServerTrendCard';
 import { FleetPerformanceChart, NetworkThroughputChart, StorageBreakdownChart } from '../../../components/dashboard-charts';
@@ -55,7 +56,34 @@ export default function OverviewPage() {
     setNodeLabels(readNodeLabels());
   }, []);
 
-  const { data: activities = [], isLoading: activitiesLoading } = usePolling('activity:1h', () => api.nodes.activity());
+  const {
+    data: activities = [],
+    isLoading: activitiesLoading,
+    mutate: mutateActivities,
+  } = usePolling('activity:1h', () => api.nodes.activity());
+
+  // Patches the polled activity cache the instant a heartbeat arrives
+  // instead of waiting up to 5s for the next poll tick - see
+  // AgentsService.onHeartbeat's 'node.heartbeat' broadcast. Polling keeps
+  // running as the source of truth/fallback; this is purely additive.
+  useLiveSocket((message) => {
+    if (message.type !== 'node.heartbeat') return;
+    const update = message.payload as NodeHeartbeatLiveEvent;
+    void mutateActivities(
+      (current) =>
+        current?.map((node): NodeActivityItem =>
+          node.id === update.nodeId
+            ? {
+                ...node,
+                status: update.status,
+                lastSeenAt: update.lastSeenAt,
+                metrics: { ...update.metrics, sampledAt: update.lastSeenAt },
+              }
+            : node,
+        ),
+      { revalidate: false },
+    );
+  });
   const { data: alerts = [], isLoading: alertsLoading } = usePolling('alerts', api.alerts.list, { intervalMs: 20000 });
   const { data: syncJobs = [], isLoading: syncJobsLoading } = usePolling('sync-jobs', api.syncJobs.list, { intervalMs: 20000 });
   const { data: migrations = [], isLoading: migrationsLoading } = usePolling('migrations', api.migrations.list, { intervalMs: 20000 });

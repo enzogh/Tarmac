@@ -205,6 +205,24 @@ export type NodeMetricSample = {
   createdAt: string;
 };
 
+// Payload of a 'node.heartbeat' message on the /live-ws socket (see
+// AgentsService.onHeartbeat) - a lean patch, not a full NodeActivityItem,
+// for merging into cached activity data the instant a heartbeat lands.
+export type NodeHeartbeatLiveEvent = {
+  nodeId: string;
+  status: 'offline' | 'online' | 'degraded';
+  lastSeenAt: string;
+  metrics: {
+    cpu: number;
+    ram: number;
+    disk: number;
+    networkRx: number;
+    networkTx: number;
+    ioRead: number;
+    ioWrite: number;
+  };
+};
+
 export type NodeActivityItem = NodeItem & {
   metrics: {
     cpu: number;

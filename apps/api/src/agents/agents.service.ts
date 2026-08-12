@@ -9,6 +9,7 @@ import { SharesService } from '../shares/shares.service';
 import { VlanService } from '../vlan/vlan.service';
 import { Region, resolveRegion } from '../vlan/region';
 import { AgentLogsService } from '../agent-logs/agent-logs.service';
+import { LiveWsServer } from '../live/live.ws';
 import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import {
   AgentLogPayload,
@@ -261,6 +262,7 @@ export class AgentsService implements OnModuleInit {
     private readonly poolsService: PoolsService,
     private readonly vlanService: VlanService,
     private readonly agentLogsService: AgentLogsService,
+    private readonly live: LiveWsServer,
   ) {}
 
   onModuleInit() {
@@ -355,12 +357,15 @@ export class AgentsService implements OnModuleInit {
   // node (in any workspace) simply by putting a different nodeId in the
   // message body. Any `nodeId` field still present in the payload itself is
   // ignored on purpose.
-  onAgentLog(nodeId: string, payload: AgentLogPayload) {
+  async onAgentLog(nodeId: string, payload: AgentLogPayload) {
     if (!payload.message) return;
+    const workspaceId = await this.resolveCallingNodeWorkspace(nodeId);
+    if (!workspaceId) return;
     return this.agentLogsService.create({
       nodeId,
       level: payload.level || 'info',
       message: payload.message,
+      workspaceId,
     });
   }
 
@@ -442,6 +447,33 @@ export class AgentsService implements OnModuleInit {
         ioWrite: metrics.ioWrite ?? 0,
       },
     });
+
+    // Lets the dashboard patch this node's status/metrics into its local
+    // cache the instant a heartbeat lands, instead of waiting for its next
+    // poll tick (up to 5s away) - see useLiveSocket usage in
+    // app/[workspace]/dashboard/page.tsx and infrastructure/page.tsx. Poll-
+    // ing keeps running underneath as the fallback/reconciliation path, this
+    // is purely additive. Deliberately a lean payload (not the full
+    // NodeActivityItem shape) - just enough to patch the fields that change
+    // every heartbeat.
+    this.live.broadcast(
+      'node.heartbeat',
+      {
+        nodeId,
+        status: node.status,
+        lastSeenAt: now.toISOString(),
+        metrics: {
+          cpu: metrics.cpu,
+          ram: metrics.ram,
+          disk: metrics.disk,
+          networkRx: metrics.networkRx ?? 0,
+          networkTx: metrics.networkTx ?? 0,
+          ioRead: metrics.ioRead ?? 0,
+          ioWrite: metrics.ioWrite ?? 0,
+        },
+      },
+      node.workspaceId,
+    );
 
     if (linkMetrics && linkMetrics.length > 0) {
       try {
@@ -557,6 +589,12 @@ export class AgentsService implements OnModuleInit {
         result.success ? '' : ` (${result.message ?? 'no message'})`
       }`,
     );
+    const callingWorkspaceId = await this.resolveCallingNodeWorkspace(nodeId);
+    if (!callingWorkspaceId) {
+      this.logger.warn(`Command result from unknown node ${nodeId} - ignored`);
+      return;
+    }
+
     const isAgentCritical =
       AGENT_CRITICAL_COMMANDS.has(result.command) ||
       result.resourceType === 'mount' ||
@@ -568,13 +606,9 @@ export class AgentsService implements OnModuleInit {
       message: `${result.command} (${result.resourceType}/${result.resourceId}): ${
         result.success ? 'succès' : 'échec'
       }${result.message ? ` — ${result.message}` : ''}`,
+      workspaceId: callingWorkspaceId,
     });
     const status = result.success ? 'active' : 'error';
-    const callingWorkspaceId = await this.resolveCallingNodeWorkspace(nodeId);
-    if (!callingWorkspaceId) {
-      this.logger.warn(`Command result from unknown node ${nodeId} - ignored`);
-      return;
-    }
 
     if (result.resourceType === 'share') {
       const share = await this.prisma.share.findUnique({

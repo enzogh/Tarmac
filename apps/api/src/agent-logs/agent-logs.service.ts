@@ -20,9 +20,10 @@ export class AgentLogsService {
     private readonly live: LiveWsServer,
   ) {}
 
-  async create(input: { nodeId: string; level: string; message: string }) {
-    const entry = await this.prisma.agentLog.create({ data: input });
-    this.live.broadcast('agent-log.new', entry);
+  async create(input: { nodeId: string; level: string; message: string; workspaceId: string }) {
+    const { workspaceId, ...data } = input;
+    const entry = await this.prisma.agentLog.create({ data });
+    this.live.broadcast('agent-log.new', entry, workspaceId);
     return entry;
   }
 

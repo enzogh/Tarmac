@@ -82,7 +82,7 @@ export class AuditLogsService {
     details?: Prisma.InputJsonValue;
   }) {
     const entry = await this.prisma.auditLog.create({ data: input });
-    this.live.broadcast('audit.new', entry);
+    this.live.broadcast('audit.new', entry, input.workspaceId);
     return entry;
   }
 }

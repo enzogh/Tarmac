@@ -21,8 +21,16 @@ import {
   Thermometer,
   Trash2,
 } from 'lucide-react';
-import { api, DirectoryScanEntry, NodeActivityItem, NodeMetricSample, SmartHistoryPoint } from '../../../../lib/api';
+import {
+  api,
+  DirectoryScanEntry,
+  NodeActivityItem,
+  NodeHeartbeatLiveEvent,
+  NodeMetricSample,
+  SmartHistoryPoint,
+} from '../../../../lib/api';
 import { usePolling } from '../../../../lib/hooks/usePolling';
+import { useLiveSocket } from '../../../../lib/hooks/useLiveSocket';
 import { CardListSkeleton, ChartCardSkeleton, StatCardSkeleton } from '../../../../components/ui/skeleton';
 import { GeoInfo, flagFromCountryCode, getGeoInfo, normalizeCountryCode, parseHostFromEndpoint } from '../../../../lib/geo';
 import { readNodeLabels, writeNodeLabels } from '../../../../lib/node-labels';
@@ -94,6 +102,29 @@ function NodeMeter({
 
 export default function InfrastructurePage() {
   const { data: nodes = [], mutate: refreshNodes, isLoading: nodesLoading } = usePolling('activity:1h', () => api.nodes.activity());
+
+  // Patches the polled activity cache the instant a heartbeat arrives
+  // instead of waiting up to 5s for the next poll tick - see
+  // AgentsService.onHeartbeat's 'node.heartbeat' broadcast. Polling keeps
+  // running as the source of truth/fallback; this is purely additive.
+  useLiveSocket((message) => {
+    if (message.type !== 'node.heartbeat') return;
+    const update = message.payload as NodeHeartbeatLiveEvent;
+    void refreshNodes(
+      (current) =>
+        current?.map((node): NodeActivityItem =>
+          node.id === update.nodeId
+            ? {
+                ...node,
+                status: update.status,
+                lastSeenAt: update.lastSeenAt,
+                metrics: { ...update.metrics, sampledAt: update.lastSeenAt },
+              }
+            : node,
+        ),
+      { revalidate: false },
+    );
+  });
   // Fetched directly rather than derived from `nodes` (which used to leave
   // it null whenever the fleet was empty, falling back to a confusing
   // "réf. inconnue" string) - this is the exact same value the bottom-right

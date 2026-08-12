@@ -1,6 +1,7 @@
 import { forwardRef, Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AgentLogsModule } from '../agent-logs/agent-logs.module';
+import { LiveModule } from '../live/live.module';
 import { MigrationsModule } from '../migrations/migrations.module';
 import { MountsModule } from '../mounts/mounts.module';
 import { PoolsModule } from '../pools/pools.module';
@@ -16,6 +17,7 @@ import { AgentsWsServer } from './agents.ws';
   imports: [
     ScheduleModule.forRoot(),
     AgentLogsModule,
+    LiveModule,
     SharesModule,
     forwardRef(() => MountsModule),
     forwardRef(() => MigrationsModule),
