@@ -3234,12 +3234,16 @@ func applyDnsZoneSlave(payload map[string]interface{}) (string, error) {
 	defer cancel()
 	client := &pdnsClient{apiKey: apiKey}
 
-	if client.zoneExists(ctx, fqdn) {
-		return fmt.Sprintf("zone %s already configured as slave", zoneName), nil
-	}
-
-	if err := client.createSlaveZone(ctx, fqdn, primaryVlanIp); err != nil {
-		return "", err
+	// Only the creation step is skip-if-exists - metadata and the AXFR
+	// trigger below always re-run on every apply. Skipping them too (as a
+	// previous version did) made this non-idempotent: if the zone shell got
+	// created but the very first transfer silently failed, every later
+	// reapply became a no-op forever, leaving the secondary stuck REFUSED
+	// for a zone it never actually received (confirmed in production).
+	if !client.zoneExists(ctx, fqdn) {
+		if err := client.createSlaveZone(ctx, fqdn, primaryVlanIp); err != nil {
+			return "", err
+		}
 	}
 
 	if groupID != "" {
