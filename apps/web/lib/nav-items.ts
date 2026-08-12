@@ -11,6 +11,7 @@ import {
   ScrollText,
   Activity,
   Settings,
+  Globe,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -40,6 +41,7 @@ export function buildNavGroups(slug: string): NavGroup[] {
       items: [
         { href: `${base}/infrastructure`, label: 'Nœuds', icon: Server },
         { href: `${base}/network`, label: 'Réseau', icon: Network },
+        { href: `${base}/dns`, label: 'DNS', icon: Globe },
       ],
     },
     {

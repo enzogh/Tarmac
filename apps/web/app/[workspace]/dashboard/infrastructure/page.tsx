@@ -12,6 +12,7 @@ import {
   FolderSearch,
   Gauge,
   GitCommitHorizontal,
+  Globe,
   Globe2,
   HardDrive,
   type LucideIcon,
@@ -24,6 +25,7 @@ import {
 import {
   api,
   DirectoryScanEntry,
+  DnsNodeRecordRef,
   NodeActivityItem,
   NodeHeartbeatLiveEvent,
   NodeMetricSample,
@@ -131,6 +133,10 @@ export default function InfrastructurePage() {
                 ...node,
                 status: update.status,
                 lastSeenAt: update.lastSeenAt,
+                agentVersion: update.agentVersion,
+                agentVersionAt: update.agentVersionAt,
+                agentUpToDate:
+                  update.agentVersion && node.controlVersion ? update.agentVersion === node.controlVersion : null,
                 metrics: { ...update.metrics, sampledAt: update.lastSeenAt },
               }
             : node,
@@ -180,6 +186,31 @@ export default function InfrastructurePage() {
   const [expandedSmartDiskId, setExpandedSmartDiskId] = useState<string | null>(null);
   const [smartHistoryByDisk, setSmartHistoryByDisk] = useState<Record<string, SmartHistoryPoint[]>>({});
   const [smartHistoryLoading, setSmartHistoryLoading] = useState<string | null>(null);
+  const [dnsRecordsForNode, setDnsRecordsForNode] = useState<DnsNodeRecordRef[] | null>(null);
+  const [dnsRecordsLoading, setDnsRecordsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!inspectingNode) {
+      setDnsRecordsForNode(null);
+      return;
+    }
+    let cancelled = false;
+    setDnsRecordsLoading(true);
+    api.dns
+      .recordsForNode(inspectingNode.id)
+      .then((records) => {
+        if (!cancelled) setDnsRecordsForNode(records);
+      })
+      .catch(() => {
+        if (!cancelled) setDnsRecordsForNode([]);
+      })
+      .finally(() => {
+        if (!cancelled) setDnsRecordsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [inspectingNode?.id]);
 
   const toggleSmartHistory = async (nodeId: string, disk: NodeActivityItem['storage']['disks'][number]) => {
     if (expandedSmartDiskId === disk.id) {
@@ -990,6 +1021,33 @@ export default function InfrastructurePage() {
                     <p className="text-xs uppercase tracking-wide text-muted-foreground">Dernière activité</p>
                     <p className="mt-1 text-zinc-200">{formatDateTime(inspectingNode.lastSeenAt)}</p>
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="flex items-center gap-2 text-sm font-medium text-zinc-100">
+                    <Globe className="h-4 w-4 text-violet-400" />
+                    Enregistrements DNS pointant ici
+                  </p>
+                  {dnsRecordsLoading ? (
+                    <p className="text-xs text-muted-foreground">Chargement…</p>
+                  ) : dnsRecordsForNode && dnsRecordsForNode.length > 0 ? (
+                    <div className="space-y-1.5">
+                      {dnsRecordsForNode.map((record) => (
+                        <div
+                          key={record.recordId}
+                          className="flex flex-wrap items-center gap-2 rounded-xl border border-white/[0.08] bg-zinc-950/50 p-2.5 text-xs"
+                        >
+                          <span className="font-mono text-zinc-200">
+                            {record.recordName === '@' ? record.zoneName : `${record.recordName}.${record.zoneName}`}
+                          </span>
+                          <Badge label={record.type} type="info" />
+                          {record.isGeo && <Badge label="Géo-routage" type="success" />}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Aucun enregistrement DNS ne pointe vers ce nœud.</p>
+                  )}
                 </div>
 
                 <div className="space-y-2">

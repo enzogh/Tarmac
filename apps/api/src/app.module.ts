@@ -8,6 +8,7 @@ import { AlertRulesModule } from './alert-rules/alert-rules.module';
 import { AlertsModule } from './alerts/alerts.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { AuthModule } from './auth/auth.module';
+import { DnsModule } from './dns/dns.module';
 import { LiveModule } from './live/live.module';
 import { MigrationsModule } from './migrations/migrations.module';
 import { MountsModule } from './mounts/mounts.module';
@@ -42,6 +43,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     SharesModule,
     MountsModule,
     PoolsModule,
+    DnsModule,
     AlertRulesModule,
     AlertsModule,
     NotificationChannelsModule,

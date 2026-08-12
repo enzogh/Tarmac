@@ -65,7 +65,12 @@ export interface CommandPayload {
     | 'command.apply_ssh_authorized_keys'
     | 'command.update_agent'
     | 'command.uninstall_agent'
-    | 'command.rotate_token';
+    | 'command.rotate_token'
+    | 'command.apply_dns_server_group'
+    | 'command.apply_dns_zone'
+    | 'command.remove_dns_zone'
+    | 'command.dns_get_zone_keys'
+    | 'command.dns_resolve_port_conflict';
   payload: Record<string, unknown>;
 }
 
@@ -85,7 +90,12 @@ export interface CommandResultPayload {
     | 'apply_ssh_authorized_keys'
     | 'update_agent'
     | 'uninstall_agent'
-    | 'rotate_token';
+    | 'rotate_token'
+    | 'apply_dns_server_group'
+    | 'apply_dns_zone'
+    | 'remove_dns_zone'
+    | 'dns_get_zone_keys'
+    | 'dns_resolve_port_conflict';
   resourceType:
     | 'share'
     | 'mount'
@@ -97,7 +107,10 @@ export interface CommandResultPayload {
     | 'directory_scan'
     | 'traceroute'
     | 'migration'
-    | 'agent';
+    | 'agent'
+    | 'dns_server_group_member'
+    | 'dns_zone'
+    | 'dns_zone_keys';
   resourceId: string;
   success: boolean;
   message?: string;
@@ -115,6 +128,21 @@ export interface CommandResultPayload {
       ip: string | null;
       latencyMs: number | null;
     }>;
+    // Set by the agent on `apply_dns_server_group` when it can't bind port
+    // 53 - surfaced to the user as a banner offering "kill & retry" or
+    // "cancel and pick another node" (see DnsServerGroupMember.conflictDetail).
+    portConflict?: {
+      port: number;
+      protocol: 'tcp' | 'udp';
+      pid: number | null;
+      processName: string | null;
+    };
+    // Set on `apply_dns_server_group` by whichever member is `primary`: the
+    // TSIG key it generated for zone transfer, echoed back so Tarmac can
+    // hand it to secondaries on their next reconcile tick.
+    dnsTsigKeySecret?: string;
+    // Set by `dns_get_zone_keys`.
+    dns?: { dsRecords?: string[]; dnskeyRecords?: string[] };
   };
 }
 

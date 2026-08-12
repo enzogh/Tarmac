@@ -2,6 +2,7 @@ import { forwardRef, Inject, Injectable, Logger, NotFoundException, OnModuleInit
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { DnsService } from '../dns/dns.service';
 import { MigrationsService } from '../migrations/migrations.service';
 import { MountsService } from '../mounts/mounts.service';
 import { PoolsService } from '../pools/pools.service';
@@ -40,6 +41,12 @@ type PendingDirectoryScanRequest = {
 type PendingTracerouteRequest = {
   nodeId: string;
   resolve: (value: { targetIp: string; hops: Array<{ hop: number; ip: string | null; latencyMs: number | null }> }) => void;
+  reject: (reason: Error) => void;
+  timeout: NodeJS.Timeout;
+};
+type PendingDnsZoneKeysRequest = {
+  nodeId: string;
+  resolve: (value: { dsRecords: string[]; dnskeyRecords: string[] }) => void;
   reject: (reason: Error) => void;
   timeout: NodeJS.Timeout;
 };
@@ -84,6 +91,7 @@ export class AgentsService implements OnModuleInit {
   private readonly pendingDirectoryRequests = new Map<string, PendingDirectoryRequest>();
   private readonly pendingDirectoryScanRequests = new Map<string, PendingDirectoryScanRequest>();
   private readonly pendingTracerouteRequests = new Map<string, PendingTracerouteRequest>();
+  private readonly pendingDnsZoneKeysRequests = new Map<string, PendingDnsZoneKeysRequest>();
   private readonly smartAlertAt = new Map<string, number>();
 
   private normalizeFailureMessage(message?: string | null) {
@@ -198,6 +206,28 @@ export class AgentsService implements OnModuleInit {
     });
   }
 
+  private async createDnsPortConflictAlert(params: {
+    nodeId: string;
+    nodeName?: string | null;
+    port: number;
+    protocol: string;
+    processName?: string | null;
+    pid?: number | null;
+  }) {
+    const node = params.nodeName?.trim() || params.nodeId;
+    const process = params.processName ? `${params.processName}${params.pid ? ` (pid ${params.pid})` : ''}` : 'un autre process';
+    const message = `DNS : le port ${params.port}/${params.protocol} est déjà utilisé sur ${node} par ${process} - PowerDNS n'a pas pu démarrer.`;
+
+    await this.prisma.alert.create({
+      data: {
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        nodeId: params.nodeId,
+        severity: 'high',
+        message,
+      },
+    });
+  }
+
   private async createSmartHealthAlert(params: {
     nodeId: string;
     diskName: string;
@@ -260,6 +290,8 @@ export class AgentsService implements OnModuleInit {
     @Inject(forwardRef(() => MountsService))
     private readonly mountsService: MountsService,
     private readonly poolsService: PoolsService,
+    @Inject(forwardRef(() => DnsService))
+    private readonly dnsService: DnsService,
     private readonly vlanService: VlanService,
     private readonly agentLogsService: AgentLogsService,
     private readonly live: LiveWsServer,
@@ -293,6 +325,12 @@ export class AgentsService implements OnModuleInit {
       clearTimeout(request.timeout);
       request.reject(new Error(`node ${nodeId} disconnected`));
       this.pendingTracerouteRequests.delete(requestId);
+    }
+    for (const [requestId, request] of this.pendingDnsZoneKeysRequests.entries()) {
+      if (request.nodeId !== nodeId) continue;
+      clearTimeout(request.timeout);
+      request.reject(new Error(`node ${nodeId} disconnected`));
+      this.pendingDnsZoneKeysRequests.delete(requestId);
     }
   }
 
@@ -448,20 +486,28 @@ export class AgentsService implements OnModuleInit {
       },
     });
 
-    // Lets the dashboard patch this node's status/metrics into its local
-    // cache the instant a heartbeat lands, instead of waiting for its next
-    // poll tick (up to 5s away) - see useLiveSocket usage in
+    // Lets the dashboard patch this node's status/metrics/version into its
+    // local cache the instant a heartbeat lands, instead of waiting for its
+    // next poll tick (up to 5s away) - see useLiveSocket usage in
     // app/[workspace]/dashboard/page.tsx and infrastructure/page.tsx. Poll-
     // ing keeps running underneath as the fallback/reconciliation path, this
     // is purely additive. Deliberately a lean payload (not the full
     // NodeActivityItem shape) - just enough to patch the fields that change
-    // every heartbeat.
+    // every heartbeat. agentVersion/agentVersionAt come from `node` (the
+    // just-updated row), not from `version`/`versionFields` above, so they're
+    // always the current DB value whether or not the agent reported a new
+    // version on this specific heartbeat - e.g. after "update agent" the
+    // agent restarts and only reports its new version on the first heartbeat
+    // after reconnecting, but every heartbeat's row already reflects
+    // whatever the last-known value was.
     this.live.broadcast(
       'node.heartbeat',
       {
         nodeId,
         status: node.status,
         lastSeenAt: now.toISOString(),
+        agentVersion: node.agentVersion,
+        agentVersionAt: node.agentVersionAt ? node.agentVersionAt.toISOString() : null,
         metrics: {
           cpu: metrics.cpu,
           ram: metrics.ram,
@@ -673,6 +719,85 @@ export class AgentsService implements OnModuleInit {
       } else if (poolId && memberNodeId) {
         this.logCrossWorkspaceAttempt(nodeId, result.resourceType, result.resourceId);
       }
+      return;
+    }
+
+    if (result.resourceType === 'dns_server_group_member') {
+      // resourceId is "<groupId>:<nodeId>" - same ownership-check shape as
+      // pool_member: this exact member is the only one allowed to report
+      // its own status.
+      const [groupId, memberNodeId] = result.resourceId.split(':');
+      if (!groupId || memberNodeId !== nodeId) {
+        if (groupId && memberNodeId) this.logCrossWorkspaceAttempt(nodeId, result.resourceType, result.resourceId);
+        return;
+      }
+
+      const portConflict = result.data?.portConflict;
+      await this.dnsService.setGroupMemberStatus(
+        groupId,
+        memberNodeId,
+        result.success ? 'active' : 'error',
+        portConflict ? (portConflict as unknown as Prisma.InputJsonValue) : null,
+      );
+
+      if (result.success && result.data?.dnsTsigKeySecret) {
+        await this.dnsService.setGroupTsigKeySecret(groupId, result.data.dnsTsigKeySecret);
+      }
+
+      if (!result.success && portConflict) {
+        const node = await this.prisma.node.findUnique({ where: { id: nodeId }, select: { name: true } });
+        await this.createDnsPortConflictAlert({
+          nodeId,
+          nodeName: node?.name,
+          port: portConflict.port,
+          protocol: portConflict.protocol,
+          processName: portConflict.processName,
+          pid: portConflict.pid,
+        });
+      } else if (!result.success) {
+        this.logger.error(
+          `DNS server group member ${result.resourceId} apply failed: ${this.normalizeFailureMessage(result.message)}`,
+        );
+      }
+      return;
+    }
+
+    if (result.resourceType === 'dns_zone') {
+      const zone = await this.prisma.dnsZone.findUnique({
+        where: { id: result.resourceId },
+        select: { workspaceId: true },
+      });
+      if (!zone || zone.workspaceId !== callingWorkspaceId) {
+        this.logCrossWorkspaceAttempt(nodeId, result.resourceType, result.resourceId);
+        return;
+      }
+      await this.dnsService.setZoneStatus(result.resourceId, result.success ? 'active' : 'error');
+      if (!result.success) {
+        this.logger.error(`DNS zone ${result.resourceId} apply failed: ${this.normalizeFailureMessage(result.message)}`);
+      }
+      return;
+    }
+
+    if (result.resourceType === 'dns_zone_keys') {
+      const pending = this.pendingDnsZoneKeysRequests.get(result.resourceId);
+      if (!pending || pending.nodeId !== nodeId) {
+        if (pending) this.logCrossWorkspaceAttempt(nodeId, result.resourceType, result.resourceId);
+        return;
+      }
+
+      clearTimeout(pending.timeout);
+      this.pendingDnsZoneKeysRequests.delete(result.resourceId);
+
+      if (!result.success) {
+        pending.reject(new Error(result.message ?? 'failed to fetch dnssec keys'));
+        return;
+      }
+
+      const dns = result.data?.dns;
+      pending.resolve({
+        dsRecords: Array.isArray(dns?.dsRecords) ? dns.dsRecords : [],
+        dnskeyRecords: Array.isArray(dns?.dnskeyRecords) ? dns.dnskeyRecords : [],
+      });
       return;
     }
 
@@ -1081,6 +1206,37 @@ export class AgentsService implements OnModuleInit {
       if (!sent) {
         clearTimeout(timeout);
         this.pendingTracerouteRequests.delete(requestId);
+        reject(new Error(`node ${nodeId} is offline`));
+      }
+    });
+  }
+
+  // DS/DNSKEY records are never persisted (see DnsZone.dnssecEnabled) -
+  // fetched live from the primary node's PowerDNS instance every time the
+  // UI needs them, same request/response-over-WS shape as requestTraceroute.
+  requestDnsZoneKeys(
+    nodeId: string,
+    zoneName: string,
+    timeoutMs = 15000,
+  ): Promise<{ dsRecords: string[]; dnskeyRecords: string[] }> {
+    const requestId = `dns-keys:${nodeId}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingDnsZoneKeysRequests.delete(requestId);
+        reject(new Error('dnssec key fetch timeout'));
+      }, timeoutMs);
+
+      this.pendingDnsZoneKeysRequests.set(requestId, { nodeId, resolve, reject, timeout });
+
+      const sent = this.sendCommand(nodeId, {
+        type: 'command.dns_get_zone_keys',
+        payload: { requestId, zoneName },
+      });
+
+      if (!sent) {
+        clearTimeout(timeout);
+        this.pendingDnsZoneKeysRequests.delete(requestId);
         reject(new Error(`node ${nodeId} is offline`));
       }
     });

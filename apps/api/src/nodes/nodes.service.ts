@@ -9,6 +9,7 @@ import { getControlPlaneVersion, isKnownControlPlaneVersion } from '../common/bu
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNodeDto } from './dto/create-node.dto';
 import { UpdateNodeDto } from './dto/update-node.dto';
+import { extractExternalIp } from './extract-external-ip';
 
 type ActivityNode = {
   id: string;
@@ -395,28 +396,7 @@ export class NodesService {
   }
 
   private extractExternalIp(endpoint: string | null | undefined) {
-    if (!endpoint) return null;
-    const raw = endpoint.trim();
-    if (!raw) return null;
-
-    try {
-      const withScheme = raw.includes('://') ? raw : `udp://${raw}`;
-      return new URL(withScheme).hostname || null;
-    } catch {
-      if (raw.startsWith('[')) {
-        const closeBracket = raw.indexOf(']');
-        if (closeBracket > 1) {
-          return raw.slice(1, closeBracket);
-        }
-      }
-      const slashIndex = raw.indexOf('/');
-      const hostPort = slashIndex >= 0 ? raw.slice(0, slashIndex) : raw;
-      const parts = hostPort.split(':');
-      if (parts.length === 2 && /^\d+$/.test(parts[1])) {
-        return parts[0] || null;
-      }
-      return hostPort || null;
-    }
+    return extractExternalIp(endpoint);
   }
 
   // Always the most recent samples in range, downsampled server-side so the

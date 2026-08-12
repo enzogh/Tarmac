@@ -90,6 +90,10 @@ export default function OverviewPage() {
                 ...node,
                 status: update.status,
                 lastSeenAt: update.lastSeenAt,
+                agentVersion: update.agentVersion,
+                agentVersionAt: update.agentVersionAt,
+                agentUpToDate:
+                  update.agentVersion && node.controlVersion ? update.agentVersion === node.controlVersion : null,
                 metrics: { ...update.metrics, sampledAt: update.lastSeenAt },
               }
             : node,

@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { AgentsService } from '../agents/agents.service';
+import { DnsService } from '../dns/dns.service';
 import { MountsService } from '../mounts/mounts.service';
 import { PoolsService } from '../pools/pools.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -18,6 +19,7 @@ export class ReconciliationService implements OnModuleInit {
     private readonly sharesService: SharesService,
     private readonly mountsService: MountsService,
     private readonly poolsService: PoolsService,
+    private readonly dnsService: DnsService,
     private readonly agentsService: AgentsService,
     private readonly prisma: PrismaService,
     private readonly vlanService: VlanService,
@@ -35,11 +37,14 @@ export class ReconciliationService implements OnModuleInit {
 
   private async tick() {
     try {
-      const [pendingShares, pendingMounts, pendingPoolMembers] = await Promise.all([
-        this.sharesService.findPending(),
-        this.mountsService.findPending(),
-        this.poolsService.findPendingMembers(),
-      ]);
+      const [pendingShares, pendingMounts, pendingPoolMembers, pendingDnsGroupMembers, pendingDnsZones] =
+        await Promise.all([
+          this.sharesService.findPending(),
+          this.mountsService.findPending(),
+          this.poolsService.findPendingMembers(),
+          this.dnsService.findPendingGroupMembers(),
+          this.dnsService.findPendingZones(),
+        ]);
 
     for (const share of pendingShares) {
       if (!this.agentsService.isConnected(share.nodeId)) continue;
@@ -95,6 +100,59 @@ export class ReconciliationService implements OnModuleInit {
         },
       });
       this.logger.debug(`Sent pool command for pool ${member.poolId} member ${member.nodeId}`);
+    }
+
+    for (const member of pendingDnsGroupMembers) {
+      if (!this.agentsService.isConnected(member.nodeId)) continue;
+
+      // A secondary can't configure AXFR/IXFR without the primary's TSIG
+      // key - if the primary hasn't reported it back yet (e.g. both members
+      // went pending in the same tick), skip and retry next tick rather
+      // than applying a half-configured secondary.
+      if (member.role === 'secondary' && !member.group.tsigKeySecret) {
+        this.logger.debug(
+          `Deferring DNS server group command for group ${member.groupId} member ${member.nodeId}: waiting on primary's TSIG key`,
+        );
+        continue;
+      }
+
+      const siblings = member.group.members.filter((sibling) => sibling.nodeId !== member.nodeId);
+      const primaryMember = member.group.members.find((sibling) => sibling.role === 'primary');
+      this.agentsService.sendCommand(member.nodeId, {
+        type: 'command.apply_dns_server_group',
+        payload: {
+          groupId: member.groupId,
+          nodeId: member.nodeId,
+          role: member.role,
+          groupMemberVlanIps: siblings.map((sibling) => sibling.node.vlanIp).filter(Boolean),
+          ...(member.role === 'secondary'
+            ? { primaryVlanIp: primaryMember?.node.vlanIp ?? null, tsigKeySecret: member.group.tsigKeySecret }
+            : {}),
+          ...(process.env.MAXMIND_LICENSE_KEY ? { maxmindLicenseKey: process.env.MAXMIND_LICENSE_KEY } : {}),
+        },
+      });
+      this.logger.debug(`Sent DNS server group command for group ${member.groupId} member ${member.nodeId}`);
+    }
+
+    for (const zone of pendingDnsZones) {
+      const primary = zone.group.members[0];
+      if (!primary || !this.agentsService.isConnected(primary.nodeId)) continue;
+      this.agentsService.sendCommand(primary.nodeId, {
+        type: 'command.apply_dns_zone',
+        payload: {
+          zoneId: zone.id,
+          zoneName: zone.name,
+          dnssecEnabled: zone.dnssecEnabled,
+          records: zone.records.map((record) => ({
+            name: record.name,
+            type: record.type,
+            ttl: record.ttl,
+            isGeo: record.isGeo,
+            values: record.values.map((value) => ({ content: value.content, priority: value.priority })),
+          })),
+        },
+      });
+      this.logger.debug(`Sent DNS zone command for zone ${zone.id}`);
     }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown error';

@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"log"
 	"math"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -677,8 +680,8 @@ func probeOverlayLatency(iface, targetIP string) (*float64, *float64) {
 
 // Matches "traceroute -n" numeric output, one probe per hop (-q 1):
 //
-//	 1  10.255.0.1  0.512 ms
-//	 2  * * *
+//	1  10.255.0.1  0.512 ms
+//	2  * * *
 var tracerouteLineRe = regexp.MustCompile(`^\s*(\d+)\s+(\S+)(?:\s+([\d.]+)\s*ms)?`)
 
 func parseTracerouteOutput(output string) []tracerouteHop {
@@ -711,9 +714,9 @@ func parseTracerouteOutput(output string) []tracerouteHop {
 // (asymmetric forward/return probes); later lines for the same hop overwrite
 // earlier ones, which naturally keeps the last (most complete) reading:
 //
-//	 1?: [LOCALHOST]                      pmtu 1420
-//	 1:  10.255.0.1                        0.412ms
-//	 2:  10.255.0.2                        1.021ms reached
+//	1?: [LOCALHOST]                      pmtu 1420
+//	1:  10.255.0.1                        0.412ms
+//	2:  10.255.0.2                        1.021ms reached
 var tracepathLineRe = regexp.MustCompile(`^\s*(\d+)\??:\s+(\S+)\s+([\d.]+)ms`)
 
 func parseTracepathOutput(output string) []tracerouteHop {
@@ -1188,7 +1191,7 @@ type smartctlOutput struct {
 	} `json:"power_on_time"`
 	AtaSmartAttributes struct {
 		Table []struct {
-			ID  int    `json:"id"`
+			ID  int `json:"id"`
 			Raw struct {
 				Value int64 `json:"value"`
 			} `json:"raw"`
@@ -1940,17 +1943,20 @@ func ensureAgentSystemPackages(ctx context.Context, packages []string) ([]string
 
 	missing := make([]string, 0, len(packages))
 	checks := map[string]func() bool{
-		"git":               func() bool { return commandExists("git") },
-		"golang-go":         func() bool { return commandExists("go") },
-		"rsync":             func() bool { return commandExists("rsync") },
-		"sshpass":           func() bool { return commandExists("sshpass") },
-		"nfs-common":        func() bool { return commandExists("mount.nfs") },
-		"nfs-kernel-server": func() bool { return commandExists("exportfs") },
-		"cifs-utils":        func() bool { return commandExists("mount.cifs") },
-		"wireguard-tools":   func() bool { return commandExists("wg") },
-		"iproute2":          func() bool { return commandExists("ip") },
-		"util-linux":        func() bool { return commandExists("mount") },
-		"smartmontools":     func() bool { return commandExists("smartctl") },
+		"git":                  func() bool { return commandExists("git") },
+		"golang-go":            func() bool { return commandExists("go") },
+		"rsync":                func() bool { return commandExists("rsync") },
+		"sshpass":              func() bool { return commandExists("sshpass") },
+		"nfs-common":           func() bool { return commandExists("mount.nfs") },
+		"nfs-kernel-server":    func() bool { return commandExists("exportfs") },
+		"cifs-utils":           func() bool { return commandExists("mount.cifs") },
+		"wireguard-tools":      func() bool { return commandExists("wg") },
+		"iproute2":             func() bool { return commandExists("ip") },
+		"util-linux":           func() bool { return commandExists("mount") },
+		"smartmontools":        func() bool { return commandExists("smartctl") },
+		"pdns-server":          func() bool { return commandExists("pdns_server") },
+		"pdns-backend-sqlite3": func() bool { return pdnsSqliteBackendInstalled() },
+		"geoipupdate":          func() bool { return commandExists("geoipupdate") },
 	}
 
 	for _, pkg := range packages {
@@ -2072,6 +2078,704 @@ func installRcloneFromOfficialScript(ctx context.Context) error {
 		return errors.New("rclone install script completed but rclone binary still not found in PATH")
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------
+// DNS server groups + zones (PowerDNS)
+//
+// The agent installs and drives PowerDNS locally via its REST API
+// (127.0.0.1:8081) - the control plane never talks to PowerDNS directly,
+// same "push desired state over the agent's outbound WebSocket" model as
+// apply_mount/apply_pool/apply_overlay. Each node has its own local SQLite
+// backend; zone data is physically replicated primary -> secondary via
+// PowerDNS's own AXFR/IXFR, over the WireGuard VLAN mesh, so a secondary
+// keeps answering correctly even if this agent or the control plane is
+// down.
+// ---------------------------------------------------------------------
+
+const (
+	pdnsConfigPath   = "/etc/powerdns/pdns.conf"
+	pdnsApiKeyPath   = "/etc/powerdns/tarmac-api-key"
+	pdnsApiBaseURL   = "http://127.0.0.1:8081/api/v1/servers/localhost"
+	dnsMarkerPath    = "/etc/tarmac-agent/dns-enabled"
+	geoipConfPath    = "/etc/GeoIP.conf"
+	geoipDatabaseDir = "/usr/share/GeoIP"
+)
+
+type dnsPortConflict struct {
+	Port        int    `json:"port"`
+	Protocol    string `json:"protocol"`
+	PID         *int   `json:"pid"`
+	ProcessName string `json:"processName"`
+}
+
+type dnsServerGroupApplyData struct {
+	PortConflict     *dnsPortConflict `json:"portConflict,omitempty"`
+	DnsTsigKeySecret string           `json:"dnsTsigKeySecret,omitempty"`
+}
+
+type dnsZoneKeysData struct {
+	DsRecords     []string `json:"dsRecords"`
+	DnskeyRecords []string `json:"dnskeyRecords"`
+}
+
+type dnsZoneKeysResultData struct {
+	Dns dnsZoneKeysData `json:"dns"`
+}
+
+func pdnsSqliteBackendInstalled() bool {
+	matches, _ := filepath.Glob("/usr/lib/*/pdns/libgsqlite3backend.so")
+	return len(matches) > 0
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// probeDnsPortConflict checks whether port 53 tcp/udp is already bound by
+// something other than an already-running PowerDNS - an idempotent
+// re-apply finding its own listener isn't a conflict.
+func probeDnsPortConflict() *dnsPortConflict {
+	if commandExists("systemctl") {
+		if err := exec.Command("systemctl", "is-active", "--quiet", "pdns").Run(); err == nil {
+			return nil
+		}
+	}
+	if conflict := probePortBinding(53, "tcp"); conflict != nil {
+		return conflict
+	}
+	return probePortBinding(53, "udp")
+}
+
+func probePortBinding(port int, protocol string) *dnsPortConflict {
+	var bound bool
+	switch protocol {
+	case "tcp":
+		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+		if err != nil {
+			bound = true
+		} else {
+			ln.Close()
+		}
+	case "udp":
+		pc, err := net.ListenPacket("udp", fmt.Sprintf(":%d", port))
+		if err != nil {
+			bound = true
+		} else {
+			pc.Close()
+		}
+	}
+	if !bound {
+		return nil
+	}
+
+	pid, name := findProcessOnPort(port, protocol)
+	conflict := &dnsPortConflict{Port: port, Protocol: protocol, ProcessName: name}
+	if pid > 0 {
+		conflict.PID = &pid
+	}
+	return conflict
+}
+
+// findProcessOnPort resolves the PID/name bound to a TCP/UDP port in pure
+// Go - reads /proc/net/{tcp,udp} for the socket inode on that port, then
+// scans /proc/*/fd for a symlink to that inode. Deliberately avoids
+// shelling out to lsof/ss, which may not be installed on a minimal node.
+func findProcessOnPort(port int, protocol string) (int, string) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/net/%s", protocol))
+	if err != nil {
+		return 0, ""
+	}
+
+	portHex := fmt.Sprintf("%04X", port)
+	var inode string
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 10 {
+			continue
+		}
+		parts := strings.Split(fields[1], ":")
+		if len(parts) != 2 || !strings.EqualFold(parts[1], portHex) {
+			continue
+		}
+		inode = fields[9]
+		break
+	}
+	if inode == "" || inode == "0" {
+		return 0, ""
+	}
+
+	procEntries, err := os.ReadDir("/proc")
+	if err != nil {
+		return 0, ""
+	}
+	target := fmt.Sprintf("socket:[%s]", inode)
+	for _, entry := range procEntries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue
+		}
+		fdDir := fmt.Sprintf("/proc/%d/fd", pid)
+		fds, err := os.ReadDir(fdDir)
+		if err != nil {
+			continue
+		}
+		for _, fd := range fds {
+			link, err := os.Readlink(fmt.Sprintf("%s/%s", fdDir, fd.Name()))
+			if err != nil || link != target {
+				continue
+			}
+			name, _ := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+			return pid, strings.TrimSpace(string(name))
+		}
+	}
+	return 0, ""
+}
+
+func knownPort53Services(processName string) []string {
+	switch strings.ToLower(processName) {
+	case "systemd-resolve", "systemd-resolved":
+		return []string{"systemd-resolved"}
+	case "named", "bind9":
+		return []string{"bind9", "named"}
+	case "dnsmasq":
+		return []string{"dnsmasq"}
+	default:
+		return nil
+	}
+}
+
+// resolveDnsPortConflict only frees the port - it deliberately does not
+// re-run applyDnsServerGroup itself. The API already flips the member back
+// to "pending" as soon as it dispatches this command (see
+// DnsService.resolvePortConflict), so the next 15s reconcile tick sends a
+// fresh apply_dns_server_group with the full payload once the port is free.
+func resolveDnsPortConflict(ctx context.Context) (string, error) {
+	conflict := probeDnsPortConflict()
+	if conflict == nil {
+		return "port 53 is already free", nil
+	}
+
+	stoppedService := false
+	if commandExists("systemctl") {
+		for _, unit := range knownPort53Services(conflict.ProcessName) {
+			if out, err := exec.CommandContext(ctx, "systemctl", "stop", unit).CombinedOutput(); err == nil {
+				exec.CommandContext(ctx, "systemctl", "disable", unit).Run()
+				stoppedService = true
+				log.Printf("dns: stopped and disabled %s to free port %d/%s", unit, conflict.Port, conflict.Protocol)
+				break
+			} else {
+				log.Printf("dns: systemctl stop %s failed: %s", unit, strings.TrimSpace(string(out)))
+			}
+		}
+	}
+
+	if !stoppedService && conflict.PID != nil {
+		if proc, err := os.FindProcess(*conflict.PID); err == nil {
+			_ = proc.Signal(syscall.SIGTERM)
+			time.Sleep(2 * time.Second)
+			_ = proc.Signal(syscall.SIGKILL)
+		}
+	}
+
+	if remaining := probeDnsPortConflict(); remaining != nil {
+		return "", fmt.Errorf("port %d/%s is still in use after attempting to free it", remaining.Port, remaining.Protocol)
+	}
+	return fmt.Sprintf("freed port %d/%s", conflict.Port, conflict.Protocol), nil
+}
+
+// ensureGeoipDatabase installs geoipupdate and refreshes the GeoLite2 MMDB
+// that PowerDNS's Lua pickclosest() geo function reads. MaxMind requires a
+// free account + license key to download it - licenseKey comes from the
+// MAXMIND_LICENSE_KEY env var on the control plane, relayed through the
+// apply_dns_server_group payload, and is only ever written to this node's
+// own /etc/GeoIP.conf, never persisted in Tarmac's database.
+func ensureGeoipDatabase(ctx context.Context, licenseKey string) error {
+	if licenseKey == "" {
+		return nil
+	}
+	if !commandExists("geoipupdate") {
+		if _, err := ensureAgentSystemPackages(ctx, []string{"geoipupdate"}); err != nil {
+			return fmt.Errorf("cannot install geoipupdate: %w", err)
+		}
+	}
+	if err := os.MkdirAll(geoipDatabaseDir, 0o755); err != nil {
+		return fmt.Errorf("cannot create geoip database dir: %w", err)
+	}
+
+	conf := fmt.Sprintf(
+		"AccountID 0\nLicenseKey %s\nEditionIDs GeoLite2-City\nDatabaseDirectory %s\n",
+		licenseKey, geoipDatabaseDir,
+	)
+	if err := os.WriteFile(geoipConfPath, []byte(conf), 0o600); err != nil {
+		return fmt.Errorf("cannot write GeoIP.conf: %w", err)
+	}
+
+	if out, err := exec.CommandContext(ctx, "geoipupdate", "-f", geoipConfPath).CombinedOutput(); err != nil {
+		return fmt.Errorf("geoipupdate failed: %s", strings.TrimSpace(string(out)))
+	}
+
+	if commandExists("systemctl") {
+		// Best-effort: keeps the database fresh going forward. The timer
+		// ships with the package on Debian/Ubuntu but isn't enabled by
+		// default.
+		_ = exec.CommandContext(ctx, "systemctl", "enable", "--now", "geoipupdate.timer").Run()
+	}
+	return nil
+}
+
+func ensurePdnsApiKey() (string, error) {
+	if data, err := os.ReadFile(pdnsApiKeyPath); err == nil {
+		if key := strings.TrimSpace(string(data)); key != "" {
+			return key, nil
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(pdnsApiKeyPath), 0o755); err != nil {
+		return "", fmt.Errorf("cannot create powerdns config dir: %w", err)
+	}
+	raw := make([]byte, 24)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("cannot generate powerdns api key: %w", err)
+	}
+	key := base64.RawURLEncoding.EncodeToString(raw)
+	if err := os.WriteFile(pdnsApiKeyPath, []byte(key), 0o600); err != nil {
+		return "", fmt.Errorf("cannot persist powerdns api key: %w", err)
+	}
+	return key, nil
+}
+
+func writePdnsConfig(apiKey string, allowAxfrIps []string) error {
+	if err := os.MkdirAll(filepath.Dir(pdnsConfigPath), 0o755); err != nil {
+		return fmt.Errorf("cannot create powerdns config dir: %w", err)
+	}
+	lines := []string{
+		"launch=gsqlite3",
+		"gsqlite3-database=/var/lib/powerdns/pdns.sqlite3",
+		"local-address=0.0.0.0",
+		"local-port=53",
+		"api=yes",
+		"api-key=" + apiKey,
+		"webserver=yes",
+		"webserver-address=127.0.0.1",
+		"webserver-port=8081",
+		"webserver-allow-from=127.0.0.1",
+		"dnssec=yes",
+		"default-ksk-algorithm=ecdsa256",
+		"enable-lua-records=yes",
+		"allow-axfr-ips=" + strings.Join(append([]string{"127.0.0.1"}, allowAxfrIps...), ","),
+	}
+	if len(allowAxfrIps) > 0 {
+		lines = append(lines, "also-notify="+strings.Join(allowAxfrIps, ","))
+	}
+	content := strings.Join(lines, "\n") + "\n"
+	return os.WriteFile(pdnsConfigPath, []byte(content), 0o644)
+}
+
+var tsigKeyNameSanitizer = regexp.MustCompile(`[^a-z0-9-]+`)
+
+func tsigKeyName(groupID string) string {
+	return "tarmac-dns-" + tsigKeyNameSanitizer.ReplaceAllString(strings.ToLower(groupID), "-")
+}
+
+var pdnsutilGenerateTsigRe = regexp.MustCompile(`(?i)Create new TSIG key \S+ \S+ (\S+)`)
+
+// ensureTsigKey returns the group's TSIG secret, generating it via pdnsutil
+// on first call (idempotent - a re-apply on the primary reuses the existing
+// key rather than rotating it, which would break already-configured
+// secondaries).
+func ensureTsigKey(ctx context.Context, keyName string) (string, error) {
+	if out, err := exec.CommandContext(ctx, "pdnsutil", "list-tsig-keys").CombinedOutput(); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 && fields[0] == keyName {
+				return fields[2], nil
+			}
+		}
+	}
+	out, err := exec.CommandContext(ctx, "pdnsutil", "generate-tsig-key", keyName, "hmac-sha256").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("pdnsutil generate-tsig-key failed: %s", strings.TrimSpace(string(out)))
+	}
+	match := pdnsutilGenerateTsigRe.FindStringSubmatch(string(out))
+	if len(match) < 2 {
+		return "", fmt.Errorf("could not parse generated TSIG secret from: %s", strings.TrimSpace(string(out)))
+	}
+	return match[1], nil
+}
+
+func applyDnsServerGroup(ctx context.Context, payload map[string]interface{}) (string, *dnsServerGroupApplyData, error) {
+	groupID := readString(payload, "groupId")
+	dnsNodeID := readString(payload, "nodeId")
+	role := readString(payload, "role")
+	if groupID == "" || dnsNodeID == "" || role == "" {
+		return "", nil, errors.New("apply_dns_server_group payload must include groupId, nodeId and role")
+	}
+
+	if _, err := ensureAgentSystemPackages(ctx, []string{"pdns-server", "pdns-backend-sqlite3"}); err != nil {
+		return "", nil, fmt.Errorf("cannot install PowerDNS: %w", err)
+	}
+
+	if conflict := probeDnsPortConflict(); conflict != nil {
+		return "", &dnsServerGroupApplyData{PortConflict: conflict}, fmt.Errorf(
+			"port %d/%s already in use by %s",
+			conflict.Port, conflict.Protocol, firstNonEmpty(conflict.ProcessName, "an unknown process"),
+		)
+	}
+
+	apiKey, err := ensurePdnsApiKey()
+	if err != nil {
+		return "", nil, err
+	}
+
+	if licenseKey := readString(payload, "maxmindLicenseKey"); licenseKey != "" {
+		if err := ensureGeoipDatabase(ctx, licenseKey); err != nil {
+			log.Printf("dns: geoip database setup failed, geo records will not resolve correctly: %v", err)
+		}
+	}
+
+	allowAxfrIps := readStringSlice(payload, "groupMemberVlanIps")
+	if err := writePdnsConfig(apiKey, allowAxfrIps); err != nil {
+		return "", nil, err
+	}
+
+	if commandExists("systemctl") {
+		if out, err := exec.CommandContext(ctx, "systemctl", "enable", "--now", "pdns").CombinedOutput(); err != nil {
+			return "", nil, fmt.Errorf("cannot enable/start pdns: %s", strings.TrimSpace(string(out)))
+		}
+		// enable --now only starts it if it wasn't running - the config may
+		// have just changed, so always restart to pick it up.
+		if out, err := exec.CommandContext(ctx, "systemctl", "restart", "pdns").CombinedOutput(); err != nil {
+			return "", nil, fmt.Errorf("cannot restart pdns: %s", strings.TrimSpace(string(out)))
+		}
+	}
+
+	data := &dnsServerGroupApplyData{}
+	keyName := tsigKeyName(groupID)
+
+	if role == "primary" {
+		secret, err := ensureTsigKey(ctx, keyName)
+		if err != nil {
+			log.Printf("dns: TSIG key generation failed, secondaries won't be able to authenticate zone transfers yet: %v", err)
+		} else {
+			data.DnsTsigKeySecret = secret
+		}
+	} else {
+		primaryVlanIp := readString(payload, "primaryVlanIp")
+		if primaryVlanIp == "" {
+			return "", nil, errors.New("secondary role requires primaryVlanIp")
+		}
+		if tsigSecret := readString(payload, "tsigKeySecret"); tsigSecret != "" {
+			if out, err := exec.CommandContext(ctx, "pdnsutil", "import-tsig-key", keyName, "hmac-sha256", tsigSecret).CombinedOutput(); err != nil {
+				log.Printf("dns: TSIG key import failed (%s), zone transfers stay IP-restricted via allow-axfr-ips only", strings.TrimSpace(string(out)))
+			}
+		}
+		// Auto-provisions slave zones on NOTIFY from the primary via
+		// PowerDNS's "supermaster" feature, so Tarmac never has to
+		// pre-create every zone on every secondary. Wiring the TSIG key
+		// into each zone's AXFR-MASTER-TSIG metadata (for signed, not just
+		// IP-restricted, transfers) is left for a follow-up pass - same
+		// spirit as apply_pool's existing "simulated" stub.
+		if out, err := exec.CommandContext(ctx, "pdnsutil", "add-supermaster", primaryVlanIp, "ns1.tarmac.local", groupID).CombinedOutput(); err != nil &&
+			!strings.Contains(strings.ToLower(string(out)), "already") {
+			log.Printf("dns: add-supermaster failed: %s", strings.TrimSpace(string(out)))
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(dnsMarkerPath), 0o755); err == nil {
+		_ = os.WriteFile(dnsMarkerPath, []byte(fmt.Sprintf("groupId=%s\nnodeId=%s\nrole=%s\n", groupID, dnsNodeID, role)), 0o600)
+	}
+
+	return fmt.Sprintf("PowerDNS configured as %s for group %s", role, groupID), data, nil
+}
+
+type pdnsClient struct {
+	apiKey string
+}
+
+func (c *pdnsClient) request(ctx context.Context, method, path string, body interface{}) ([]byte, int, error) {
+	var reader io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return nil, 0, err
+		}
+		reader = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, pdnsApiBaseURL+path, reader)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("X-API-Key", c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	return respBody, resp.StatusCode, nil
+}
+
+func (c *pdnsClient) zoneExists(ctx context.Context, fqdn string) bool {
+	_, status, err := c.request(ctx, http.MethodGet, "/zones/"+url.PathEscape(fqdn), nil)
+	return err == nil && status == http.StatusOK
+}
+
+func (c *pdnsClient) createZone(ctx context.Context, fqdn string) error {
+	body := map[string]interface{}{"name": fqdn, "kind": "Master", "nameservers": []string{}}
+	respBody, status, err := c.request(ctx, http.MethodPost, "/zones", body)
+	if err != nil {
+		return fmt.Errorf("cannot create zone %s: %w", fqdn, err)
+	}
+	if status >= 300 {
+		return fmt.Errorf("cannot create zone %s: %s", fqdn, strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}
+
+func (c *pdnsClient) patchRrsets(ctx context.Context, fqdn string, rrsets []map[string]interface{}) error {
+	respBody, status, err := c.request(ctx, http.MethodPatch, "/zones/"+url.PathEscape(fqdn), map[string]interface{}{"rrsets": rrsets})
+	if err != nil {
+		return fmt.Errorf("cannot apply records to zone %s: %w", fqdn, err)
+	}
+	if status >= 300 {
+		return fmt.Errorf("cannot apply records to zone %s: %s", fqdn, strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}
+
+func (c *pdnsClient) enableDnssec(ctx context.Context, fqdn string) error {
+	respBody, status, err := c.request(ctx, http.MethodPost, "/zones/"+url.PathEscape(fqdn)+"/cryptokeys", map[string]interface{}{"keytype": "ksk", "active": true})
+	if err != nil {
+		return err
+	}
+	if status >= 300 {
+		return fmt.Errorf("%s", strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}
+
+func (c *pdnsClient) fetchCryptoKeys(ctx context.Context, fqdn string) ([]map[string]interface{}, error) {
+	respBody, status, err := c.request(ctx, http.MethodGet, "/zones/"+url.PathEscape(fqdn)+"/cryptokeys", nil)
+	if err != nil {
+		return nil, err
+	}
+	if status >= 300 {
+		return nil, fmt.Errorf("%s", strings.TrimSpace(string(respBody)))
+	}
+	var keys []map[string]interface{}
+	if err := json.Unmarshal(respBody, &keys); err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+func (c *pdnsClient) deleteZone(ctx context.Context, fqdn string) error {
+	_, status, err := c.request(ctx, http.MethodDelete, "/zones/"+url.PathEscape(fqdn), nil)
+	if err != nil {
+		return err
+	}
+	if status >= 300 && status != http.StatusNotFound {
+		return fmt.Errorf("delete zone %s failed with status %d", fqdn, status)
+	}
+	return nil
+}
+
+type dnsRecordValuePayload struct {
+	Content  string
+	Priority int
+}
+
+type dnsRecordPayload struct {
+	Name   string
+	Type   string
+	Ttl    int
+	IsGeo  bool
+	Values []dnsRecordValuePayload
+}
+
+func parseDnsRecords(payload map[string]interface{}) []dnsRecordPayload {
+	rawRecords, ok := payload["records"].([]interface{})
+	if !ok {
+		return nil
+	}
+
+	records := make([]dnsRecordPayload, 0, len(rawRecords))
+	for _, entry := range rawRecords {
+		record, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name := readString(record, "name")
+		recordType := readString(record, "type")
+		if name == "" || recordType == "" {
+			continue
+		}
+
+		var values []dnsRecordValuePayload
+		if rawValues, ok := record["values"].([]interface{}); ok {
+			for _, rv := range rawValues {
+				valueMap, ok := rv.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				content := readString(valueMap, "content")
+				if content == "" {
+					continue
+				}
+				values = append(values, dnsRecordValuePayload{Content: content, Priority: readInt(valueMap, "priority", 0)})
+			}
+		}
+
+		records = append(records, dnsRecordPayload{
+			Name:   name,
+			Type:   recordType,
+			Ttl:    readInt(record, "ttl", 3600),
+			IsGeo:  readBool(record, "isGeo"),
+			Values: values,
+		})
+	}
+	return records
+}
+
+func dnsRecordFqdn(zoneName, label string) string {
+	if label == "" || label == "@" {
+		return zoneName + "."
+	}
+	return label + "." + zoneName + "."
+}
+
+// applyDnsZone pushes the zone's complete record set on every call (like
+// applyOverlay's full peer-list push), not a diff - simpler and safer over
+// an unreliable channel, at the cost of re-writing the whole zone for a
+// single-record edit. Acceptable for the zone sizes expected in v1.
+func applyDnsZone(payload map[string]interface{}) (string, error) {
+	zoneName := readString(payload, "zoneName")
+	if zoneName == "" {
+		return "", errors.New("apply_dns_zone payload must include zoneName")
+	}
+	fqdn := zoneName + "."
+	records := parseDnsRecords(payload)
+
+	apiKey, err := ensurePdnsApiKey()
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	client := &pdnsClient{apiKey: apiKey}
+
+	if !client.zoneExists(ctx, fqdn) {
+		if err := client.createZone(ctx, fqdn); err != nil {
+			return "", err
+		}
+	}
+
+	rrsets := make([]map[string]interface{}, 0, len(records))
+	for _, record := range records {
+		var pdnsRecords []map[string]interface{}
+		rrsetType := record.Type
+		if record.IsGeo {
+			rrsetType = "LUA"
+			quoted := make([]string, 0, len(record.Values))
+			for _, value := range record.Values {
+				quoted = append(quoted, "'"+strings.ReplaceAll(value.Content, "'", "\\'")+"'")
+			}
+			pdnsRecords = []map[string]interface{}{{
+				"content":  fmt.Sprintf("\"a\" pickclosest({%s})", strings.Join(quoted, ", ")),
+				"disabled": false,
+			}}
+		} else {
+			for _, value := range record.Values {
+				content := value.Content
+				if record.Type == "MX" || record.Type == "SRV" {
+					content = fmt.Sprintf("%d %s", value.Priority, value.Content)
+				}
+				pdnsRecords = append(pdnsRecords, map[string]interface{}{"content": content, "disabled": false})
+			}
+		}
+
+		rrsets = append(rrsets, map[string]interface{}{
+			"name":       dnsRecordFqdn(zoneName, record.Name),
+			"type":       rrsetType,
+			"ttl":        record.Ttl,
+			"changetype": "REPLACE",
+			"records":    pdnsRecords,
+		})
+	}
+
+	if len(rrsets) > 0 {
+		if err := client.patchRrsets(ctx, fqdn, rrsets); err != nil {
+			return "", err
+		}
+	}
+
+	if readBool(payload, "dnssecEnabled") {
+		if err := client.enableDnssec(ctx, fqdn); err != nil {
+			log.Printf("dns: enabling DNSSEC for %s failed: %v", zoneName, err)
+		}
+	}
+
+	return fmt.Sprintf("applied %d record(s) to zone %s", len(rrsets), zoneName), nil
+}
+
+func removeDnsZone(payload map[string]interface{}) (string, error) {
+	zoneName := readString(payload, "zoneName")
+	if zoneName == "" {
+		return "", errors.New("remove_dns_zone payload must include zoneName")
+	}
+	apiKey, err := ensurePdnsApiKey()
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := (&pdnsClient{apiKey: apiKey}).deleteZone(ctx, zoneName+"."); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("removed zone %s", zoneName), nil
+}
+
+func fetchDnsZoneKeys(payload map[string]interface{}) (dnsZoneKeysResultData, error) {
+	zoneName := readString(payload, "zoneName")
+	if zoneName == "" {
+		return dnsZoneKeysResultData{}, errors.New("dns_get_zone_keys payload must include zoneName")
+	}
+	apiKey, err := ensurePdnsApiKey()
+	if err != nil {
+		return dnsZoneKeysResultData{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	keys, err := (&pdnsClient{apiKey: apiKey}).fetchCryptoKeys(ctx, zoneName+".")
+	if err != nil {
+		return dnsZoneKeysResultData{}, err
+	}
+
+	var ds, dnskey []string
+	for _, key := range keys {
+		active, _ := key["active"].(bool)
+		if !active {
+			continue
+		}
+		if rawDs, ok := key["ds"].([]interface{}); ok {
+			for _, entry := range rawDs {
+				if s, ok := entry.(string); ok {
+					ds = append(ds, s)
+				}
+			}
+		}
+		if s, ok := key["dnskey"].(string); ok && s != "" {
+			dnskey = append(dnskey, s)
+		}
+	}
+	return dnsZoneKeysResultData{Dns: dnsZoneKeysData{DsRecords: ds, DnskeyRecords: dnskey}}, nil
 }
 
 func parseOverlayPeers(payload map[string]interface{}) []overlayPeer {
@@ -3809,6 +4513,67 @@ func handleCommand(ctx context.Context, cmd commandPayload, onProgress func(prog
 		} else {
 			result.Message = message
 		}
+	case "command.apply_dns_server_group":
+		result.Command = "apply_dns_server_group"
+		result.ResourceType = "dns_server_group_member"
+		dnsGroupID := readString(cmd.Payload, "groupId")
+		dnsMemberNodeID := readString(cmd.Payload, "nodeId")
+		result.ResourceID = fmt.Sprintf("%s:%s", dnsGroupID, dnsMemberNodeID)
+		message, data, err := applyDnsServerGroup(ctx, cmd.Payload)
+		if data != nil {
+			result.Data = data
+		}
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Message = message
+		}
+	case "command.apply_dns_zone":
+		result.Command = "apply_dns_zone"
+		result.ResourceType = "dns_zone"
+		result.ResourceID = readString(cmd.Payload, "zoneId")
+		message, err := applyDnsZone(cmd.Payload)
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Message = message
+		}
+	case "command.remove_dns_zone":
+		result.Command = "remove_dns_zone"
+		result.ResourceType = "dns_zone"
+		result.ResourceID = readString(cmd.Payload, "zoneId")
+		message, err := removeDnsZone(cmd.Payload)
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Message = message
+		}
+	case "command.dns_get_zone_keys":
+		result.Command = "dns_get_zone_keys"
+		result.ResourceType = "dns_zone_keys"
+		result.ResourceID = readString(cmd.Payload, "requestId")
+		data, err := fetchDnsZoneKeys(cmd.Payload)
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Data = data
+			result.Message = fmt.Sprintf("%d DS record(s)", len(data.Dns.DsRecords))
+		}
+	case "command.dns_resolve_port_conflict":
+		result.Command = "dns_resolve_port_conflict"
+		result.ResourceType = "dns_port_conflict"
+		result.ResourceID = fmt.Sprintf("%s:%s", readString(cmd.Payload, "groupId"), readString(cmd.Payload, "nodeId"))
+		message, err := resolveDnsPortConflict(ctx)
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Message = message
+		}
 	default:
 		result.Success = false
 		result.Message = fmt.Sprintf("unknown command %s", cmd.Type)
@@ -4020,6 +4785,19 @@ func main() {
 		installCtx, installCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		if _, err := ensureAgentSystemPackages(installCtx, []string{"smartmontools"}); err != nil {
 			log.Printf("smartmontools unavailable, SMART disk health monitoring disabled: %v", err)
+		}
+		installCancel()
+	}
+
+	// This node was previously configured as a DNS server (see
+	// applyDnsServerGroup) - re-verify PowerDNS/geoip prerequisites on every
+	// restart (including the one triggered by "update agent") so they can't
+	// silently go missing after an update, without waiting for the control
+	// plane to re-send apply_dns_server_group.
+	if _, err := os.Stat(dnsMarkerPath); err == nil {
+		installCtx, installCancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		if _, err := ensureAgentSystemPackages(installCtx, []string{"pdns-server", "pdns-backend-sqlite3"}); err != nil {
+			log.Printf("dns: failed to re-verify PowerDNS prerequisites on startup: %v", err)
 		}
 		installCancel()
 	}

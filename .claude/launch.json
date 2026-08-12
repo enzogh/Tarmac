@@ -7,6 +7,12 @@
       "runtimeArgs": ["--workspace", "@tarmac/web", "run", "dev"],
       "port": 3000,
       "autoPort": true
+    },
+    {
+      "name": "api",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--workspace", "@tarmac/api", "run", "start:dev"],
+      "port": 3001
     }
   ]
 }

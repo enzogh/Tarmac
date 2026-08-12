@@ -61,6 +61,47 @@ enum PoolMemberRole {
   replica
 }
 
+enum DnsServerGroupStatus {
+  pending
+  active
+  error
+}
+
+enum DnsServerGroupMemberStatus {
+  pending
+  active
+  error
+}
+
+enum DnsServerGroupMemberRole {
+  primary
+  secondary
+}
+
+enum DnsZoneStatus {
+  pending
+  active
+  error
+}
+
+enum DnsRecordStatus {
+  pending
+  active
+  error
+}
+
+enum DnsRecordType {
+  A
+  AAAA
+  CNAME
+  MX
+  TXT
+  NS
+  CAA
+  SRV
+  PTR
+}
+
 enum AlertSeverity {
   low
   medium
@@ -156,6 +197,8 @@ model Workspace {
   syncJobs             SyncJob[]
   migrationTasks       MigrationTask[]
   pools                Pool[]
+  dnsServerGroups      DnsServerGroup[]
+  dnsZones             DnsZone[]
   notificationChannels NotificationChannel[]
   auditLogs            AuditLog[]
 }
@@ -181,12 +224,12 @@ model WorkspaceMembership {
 }
 
 model Node {
-  id                     String               @id @default(cuid())
+  id                     String                 @id @default(cuid())
   workspaceId            String
-  workspace              Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  workspace              Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   name                   String
   role                   String
-  status                 NodeStatus           @default(offline)
+  status                 NodeStatus             @default(offline)
   locationCity           String?
   locationCountry        String?
   locationCountryCode    String?
@@ -195,14 +238,14 @@ model Node {
   graphX                 Float?
   graphY                 Float?
   lastSeenAt             DateTime?
-  vlanIp                 String?              @unique
-  vlanMac                String?              @unique
+  vlanIp                 String?                @unique
+  vlanMac                String?                @unique
   overlayPublicKey       String?
   overlayEndpoint        String?
   overlayListenPort      Int?
   overlaySshPublicKey    String?
   overlaySshUser         String?
-  overlayIsGateway       Boolean              @default(false)
+  overlayIsGateway       Boolean                @default(false)
   agentVersion           String?
   agentVersionAt         DateTime?
   agentTokenHash         String?
@@ -210,23 +253,25 @@ model Node {
   agentTokenGraceUntil   DateTime?
   agentTokenRotatedAt    DateTime?
   mutedUntil             DateTime?
-  createdAt              DateTime             @default(now())
-  updatedAt              DateTime             @updatedAt
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime               @updatedAt
   metrics                MetricSample[]
   shares                 Share[]
   mounts                 Mount[]
   disks                  Disk[]
   smartReports           SmartReport[]
   poolMembers            PoolMember[]
-  alertRules             AlertRule[]          @relation("NodeAlertRules")
-  alerts                 Alert[]              @relation("NodeAlerts")
-  sourceMigrations       MigrationTask[]      @relation("MigrationSourceNode")
-  targetMigrations       MigrationTask[]      @relation("MigrationTargetNode")
+  dnsServerGroupMembers  DnsServerGroupMember[]
+  dnsRecordValues        DnsRecordValue[]
+  alertRules             AlertRule[]            @relation("NodeAlertRules")
+  alerts                 Alert[]                @relation("NodeAlerts")
+  sourceMigrations       MigrationTask[]        @relation("MigrationSourceNode")
+  targetMigrations       MigrationTask[]        @relation("MigrationTargetNode")
   syncJobs               SyncJob[]
   vlanMemberships        VlanMember[]
-  outgoingConnections    VlanConnection[]     @relation("SourceNode")
-  incomingConnections    VlanConnection[]     @relation("TargetNode")
-  connectionTests        VlanConnectionTest[] @relation("InitiatorNode")
+  outgoingConnections    VlanConnection[]       @relation("SourceNode")
+  incomingConnections    VlanConnection[]       @relation("TargetNode")
+  connectionTests        VlanConnectionTest[]   @relation("InitiatorNode")
 
   @@index([workspaceId])
 }
@@ -371,6 +416,114 @@ model PoolMember {
   @@unique([poolId, nodeId])
   @@index([nodeId])
   @@index([status])
+}
+
+// A DNS server group is a fleet of nodes running PowerDNS for one or more
+// zones, with one `primary` (master) and one or more `secondary` (slave)
+// members - real AXFR/IXFR zone transfer between them, not a Tarmac-managed
+// config push, so a secondary keeps answering correctly even if the control
+// plane or the primary node is down. Structurally mirrors Pool/PoolMember.
+model DnsServerGroup {
+  id            String                 @id @default(cuid())
+  workspaceId   String
+  workspace     Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  name          String
+  status        DnsServerGroupStatus   @default(pending)
+  // Shared secret for AXFR/IXFR zone transfer between this group's members,
+  // generated by whichever node is `primary` and relayed to `secondary`
+  // members via the reconciliation loop. Plaintext at rest like the rest of
+  // this app's operational config (Postgres access is already the trust
+  // boundary here) - unlike Node.agentTokenHash, this can't be a one-way
+  // hash since secondaries need the literal value to configure PowerDNS.
+  tsigKeySecret String?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  members       DnsServerGroupMember[]
+  zones         DnsZone[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+model DnsServerGroupMember {
+  id             String                     @id @default(cuid())
+  groupId        String
+  nodeId         String
+  role           DnsServerGroupMemberRole   @default(secondary)
+  status         DnsServerGroupMemberStatus @default(pending)
+  // Set by the agent when it can't bind port 53 while applying this member's
+  // PowerDNS install ({ port, protocol, pid, processName }). Cleared as soon
+  // as a subsequent apply/resolve succeeds. Surfaced in the DNS UI so the
+  // user can choose to kill the conflicting process or pick another node.
+  conflictDetail Json?
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+  group          DnsServerGroup             @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  node           Node                       @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, nodeId])
+  @@index([nodeId])
+  @@index([status])
+}
+
+model DnsZone {
+  id            String         @id @default(cuid())
+  workspaceId   String
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  groupId       String
+  group         DnsServerGroup @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  // FQDN without a trailing dot; the PowerDNS-style trailing-dot convention
+  // is applied only at the service/agent boundary, not stored here.
+  name          String
+  dnssecEnabled Boolean        @default(true)
+  status        DnsZoneStatus  @default(pending)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  records       DnsRecord[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+  @@index([groupId])
+}
+
+// One row = one RRset (all values for a given name+type answered together).
+model DnsRecord {
+  id        String           @id @default(cuid())
+  zoneId    String
+  zone      DnsZone          @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  // Relative label ("www", "@" for the zone apex).
+  name      String
+  type      DnsRecordType
+  ttl       Int              @default(3600)
+  // false: plain multi-value RRset (round-robin). true: rendered as a
+  // PowerDNS Lua record (pickclosest(...)) over `values` for GeoDNS.
+  isGeo     Boolean          @default(false)
+  status    DnsRecordStatus  @default(pending)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  values    DnsRecordValue[]
+
+  @@unique([zoneId, name, type])
+  @@index([zoneId])
+  @@index([status])
+}
+
+model DnsRecordValue {
+  id        String    @id @default(cuid())
+  recordId  String
+  record    DnsRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  // IP for A/AAAA, hostname for CNAME/MX/NS, free text for TXT/CAA.
+  content   String
+  // Set when this value targets one of the workspace's own fleet nodes -
+  // drives the "which records point here" reverse lookup from a node.
+  nodeId    String?
+  node      Node?     @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+  // MX/SRV only.
+  priority  Int?
+  createdAt DateTime  @default(now())
+
+  @@index([recordId])
+  @@index([nodeId])
 }
 
 model NotificationChannel {

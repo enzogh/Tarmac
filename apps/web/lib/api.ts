@@ -111,6 +111,65 @@ export type PoolItem = {
   members: Array<{ nodeId: string; role: 'primary' | 'replica'; status: 'pending' | 'active' | 'error' }>;
 };
 
+export type DnsPortConflict = {
+  port: number;
+  protocol: 'tcp' | 'udp';
+  pid: number | null;
+  processName: string | null;
+};
+
+export type DnsServerGroupMemberItem = {
+  nodeId: string;
+  role: 'primary' | 'secondary';
+  status: 'pending' | 'active' | 'error';
+  conflictDetail?: DnsPortConflict | null;
+};
+
+export type DnsServerGroupItem = {
+  id: string;
+  name: string;
+  status: 'pending' | 'active' | 'error';
+  members: DnsServerGroupMemberItem[];
+  zones?: Array<{ id: string; name: string; status: 'pending' | 'active' | 'error' }>;
+};
+
+export type DnsRecordType = 'A' | 'AAAA' | 'CNAME' | 'MX' | 'TXT' | 'NS' | 'CAA' | 'SRV' | 'PTR';
+
+export type DnsRecordValueItem = {
+  id?: string;
+  content: string;
+  nodeId?: string | null;
+  priority?: number | null;
+};
+
+export type DnsRecordItem = {
+  id: string;
+  name: string;
+  type: DnsRecordType;
+  ttl: number;
+  isGeo: boolean;
+  status: 'pending' | 'active' | 'error';
+  values: DnsRecordValueItem[];
+};
+
+export type DnsZoneItem = {
+  id: string;
+  groupId: string;
+  name: string;
+  dnssecEnabled: boolean;
+  status: 'pending' | 'active' | 'error';
+  records: DnsRecordItem[];
+};
+
+export type DnsNodeRecordRef = {
+  zoneId: string;
+  zoneName: string;
+  recordId: string;
+  recordName: string;
+  type: DnsRecordType;
+  isGeo: boolean;
+};
+
 export type AlertItem = {
   id: string;
   message: string;
@@ -212,6 +271,8 @@ export type NodeHeartbeatLiveEvent = {
   nodeId: string;
   status: 'offline' | 'online' | 'degraded';
   lastSeenAt: string;
+  agentVersion: string | null;
+  agentVersionAt: string | null;
   metrics: {
     cpu: number;
     ram: number;
@@ -631,6 +692,55 @@ export const api = {
       request(`/api/v1/pools/${poolId}/members`, { method: 'POST', body: JSON.stringify(payload) }),
     removeMember: (poolId: string, nodeId: string) =>
       request<void>(`/api/v1/pools/${poolId}/members/${nodeId}`, { method: 'DELETE' }),
+  },
+
+  dns: {
+    groups: {
+      list: () => request<DnsServerGroupItem[]>('/api/v1/dns/groups'),
+      create: (payload: { name: string }) =>
+        request<DnsServerGroupItem>('/api/v1/dns/groups', { method: 'POST', body: JSON.stringify(payload) }),
+      delete: (id: string) => request<void>(`/api/v1/dns/groups/${id}`, { method: 'DELETE' }),
+      addMember: (
+        groupId: string,
+        payload: { nodeId: string; role: 'primary' | 'secondary'; status: 'pending' | 'active' | 'error' },
+      ) =>
+        request<DnsServerGroupMemberItem>(`/api/v1/dns/groups/${groupId}/members`, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        }),
+      removeMember: (groupId: string, nodeId: string) =>
+        request<void>(`/api/v1/dns/groups/${groupId}/members/${nodeId}`, { method: 'DELETE' }),
+      resolvePortConflict: (groupId: string, nodeId: string) =>
+        request<DnsServerGroupMemberItem>(`/api/v1/dns/groups/${groupId}/members/${nodeId}/resolve-port-conflict`, {
+          method: 'POST',
+        }),
+    },
+    zones: {
+      list: (groupId?: string) =>
+        request<DnsZoneItem[]>(`/api/v1/dns/zones${groupId ? `?groupId=${encodeURIComponent(groupId)}` : ''}`),
+      create: (payload: { groupId: string; name: string; dnssecEnabled?: boolean }) =>
+        request<DnsZoneItem>('/api/v1/dns/zones', { method: 'POST', body: JSON.stringify(payload) }),
+      delete: (id: string) => request<void>(`/api/v1/dns/zones/${id}`, { method: 'DELETE' }),
+      getDnssecKeys: (zoneId: string) =>
+        request<{ dsRecords: string[]; dnskeyRecords: string[] }>(`/api/v1/dns/zones/${zoneId}/dnssec`),
+      getDelegation: (zoneId: string) =>
+        request<{ nsHostnames: string[]; glue: Array<{ host: string; ip: string }> }>(
+          `/api/v1/dns/zones/${zoneId}/delegation`,
+        ),
+      upsertRecord: (
+        zoneId: string,
+        payload: {
+          name: string;
+          type: DnsRecordType;
+          ttl?: number;
+          isGeo?: boolean;
+          values: Array<{ content: string; nodeId?: string; priority?: number }>;
+        },
+      ) => request<DnsRecordItem>(`/api/v1/dns/zones/${zoneId}/records`, { method: 'POST', body: JSON.stringify(payload) }),
+      deleteRecord: (zoneId: string, recordId: string) =>
+        request<void>(`/api/v1/dns/zones/${zoneId}/records/${recordId}`, { method: 'DELETE' }),
+    },
+    recordsForNode: (nodeId: string) => request<DnsNodeRecordRef[]>(`/api/v1/dns/nodes/${nodeId}/records`),
   },
 
   alerts: {
