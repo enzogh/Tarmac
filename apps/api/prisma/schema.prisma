@@ -114,76 +114,138 @@ enum MigrationStatus {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String?
-  name         String?
-  avatarUrl    String?
-  isSuperuser  Boolean  @default(false)
-  ssoSubject   String?  @unique
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                   String                @id @default(cuid())
+  email                String                @unique
+  passwordHash         String?
+  name                 String?
+  avatarUrl            String?
+  isSuperuser          Boolean               @default(false)
+  ssoSubject           String?               @unique
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  workspaceMemberships WorkspaceMembership[]
+}
+
+// A workspace groups a set of nodes (and everything hanging off them) under
+// one isolated tenant. Every pre-existing row is backfilled into a single
+// "Default" workspace (isDefault=true) by the add_workspace migration so
+// nothing changes for the already-deployed fleet - see that migration's
+// data-backfill step before touching this model.
+model Workspace {
+  id            String   @id @default(cuid())
+  name          String
+  slug          String   @unique
+  // Authentik group name that auto-grants membership on SSO login (Phase 3).
+  // Null means membership is only ever granted manually by a platform admin.
+  ssoGroupClaim String?  @unique
+  isDefault     Boolean  @default(false)
+  // Index into the per-workspace subnet pool (10.(16+n-1).0.0/16). Null for
+  // the Default workspace, which permanently keeps the legacy 10.255.0.0/16
+  // range instead so existing node IPs never move.
+  subnetIndex   Int?     @unique
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  memberships          WorkspaceMembership[]
+  nodes                Node[]
+  vlans                Vlan[]
+  shares               Share[]
+  mounts               Mount[]
+  alertRules           AlertRule[]
+  alerts               Alert[]
+  syncJobs             SyncJob[]
+  migrationTasks       MigrationTask[]
+  pools                Pool[]
+  notificationChannels NotificationChannel[]
+  auditLogs            AuditLog[]
+}
+
+model WorkspaceMembership {
+  id          String    @id @default(cuid())
+  workspaceId String
+  userId      String
+  // Reserved for owner/admin/viewer distinctions later; v1 authz treats any
+  // membership row as full access to the workspace regardless of this value.
+  role        String    @default("member")
+  // "manual" (platform-admin-granted, incl. the Phase 0 backfill) vs "sso"
+  // (granted by an Authentik group claim). Lets a future full add+revoke SSO
+  // sync only ever touch rows it itself created.
+  source      String    @default("manual")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
 }
 
 model Node {
-  id                 String           @id @default(cuid())
-  name               String
-  role               String
-  status             NodeStatus       @default(offline)
-  locationCity       String?
-  locationCountry    String?
-  locationCountryCode String?
-  locationLat        Float?
-  locationLng        Float?
-  graphX             Float?
-  graphY             Float?
-  lastSeenAt         DateTime?
-  vlanIp             String?          @unique
-  vlanMac            String?          @unique
-  overlayPublicKey   String?
-  overlayEndpoint    String?
-  overlayListenPort  Int?
-  overlaySshPublicKey String?
-  overlaySshUser     String?
-  overlayIsGateway   Boolean          @default(false)
-  agentVersion       String?
-  agentVersionAt     DateTime?
+  id                     String               @id @default(cuid())
+  workspaceId            String
+  workspace              Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  name                   String
+  role                   String
+  status                 NodeStatus           @default(offline)
+  locationCity           String?
+  locationCountry        String?
+  locationCountryCode    String?
+  locationLat            Float?
+  locationLng            Float?
+  graphX                 Float?
+  graphY                 Float?
+  lastSeenAt             DateTime?
+  vlanIp                 String?              @unique
+  vlanMac                String?              @unique
+  overlayPublicKey       String?
+  overlayEndpoint        String?
+  overlayListenPort      Int?
+  overlaySshPublicKey    String?
+  overlaySshUser         String?
+  overlayIsGateway       Boolean              @default(false)
+  agentVersion           String?
+  agentVersionAt         DateTime?
   agentTokenHash         String?
   agentTokenPreviousHash String?
   agentTokenGraceUntil   DateTime?
   agentTokenRotatedAt    DateTime?
-  mutedUntil         DateTime?
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
-  metrics            MetricSample[]
-  shares             Share[]
-  mounts             Mount[]
-  disks              Disk[]
-  smartReports       SmartReport[]
-  poolMembers        PoolMember[]
-  alertRules         AlertRule[]      @relation("NodeAlertRules")
-  alerts             Alert[]          @relation("NodeAlerts")
-  sourceMigrations   MigrationTask[]  @relation("MigrationSourceNode")
-  targetMigrations   MigrationTask[]  @relation("MigrationTargetNode")
-  syncJobs           SyncJob[]
-  vlanMemberships    VlanMember[]
-  outgoingConnections VlanConnection[] @relation("SourceNode")
-  incomingConnections VlanConnection[] @relation("TargetNode")
-  connectionTests    VlanConnectionTest[] @relation("InitiatorNode")
+  mutedUntil             DateTime?
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+  metrics                MetricSample[]
+  shares                 Share[]
+  mounts                 Mount[]
+  disks                  Disk[]
+  smartReports           SmartReport[]
+  poolMembers            PoolMember[]
+  alertRules             AlertRule[]          @relation("NodeAlertRules")
+  alerts                 Alert[]              @relation("NodeAlerts")
+  sourceMigrations       MigrationTask[]      @relation("MigrationSourceNode")
+  targetMigrations       MigrationTask[]      @relation("MigrationTargetNode")
+  syncJobs               SyncJob[]
+  vlanMemberships        VlanMember[]
+  outgoingConnections    VlanConnection[]     @relation("SourceNode")
+  incomingConnections    VlanConnection[]     @relation("TargetNode")
+  connectionTests        VlanConnectionTest[] @relation("InitiatorNode")
+
+  @@index([workspaceId])
 }
 
 model Share {
-  id         String        @id @default(cuid())
-  name       String
-  path       String
-  status     ShareStatus   @default(pending)
-  nodeId     String?
-  node       Node?         @relation(fields: [nodeId], references: [id])
-  clients    ShareClient[]
-  createdAt  DateTime      @default(now())
-  updatedAt  DateTime      @updatedAt
+  id          String        @id @default(cuid())
+  workspaceId String
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  name        String
+  path        String
+  status      ShareStatus   @default(pending)
+  nodeId      String?
+  node        Node?         @relation(fields: [nodeId], references: [id])
+  clients     ShareClient[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
   @@index([status])
+  @@index([workspaceId])
 }
 
 model ShareClient {
@@ -199,28 +261,31 @@ model ShareClient {
 }
 
 model Mount {
-  id         String      @id @default(cuid())
-  name       String
-  sourcePath String
-  additionalSources String[] @default([])
-  targetPath String
-  fsType     String      @default("nfs")
-  mountOptions String?
+  id                String      @id @default(cuid())
+  workspaceId       String
+  workspace         Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  name              String
+  sourcePath        String
+  additionalSources String[]    @default([])
+  targetPath        String
+  fsType            String      @default("nfs")
+  mountOptions      String?
   // Optional remote SSH source for fsType "rclone-sftp" (e.g. an external
   // seedbox with no root access, not a Tarmac node). Auth is by SSH key only
   // - the executing node's own agent key (Node.overlaySshPublicKey) must be
   // added to the remote host's authorized_keys. No password is ever stored.
-  remoteHost    String?
-  remoteUser    String?
-  remoteSshPort Int?      @default(22)
-  status     MountStatus @default(pending)
-  lastError  String?
-  nodeId     String?
-  node       Node?       @relation(fields: [nodeId], references: [id])
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
+  remoteHost        String?
+  remoteUser        String?
+  remoteSshPort     Int?        @default(22)
+  status            MountStatus @default(pending)
+  lastError         String?
+  nodeId            String?
+  node              Node?       @relation(fields: [nodeId], references: [id])
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
 
   @@index([status])
+  @@index([workspaceId])
 }
 
 model MetricSample {
@@ -240,25 +305,25 @@ model MetricSample {
 }
 
 model Disk {
-  id         String     @id @default(cuid())
-  nodeId     String
-  name       String
-  mountPath  String
-  type       DiskType   @default(hdd)
-  health     DiskHealth @default(unknown)
-  capacityGb Int
-  usedGb     Int
-  physicalDisks String[] @default([])
-  createdAt  DateTime   @default(now())
-  updatedAt  DateTime   @updatedAt
-  node       Node       @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  id            String     @id @default(cuid())
+  nodeId        String
+  name          String
+  mountPath     String
+  type          DiskType   @default(hdd)
+  health        DiskHealth @default(unknown)
+  capacityGb    Int
+  usedGb        Int
+  physicalDisks String[]   @default([])
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  node          Node       @relation(fields: [nodeId], references: [id], onDelete: Cascade)
 
-  @@index([nodeId])
   @@unique([nodeId, name])
+  @@index([nodeId])
 }
 
 model SmartReport {
-  id                 String   @id @default(cuid())
+  id                 String     @id @default(cuid())
   nodeId             String
   diskName           String
   temperatureC       Int
@@ -266,21 +331,25 @@ model SmartReport {
   pendingSectors     Int
   powerOnHours       Int
   overall            DiskHealth @default(unknown)
-  collectedAt        DateTime @default(now())
-  node               Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  collectedAt        DateTime   @default(now())
+  node               Node       @relation(fields: [nodeId], references: [id], onDelete: Cascade)
 
   @@index([nodeId, collectedAt])
   @@index([nodeId, diskName, collectedAt])
 }
 
 model Pool {
-  id        String       @id @default(cuid())
-  name      String       @unique
-  strategy  String
-  status    PoolStatus   @default(pending)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
-  members   PoolMember[]
+  id          String       @id @default(cuid())
+  workspaceId String
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  name        String       @unique
+  strategy    String
+  status      PoolStatus   @default(pending)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  members     PoolMember[]
+
+  @@index([workspaceId])
 }
 
 model PoolMember {
@@ -300,71 +369,83 @@ model PoolMember {
 }
 
 model NotificationChannel {
-  id        String                  @id @default(cuid())
-  name      String
-  type      NotificationChannelType
-  target    String
-  enabled   Boolean                 @default(true)
-  createdAt DateTime                @default(now())
-  updatedAt DateTime                @updatedAt
-  rules     AlertRule[]
+  id          String                  @id @default(cuid())
+  workspaceId String
+  workspace   Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  name        String
+  type        NotificationChannelType
+  target      String
+  enabled     Boolean                 @default(true)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  rules       AlertRule[]
+
+  @@index([workspaceId])
 }
 
 model AlertRule {
-  id                    String                @id @default(cuid())
+  id                    String               @id @default(cuid())
+  workspaceId           String
+  workspace             Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   name                  String
   metric                String
-  comparator            Comparator            @default(gte)
+  comparator            Comparator           @default(gte)
   threshold             Float
-  severity              AlertSeverity         @default(medium)
-  enabled               Boolean               @default(true)
+  severity              AlertSeverity        @default(medium)
+  enabled               Boolean              @default(true)
   nodeId                String?
   notificationChannelId String?
-  createdAt             DateTime              @default(now())
-  updatedAt             DateTime              @updatedAt
-  node                  Node?                 @relation("NodeAlertRules", fields: [nodeId], references: [id])
-  notificationChannel   NotificationChannel?  @relation(fields: [notificationChannelId], references: [id])
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  node                  Node?                @relation("NodeAlertRules", fields: [nodeId], references: [id])
+  notificationChannel   NotificationChannel? @relation(fields: [notificationChannelId], references: [id])
   alerts                Alert[]
 
   @@index([enabled])
+  @@index([workspaceId])
 }
 
 model Alert {
-  id             String       @id @default(cuid())
+  id             String        @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   ruleId         String?
   nodeId         String?
   message        String
   severity       AlertSeverity @default(medium)
-  status         AlertStatus  @default(open)
-  triggeredAt    DateTime     @default(now())
+  status         AlertStatus   @default(open)
+  triggeredAt    DateTime      @default(now())
   acknowledgedAt DateTime?
   resolvedAt     DateTime?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  rule           AlertRule?   @relation(fields: [ruleId], references: [id], onDelete: SetNull)
-  node           Node?        @relation("NodeAlerts", fields: [nodeId], references: [id], onDelete: SetNull)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  rule           AlertRule?    @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  node           Node?         @relation("NodeAlerts", fields: [nodeId], references: [id], onDelete: SetNull)
 
   @@index([triggeredAt])
   @@index([status])
   @@index([nodeId])
+  @@index([workspaceId])
 }
 
 model SyncJob {
-  id         String         @id @default(cuid())
-  name       String
-  sourcePath String
-  targetPath String
-  schedule   String
-  status     SyncJobStatus  @default(pending)
-  nodeId     String?
+  id                    String        @id @default(cuid())
+  workspaceId           String
+  workspace             Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  name                  String
+  sourcePath            String
+  targetPath            String
+  schedule              String
+  status                SyncJobStatus @default(pending)
+  nodeId                String?
   // Optional remote SSH source (e.g. an external seedbox outside the Tarmac
   // node fleet). When set, the agent pulls sourcePath from this host instead
   // of treating it as a local path. Auth is by SSH key only - the agent's own
   // key (public key surfaced via Node.overlaySshPublicKey) must be added to
   // the remote host's authorized_keys. No password is ever stored at rest.
-  sourceHost    String?
-  sourceUser    String?
-  sourceSshPort Int?      @default(22)
+  sourceHost            String?
+  sourceUser            String?
+  sourceSshPort         Int?          @default(22)
   // Hash of the per-job secret used by POST /sync-jobs/:id/trigger to start a
   // run without an interactive JWT session (e.g. from a qBittorrent
   // "run on completion" script). Same sha256-at-rest pattern as
@@ -372,11 +453,13 @@ model SyncJob {
   // creation or rotation time.
   triggerTokenHash      String?
   triggerTokenRotatedAt DateTime?
-  lastRunAt  DateTime?
-  createdAt  DateTime       @default(now())
-  updatedAt  DateTime       @updatedAt
-  node       Node?          @relation(fields: [nodeId], references: [id], onDelete: SetNull)
-  runs       SyncJobRun[]
+  lastRunAt             DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  node                  Node?         @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+  runs                  SyncJobRun[]
+
+  @@index([workspaceId])
 }
 
 model SyncJobRun {
@@ -397,6 +480,8 @@ model SyncJobRun {
 
 model MigrationTask {
   id           String          @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   name         String
   shareId      String?
   sourceNodeId String?
@@ -412,21 +497,28 @@ model MigrationTask {
   targetNode   Node?           @relation("MigrationTargetNode", fields: [targetNodeId], references: [id], onDelete: SetNull)
 
   @@index([sourceNodeId, status])
+  @@index([workspaceId])
 }
 
+// resourceType/resourceId stay generic (no FK) since AuditLog spans every
+// resource kind. workspaceId is nullable because some rows predate
+// workspaces or record platform-level (cross-workspace) actions.
 model AuditLog {
-  id           String   @id @default(cuid())
+  id           String     @id @default(cuid())
+  workspaceId  String?
+  workspace    Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
   actorUserId  String?
   action       String
   resourceType String
   resourceId   String?
   details      Json?
-  createdAt    DateTime @default(now())
+  createdAt    DateTime   @default(now())
 
   @@index([createdAt])
   @@index([actorUserId])
   @@index([action])
   @@index([resourceType])
+  @@index([workspaceId])
 }
 
 model AgentLog {
@@ -441,31 +533,39 @@ model AgentLog {
 }
 
 model Vlan {
-  id              String         @id @default(cuid())
-  name            String         @unique
-  subnetCidr      String
-  description     String?
-  status          String         @default("active")
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-  members         VlanMember[]
-  connections     VlanConnection[]
-  connectionTests VlanConnectionTest[]
+  id                String                 @id @default(cuid())
+  // One workspace has exactly one Vlan (its private mesh) - see
+  // vlan.service.ts getOrCreateVlan. Kept as a plain FK rather than 1:1
+  // unique-constrained for now to avoid over-constraining before Phase 2
+  // actually enforces the invariant in code.
+  workspaceId       String
+  workspace         Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  name              String                 @unique
+  subnetCidr        String
+  description       String?
+  status            String                 @default("active")
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  members           VlanMember[]
+  connections       VlanConnection[]
+  connectionTests   VlanConnectionTest[]
   connectionSamples VlanConnectionSample[]
+
+  @@index([workspaceId])
 }
 
 model VlanMember {
-  id          String    @id @default(cuid())
-  vlanId      String
-  nodeId      String
-  vlanIp      String
-  vlanMac     String
-  joinedAt    DateTime  @default(now())
+  id            String   @id @default(cuid())
+  vlanId        String
+  nodeId        String
+  vlanIp        String
+  vlanMac       String
+  joinedAt      DateTime @default(now())
   lastHeartbeat DateTime @default(now())
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  vlan        Vlan      @relation(fields: [vlanId], references: [id], onDelete: Cascade)
-  node        Node      @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  vlan          Vlan     @relation(fields: [vlanId], references: [id], onDelete: Cascade)
+  node          Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
 
   @@unique([vlanId, nodeId])
   @@unique([vlanId, vlanIp])
@@ -475,20 +575,20 @@ model VlanMember {
 }
 
 model VlanConnection {
-  id        String                @id @default(cuid())
-  vlanId    String
-  sourceNodeId String
-  targetNodeId String
-  status    VlanConnectionStatus  @default(unknown)
-  latencyMs Float?
-  packetLoss Float?
-  bandwidth  Float?
+  id            String               @id @default(cuid())
+  vlanId        String
+  sourceNodeId  String
+  targetNodeId  String
+  status        VlanConnectionStatus @default(unknown)
+  latencyMs     Float?
+  packetLoss    Float?
+  bandwidth     Float?
   lastCheckedAt DateTime?
-  createdAt DateTime              @default(now())
-  updatedAt DateTime              @updatedAt
-  vlan      Vlan                  @relation(fields: [vlanId], references: [id], onDelete: Cascade)
-  sourceNode Node                 @relation("SourceNode", fields: [sourceNodeId], references: [id], onDelete: Cascade)
-  targetNode Node                 @relation("TargetNode", fields: [targetNodeId], references: [id], onDelete: Cascade)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  vlan          Vlan                 @relation(fields: [vlanId], references: [id], onDelete: Cascade)
+  sourceNode    Node                 @relation("SourceNode", fields: [sourceNodeId], references: [id], onDelete: Cascade)
+  targetNode    Node                 @relation("TargetNode", fields: [targetNodeId], references: [id], onDelete: Cascade)
 
   @@unique([vlanId, sourceNodeId, targetNodeId])
   @@index([vlanId])
@@ -497,22 +597,22 @@ model VlanConnection {
 }
 
 model VlanConnectionTest {
-  id          String         @id @default(cuid())
-  vlanId      String
+  id              String       @id @default(cuid())
+  vlanId          String
   initiatorNodeId String
-  targetNodeId String
-  testType    VlanTestType   @default(ping)
-  status      String         @default("pending")
-  resultCode  Int?
-  resultMessage String?
-  latencyMs   Float?
-  packetLoss  Float?
-  hops        Json?
-  startedAt   DateTime       @default(now())
-  completedAt DateTime?
-  createdAt   DateTime       @default(now())
-  vlan        Vlan           @relation(fields: [vlanId], references: [id], onDelete: Cascade)
-  initiatorNode Node         @relation("InitiatorNode", fields: [initiatorNodeId], references: [id], onDelete: Cascade)
+  targetNodeId    String
+  testType        VlanTestType @default(ping)
+  status          String       @default("pending")
+  resultCode      Int?
+  resultMessage   String?
+  latencyMs       Float?
+  packetLoss      Float?
+  hops            Json?
+  startedAt       DateTime     @default(now())
+  completedAt     DateTime?
+  createdAt       DateTime     @default(now())
+  vlan            Vlan         @relation(fields: [vlanId], references: [id], onDelete: Cascade)
+  initiatorNode   Node         @relation("InitiatorNode", fields: [initiatorNodeId], references: [id], onDelete: Cascade)
 
   @@index([vlanId])
   @@index([initiatorNodeId])

@@ -4,6 +4,7 @@ import { IncomingMessage } from 'http';
 import { parse } from 'url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import { AgentTokenService } from './agent-token.service';
 import { AgentsService } from './agents.service';
 import {
@@ -93,6 +94,7 @@ export class AgentsWsServer implements OnModuleInit {
         this.logger.warn(`Invalid agent WS payload for node ${nodeId}: ${message}`);
         await this.prisma.alert.create({
           data: {
+            workspaceId: DEFAULT_WORKSPACE_ID,
             nodeId,
             severity: 'medium',
             message: `Invalid agent WS payload for node ${nodeId}: ${message}`,

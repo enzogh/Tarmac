@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PoolMemberStatus, Prisma } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import { CreatePoolDto } from './dto/create-pool.dto';
 import { UpdatePoolDto } from './dto/update-pool.dto';
 import { UpsertPoolMemberDto } from './dto/upsert-pool-member.dto';
@@ -21,7 +22,7 @@ export class PoolsService {
   }
 
   async create(dto: CreatePoolDto, actorUserId?: string) {
-    const created = await this.prisma.pool.create({ data: dto });
+    const created = await this.prisma.pool.create({ data: { ...dto, workspaceId: DEFAULT_WORKSPACE_ID } });
     await this.auditLogsService.log({
       actorUserId,
       action: 'pool.create',

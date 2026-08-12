@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import { Region, resolveRegion } from './region';
 
 const CONNECTION_OFFLINE_TIMEOUT_MS = 60_000;
@@ -72,6 +73,7 @@ export class VlanService implements OnModuleInit {
         try {
           vlan = await this.prisma.vlan.create({
             data: {
+              workspaceId: DEFAULT_WORKSPACE_ID,
               name,
               subnetCidr: this.VLAN_SUBNET,
               description: `Automated VLAN for cluster ${name}`,
@@ -328,6 +330,7 @@ export class VlanService implements OnModuleInit {
 
     await this.prisma.alert.create({
       data: {
+        workspaceId: DEFAULT_WORKSPACE_ID,
         nodeId: sourceNodeId,
         severity: next.status === 'offline' ? 'high' : 'medium',
         message: `Lien VLAN ${statusLabel} : ${sourceLabel} ↔ ${targetLabel}`,

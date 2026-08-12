@@ -69,9 +69,14 @@ if [ "$migrate_test_types_status" -ne 0 ] && ! printf '%s' "$migrate_test_types_
   echo "$migrate_test_types_output"
 fi
 
-echo "Applying Prisma schema..."
-until npx prisma db push --schema apps/api/prisma/schema.prisma --accept-data-loss 2>&1; do
-  echo "DB schema push failed, retrying in 3s..."
+# One-way door: schema changes now go through versioned migrations
+# (apps/api/prisma/migrations/), never `prisma db push` again against this
+# database — db push --accept-data-loss can silently drop/truncate columns,
+# which is fine for a schema with no migration history but not once real
+# migrations (with backfill steps like add_workspace) are the source of truth.
+echo "Applying Prisma migrations..."
+until npx prisma migrate deploy --schema apps/api/prisma/schema.prisma 2>&1; do
+  echo "DB migration failed, retrying in 3s..."
   sleep 3
 done
 

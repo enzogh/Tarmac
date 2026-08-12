@@ -3,6 +3,7 @@ import { Prisma, SyncJobStatus } from '@prisma/client';
 import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { UpdateSyncJobDto } from './dto/update-sync-job.dto';
 import { SyncJobTriggerService } from './sync-job-trigger.service';
@@ -53,6 +54,7 @@ export class SyncJobsService {
 
     await this.prisma.alert.create({
       data: {
+        workspaceId: DEFAULT_WORKSPACE_ID,
         nodeId: params.nodeId ?? null,
         severity: 'high',
         message,
@@ -83,7 +85,12 @@ export class SyncJobsService {
   async create(dto: CreateSyncJobDto, actorUserId?: string) {
     const triggerToken = this.syncJobTriggerService.generate();
     const created = await this.prisma.syncJob.create({
-      data: { ...dto, triggerTokenHash: this.syncJobTriggerService.hash(triggerToken), triggerTokenRotatedAt: new Date() },
+      data: {
+        ...dto,
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        triggerTokenHash: this.syncJobTriggerService.hash(triggerToken),
+        triggerTokenRotatedAt: new Date(),
+      },
     });
     await this.auditLogsService.log({
       actorUserId,

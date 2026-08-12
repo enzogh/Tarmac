@@ -11,6 +11,7 @@ import { Prisma } from '@prisma/client';
 import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import { CreateMigrationDto } from './dto/create-migration.dto';
 import { UpdateMigrationDto } from './dto/update-migration.dto';
 
@@ -66,6 +67,7 @@ export class MigrationsService {
 
     await this.prisma.alert.create({
       data: {
+        workspaceId: DEFAULT_WORKSPACE_ID,
         nodeId: params.nodeId ?? null,
         severity: 'high',
         message,
@@ -203,6 +205,7 @@ export class MigrationsService {
   async create(dto: CreateMigrationDto, actorUserId?: string) {
     const created = await this.prisma.migrationTask.create({
       data: {
+        workspaceId: DEFAULT_WORKSPACE_ID,
         name: dto.name,
         shareId: dto.shareId,
         sourceNodeId: dto.sourceNodeId,

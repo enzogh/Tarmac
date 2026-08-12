@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import { CreateNotificationChannelDto } from './dto/create-notification-channel.dto';
 import { UpdateNotificationChannelDto } from './dto/update-notification-channel.dto';
 
@@ -17,7 +18,7 @@ export class NotificationChannelsService {
   }
 
   async create(dto: CreateNotificationChannelDto, actorUserId?: string) {
-    const created = await this.prisma.notificationChannel.create({ data: dto });
+    const created = await this.prisma.notificationChannel.create({ data: { ...dto, workspaceId: DEFAULT_WORKSPACE_ID } });
     await this.auditLogsService.log({
       actorUserId,
       action: 'notification_channel.create',

@@ -5,6 +5,7 @@ import { PoolsService } from '../pools/pools.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SharesService } from '../shares/shares.service';
 import { VlanService } from '../vlan/vlan.service';
+import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 
 const STUCK_MOUNT_ALERT_COOLDOWN_MS = 5 * 60 * 1000;
 
@@ -99,6 +100,7 @@ export class ReconciliationService implements OnModuleInit {
       this.logger.warn(`Reconciliation tick skipped: ${message}`);
       await this.prisma.alert.create({
         data: {
+          workspaceId: DEFAULT_WORKSPACE_ID,
           severity: 'medium',
           message: `Reconciliation tick skipped: ${message}`,
         },
@@ -118,6 +120,7 @@ export class ReconciliationService implements OnModuleInit {
     this.logger.warn(message);
     await this.prisma.alert.create({
       data: {
+        workspaceId: DEFAULT_WORKSPACE_ID,
         nodeId: nodeId ?? null,
         severity: 'medium',
         message,

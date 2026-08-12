@@ -3,6 +3,7 @@ import { MountStatus, Prisma } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { AgentsService } from '../agents/agents.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import { CreateMountDto } from './dto/create-mount.dto';
 import { UpdateMountDto } from './dto/update-mount.dto';
 
@@ -21,6 +22,7 @@ export class MountsService {
 
   async create(dto: CreateMountDto, actorUserId?: string) {
     const data: Prisma.MountCreateInput = {
+      workspace: { connect: { id: DEFAULT_WORKSPACE_ID } },
       name: dto.name,
       sourcePath: dto.sourcePath,
       additionalSources: dto.additionalSources ?? [],

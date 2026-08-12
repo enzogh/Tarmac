@@ -5,6 +5,7 @@ import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { getControlPlaneVersion } from '../common/build-info';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import { CreateNodeDto } from './dto/create-node.dto';
 import { UpdateNodeDto } from './dto/update-node.dto';
 
@@ -80,6 +81,7 @@ export class NodesService {
   async create(dto: CreateNodeDto, actorUserId?: string) {
     const created = await this.prisma.node.create({
       data: {
+        workspaceId: DEFAULT_WORKSPACE_ID,
         name: dto.name,
         role: dto.role,
         status: (dto.status as NodeStatus | undefined) ?? 'offline',

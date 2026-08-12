@@ -4,6 +4,7 @@ import { NestFactory } from '@nestjs/core';
 import { PrismaClient } from '@prisma/client';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
+import { DEFAULT_WORKSPACE_ID } from './workspaces/default-workspace';
 
 const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:3000', 'https://tarmac.casterot.com'];
 
@@ -17,6 +18,7 @@ async function reportCrashToAlerts(title: string, reason: unknown) {
   try {
     await crashAlertPrisma.alert.create({
       data: {
+        workspaceId: DEFAULT_WORKSPACE_ID,
         severity: 'critical',
         message,
       },

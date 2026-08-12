@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Comparator } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 
 const SUPPORTED_METRICS = ['cpu', 'ram', 'disk'] as const;
 type SupportedMetric = (typeof SUPPORTED_METRICS)[number];
@@ -101,7 +102,11 @@ export class AlertRulesEvaluatorService {
     }
 
     await Promise.all([
-      toCreate.length > 0 ? this.prisma.alert.createMany({ data: toCreate }) : Promise.resolve(),
+      toCreate.length > 0
+        ? this.prisma.alert.createMany({
+            data: toCreate.map((alert) => ({ ...alert, workspaceId: DEFAULT_WORKSPACE_ID })),
+          })
+        : Promise.resolve(),
       toResolveIds.length > 0
         ? this.prisma.alert.updateMany({
             where: { id: { in: toResolveIds } },

@@ -9,6 +9,7 @@ import { SharesService } from '../shares/shares.service';
 import { VlanService } from '../vlan/vlan.service';
 import { Region, resolveRegion } from '../vlan/region';
 import { AgentLogsService } from '../agent-logs/agent-logs.service';
+import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import {
   AgentLogPayload,
   CommandPayload,
@@ -126,6 +127,7 @@ export class AgentsService implements OnModuleInit {
   private async createSystemAlert(message: string, severity: 'medium' | 'high' | 'critical' = 'high') {
     await this.prisma.alert.create({
       data: {
+        workspaceId: DEFAULT_WORKSPACE_ID,
         severity,
         message: this.normalizeFailureMessage(message),
       },
@@ -147,6 +149,7 @@ export class AgentsService implements OnModuleInit {
 
     await this.prisma.alert.create({
       data: {
+        workspaceId: DEFAULT_WORKSPACE_ID,
         nodeId: params.nodeId ?? null,
         severity: 'high',
         message,
@@ -164,6 +167,7 @@ export class AgentsService implements OnModuleInit {
 
     await this.prisma.alert.create({
       data: {
+        workspaceId: DEFAULT_WORKSPACE_ID,
         nodeId: params.nodeId ?? null,
         severity: 'high',
         message,
@@ -185,6 +189,7 @@ export class AgentsService implements OnModuleInit {
 
     await this.prisma.alert.create({
       data: {
+        workspaceId: DEFAULT_WORKSPACE_ID,
         nodeId: params.nodeId ?? null,
         severity: 'high',
         message,
@@ -217,6 +222,7 @@ export class AgentsService implements OnModuleInit {
 
     await this.prisma.alert.create({
       data: {
+        workspaceId: DEFAULT_WORKSPACE_ID,
         nodeId: params.nodeId,
         severity,
         message,
@@ -375,6 +381,7 @@ export class AgentsService implements OnModuleInit {
         const created = await this.prisma.node.create({
           data: {
             id: nodeId,
+            workspaceId: DEFAULT_WORKSPACE_ID,
             name: `node-${nodeId.slice(0, 6)}`,
             role: 'worker',
             status: 'online',

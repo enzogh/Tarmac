@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma, ShareClientAccess, ShareStatus } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import { CreateShareDto } from './dto/create-share.dto';
 import { UpdateShareDto } from './dto/update-share.dto';
 
@@ -21,6 +22,7 @@ export class SharesService {
 
   async create(dto: CreateShareDto, actorUserId?: string) {
     const data: Prisma.ShareCreateInput = {
+      workspace: { connect: { id: DEFAULT_WORKSPACE_ID } },
       name: dto.name,
       path: dto.path,
       ...(dto.nodeId ? { node: { connect: { id: dto.nodeId } } } : {}),

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import { CreateAlertDto } from './dto/create-alert.dto';
 
 @Injectable()
@@ -20,7 +21,10 @@ export class AlertsService {
   }
 
   async create(dto: CreateAlertDto, actorUserId?: string) {
-    const created = await this.prisma.alert.create({ data: dto, include: { node: true, rule: true } });
+    const created = await this.prisma.alert.create({
+      data: { ...dto, workspaceId: DEFAULT_WORKSPACE_ID },
+      include: { node: true, rule: true },
+    });
     await this.auditLogsService.log({
       actorUserId,
       action: 'alert.create',
