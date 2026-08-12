@@ -168,16 +168,23 @@ export default function DnsPage() {
 
   // Journal panel: shows recent DNS-related agent-log entries for a node,
   // toggled per group-member/zone row (mirrors the SMART-history expand
-  // pattern on the infrastructure page). Only one open at a time.
+  // pattern on the infrastructure page). `expandedLogKey` is per-ROW (e.g.
+  // "member:<nodeId>" vs "zone:<zoneId>"), kept separate from
+  // `expandedLogNodeId` (which node's live log stream is being watched) -
+  // a group's primary member and its zone share the same nodeId, so
+  // without this split, opening one row's panel also opened the other's.
+  const [expandedLogKey, setExpandedLogKey] = useState<string | null>(null);
   const [expandedLogNodeId, setExpandedLogNodeId] = useState<string | null>(null);
   const [logsByNode, setLogsByNode] = useState<Record<string, AgentLogItem[]>>({});
   const [logsLoadingNodeId, setLogsLoadingNodeId] = useState<string | null>(null);
 
-  const toggleLogs = async (nodeId: string) => {
-    if (expandedLogNodeId === nodeId) {
+  const toggleLogs = async (key: string, nodeId: string) => {
+    if (expandedLogKey === key) {
+      setExpandedLogKey(null);
       setExpandedLogNodeId(null);
       return;
     }
+    setExpandedLogKey(key);
     setExpandedLogNodeId(nodeId);
     setLogsLoadingNodeId(nodeId);
     try {
@@ -267,8 +274,8 @@ export default function DnsPage() {
   const nodeName = (nodeId: string) => nodes.find((n) => n.id === nodeId)?.name ?? nodeId;
   const nodeExternalIp = (nodeId: string) => nodes.find((n) => n.id === nodeId)?.externalIp ?? '';
 
-  const renderLogPanel = (nodeId: string) => {
-    if (expandedLogNodeId !== nodeId) return null;
+  const renderLogPanel = (key: string, nodeId: string) => {
+    if (expandedLogKey !== key) return null;
     const entries = logsByNode[nodeId];
     return (
       <div className="mt-2 max-h-56 space-y-1.5 overflow-y-auto rounded-lg border border-white/[0.08] bg-zinc-950/70 p-2.5 font-mono text-xs">
@@ -609,9 +616,14 @@ export default function DnsPage() {
                               </span>
                               <div className="flex items-center gap-2">
                                 <StatusIndicator status={member.status} />
-                                <Button variant="ghost" size="sm" className="gap-1" onClick={() => toggleLogs(member.nodeId)}>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="gap-1"
+                                  onClick={() => toggleLogs(`member:${group.id}:${member.nodeId}`, member.nodeId)}
+                                >
                                   <ScrollText className="h-3.5 w-3.5" />
-                                  {expandedLogNodeId === member.nodeId ? 'Masquer' : 'Journal'}
+                                  {expandedLogKey === `member:${group.id}:${member.nodeId}` ? 'Masquer' : 'Journal'}
                                 </Button>
                                 <Button
                                   variant="ghost"
@@ -624,7 +636,7 @@ export default function DnsPage() {
                                 </Button>
                               </div>
                             </div>
-                            {renderLogPanel(member.nodeId)}
+                            {renderLogPanel(`member:${group.id}:${member.nodeId}`, member.nodeId)}
                             {member.conflictDetail && (
                               <Alert variant="destructive" className="ml-1">
                                 <AlertTriangle className="h-4 w-4" />
@@ -701,9 +713,14 @@ export default function DnsPage() {
                           {zone.dnssecEnabled && <Badge label="DNSSEC" type="success" />}
                           <StatusIndicator status={zone.status} />
                           {primaryNodeId && (
-                            <Button variant="ghost" size="sm" className="gap-1" onClick={() => toggleLogs(primaryNodeId)}>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="gap-1"
+                              onClick={() => toggleLogs(`zone:${zone.id}`, primaryNodeId)}
+                            >
                               <ScrollText className="h-3.5 w-3.5" />
-                              {expandedLogNodeId === primaryNodeId ? 'Masquer' : 'Journal'}
+                              {expandedLogKey === `zone:${zone.id}` ? 'Masquer' : 'Journal'}
                             </Button>
                           )}
                           <Button variant="ghost" size="sm" onClick={() => openDelegation(zone)} className="gap-1">
@@ -727,7 +744,7 @@ export default function DnsPage() {
                           </Button>
                         </div>
                       </div>
-                      {primaryNodeId && renderLogPanel(primaryNodeId)}
+                      {primaryNodeId && renderLogPanel(`zone:${zone.id}`, primaryNodeId)}
                     </CardHeader>
                     <CardContent className="space-y-2">
                       {zone.records.length === 0 && (
@@ -1065,32 +1082,59 @@ export default function DnsPage() {
             <p className="text-sm text-muted-foreground">Chargement…</p>
           ) : infoPanel?.tab === 'delegation' ? (
             <div className="space-y-4 text-sm">
-              <p className="text-muted-foreground">
-                Configure ces serveurs de noms chez ton registrar pour déléguer <strong>{infoPanel.zone.name}</strong>{' '}
-                à Tarmac.
-              </p>
-              <div className="space-y-2">
-                {infoPanel.delegation?.nsHostnames.map((host) => (
-                  <div key={host} className="rounded-lg border border-white/[0.08] bg-zinc-950/60 px-3 py-2 font-mono">
-                    {host}
+              {infoPanel.delegation && infoPanel.delegation.nsHostnames.length > 0 && (
+                <>
+                  <div className="space-y-2">
+                    <p className="text-muted-foreground">Nameservers de cette zone :</p>
+                    {infoPanel.delegation.nsHostnames.map((host) => (
+                      <div key={host} className="rounded-lg border border-white/[0.08] bg-zinc-950/60 px-3 py-2 font-mono">
+                        {host}
+                      </div>
+                    ))}
                   </div>
-                ))}
-                {(!infoPanel.delegation || infoPanel.delegation.nsHostnames.length === 0) && (
-                  <p className="text-muted-foreground">Ajoute au moins un serveur au groupe DNS de cette zone.</p>
-                )}
-              </div>
-              <Callout variant="warning">
-                La plupart des registrars demandent aussi d'enregistrer des <strong>glue records</strong> pour des
-                nameservers appartenant au domaine lui-même — voici les IP correspondantes, à renseigner séparément
-                dans l'interface de ton registrar :
-                <ul className="mt-2 space-y-1 font-mono text-xs">
-                  {infoPanel.delegation?.glue.map((g) => (
-                    <li key={g.host}>
-                      {g.host} → {g.ip}
-                    </li>
-                  ))}
-                </ul>
-              </Callout>
+
+                  {infoPanel.zone.name.split('.').length <= 2 ? (
+                    <Callout variant="warning">
+                      <strong>{infoPanel.zone.name}</strong> ressemble à un domaine racine — pour le déléguer
+                      directement, ton registrar doit accepter d'y ajouter les <strong>glue records</strong>{' '}
+                      (parfois appelés « host records » / « enregistrements hôte ») ci-dessous. Certains registrars ne
+                      proposent pas cette option facilement.
+                      <ul className="mt-2 space-y-1 font-mono text-xs">
+                        {infoPanel.delegation.glue.map((g) => (
+                          <li key={g.host}>
+                            {g.host} → {g.ip}
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="mt-2">
+                        Alternative plus simple : recrée cette zone comme un{' '}
+                        <strong>sous-domaine</strong> (ex : <code>dns.{infoPanel.zone.name}</code>) — tu n'as alors
+                        besoin d'ajouter que des enregistrements A/NS classiques dans le DNS existant de ton domaine
+                        principal, sans configuration spéciale chez le registrar.
+                      </p>
+                    </Callout>
+                  ) : (
+                    <Callout variant="info">
+                      <strong>{infoPanel.zone.name}</strong> est un sous-domaine : pas de glue record nécessaire.
+                      Dans le DNS existant de ton domaine principal (là où tu gères déjà ses enregistrements
+                      aujourd'hui), ajoute simplement :
+                      <ul className="mt-2 space-y-1 font-mono text-xs">
+                        <li>
+                          NS &nbsp;{infoPanel.zone.name} → {infoPanel.delegation.nsHostnames.join(', ')}
+                        </li>
+                        {infoPanel.delegation.glue.map((g) => (
+                          <li key={g.host}>
+                            A &nbsp;{g.host} → {g.ip}
+                          </li>
+                        ))}
+                      </ul>
+                    </Callout>
+                  )}
+                </>
+              )}
+              {(!infoPanel.delegation || infoPanel.delegation.nsHostnames.length === 0) && (
+                <p className="text-muted-foreground">Ajoute au moins un serveur au groupe DNS de cette zone.</p>
+              )}
             </div>
           ) : (
             <div className="space-y-4 text-sm">
