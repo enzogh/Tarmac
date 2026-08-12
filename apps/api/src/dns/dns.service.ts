@@ -299,12 +299,15 @@ export class DnsService {
   // Whole-zone snapshot push (like apply_overlay's full peer-list push) -
   // any change to a zone's records marks the whole zone pending again, and
   // the reconcile tick re-applies the complete record set, not a diff.
+  // Includes every group member (not just primary) - the agent needs the
+  // full list to build the zone's own NS records (ns1.<zone>, ns2.<zone>,
+  // ...), same ordering as getDelegation so the two stay consistent.
   findPendingZones() {
     return this.prisma.dnsZone.findMany({
       where: { status: 'pending' },
       include: {
         records: { include: { values: true } },
-        group: { include: { members: { where: { role: 'primary' }, include: { node: true } } } },
+        group: { include: { members: { include: { node: true }, orderBy: [{ role: 'asc' }, { createdAt: 'asc' }] } } },
       },
       orderBy: { createdAt: 'asc' },
     });

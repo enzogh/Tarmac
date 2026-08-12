@@ -2871,6 +2871,11 @@ func (c *pdnsClient) zoneExists(ctx context.Context, fqdn string) bool {
 }
 
 func (c *pdnsClient) createZone(ctx context.Context, fqdn string) error {
+	// nameservers is deliberately empty here, not an oversight: PowerDNS
+	// would otherwise auto-generate NS records using whatever hostname the
+	// system itself reports, which has nothing to do with the group's
+	// actual vanity nameserver names. applyDnsZone always PATCHes the real
+	// NS rrset right after this, on every apply (not just creation).
 	body := map[string]interface{}{"name": fqdn, "kind": "Master", "nameservers": []string{}}
 	respBody, status, err := c.request(ctx, http.MethodPost, "/zones", body)
 	if err != nil {
@@ -3037,6 +3042,29 @@ func applyDnsZone(payload map[string]interface{}) (string, error) {
 			"disabled": false,
 		}},
 	}}
+
+	// createZone passes an empty nameservers list on purpose (see its own
+	// comment) - PowerDNS never auto-creates NS records for the zone, so
+	// without this the zone has none at all, which is exactly what showed
+	// up as "missing nameservers" / "mismatched NS records" from an
+	// external DNS health check. One NS record per group member, matching
+	// the ns1./ns2./... names already shown in the delegation panel.
+	nameservers := readStringSlice(payload, "nameservers")
+	if len(nameservers) == 0 {
+		nameservers = []string{"ns1." + zoneName}
+	}
+	nsRecords := make([]map[string]interface{}, 0, len(nameservers))
+	for _, ns := range nameservers {
+		nsRecords = append(nsRecords, map[string]interface{}{"content": ns + ".", "disabled": false})
+	}
+	rrsets = append(rrsets, map[string]interface{}{
+		"name":       fqdn,
+		"type":       "NS",
+		"ttl":        3600,
+		"changetype": "REPLACE",
+		"records":    nsRecords,
+	})
+
 	for _, record := range records {
 		var pdnsRecords []map[string]interface{}
 		rrsetType := record.Type

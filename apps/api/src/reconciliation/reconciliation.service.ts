@@ -135,7 +135,7 @@ export class ReconciliationService implements OnModuleInit {
     }
 
     for (const zone of pendingDnsZones) {
-      const primary = zone.group.members[0];
+      const primary = zone.group.members.find((member) => member.role === 'primary');
       if (!primary || !this.agentsService.isConnected(primary.nodeId)) continue;
       this.agentsService.sendCommand(primary.nodeId, {
         type: 'command.apply_dns_zone',
@@ -143,6 +143,10 @@ export class ReconciliationService implements OnModuleInit {
           zoneId: zone.id,
           zoneName: zone.name,
           dnssecEnabled: zone.dnssecEnabled,
+          // Vanity nameserver hostnames the agent writes as the zone's own
+          // NS records - one per group member, same ns1./ns2./... ordering
+          // (primary first) already shown in the delegation panel.
+          nameservers: zone.group.members.map((_, index) => `ns${index + 1}.${zone.name}`),
           records: zone.records.map((record) => ({
             name: record.name,
             type: record.type,
