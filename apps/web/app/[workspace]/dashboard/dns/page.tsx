@@ -374,6 +374,23 @@ export default function DnsPage() {
     }
   };
 
+  // For a member in "Erreur" without a port conflict (e.g. a config bug
+  // that's since been fixed agent-side) - re-upserting with the same
+  // role/status:'pending' is enough to get the reconciliation loop to
+  // resend apply_dns_server_group on its next tick.
+  const retryGroupMember = async (groupId: string, member: DnsServerGroupItem['members'][number]) => {
+    setBusyKey(`retry-${groupId}-${member.nodeId}`);
+    try {
+      await api.dns.groups.addMember(groupId, { nodeId: member.nodeId, role: member.role, status: 'pending' });
+      setNotice({ type: 'success', message: 'Nouvelle tentative programmée.' });
+      await refreshGroups();
+    } catch {
+      setNotice({ type: 'error', message: 'Erreur lors de la relance.' });
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
   const createZone = async () => {
     if (!zoneForm.groupId || !zoneForm.name.trim()) {
       setNotice({ type: 'error', message: 'Groupe DNS et nom de domaine sont obligatoires.' });
@@ -665,6 +682,24 @@ export default function DnsPage() {
                                       Annuler et changer de serveur
                                     </Button>
                                   </div>
+                                </AlertDescription>
+                              </Alert>
+                            )}
+                            {member.status === 'error' && !member.conflictDetail && (
+                              <Alert variant="destructive" className="ml-1">
+                                <AlertTriangle className="h-4 w-4" />
+                                <AlertDescription className="space-y-2">
+                                  <p>
+                                    L'application a échoué sur {nodeName(member.nodeId)} — ouvre le Journal
+                                    ci-dessus pour voir le message d'erreur de l'agent.
+                                  </p>
+                                  <Button
+                                    size="sm"
+                                    disabled={busyKey === `retry-${group.id}-${member.nodeId}`}
+                                    onClick={() => retryGroupMember(group.id, member)}
+                                  >
+                                    Réessayer
+                                  </Button>
                                 </AlertDescription>
                               </Alert>
                             )}

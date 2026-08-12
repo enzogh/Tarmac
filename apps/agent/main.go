@@ -2095,13 +2095,15 @@ func installRcloneFromOfficialScript(ctx context.Context) error {
 // ---------------------------------------------------------------------
 
 const (
-	pdnsConfigPath   = "/etc/powerdns/pdns.conf"
-	pdnsApiKeyPath   = "/etc/powerdns/tarmac-api-key"
-	pdnsApiBaseURL   = "http://127.0.0.1:8081/api/v1/servers/localhost"
-	pdnsSqliteDbPath = "/var/lib/powerdns/pdns.sqlite3"
-	dnsMarkerPath    = "/etc/tarmac-agent/dns-enabled"
-	geoipConfPath    = "/etc/GeoIP.conf"
-	geoipDatabaseDir = "/usr/share/GeoIP"
+	pdnsConfigPath        = "/etc/powerdns/pdns.conf"
+	pdnsApiKeyPath        = "/etc/powerdns/tarmac-api-key"
+	pdnsApiBaseURL        = "http://127.0.0.1:8081/api/v1/servers/localhost"
+	pdnsSqliteDbPath      = "/var/lib/powerdns/pdns.sqlite3"
+	pdnsLmdbFilePath      = "/var/lib/powerdns/pdns.lmdb"
+	pdnsBackendMarkerPath = "/etc/tarmac-agent/pdns-backend"
+	dnsMarkerPath         = "/etc/tarmac-agent/dns-enabled"
+	geoipConfPath         = "/etc/GeoIP.conf"
+	geoipDatabaseDir      = "/usr/share/GeoIP"
 )
 
 type dnsPortConflict struct {
@@ -2495,29 +2497,39 @@ func ensurePdnsSqliteDatabase(ctx context.Context) error {
 	return nil
 }
 
-func writePdnsConfig(apiKey string, allowAxfrIps []string) error {
+// writePdnsConfig accepts the backend explicitly (rather than always
+// defaulting to gsqlite3) so a fresh install can go straight to lmdb - see
+// readPdnsBackend/migratePdnsBackendToLmdb below for why lmdb is preferred:
+// gsqlite3 serializes every write behind a single lock, which becomes the
+// query-response-time bottleneck under real load, whereas lmdb is a
+// memory-mapped B+tree with much better read concurrency.
+func writePdnsConfig(apiKey string, allowAxfrIps []string, backend string) error {
 	if err := os.MkdirAll(filepath.Dir(pdnsConfigPath), 0o755); err != nil {
 		return fmt.Errorf("cannot create powerdns config dir: %w", err)
+	}
+	var backendLines []string
+	if backend == "lmdb" {
+		backendLines = []string{"launch=lmdb", "lmdb-filename=" + pdnsLmdbFilePath}
+	} else {
+		backendLines = []string{"launch=gsqlite3", "gsqlite3-database=" + pdnsSqliteDbPath}
 	}
 	// No global "dnssec"/"default-ksk-algorithm" setting here on purpose -
 	// PowerDNS Authoritative has no such global toggle (that was a mistaken
 	// guess that crashed pdns_server outright: "Fatal error: Trying to set
 	// unknown setting 'dnssec'"). DNSSEC is enabled per zone instead, via
 	// the POST .../cryptokeys call already made in applyDnsZone.
-	lines := []string{
-		"launch=gsqlite3",
-		"gsqlite3-database=" + pdnsSqliteDbPath,
+	lines := append(backendLines,
 		"local-address=0.0.0.0",
 		"local-port=53",
 		"api=yes",
-		"api-key=" + apiKey,
+		"api-key="+apiKey,
 		"webserver=yes",
 		"webserver-address=127.0.0.1",
 		"webserver-port=8081",
 		"webserver-allow-from=127.0.0.1",
 		"enable-lua-records=yes",
-		"allow-axfr-ips=" + strings.Join(append([]string{"127.0.0.1"}, allowAxfrIps...), ","),
-	}
+		"allow-axfr-ips="+strings.Join(append([]string{"127.0.0.1"}, allowAxfrIps...), ","),
+	)
 	if len(allowAxfrIps) > 0 {
 		lines = append(lines, "also-notify="+strings.Join(allowAxfrIps, ","))
 	}
@@ -2557,6 +2569,174 @@ func ensureTsigKey(ctx context.Context, keyName string) (string, error) {
 	return match[1], nil
 }
 
+// readPdnsBackend reports which PowerDNS backend this node uses: the
+// persisted marker if one exists, "lmdb" for a genuinely fresh install (no
+// gsqlite3 database has ever been created here, so there's nothing to
+// migrate - go straight to the better-performing backend), or "gsqlite3"
+// for an existing pre-marker install that still needs migrating.
+func readPdnsBackend() string {
+	if data, err := os.ReadFile(pdnsBackendMarkerPath); err == nil {
+		if backend := strings.TrimSpace(string(data)); backend != "" {
+			return backend
+		}
+	}
+	if _, err := os.Stat(pdnsSqliteDbPath); err != nil {
+		return "lmdb"
+	}
+	return "gsqlite3"
+}
+
+func writePdnsBackendMarker(backend string) error {
+	if err := os.MkdirAll(filepath.Dir(pdnsBackendMarkerPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(pdnsBackendMarkerPath, []byte(backend), 0o644)
+}
+
+func fetchPdnsZoneNames(ctx context.Context, apiKey string) ([]string, error) {
+	client := &pdnsClient{apiKey: apiKey}
+	body, status, err := client.request(ctx, http.MethodGet, "/zones", nil)
+	if err != nil {
+		return nil, err
+	}
+	if status >= 300 {
+		return nil, fmt.Errorf("unexpected status %d: %s", status, strings.TrimSpace(string(body)))
+	}
+	var zones []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &zones); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(zones))
+	for _, zone := range zones {
+		names = append(names, zone.Name)
+	}
+	return names, nil
+}
+
+// migratePdnsBackendToLmdb runs at most once per node (gated by
+// pdnsBackendMarkerPath) - called from main() on every agent startup,
+// after the DNS-prerequisite recheck, so it happens automatically on any
+// restart including the one an agent update triggers, without needing a
+// separate command from the control plane.
+//
+// Deliberately conservative at every step: the gsqlite3 database is never
+// modified or deleted, the new lmdb-backed server's zone list is verified
+// against the old one before the switch is considered final, and any
+// failure rolls back to the untouched original config and restarts pdns
+// on gsqlite3 - so even if pdnsutil's exact behavior here turns out to
+// differ from what's assumed, the worst case is a failed, rolled-back
+// attempt visible in the Journal, not broken DNS.
+func migratePdnsBackendToLmdb(ctx context.Context) {
+	if readPdnsBackend() != "gsqlite3" {
+		return
+	}
+	if _, err := os.Stat(pdnsSqliteDbPath); err != nil {
+		// Nothing was ever migrated from - either this node was never
+		// actually a working DNS server, or applyDnsServerGroup already
+		// wrote a marker. Adopt lmdb for the next apply and stop.
+		if err := writePdnsBackendMarker("lmdb"); err != nil {
+			log.Printf("dns: could not record lmdb backend marker: %v", err)
+		}
+		return
+	}
+
+	log.Printf("dns: migrating PowerDNS backend from gsqlite3 to lmdb for better query response time")
+
+	if _, err := ensureAgentSystemPackages(ctx, []string{"pdns-backend-lmdb"}); err != nil {
+		log.Printf("dns: lmdb backend migration aborted, cannot install pdns-backend-lmdb: %v", err)
+		return
+	}
+
+	apiKey, err := ensurePdnsApiKey()
+	if err != nil {
+		log.Printf("dns: lmdb backend migration aborted: %v", err)
+		return
+	}
+
+	beforeZones, err := fetchPdnsZoneNames(ctx, apiKey)
+	if err != nil {
+		log.Printf("dns: lmdb backend migration aborted, could not read current zone list: %v", err)
+		return
+	}
+
+	originalConfig, err := os.ReadFile(pdnsConfigPath)
+	if err != nil {
+		log.Printf("dns: lmdb backend migration aborted, cannot read current pdns.conf: %v", err)
+		return
+	}
+
+	restoreOriginalConfig := func(reason string) {
+		log.Printf("dns: lmdb backend migration failed (%s) - rolling back to gsqlite3, no data was touched", reason)
+		if err := os.WriteFile(pdnsConfigPath, originalConfig, 0o644); err != nil {
+			log.Printf("dns: could not restore original pdns.conf during rollback: %v", err)
+			return
+		}
+		if out, err := exec.CommandContext(ctx, "systemctl", "restart", "pdns").CombinedOutput(); err != nil {
+			log.Printf("dns: could not restart pdns after rollback: %s", strings.TrimSpace(string(out)))
+		}
+	}
+
+	if out, err := exec.CommandContext(ctx, "systemctl", "stop", "pdns").CombinedOutput(); err != nil {
+		log.Printf("dns: lmdb backend migration aborted, cannot stop pdns: %s", strings.TrimSpace(string(out)))
+		return
+	}
+
+	// Both backends need to be loaded simultaneously for pdnsutil to read
+	// from one and write into the other - pdns itself stays stopped
+	// throughout, pdnsutil talks to the backend files directly.
+	dualConfig := strings.Replace(
+		string(originalConfig), "launch=gsqlite3", "launch=gsqlite3,lmdb\nlmdb-filename="+pdnsLmdbFilePath, 1,
+	)
+	if dualConfig == string(originalConfig) {
+		restoreOriginalConfig("could not find the expected \"launch=gsqlite3\" line to extend")
+		return
+	}
+	if err := os.WriteFile(pdnsConfigPath, []byte(dualConfig), 0o644); err != nil {
+		restoreOriginalConfig(fmt.Sprintf("could not write dual-backend config: %v", err))
+		return
+	}
+
+	migrateOut, migrateErr := exec.CommandContext(ctx, "pdnsutil", "b2b-migrate", "gsqlite3", "lmdb").CombinedOutput()
+	if migrateErr != nil || strings.Contains(strings.ToLower(string(migrateOut)), "error") {
+		restoreOriginalConfig(fmt.Sprintf("pdnsutil b2b-migrate failed: %s", strings.TrimSpace(string(migrateOut))))
+		return
+	}
+
+	lmdbOnlyConfig := strings.Replace(
+		string(originalConfig), "launch=gsqlite3", "launch=lmdb\nlmdb-filename="+pdnsLmdbFilePath, 1,
+	)
+	if err := os.WriteFile(pdnsConfigPath, []byte(lmdbOnlyConfig), 0o644); err != nil {
+		restoreOriginalConfig(fmt.Sprintf("could not write lmdb-only config: %v", err))
+		return
+	}
+
+	if out, err := exec.CommandContext(ctx, "systemctl", "restart", "pdns").CombinedOutput(); err != nil {
+		restoreOriginalConfig(fmt.Sprintf("pdns would not start on lmdb: %s", strings.TrimSpace(string(out))))
+		return
+	}
+
+	// Give pdns a moment to come fully up before hitting its API.
+	time.Sleep(2 * time.Second)
+	afterZones, err := fetchPdnsZoneNames(ctx, apiKey)
+	if err != nil || len(afterZones) != len(beforeZones) {
+		restoreOriginalConfig(fmt.Sprintf(
+			"post-migration zone count mismatch (before=%d, after=%d, err=%v)", len(beforeZones), len(afterZones), err,
+		))
+		return
+	}
+
+	if err := writePdnsBackendMarker("lmdb"); err != nil {
+		log.Printf("dns: migration succeeded but could not persist the lmdb marker, will retry on next restart: %v", err)
+		return
+	}
+	log.Printf(
+		"dns: PowerDNS backend migration to lmdb complete (%d zone(s) verified) - %s is no longer used but was left untouched",
+		len(afterZones), pdnsSqliteDbPath,
+	)
+}
+
 func applyDnsServerGroup(ctx context.Context, payload map[string]interface{}) (string, *dnsServerGroupApplyData, error) {
 	groupID := readString(payload, "groupId")
 	dnsNodeID := readString(payload, "nodeId")
@@ -2565,12 +2745,19 @@ func applyDnsServerGroup(ctx context.Context, payload map[string]interface{}) (s
 		return "", nil, errors.New("apply_dns_server_group payload must include groupId, nodeId and role")
 	}
 
-	if _, err := ensureAgentSystemPackages(ctx, []string{"pdns-server", "pdns-backend-sqlite3"}); err != nil {
+	backend := readPdnsBackend()
+	backendPackage := "pdns-backend-sqlite3"
+	if backend == "lmdb" {
+		backendPackage = "pdns-backend-lmdb"
+	}
+	if _, err := ensureAgentSystemPackages(ctx, []string{"pdns-server", backendPackage}); err != nil {
 		return "", nil, fmt.Errorf("cannot install PowerDNS: %w", err)
 	}
 
-	if err := ensurePdnsSqliteDatabase(ctx); err != nil {
-		return "", nil, err
+	if backend != "lmdb" {
+		if err := ensurePdnsSqliteDatabase(ctx); err != nil {
+			return "", nil, err
+		}
 	}
 
 	if conflict := probeDnsPortConflict(); conflict != nil {
@@ -2592,8 +2779,11 @@ func applyDnsServerGroup(ctx context.Context, payload map[string]interface{}) (s
 	}
 
 	allowAxfrIps := readStringSlice(payload, "groupMemberVlanIps")
-	if err := writePdnsConfig(apiKey, allowAxfrIps); err != nil {
+	if err := writePdnsConfig(apiKey, allowAxfrIps, backend); err != nil {
 		return "", nil, err
+	}
+	if err := writePdnsBackendMarker(backend); err != nil {
+		log.Printf("dns: could not record pdns backend marker: %v", err)
 	}
 
 	if commandExists("systemctl") {
@@ -4953,6 +5143,14 @@ func main() {
 			log.Printf("dns: failed to re-verify PowerDNS prerequisites on startup: %v", err)
 		}
 		installCancel()
+
+		// Runs on every restart (including the one an agent update
+		// triggers), so a still-on-gsqlite3 node gets migrated to lmdb for
+		// better query response time automatically, with no separate
+		// command needed - see migratePdnsBackendToLmdb for the safety net.
+		migrateCtx, migrateCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		migratePdnsBackendToLmdb(migrateCtx)
+		migrateCancel()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
