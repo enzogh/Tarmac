@@ -38,6 +38,10 @@ export type NodeItem = {
   agentUpToDate?: boolean | null;
   mutedUntil?: string | null;
   overlayIsGateway?: boolean;
+  vlanIp?: string | null;
+  // Custom <dnsHostname>.tarmac.local label - see InternalDnsService on the
+  // API side. Null means a slug derived from `name` is used instead.
+  dnsHostname?: string | null;
 };
 
 export type SmartHistoryPoint = {
@@ -639,6 +643,7 @@ export const api = {
         locationLng?: number | null;
         graphX?: number | null;
         graphY?: number | null;
+        dnsHostname?: string | null;
       },
     ) =>
       request<NodeItem>(`/api/v1/nodes/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
@@ -762,6 +767,15 @@ export const api = {
         request<void>(`/api/v1/dns/zones/${zoneId}/records/${recordId}`, { method: 'DELETE' }),
     },
     recordsForNode: (nodeId: string) => request<DnsNodeRecordRef[]>(`/api/v1/dns/nodes/${nodeId}/records`),
+    internal: {
+      getStatus: () =>
+        request<{ internalDnsNodeId: string | null; records: Array<{ name: string; content: string }> }>(
+          '/api/v1/dns/internal',
+        ),
+      designate: (nodeId: string) =>
+        request<{ nodeId: string; applySent: boolean }>(`/api/v1/dns/internal/${nodeId}`, { method: 'POST' }),
+      clear: () => request<{ cleanupSent: boolean }>('/api/v1/dns/internal', { method: 'DELETE' }),
+    },
   },
 
   alerts: {

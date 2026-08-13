@@ -78,6 +78,24 @@ const (
 	pdnsBackendMarkerPath = "/etc/tarmac-agent/pdns-backend"
 	dnsMarkerPath         = "/etc/tarmac-agent/dns-enabled"
 	geoipDatabaseDir      = "/usr/share/GeoIP"
+
+	// Dedicated second PowerDNS instance serving *.tarmac.local for the
+	// fleet's own internal name resolution - see internal-dns.service.ts on
+	// the API side. Fully independent of the "normal" pdns instance above
+	// (own config file, database, API port, systemd unit, non-standard DNS
+	// port) - launched via `pdns_server --config-name=internal
+	// --config-dir=/etc/powerdns`, which PowerDNS resolves to
+	// pdns-internal.conf and its own separate control socket/PID (verified
+	// empirically: running both --config-name=internal and the default
+	// instance side by side on one box, no collision). Never touches port
+	// 53, so it never needs the port-conflict probe/kill flow the normal
+	// instance uses.
+	internalPdnsConfigPath   = "/etc/powerdns/pdns-internal.conf"
+	internalPdnsApiKeyPath   = "/etc/powerdns/tarmac-internal-api-key"
+	internalPdnsSqliteDbPath = "/var/lib/powerdns/pdns-internal.sqlite3"
+	internalPdnsSystemdUnit  = "pdns-internal"
+	internalDnsMarkerPath    = "/etc/tarmac-agent/internal-dns-enabled"
+	internalDnsZoneName      = "tarmac.local."
 )
 
 type dnsPortConflict struct {
@@ -336,12 +354,18 @@ func resolveDnsPortConflict(ctx context.Context) (string, error) {
 }
 
 func ensurePdnsApiKey() (string, error) {
-	if data, err := os.ReadFile(pdnsApiKeyPath); err == nil {
+	return ensureApiKeyAt(pdnsApiKeyPath)
+}
+
+// ensureApiKeyAt is the parameterized core of ensurePdnsApiKey, reused by
+// the dedicated internal PowerDNS instance (own key file, own instance).
+func ensureApiKeyAt(path string) (string, error) {
+	if data, err := os.ReadFile(path); err == nil {
 		if key := strings.TrimSpace(string(data)); key != "" {
 			return key, nil
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(pdnsApiKeyPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", fmt.Errorf("cannot create powerdns config dir: %w", err)
 	}
 	raw := make([]byte, 24)
@@ -349,7 +373,7 @@ func ensurePdnsApiKey() (string, error) {
 		return "", fmt.Errorf("cannot generate powerdns api key: %w", err)
 	}
 	key := base64.RawURLEncoding.EncodeToString(raw)
-	if err := os.WriteFile(pdnsApiKeyPath, []byte(key), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(key), 0o600); err != nil {
 		return "", fmt.Errorf("cannot persist powerdns api key: %w", err)
 	}
 	return key, nil
@@ -381,10 +405,17 @@ func findPdnsSqliteSchema() (string, error) {
 // SQL shipped by the pdns-backend-sqlite3 package before pdns is ever
 // started. No-op if the file already exists (idempotent across re-applies).
 func ensurePdnsSqliteDatabase(ctx context.Context) error {
-	if _, err := os.Stat(pdnsSqliteDbPath); err == nil {
+	return ensureSqliteDatabaseAt(ctx, pdnsSqliteDbPath)
+}
+
+// ensureSqliteDatabaseAt is the parameterized core of ensurePdnsSqliteDatabase,
+// reused by the dedicated internal PowerDNS instance (separate database file,
+// same schema) - see ensureInternalPdnsSqliteDatabase below.
+func ensureSqliteDatabaseAt(ctx context.Context, dbPath string) error {
+	if _, err := os.Stat(dbPath); err == nil {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(pdnsSqliteDbPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return fmt.Errorf("cannot create powerdns database dir: %w", err)
 	}
 	if !commandExists("sqlite3") {
@@ -412,11 +443,11 @@ func ensurePdnsSqliteDatabase(ctx context.Context) error {
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, "sqlite3", pdnsSqliteDbPath)
+	cmd := exec.CommandContext(ctx, "sqlite3", dbPath)
 	cmd.Stdin = bytes.NewReader(schemaSQL)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		_ = os.Remove(pdnsSqliteDbPath) // don't leave a half-initialized db behind for the next attempt to trip over
-		return fmt.Errorf("cannot load powerdns schema into %s: %s", pdnsSqliteDbPath, strings.TrimSpace(string(out)))
+		_ = os.Remove(dbPath) // don't leave a half-initialized db behind for the next attempt to trip over
+		return fmt.Errorf("cannot load powerdns schema into %s: %s", dbPath, strings.TrimSpace(string(out)))
 	}
 
 	// pdns_server runs as the "pdns" system user (created by the
@@ -424,8 +455,8 @@ func ensurePdnsSqliteDatabase(ctx context.Context) error {
 	// db file and its directory (sqlite writes -wal/-shm files alongside
 	// it once opened for read-write).
 	if commandExists("chown") {
-		if out, err := exec.CommandContext(ctx, "chown", "-R", "pdns:pdns", filepath.Dir(pdnsSqliteDbPath)).CombinedOutput(); err != nil {
-			log.Printf("dns: chown pdns:pdns %s failed (pdns_server may fail to start if it can't write here): %s", filepath.Dir(pdnsSqliteDbPath), strings.TrimSpace(string(out)))
+		if out, err := exec.CommandContext(ctx, "chown", "-R", "pdns:pdns", filepath.Dir(dbPath)).CombinedOutput(); err != nil {
+			log.Printf("dns: chown pdns:pdns %s failed (pdns_server may fail to start if it can't write here): %s", filepath.Dir(dbPath), strings.TrimSpace(string(out)))
 		}
 	}
 	return nil
@@ -867,6 +898,11 @@ func applyDnsServerGroup(ctx context.Context, payload map[string]interface{}) (s
 
 type pdnsClient struct {
 	apiKey string
+	// baseURL overrides pdnsApiBaseURL when set - lets pdnsClient talk to
+	// the dedicated internal PowerDNS instance (different port) without
+	// duplicating every method. Leave zero-valued to keep talking to the
+	// normal instance, as every existing call site does.
+	baseURL string
 }
 
 func (c *pdnsClient) request(ctx context.Context, method, path string, body interface{}) ([]byte, int, error) {
@@ -878,7 +914,11 @@ func (c *pdnsClient) request(ctx context.Context, method, path string, body inte
 		}
 		reader = bytes.NewReader(encoded)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, pdnsApiBaseURL+path, reader)
+	base := c.baseURL
+	if base == "" {
+		base = pdnsApiBaseURL
+	}
+	req, err := http.NewRequestWithContext(ctx, method, base+path, reader)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -970,6 +1010,37 @@ func (c *pdnsClient) patchRrsets(ctx context.Context, fqdn string, rrsets []map[
 		return fmt.Errorf("cannot apply records to zone %s: %s", fqdn, strings.TrimSpace(string(respBody)))
 	}
 	return nil
+}
+
+// fetchZoneARecordNames lists the fully-qualified names of every A rrset
+// currently in the zone - used by applyInternalDnsRecords to find records
+// that need an explicit DELETE (see the comment there for why REPLACE alone
+// isn't enough to keep tarmac.local in sync with the fleet's current node
+// list).
+func (c *pdnsClient) fetchZoneARecordNames(ctx context.Context, fqdn string) ([]string, error) {
+	respBody, status, err := c.request(ctx, http.MethodGet, "/zones/"+url.PathEscape(fqdn), nil)
+	if err != nil {
+		return nil, fmt.Errorf("cannot fetch zone %s: %w", fqdn, err)
+	}
+	if status >= 300 {
+		return nil, fmt.Errorf("cannot fetch zone %s: status %d", fqdn, status)
+	}
+	var zone struct {
+		Rrsets []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"rrsets"`
+	}
+	if err := json.Unmarshal(respBody, &zone); err != nil {
+		return nil, fmt.Errorf("cannot parse zone %s: %w", fqdn, err)
+	}
+	names := make([]string, 0, len(zone.Rrsets))
+	for _, rrset := range zone.Rrsets {
+		if rrset.Type == "A" {
+			names = append(names, rrset.Name)
+		}
+	}
+	return names, nil
 }
 
 // enableDnssec is idempotent and self-healing. It used to unconditionally
@@ -1396,6 +1467,235 @@ func uninstallDnsFromNode(ctx context.Context) (string, error) {
 	return fmt.Sprintf("PowerDNS stopped, %d zone(s) removed from this node", zonesRemoved), nil
 }
 
+// ---------------------------------------------------------------------
+// Internal PowerDNS instance - a second, independent pdns_server process
+// (via --config-name=internal) serving *.tarmac.local on a non-standard
+// port for the fleet's own name resolution. See the constants block above
+// for why this is kept fully separate from the normal instance.
+// ---------------------------------------------------------------------
+
+var pdnsUnitCandidates = []string{
+	"/lib/systemd/system/pdns.service",
+	"/usr/lib/systemd/system/pdns.service",
+}
+
+// ensureInternalPdnsSystemdUnit writes /etc/systemd/system/pdns-internal.service
+// by copying the pdns-server package's own real unit file and only touching
+// the ExecStart line (appends --config-name=internal) - deliberately not
+// hand-authored from scratch, since guessing at User=/resource limits/
+// Type=notify semantics without being able to verify against a real
+// systemd from this environment would be exactly the kind of unverified
+// PowerDNS assumption this project has been burned by before. No-op if the
+// unit file already exists (idempotent across re-applies).
+func ensureInternalPdnsSystemdUnit(ctx context.Context) error {
+	if !commandExists("systemctl") {
+		return nil
+	}
+	unitPath := "/etc/systemd/system/" + internalPdnsSystemdUnit + ".service"
+	if _, err := os.Stat(unitPath); err == nil {
+		return nil
+	}
+
+	var source string
+	for _, candidate := range pdnsUnitCandidates {
+		if data, err := os.ReadFile(candidate); err == nil {
+			source = string(data)
+			break
+		}
+	}
+	if source == "" {
+		return fmt.Errorf("could not find the pdns-server package's own systemd unit (checked: %s)", strings.Join(pdnsUnitCandidates, ", "))
+	}
+
+	lines := strings.Split(source, "\n")
+	found := false
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "ExecStart=") {
+			lines[i] = strings.TrimRight(line, " \t") + " --config-name=internal"
+			found = true
+			break
+		}
+	}
+	if !found {
+		return errors.New("pdns-server's systemd unit has no ExecStart line to extend")
+	}
+
+	if err := os.WriteFile(unitPath, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		return fmt.Errorf("cannot write %s: %w", unitPath, err)
+	}
+	if out, err := exec.CommandContext(ctx, "systemctl", "daemon-reload").CombinedOutput(); err != nil {
+		return fmt.Errorf("systemctl daemon-reload failed: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func writeInternalPdnsConfig(apiKey string, port, apiPort int) error {
+	if err := os.MkdirAll(filepath.Dir(internalPdnsConfigPath), 0o755); err != nil {
+		return fmt.Errorf("cannot create powerdns config dir: %w", err)
+	}
+	lines := []string{
+		"launch=gsqlite3",
+		"gsqlite3-database=" + internalPdnsSqliteDbPath,
+		"local-address=0.0.0.0",
+		fmt.Sprintf("local-port=%d", port),
+		"api=yes",
+		"api-key=" + apiKey,
+		"webserver=yes",
+		"webserver-address=127.0.0.1",
+		fmt.Sprintf("webserver-port=%d", apiPort),
+		"webserver-allow-from=127.0.0.1",
+		// Single always-Master instance, no AXFR fan-out - one node,
+		// designated explicitly by the user, serves the whole fleet's
+		// internal zone directly (see the plan's topology discussion:
+		// deliberately not replicated like DnsServerGroup's public zones).
+	}
+	content := strings.Join(lines, "\n") + "\n"
+	return os.WriteFile(internalPdnsConfigPath, []byte(content), 0o644)
+}
+
+// installInternalPdns brings up the dedicated internal PowerDNS instance if
+// it isn't already running - idempotent, safe to call on every sync tick
+// (which is exactly how the control plane drives it: command.setup_internal_dns
+// doubles as both first-install and every subsequent record sync).
+func installInternalPdns(ctx context.Context, port, apiPort int) (string, error) {
+	if _, err := ensureAgentSystemPackages(ctx, []string{"pdns-server", "pdns-backend-sqlite3"}); err != nil {
+		return "", fmt.Errorf("cannot install PowerDNS: %w", err)
+	}
+	if err := ensureSqliteDatabaseAt(ctx, internalPdnsSqliteDbPath); err != nil {
+		return "", err
+	}
+	apiKey, err := ensureApiKeyAt(internalPdnsApiKeyPath)
+	if err != nil {
+		return "", err
+	}
+	if err := writeInternalPdnsConfig(apiKey, port, apiPort); err != nil {
+		return "", err
+	}
+	if err := ensureInternalPdnsSystemdUnit(ctx); err != nil {
+		return "", err
+	}
+	if commandExists("systemctl") {
+		if out, err := exec.CommandContext(ctx, "systemctl", "enable", "--now", internalPdnsSystemdUnit).CombinedOutput(); err != nil {
+			return "", fmt.Errorf("cannot enable/start %s: %s", internalPdnsSystemdUnit, strings.TrimSpace(string(out)))
+		}
+		if out, err := exec.CommandContext(ctx, "systemctl", "restart", internalPdnsSystemdUnit).CombinedOutput(); err != nil {
+			return "", fmt.Errorf("cannot restart %s: %s", internalPdnsSystemdUnit, strings.TrimSpace(string(out)))
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(internalDnsMarkerPath), 0o755); err == nil {
+		_ = os.WriteFile(internalDnsMarkerPath, []byte("enabled\n"), 0o600)
+	}
+	return apiKey, nil
+}
+
+// applyInternalDnsRecords installs (if needed) and (re)applies the full A
+// record set for tarmac.local - same whole-zone-snapshot-push style as
+// applyDnsZone, just simpler (single Master zone, no primary/secondary
+// role, no DNSSEC).
+func applyInternalDnsRecords(ctx context.Context, payload map[string]interface{}) (string, error) {
+	port := readInt(payload, "port", 5300)
+	apiPort := readInt(payload, "apiPort", 8090)
+
+	apiKey, err := installInternalPdns(ctx, port, apiPort)
+	if err != nil {
+		return "", err
+	}
+
+	client := &pdnsClient{apiKey: apiKey, baseURL: fmt.Sprintf("http://127.0.0.1:%d/api/v1/servers/localhost", apiPort)}
+	if !client.zoneExists(ctx, internalDnsZoneName) {
+		if err := client.createZone(ctx, internalDnsZoneName); err != nil {
+			return "", err
+		}
+	}
+
+	rawRecords, _ := payload["records"].([]interface{})
+	desired := make(map[string]string, len(rawRecords))
+	for _, raw := range rawRecords {
+		entry, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name := readString(entry, "name")
+		content := readString(entry, "content")
+		if name == "" || content == "" {
+			continue
+		}
+		desired[dnsRecordFqdn(strings.TrimSuffix(internalDnsZoneName, "."), name)] = content
+	}
+
+	// PATCH with changetype REPLACE only ever touches the rrsets named in
+	// the request - it never removes ones that simply aren't mentioned
+	// anymore. Since this function recomputes the *entire* desired set from
+	// scratch every call (no per-node "delete this one" ever gets sent
+	// separately, unlike the user-facing DnsRecordsService flow), a stale
+	// node here would otherwise linger in tarmac.local forever. So: diff
+	// against what's actually in the zone today and explicitly DELETE
+	// whatever A record is no longer desired (confirmed empirically this
+	// left node2/node3 behind on the first version of this function without
+	// this diff, caught by the Docker verification spike before this ever
+	// shipped).
+	existing, err := client.fetchZoneARecordNames(ctx, internalDnsZoneName)
+	if err != nil {
+		return "", err
+	}
+
+	rrsets := make([]map[string]interface{}, 0, len(desired)+len(existing))
+	for name, content := range desired {
+		rrsets = append(rrsets, map[string]interface{}{
+			"name":       name,
+			"type":       "A",
+			"ttl":        300,
+			"changetype": "REPLACE",
+			"records":    []map[string]interface{}{{"content": content, "disabled": false}},
+		})
+	}
+	for _, name := range existing {
+		if _, stillDesired := desired[name]; stillDesired {
+			continue
+		}
+		rrsets = append(rrsets, map[string]interface{}{
+			"name":       name,
+			"type":       "A",
+			"changetype": "DELETE",
+		})
+	}
+
+	if len(rrsets) > 0 {
+		if err := client.patchRrsets(ctx, internalDnsZoneName, rrsets); err != nil {
+			return "", err
+		}
+	}
+	return fmt.Sprintf("tarmac.local ready with %d record(s)", len(desired)), nil
+}
+
+// removeInternalDns is uninstallDnsFromNode's counterpart for the dedicated
+// internal instance - same idempotent, tolerant-of-partial-failure shape,
+// targeting pdns-internal instead of the normal pdns service.
+func removeInternalDns(ctx context.Context) (string, error) {
+	if _, err := os.Stat(internalDnsMarkerPath); err != nil {
+		return "node was not running the internal DNS instance, nothing to clean up", nil
+	}
+
+	if apiKey, err := os.ReadFile(internalPdnsApiKeyPath); err == nil {
+		client := &pdnsClient{apiKey: strings.TrimSpace(string(apiKey)), baseURL: "http://127.0.0.1:8090/api/v1/servers/localhost"}
+		if err := client.deleteZone(ctx, internalDnsZoneName); err != nil {
+			log.Printf("dns: internal DNS uninstall could not remove tarmac.local (continuing): %v", err)
+		}
+	}
+
+	if commandExists("systemctl") {
+		if out, err := exec.CommandContext(ctx, "systemctl", "stop", internalPdnsSystemdUnit).CombinedOutput(); err != nil {
+			log.Printf("dns: internal DNS uninstall: systemctl stop %s failed (continuing): %s", internalPdnsSystemdUnit, strings.TrimSpace(string(out)))
+		}
+		if out, err := exec.CommandContext(ctx, "systemctl", "disable", internalPdnsSystemdUnit).CombinedOutput(); err != nil {
+			log.Printf("dns: internal DNS uninstall: systemctl disable %s failed (continuing): %s", internalPdnsSystemdUnit, strings.TrimSpace(string(out)))
+		}
+	}
+
+	_ = os.Remove(internalDnsMarkerPath)
+	return "internal DNS instance stopped and tarmac.local removed", nil
+}
+
 func fetchDnsZoneKeys(payload map[string]interface{}) (dnsZoneKeysResultData, error) {
 	zoneName := readString(payload, "zoneName")
 	if zoneName == "" {
@@ -1505,6 +1805,81 @@ func handleUninstallDnsNodeCommand(ctx context.Context, cmd commandPayload, resu
 		result.Message = err.Error()
 	} else {
 		result.Message = message
+	}
+}
+
+func handleSetupInternalDnsCommand(ctx context.Context, cmd commandPayload, result *commandResult) {
+	result.Command = "setup_internal_dns"
+	result.ResourceType = "internal_dns"
+	result.ResourceID = envOrDefault("NODE_ID", "agent")
+	message, err := applyInternalDnsRecords(ctx, cmd.Payload)
+	if err != nil {
+		result.Success = false
+		result.Message = err.Error()
+	} else {
+		result.Message = message
+	}
+}
+
+func handleRemoveInternalDnsCommand(ctx context.Context, cmd commandPayload, result *commandResult) {
+	result.Command = "remove_internal_dns"
+	result.ResourceType = "internal_dns"
+	result.ResourceID = envOrDefault("NODE_ID", "agent")
+	message, err := removeInternalDns(ctx)
+	if err != nil {
+		result.Success = false
+		result.Message = err.Error()
+	} else {
+		result.Message = message
+	}
+}
+
+// ensureInternalDnsSplitRoute points *.tarmac.local queries at the
+// workspace's designated internal DNS node over the overlay mesh, without
+// touching resolution for anything else - systemd-resolved's per-link
+// "routing domain" feature (resolvectl domain/dns), scoped to the
+// tarmacwg0 interface only. Idempotent (safe to re-run with the same or
+// different ip on every sync tick, see internal-dns.service.ts's
+// pushRouteToFleet - this is what makes an already-deployed fleet pick the
+// route up automatically the moment its agent reconnects, without any
+// first-install-only gate). Empty ip clears the route (internal DNS turned
+// off for this workspace).
+//
+// Deliberately not verified against a real systemd-resolved from this
+// environment (no systemd in the Docker sandboxes available here) - falls
+// back to a clear, non-fatal log line on distributions without resolvectl
+// rather than guessing at an alternative.
+func ensureInternalDnsSplitRoute(ctx context.Context, ip string, port int) {
+	if !commandExists("resolvectl") {
+		log.Printf("dns: resolvectl not available, skipping tarmac.local split-DNS route")
+		return
+	}
+	if ip == "" {
+		if out, err := exec.CommandContext(ctx, "resolvectl", "domain", "tarmacwg0", "").CombinedOutput(); err != nil {
+			log.Printf("dns: could not clear tarmac.local routing domain (continuing): %s", strings.TrimSpace(string(out)))
+		}
+		return
+	}
+	if out, err := exec.CommandContext(ctx, "resolvectl", "dns", "tarmacwg0", fmt.Sprintf("%s:%d", ip, port)).CombinedOutput(); err != nil {
+		log.Printf("dns: could not set tarmac.local resolver (continuing): %s", strings.TrimSpace(string(out)))
+		return
+	}
+	if out, err := exec.CommandContext(ctx, "resolvectl", "domain", "tarmacwg0", "~tarmac.local").CombinedOutput(); err != nil {
+		log.Printf("dns: could not set tarmac.local routing domain (continuing): %s", strings.TrimSpace(string(out)))
+	}
+}
+
+func handleEnsureInternalDnsRouteCommand(ctx context.Context, cmd commandPayload, result *commandResult) {
+	result.Command = "ensure_internal_dns_route"
+	result.ResourceType = "internal_dns"
+	result.ResourceID = envOrDefault("NODE_ID", "agent")
+	ip := readString(cmd.Payload, "ip")
+	port := readInt(cmd.Payload, "port", 5300)
+	ensureInternalDnsSplitRoute(ctx, ip, port)
+	if ip == "" {
+		result.Message = "tarmac.local split-DNS route cleared"
+	} else {
+		result.Message = fmt.Sprintf("tarmac.local split-DNS route set to %s:%d", ip, port)
 	}
 }
 

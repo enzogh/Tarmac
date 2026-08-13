@@ -6,6 +6,7 @@ import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { scopeWhere, scopeWhereViaNode, WorkspaceScope } from '../auth/workspace.guard';
 import { getControlPlaneVersion, isKnownControlPlaneVersion } from '../common/build-info';
+import { slugify } from '../common/slugify';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNodeDto } from './dto/create-node.dto';
 import { UpdateNodeDto } from './dto/update-node.dto';
@@ -127,6 +128,9 @@ export class NodesService {
       ...(dto.locationLng !== undefined ? { locationLng: dto.locationLng } : {}),
       ...(dto.graphX !== undefined ? { graphX: dto.graphX } : {}),
       ...(dto.graphY !== undefined ? { graphY: dto.graphY } : {}),
+      // Slugified server-side (not just trusted from the frontend) since
+      // this value flows directly into a DNS record name.
+      ...(dto.dnsHostname !== undefined ? { dnsHostname: dto.dnsHostname ? slugify(dto.dnsHostname) || null : null } : {}),
     };
 
     const updated = await this.prisma.node.update({ where: { id }, data });

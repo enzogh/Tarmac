@@ -72,7 +72,10 @@ export interface CommandPayload {
     | 'command.remove_dns_zone'
     | 'command.uninstall_dns_node'
     | 'command.dns_get_zone_keys'
-    | 'command.dns_resolve_port_conflict';
+    | 'command.dns_resolve_port_conflict'
+    | 'command.setup_internal_dns'
+    | 'command.remove_internal_dns'
+    | 'command.ensure_internal_dns_route';
   payload: Record<string, unknown>;
 }
 

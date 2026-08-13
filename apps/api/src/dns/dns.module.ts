@@ -8,11 +8,26 @@ import { DnsDelegationService } from './dns-delegation.service';
 import { DnsGroupsService } from './dns-groups.service';
 import { DnsRecordsService } from './dns-records.service';
 import { DnsZonesService } from './dns-zones.service';
+import { InternalDnsService } from './internal-dns.service';
 
 @Module({
   imports: [AuditLogsModule, LiveModule, forwardRef(() => AgentsModule)],
   controllers: [DnsController],
-  providers: [DnsGroupsService, DnsZonesService, DnsRecordsService, DnsDelegationService, DnsDelegationCheckService],
-  exports: [DnsGroupsService, DnsZonesService, DnsRecordsService, DnsDelegationService, DnsDelegationCheckService],
+  providers: [
+    DnsGroupsService,
+    DnsZonesService,
+    DnsRecordsService,
+    DnsDelegationService,
+    DnsDelegationCheckService,
+    InternalDnsService,
+  ],
+  exports: [
+    DnsGroupsService,
+    DnsZonesService,
+    DnsRecordsService,
+    DnsDelegationService,
+    DnsDelegationCheckService,
+    InternalDnsService,
+  ],
 })
 export class DnsModule {}

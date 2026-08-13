@@ -16,6 +16,7 @@ import {
   Globe2,
   HardDrive,
   type LucideIcon,
+  Network,
   Pencil,
   RefreshCcw,
   Server,
@@ -51,6 +52,7 @@ import { Input } from '../../../../components/ui/input';
 import { Label } from '../../../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../../components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
+import { HelpText } from '../../../../components/ui/wizard';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../../components/ui/tabs';
 import {
   Dialog,
@@ -107,6 +109,28 @@ function NodeMeter({
 export default function InfrastructurePage() {
   const { data: nodesRaw, mutate: refreshNodes, isLoading: nodesLoading } = usePolling('activity:1h', () => api.nodes.activity());
   const nodes = nodesRaw ?? [];
+
+  const { data: internalDnsStatus, mutate: refreshInternalDns } = usePolling(
+    'dns-internal',
+    api.dns.internal.getStatus,
+    { intervalMs: 15000 },
+  );
+  const internalDnsNodeId = internalDnsStatus?.internalDnsNodeId ?? null;
+  const [internalDnsBusyId, setInternalDnsBusyId] = useState<string | null>(null);
+
+  const toggleInternalDnsNode = async (node: NodeActivityItem) => {
+    setInternalDnsBusyId(node.id);
+    try {
+      if (internalDnsNodeId === node.id) {
+        await api.dns.internal.clear();
+      } else {
+        await api.dns.internal.designate(node.id);
+      }
+      await refreshInternalDns();
+    } finally {
+      setInternalDnsBusyId(null);
+    }
+  };
 
   // Patches the polled activity cache the instant a heartbeat arrives
   // instead of waiting up to 5s for the next poll tick - see
@@ -181,6 +205,7 @@ export default function InfrastructurePage() {
   const [editName, setEditName] = useState('');
   const [editRole, setEditRole] = useState('');
   const [editLabels, setEditLabels] = useState('');
+  const [editDnsHostname, setEditDnsHostname] = useState('');
   const [editLoading, setEditLoading] = useState(false);
   const [nodeToDelete, setNodeToDelete] = useState<NodeActivityItem | null>(null);
   const [inspectingNode, setInspectingNode] = useState<NodeActivityItem | null>(null);
@@ -373,6 +398,7 @@ export default function InfrastructurePage() {
     setEditName(node.name);
     setEditRole(node.role);
     setEditLabels((nodeLabels[node.id] ?? []).join(', '));
+    setEditDnsHostname(node.dnsHostname ?? '');
   };
 
   const saveEditNode = async (e: FormEvent) => {
@@ -380,7 +406,7 @@ export default function InfrastructurePage() {
     if (!editNode) return;
     setEditLoading(true);
     try {
-      await api.nodes.update(editNode.id, { name: editName, role: editRole });
+      await api.nodes.update(editNode.id, { name: editName, role: editRole, dnsHostname: editDnsHostname || null });
       const labels = editLabels
         .split(',')
         .map((value) => value.trim())
@@ -949,6 +975,28 @@ export default function InfrastructurePage() {
                           <Button
                             variant="ghost"
                             size="icon"
+                            onClick={() => void toggleInternalDnsNode(node)}
+                            disabled={internalDnsBusyId === node.id}
+                            className={`h-8 w-8 ${
+                              internalDnsNodeId === node.id
+                                ? 'text-violet-400 hover:text-violet-300'
+                                : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            <Network className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {internalDnsNodeId === node.id
+                            ? 'Serveur DNS interne de la flotte (tarmac.local) — cliquer pour retirer'
+                            : 'Désigner comme serveur DNS interne de la flotte (tarmac.local)'}
+                        </TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
                             onClick={() => openEditModal(node)}
                             className="h-8 w-8 text-muted-foreground hover:text-foreground"
                           >
@@ -1260,6 +1308,22 @@ export default function InfrastructurePage() {
                   placeholder="paris, production, critical"
                 />
                 <p className="text-xs text-muted-foreground">Sépare les labels par des virgules (max 6).</p>
+              </div>
+              <div className="space-y-2">
+                <span className="flex items-center gap-1">
+                  <Label htmlFor="edit-dns-hostname">Nom DNS interne</Label>
+                  <HelpText text="Nom utilisé pour joindre ce nœud sur la VLAN via son domaine interne (ex: node1.tarmac.local), une fois qu'un serveur DNS interne est désigné dans la flotte. Laisse vide pour utiliser un nom dérivé automatiquement du nom du nœud." />
+                </span>
+                <Input
+                  id="edit-dns-hostname"
+                  value={editDnsHostname}
+                  onChange={(e) => setEditDnsHostname(e.target.value)}
+                  placeholder={editName ? editName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') : 'node1'}
+                />
+                <p className="font-mono text-xs text-muted-foreground">
+                  {(editDnsHostname || editName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || '…')}
+                  .tarmac.local
+                </p>
               </div>
               <DialogFooter>
                 <Button type="button" variant="secondary" onClick={() => setEditNode(null)}>

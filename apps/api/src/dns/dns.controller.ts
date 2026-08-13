@@ -7,6 +7,7 @@ import { DnsDelegationService } from './dns-delegation.service';
 import { DnsGroupsService } from './dns-groups.service';
 import { DnsRecordsService } from './dns-records.service';
 import { DnsZonesService } from './dns-zones.service';
+import { InternalDnsService } from './internal-dns.service';
 import { CreateDnsGroupDto } from './dto/create-dns-group.dto';
 import { CreateDnsZoneDto } from './dto/create-dns-zone.dto';
 import { UpdateDnsGroupDto } from './dto/update-dns-group.dto';
@@ -26,6 +27,7 @@ export class DnsController {
     private readonly dnsRecordsService: DnsRecordsService,
     private readonly dnsDelegationService: DnsDelegationService,
     private readonly dnsDelegationCheckService: DnsDelegationCheckService,
+    private readonly internalDnsService: InternalDnsService,
   ) {}
 
   @Get('groups')
@@ -165,5 +167,24 @@ export class DnsController {
   @Get('nodes/:nodeId/records')
   recordsForNode(@Param('nodeId') nodeId: string, @CurrentWorkspace() scope: WorkspaceScope) {
     return this.dnsRecordsService.recordsForNode(nodeId, scope);
+  }
+
+  @Get('internal')
+  getInternalDnsStatus(@CurrentWorkspace() scope: WorkspaceScope) {
+    return this.internalDnsService.getStatus(scope);
+  }
+
+  @Post('internal/:nodeId')
+  setInternalDnsNode(
+    @Param('nodeId') nodeId: string,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.internalDnsService.setInternalDnsNode(nodeId, scope, req.user?.userId);
+  }
+
+  @Delete('internal')
+  clearInternalDnsNode(@CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.internalDnsService.clearInternalDnsNode(scope, req.user?.userId);
   }
 }

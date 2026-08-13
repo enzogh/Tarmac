@@ -43,4 +43,11 @@ export class UpdateNodeDto {
   @IsOptional()
   @IsNumber()
   graphY?: number | null;
+
+  // Custom <dnsHostname>.tarmac.local label - only meaningful once the
+  // workspace has a node designated to run the internal DNS zone, but
+  // editable regardless so it's ready whenever that happens.
+  @IsOptional()
+  @IsString()
+  dnsHostname?: string | null;
 }

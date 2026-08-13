@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { slugify } from '../common/slugify';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceScope } from '../auth/workspace.guard';
 import { VlanService } from '../vlan/vlan.service';
@@ -57,14 +58,6 @@ export class WorkspacesService {
     }));
   }
 
-  private slugify(name: string): string {
-    return name
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-  }
-
   // Allocates the next free subnetIndex (1..MAX_WORKSPACE_SUBNETS) and
   // creates the workspace, then eagerly provisions its Vlan (subnet
   // reserved from creation time, before any node ever joins). Concurrent
@@ -74,7 +67,7 @@ export class WorkspacesService {
   // computing the same "next" index, so this can't rely on a plain
   // SELECT MAX + INSERT being atomic.
   async create(dto: CreateWorkspaceDto, actorUserId?: string) {
-    const slug = dto.slug ? this.slugify(dto.slug) : this.slugify(dto.name);
+    const slug = dto.slug ? slugify(dto.slug) : slugify(dto.name);
     if (!slug) {
       throw new BadRequestException('Unable to derive a slug from the provided name');
     }

@@ -187,6 +187,13 @@ model Workspace {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  // The single node (if any) running the dedicated internal PowerDNS
+  // instance that serves *.tarmac.local for the whole fleet - separate
+  // relation from `nodes` below (a node's normal Workspace membership),
+  // since this one specific node is optionally singled out for that role.
+  internalDnsNodeId String?
+  internalDnsNode    Node?   @relation("InternalDnsNode", fields: [internalDnsNodeId], references: [id], onDelete: SetNull)
+
   memberships          WorkspaceMembership[]
   nodes                Node[]
   vlans                Vlan[]
@@ -253,6 +260,10 @@ model Node {
   agentTokenGraceUntil   DateTime?
   agentTokenRotatedAt    DateTime?
   mutedUntil             DateTime?
+  // Custom label for <dnsHostname>.tarmac.local when this workspace has a
+  // node designated to run the internal DNS zone (see Workspace.
+  // internalDnsNode) - null means derive one from `name` instead.
+  dnsHostname            String?
   createdAt              DateTime               @default(now())
   updatedAt              DateTime               @updatedAt
   metrics                MetricSample[]
@@ -272,6 +283,7 @@ model Node {
   outgoingConnections    VlanConnection[]       @relation("SourceNode")
   incomingConnections    VlanConnection[]       @relation("TargetNode")
   connectionTests        VlanConnectionTest[]   @relation("InitiatorNode")
+  internalDnsForWorkspace Workspace[]           @relation("InternalDnsNode")
 
   @@index([workspaceId])
 }
