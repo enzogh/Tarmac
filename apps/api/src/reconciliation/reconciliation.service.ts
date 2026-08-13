@@ -176,9 +176,25 @@ export class ReconciliationService implements OnModuleInit {
       // PowerDNS has nothing to transfer at all and answers REFUSED for a
       // zone it's never heard of (confirmed in production: supermaster
       // auto-provisioning silently never worked - see applyDnsServerGroup).
-      if (!primary.node.vlanIp) continue;
+      if (!primary.node.vlanIp) {
+        // Silent before this log existed - a zone would apply fine on the
+        // primary while every secondary got nothing at all, no error
+        // anywhere, because this guard skipped the whole loop below
+        // (confirmed in production: took reading pdns/agent logs on two
+        // separate boxes to find, since neither side ever saw the command).
+        this.logger.warn(
+          `Skipping DNS zone slave dispatch for zone ${zone.id}: primary node ${primary.nodeId} has no vlanIp`,
+        );
+        continue;
+      }
       for (const secondary of zone.group.members) {
-        if (secondary.role === 'primary' || !this.agentsService.isConnected(secondary.nodeId)) continue;
+        if (secondary.role === 'primary') continue;
+        if (!this.agentsService.isConnected(secondary.nodeId)) {
+          this.logger.warn(
+            `Skipping DNS zone slave dispatch for zone ${zone.id}: secondary node ${secondary.nodeId} is not connected`,
+          );
+          continue;
+        }
         this.agentsService.sendCommand(secondary.nodeId, {
           type: 'command.apply_dns_zone_slave',
           payload: { zoneId: zone.id, zoneName: zone.name, primaryVlanIp: primary.node.vlanIp, groupId: zone.groupId },

@@ -2539,9 +2539,16 @@ func writePdnsConfig(apiKey string, allowAxfrIps []string, backend string) error
 	}
 	var backendLines []string
 	if backend == "lmdb" {
+		// The LMDB backend has DNSSEC support built in, no separate toggle.
 		backendLines = []string{"launch=lmdb", "lmdb-filename=" + pdnsLmdbFilePath}
 	} else {
-		backendLines = []string{"launch=gsqlite3", "gsqlite3-database=" + pdnsSqliteDbPath}
+		// Unlike LMDB, the generic-SQL backends (gsqlite3/gmysql/gpgsql)
+		// need their own "<backend>-dnssec=yes" to enable the DNSSEC tables
+		// at all - without it, POST .../cryptokeys always fails with
+		// "Adding key failed, perhaps DNSSEC not enabled in configuration?"
+		// even though the zone and API call are otherwise fine (confirmed
+		// in production).
+		backendLines = []string{"launch=gsqlite3", "gsqlite3-database=" + pdnsSqliteDbPath, "gsqlite3-dnssec=yes"}
 	}
 	// No global "dnssec"/"default-ksk-algorithm" setting here on purpose -
 	// PowerDNS Authoritative has no such global toggle (that was a mistaken
