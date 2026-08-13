@@ -2574,6 +2574,61 @@ func writePdnsConfig(apiKey string, allowAxfrIps []string, backend string) error
 	return os.WriteFile(pdnsConfigPath, []byte(content), 0o644)
 }
 
+// readPdnsAllowAxfrIps recovers the sibling VLAN IPs writePdnsConfig was
+// last called with, by reading them back out of the file on disk (own-node
+// "127.0.0.1" excluded) - used by refreshPdnsConfigOnStartup, which doesn't
+// have a fresh apply_dns_server_group payload to read them from.
+func readPdnsAllowAxfrIps() []string {
+	data, err := os.ReadFile(pdnsConfigPath)
+	if err != nil {
+		return nil
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "allow-axfr-ips=") {
+			continue
+		}
+		var ips []string
+		for _, ip := range strings.Split(strings.TrimPrefix(line, "allow-axfr-ips="), ",") {
+			ip = strings.TrimSpace(ip)
+			if ip != "" && ip != "127.0.0.1" {
+				ips = append(ips, ip)
+			}
+		}
+		return ips
+	}
+	return nil
+}
+
+// refreshPdnsConfigOnStartup regenerates pdns.conf from the current backend
+// and ACL state on every agent restart, so a config-affecting agent update
+// (e.g. adding "gsqlite3-dnssec=yes") takes effect without waiting for the
+// control plane to re-send apply_dns_server_group, which only happens if
+// the member goes back to pending (confirmed in production: the DNSSEC fix
+// alone didn't help an already-provisioned node until this ran). Only
+// restarts pdns if the regenerated file actually differs, to avoid an
+// unnecessary DNS blip on every plain agent restart.
+func refreshPdnsConfigOnStartup(ctx context.Context) {
+	apiKey, err := ensurePdnsApiKey()
+	if err != nil {
+		log.Printf("dns: could not refresh PowerDNS config on startup: %v", err)
+		return
+	}
+	before, _ := os.ReadFile(pdnsConfigPath)
+	if err := writePdnsConfig(apiKey, readPdnsAllowAxfrIps(), readPdnsBackend()); err != nil {
+		log.Printf("dns: could not refresh PowerDNS config on startup: %v", err)
+		return
+	}
+	after, err := os.ReadFile(pdnsConfigPath)
+	if err != nil || bytes.Equal(before, after) {
+		return
+	}
+	if commandExists("systemctl") {
+		if out, err := exec.CommandContext(ctx, "systemctl", "restart", "pdns").CombinedOutput(); err != nil {
+			log.Printf("dns: could not restart pdns after refreshing config on startup: %s", strings.TrimSpace(string(out)))
+		}
+	}
+}
+
 var tsigKeyNameSanitizer = regexp.MustCompile(`[^a-z0-9-]+`)
 
 func tsigKeyName(groupID string) string {
@@ -5360,6 +5415,14 @@ func main() {
 		migrateCtx, migrateCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		migratePdnsBackendToLmdb(migrateCtx)
 		migrateCancel()
+
+		// Same reasoning: a pdns.conf-affecting agent update (new static
+		// setting, e.g. a backend-specific dnssec flag) must take effect on
+		// its own, not stay stuck until the control plane happens to
+		// re-send apply_dns_server_group.
+		refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		refreshPdnsConfigOnStartup(refreshCtx)
+		refreshCancel()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
