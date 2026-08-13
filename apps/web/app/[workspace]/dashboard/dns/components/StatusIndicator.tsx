@@ -13,7 +13,22 @@ const STATUS_BADGE: Record<string, { label: string; type: 'success' | 'warning' 
 // makes it visually obvious the agent is actively working on it (config
 // push, package install, service restart...) rather than waiting on the
 // user for something.
-export function StatusIndicator({ status }: { status: 'pending' | 'active' | 'error' }) {
+//
+// `compact` trades the full badge for a plain dot when status is "active" -
+// "silence = fine" for rows where most items are healthy most of the time
+// (member/record rows), while pending/error still always render the full
+// badge so a problem is never less visible. Defaults to false so every
+// existing call site keeps today's exact appearance unless it opts in.
+export function StatusIndicator({
+  status,
+  compact = false,
+}: {
+  status: 'pending' | 'active' | 'error';
+  compact?: boolean;
+}) {
+  if (compact && status === 'active') {
+    return <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" title="Actif" />;
+  }
   const badge = STATUS_BADGE[status] ?? STATUS_BADGE.pending;
   return (
     <span className="inline-flex items-center gap-1.5">

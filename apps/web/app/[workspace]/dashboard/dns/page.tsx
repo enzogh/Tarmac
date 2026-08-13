@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { AlertCircle, CheckCircle2, Globe, Layers, Plus, ShieldCheck } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Globe, Layers, MapPin, Plus, Server, ShieldCheck } from 'lucide-react';
 import { api, DnsRecordItem, DnsZoneItem } from '../../../../lib/api';
 import { PageHeader } from '../../../../components/PageHeader';
 import { SectionLabel } from '../../../../components/SectionLabel';
@@ -9,6 +9,7 @@ import { Alert, AlertDescription } from '../../../../components/ui/alert';
 import { Button } from '../../../../components/ui/button';
 import { StatCard } from '../../../../components/ui';
 import { StatCardSkeleton } from '../../../../components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../../components/ui/tabs';
 import { DelegationDnssecDialog, DnsInfoPanelState } from './components/DelegationDnssecDialog';
 import { GeoMapSection } from './components/GeoMapSection';
 import { GroupDialog } from './components/GroupDialog';
@@ -123,32 +124,55 @@ export default function DnsPage() {
           )}
         </section>
 
-        <GroupsSection
-          groups={groups}
-          groupsLoading={groupsLoading}
-          nodes={nodes}
-          busyKey={busyKey}
-          setBusyKey={setBusyKey}
-          setNotice={setNotice}
-          refreshGroups={refreshGroups}
-          journal={journal}
-        />
+        <Tabs defaultValue="groups" className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="groups" className="gap-1.5">
+              <Server className="h-3.5 w-3.5" />
+              Groupes
+            </TabsTrigger>
+            <TabsTrigger value="zones" className="gap-1.5">
+              <Globe className="h-3.5 w-3.5" />
+              Zones
+            </TabsTrigger>
+            <TabsTrigger value="map" className="gap-1.5">
+              <MapPin className="h-3.5 w-3.5" />
+              Carte
+            </TabsTrigger>
+          </TabsList>
 
-        <ZonesSection
-          zones={zones}
-          zonesLoading={zonesLoading}
-          groups={groups}
-          busyKey={busyKey}
-          setBusyKey={setBusyKey}
-          setNotice={setNotice}
-          refreshZones={refreshZones}
-          journal={journal}
-          onOpenRecordDialog={openRecordDialog}
-          onOpenDelegation={openDelegation}
-          onOpenDnssec={openDnssec}
-        />
+          <TabsContent value="groups">
+            <GroupsSection
+              groups={groups}
+              groupsLoading={groupsLoading}
+              nodes={nodes}
+              busyKey={busyKey}
+              setBusyKey={setBusyKey}
+              setNotice={setNotice}
+              refreshGroups={refreshGroups}
+              journal={journal}
+            />
+          </TabsContent>
 
-        <GeoMapSection nodes={nodes} groups={groups} zones={zones} />
+          <TabsContent value="zones">
+            <ZonesSection
+              zones={zones}
+              zonesLoading={zonesLoading}
+              groups={groups}
+              busyKey={busyKey}
+              setBusyKey={setBusyKey}
+              setNotice={setNotice}
+              refreshZones={refreshZones}
+              journal={journal}
+              onOpenRecordDialog={openRecordDialog}
+              onOpenDelegation={openDelegation}
+              onOpenDnssec={openDnssec}
+            />
+          </TabsContent>
+
+          <TabsContent value="map">
+            <GeoMapSection nodes={nodes} groups={groups} zones={zones} />
+          </TabsContent>
+        </Tabs>
       </div>
 
       <GroupDialog

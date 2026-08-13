@@ -4,11 +4,10 @@ import { useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { MapPin } from 'lucide-react';
 import { api, DnsNodeRecordRef, DnsServerGroupItem, DnsZoneItem, NodeItem } from '@/lib/api';
-import { Callout } from '@/components/Callout';
-import { SectionLabel } from '@/components/SectionLabel';
 import { Badge } from '@/components/ui';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { HelpText } from '@/components/ui/wizard';
 import type { WorldMapNode } from '@/components/WorldMap';
 
 const WorldMap = dynamic(() => import('@/components/WorldMap').then((mod) => mod.WorldMap), {
@@ -74,12 +73,11 @@ export function GeoMapSection({ nodes, groups, zones }: { nodes: NodeItem[]; gro
 
   return (
     <>
-      <section className="space-y-4">
-        <SectionLabel>Carte géographique</SectionLabel>
-        <Callout variant="info">
-          Serveurs DNS et cibles géo-routées de ta flotte. Clique sur un marqueur pour voir quelles zones/records le
-          ciblent.
-        </Callout>
+      <div className="space-y-4">
+        <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+          Serveurs DNS et cibles géo-routées de ta flotte.
+          <HelpText text="Clique sur un marqueur pour voir quelles zones/records le ciblent." />
+        </p>
         {dnsWorldMapNodes.length === 0 ? (
           <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
             <CardContent className="pt-12 pb-12 text-center">
@@ -95,7 +93,7 @@ export function GeoMapSection({ nodes, groups, zones }: { nodes: NodeItem[]; gro
             <WorldMap nodes={dnsWorldMapNodes} onSelectNode={openGeoNode} className="h-[420px] w-full" />
           </Card>
         )}
-      </section>
+      </div>
 
       <Dialog open={!!geoPanel} onOpenChange={(open) => !open && setGeoPanel(null)}>
         <DialogContent>

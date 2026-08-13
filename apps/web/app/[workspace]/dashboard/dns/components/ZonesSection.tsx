@@ -1,14 +1,17 @@
 'use client';
 
-import { Globe, KeyRound, Plus, RefreshCcw, ScrollText, ShieldCheck, Trash2 } from 'lucide-react';
+import { ChevronDown, Globe, KeyRound, Plus, RefreshCcw, ScrollText, ShieldCheck, Trash2 } from 'lucide-react';
 import { api, DnsRecordItem, DnsServerGroupItem, DnsZoneItem } from '@/lib/api';
 import { SectionLabel } from '@/components/SectionLabel';
 import { Badge } from '@/components/ui';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CardListSkeleton } from '@/components/ui/skeleton';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { JournalLogPanel } from './JournalLogPanel';
+import { RecordsTable } from './RecordsTable';
 import { StatusIndicator } from './StatusIndicator';
+import { useCollapsibleCards } from './useCollapsibleCards';
 import { DnsJournalState, DnsNotice } from './useDnsPageState';
 
 export function ZonesSection({
@@ -36,6 +39,8 @@ export function ZonesSection({
   onOpenDelegation: (zone: DnsZoneItem) => void;
   onOpenDnssec: (zone: DnsZoneItem) => void;
 }) {
+  const cards = useCollapsibleCards(zones, (zone) => zone.status !== 'active' || zone.records.length === 0);
+
   const deleteZone = async (zone: DnsZoneItem) => {
     if (!window.confirm(`Supprimer la zone « ${zone.name} » et tous ses enregistrements ?`)) return;
     setBusyKey(`zone-${zone.id}`);
@@ -97,98 +102,103 @@ export function ZonesSection({
             const group = groups.find((g) => g.id === zone.groupId);
             const primaryNodeId = group?.members.find((m) => m.role === 'primary')?.nodeId;
             const key = `zone:${zone.id}`;
+            const collapsed = cards.isCollapsed(zone.id);
             return (
               <Card key={zone.id} className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
                 <CardHeader>
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <CardTitle className="flex items-center gap-2">
-                      <Globe className="w-5 h-5 text-violet-400" />
-                      {zone.name}
-                    </CardTitle>
+                    <button
+                      type="button"
+                      onClick={() => cards.toggle(zone.id)}
+                      className="flex items-center gap-2 text-left"
+                    >
+                      <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${collapsed ? '-rotate-90' : ''}`} />
+                      <CardTitle className="flex items-center gap-2">
+                        <Globe className="w-5 h-5 text-violet-400" />
+                        {zone.name}
+                      </CardTitle>
+                    </button>
                     <div className="flex flex-wrap items-center gap-2">
                       {group && <Badge label={group.name} type="info" />}
-                      {zone.dnssecEnabled && <Badge label="DNSSEC" type="success" />}
                       <StatusIndicator status={zone.status} />
                       {primaryNodeId && (
-                        <Button variant="ghost" size="sm" className="gap-1" onClick={() => journal.toggleLogs(key, primaryNodeId)}>
-                          <ScrollText className="h-3.5 w-3.5" />
-                          {journal.expandedLogKey === key ? 'Masquer' : 'Journal'}
-                        </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button variant="ghost" size="icon" onClick={() => journal.toggleLogs(key, primaryNodeId)}>
+                              <ScrollText className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{journal.expandedLogKey === key ? 'Masquer le journal' : 'Afficher le journal'}</TooltipContent>
+                        </Tooltip>
                       )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="gap-1"
-                        disabled={busyKey === `zone-reapply-${zone.id}`}
-                        onClick={() => reapplyZone(zone)}
-                        title="Force une ré-application complète de la zone au prochain cycle de réconciliation (~15s)"
-                      >
-                        <RefreshCcw className="h-3.5 w-3.5" />
-                        Réappliquer
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => onOpenDelegation(zone)} className="gap-1">
-                        <KeyRound className="h-3.5 w-3.5" />
-                        Délégation
-                      </Button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            disabled={busyKey === `zone-reapply-${zone.id}`}
+                            onClick={() => reapplyZone(zone)}
+                          >
+                            <RefreshCcw className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Force une ré-application complète au prochain cycle de réconciliation (~15s)</TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button variant="ghost" size="icon" onClick={() => onOpenDelegation(zone)}>
+                            <KeyRound className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Délégation</TooltipContent>
+                      </Tooltip>
                       {zone.dnssecEnabled && (
-                        <Button variant="ghost" size="sm" onClick={() => onOpenDnssec(zone)} className="gap-1">
-                          <ShieldCheck className="h-3.5 w-3.5" />
-                          DNSSEC
-                        </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button variant="ghost" size="icon" onClick={() => onOpenDnssec(zone)}>
+                              <ShieldCheck className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>DNSSEC</TooltipContent>
+                        </Tooltip>
                       )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={busyKey === `zone-${zone.id}`}
-                        onClick={() => deleteZone(zone)}
-                        className="text-rose-300 hover:text-rose-200"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            disabled={busyKey === `zone-${zone.id}`}
+                            onClick={() => deleteZone(zone)}
+                            className="text-rose-300 hover:text-rose-200"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Supprimer la zone</TooltipContent>
+                      </Tooltip>
                     </div>
                   </div>
                   {primaryNodeId && <JournalLogPanel journal={journal} panelKey={key} nodeId={primaryNodeId} />}
                 </CardHeader>
-                <CardContent className="space-y-2">
-                  {zone.records.length === 0 && (
-                    <p className="text-sm text-muted-foreground">Aucun enregistrement pour cette zone.</p>
-                  )}
-                  {zone.records.map((record) => (
-                    <div
-                      key={record.id}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-sm"
-                    >
-                      <span className="flex flex-wrap items-center gap-2">
-                        <span className="font-mono">{record.name}</span>
-                        <Badge label={record.type} type="info" />
-                        {record.isGeo && <Badge label="Géo-routage" type="success" />}
-                        <span className="text-xs text-muted-foreground">TTL {record.ttl}s</span>
-                        <span className="text-xs text-muted-foreground">
-                          {record.values.map((v) => v.content).join(', ')}
-                        </span>
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <StatusIndicator status={record.status} />
-                        <Button variant="ghost" size="sm" onClick={() => onOpenRecordDialog(zone.id, record)}>
-                          Modifier
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={busyKey === `record-${record.id}`}
-                          onClick={() => deleteRecord(zone.id, record.id)}
-                          className="text-rose-300 hover:text-rose-200"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                  <Button variant="secondary" size="sm" className="gap-1" onClick={() => onOpenRecordDialog(zone.id)}>
-                    <Plus className="h-3.5 w-3.5" />
-                    Ajouter un enregistrement
-                  </Button>
-                </CardContent>
+                {!collapsed && (
+                  <CardContent className="space-y-2">
+                    {zone.records.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Aucun enregistrement pour cette zone.</p>
+                    ) : (
+                      <RecordsTable
+                        zoneId={zone.id}
+                        records={zone.records}
+                        busyKey={busyKey}
+                        onEdit={(record) => onOpenRecordDialog(zone.id, record)}
+                        onDelete={deleteRecord}
+                      />
+                    )}
+                    <Button variant="secondary" size="sm" className="gap-1" onClick={() => onOpenRecordDialog(zone.id)}>
+                      <Plus className="h-3.5 w-3.5" />
+                      Ajouter un enregistrement
+                    </Button>
+                  </CardContent>
+                )}
               </Card>
             );
           })}
