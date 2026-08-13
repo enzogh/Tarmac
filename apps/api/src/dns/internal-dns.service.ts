@@ -170,10 +170,15 @@ export class InternalDnsService implements OnModuleInit {
   // time it reconnects and this runs again.
   private async pushRouteToFleet(workspaceId: string, ip: string | null) {
     const nodes = await this.prisma.node.findMany({ where: { workspaceId }, select: { id: true } });
+    // Records travel alongside the route so a node that can't use
+    // resolvectl/dnsmasq (already owns port 53 for its own public PowerDNS,
+    // see dnsMarkerPath in the agent) can still resolve *.tarmac.local
+    // locally via a static /etc/hosts block - see ensureInternalDnsForwarder.
+    const records = ip ? await this.desiredRecords(workspaceId) : [];
     for (const node of nodes) {
       this.agentsService.sendCommand(node.id, {
         type: 'command.ensure_internal_dns_route',
-        payload: { ip, port: INTERNAL_DNS_PORT },
+        payload: { ip, port: INTERNAL_DNS_PORT, records },
       });
     }
   }

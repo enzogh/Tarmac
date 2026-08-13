@@ -1837,7 +1837,13 @@ func handleRemoveInternalDnsCommand(ctx context.Context, cmd commandPayload, res
 const (
 	internalDnsForwarderMarkerPath = "/etc/tarmac-agent/internal-dns-forwarder-enabled"
 	internalDnsDnsmasqConfigPath   = "/etc/dnsmasq.d/tarmac-internal.conf"
+	internalDnsHostsBeginMarker    = "# BEGIN TARMAC INTERNAL DNS (tarmac.local) - managed by tarmac-agent, do not edit"
+	internalDnsHostsEndMarker      = "# END TARMAC INTERNAL DNS"
 )
+
+// hostsPath is a var (not const) so tests can point it at a temp file
+// instead of the real /etc/hosts.
+var hostsPath = "/etc/hosts"
 
 type internalDnsRouteResultData struct {
 	Status   string           `json:"status"`
@@ -1859,7 +1865,7 @@ type internalDnsRouteResultData struct {
 // pushRouteToFleet), which is what makes an already-deployed fleet pick up
 // the route automatically the moment its agent reconnects. Empty ip clears
 // the route (internal DNS turned off for this workspace).
-func ensureInternalDnsSplitRoute(ctx context.Context, ip string, port int) internalDnsRouteResultData {
+func ensureInternalDnsSplitRoute(ctx context.Context, ip string, port int, records []internalDnsHostRecord) internalDnsRouteResultData {
 	if ip == "" {
 		if commandExists("resolvectl") {
 			if out, err := exec.CommandContext(ctx, "resolvectl", "domain", "tarmacwg0", "").CombinedOutput(); err != nil {
@@ -1868,6 +1874,9 @@ func ensureInternalDnsSplitRoute(ctx context.Context, ip string, port int) inter
 		}
 		if err := removeInternalDnsForwarder(ctx); err != nil {
 			log.Printf("dns: could not remove internal DNS forwarder (continuing): %v", err)
+		}
+		if err := removeInternalDnsHostsBlock(); err != nil {
+			log.Printf("dns: could not remove internal DNS /etc/hosts block (continuing): %v", err)
 		}
 		return internalDnsRouteResultData{Status: "cleared"}
 	}
@@ -1878,12 +1887,12 @@ func ensureInternalDnsSplitRoute(ctx context.Context, ip string, port int) inter
 		if dnsErr == nil && domainErr == nil {
 			return internalDnsRouteResultData{Status: "active"}
 		}
-		log.Printf("dns: resolvectl present but not usable on this node (systemd-resolved not running?), falling back to a local dnsmasq forwarder")
+		log.Printf("dns: resolvectl present but not usable on this node (systemd-resolved not running?), trying local dnsmasq forwarder fallback")
 	} else {
-		log.Printf("dns: resolvectl not installed, falling back to a local dnsmasq forwarder")
+		log.Printf("dns: resolvectl not installed, trying local dnsmasq forwarder fallback")
 	}
 
-	status, conflict, err := ensureInternalDnsForwarder(ctx, ip, port)
+	status, conflict, err := ensureInternalDnsForwarder(ctx, ip, port, records)
 	if err != nil {
 		log.Printf("dns: internal DNS forwarder fallback failed: %v", err)
 		return internalDnsRouteResultData{Status: "error"}
@@ -1899,15 +1908,23 @@ func ensureInternalDnsSplitRoute(ctx context.Context, ip string, port int) inter
 // isn't usable. Deliberately never touches a node that already runs this
 // agent's own PowerDNS on port 53 for a DnsServerGroup (dnsMarkerPath) -
 // that port is already legitimately ours there, and dnsmasq would only
-// fight with it; such a node is simply left uncovered rather than risking
-// that. When something else holds the port, this reports the conflict
-// (status "conflict") without touching it - killing anything is only ever
-// done via the explicit resolveInternalDnsForwarderConflict flow, the same
-// "propose, don't auto-kill" rule already followed for DnsServerGroup's own
-// port-53 use.
-func ensureInternalDnsForwarder(ctx context.Context, ip string, port int) (string, *dnsPortConflict, error) {
+// fight with it. Instead, on such a node, *.tarmac.local is made to resolve
+// via a static /etc/hosts block (writeInternalDnsHostsBlock) - NSS resolves
+// from /etc/hosts before ever making a DNS query, so this needs no port,
+// can't conflict with the node's own public PowerDNS, and carries none of
+// the open-resolver risk that adding a catch-all recursive forward-zone to
+// that already-internet-exposed PowerDNS instance would (see the plan doc
+// for why that approach was rejected). When something else holds the port,
+// this reports the conflict (status "conflict") without touching it -
+// killing anything is only ever done via the explicit
+// resolveInternalDnsForwarderConflict flow, the same "propose, don't
+// auto-kill" rule already followed for DnsServerGroup's own port-53 use.
+func ensureInternalDnsForwarder(ctx context.Context, ip string, port int, records []internalDnsHostRecord) (string, *dnsPortConflict, error) {
 	if _, err := os.Stat(dnsMarkerPath); err == nil {
-		return "skipped", nil, nil
+		if err := writeInternalDnsHostsBlock(records); err != nil {
+			return "", nil, fmt.Errorf("cannot write /etc/hosts fallback: %w", err)
+		}
+		return "active", nil, nil
 	}
 
 	if _, err := os.Stat(internalDnsForwarderMarkerPath); err != nil {
@@ -1960,6 +1977,83 @@ func writeInternalDnsmasqConfig(ip string, port int) error {
 		return fmt.Errorf("cannot write dnsmasq config: %w", err)
 	}
 	return nil
+}
+
+type internalDnsHostRecord struct {
+	Name    string `json:"name"`
+	Content string `json:"content"`
+}
+
+// writeInternalDnsHostsBlock maintains a clearly-marked block of
+// *.tarmac.local entries in /etc/hosts, for nodes where a port-53 forwarder
+// can't be used. NSS resolves /etc/hosts before ever making a DNS query
+// (nsswitch.conf's default "files dns" order), so this needs no listening
+// process and can't conflict with anything already bound to port 53. Only
+// rewrites the file when the block's content actually changed, same
+// diff-before-write discipline as refreshPdnsConfigOnStartup - this runs on
+// every ~30s reconciliation tick (pushRouteToFleet), so avoiding needless
+// writes matters. Idempotent: re-running with the same records is a no-op,
+// and any existing block is replaced in place rather than duplicated.
+func writeInternalDnsHostsBlock(records []internalDnsHostRecord) error {
+	lines := make([]string, 0, len(records)+2)
+	lines = append(lines, internalDnsHostsBeginMarker)
+	for _, record := range records {
+		if record.Name == "" || record.Content == "" {
+			continue
+		}
+		fqdn := dnsRecordFqdn(strings.TrimSuffix(internalDnsZoneName, "."), record.Name)
+		lines = append(lines, fmt.Sprintf("%s %s", record.Content, fqdn))
+	}
+	lines = append(lines, internalDnsHostsEndMarker)
+	return replaceInternalDnsHostsBlock(lines)
+}
+
+// removeInternalDnsHostsBlock strips the managed block if present -
+// idempotent no-op otherwise, called when internal DNS is cleared for the
+// workspace or the split-DNS route is torn down.
+func removeInternalDnsHostsBlock() error {
+	return replaceInternalDnsHostsBlock(nil)
+}
+
+// replaceInternalDnsHostsBlock does the actual read-modify-write: strips any
+// existing marked block from /etc/hosts, then splices in newBlock (nil means
+// "just remove, don't add anything back") at the end. Lines outside the
+// markers are left untouched.
+func replaceInternalDnsHostsBlock(newBlock []string) error {
+	existing, err := os.ReadFile(hostsPath)
+	if err != nil {
+		return fmt.Errorf("cannot read %s: %w", hostsPath, err)
+	}
+
+	var kept []string
+	inBlock := false
+	for _, line := range strings.Split(string(existing), "\n") {
+		switch {
+		case strings.TrimSpace(line) == internalDnsHostsBeginMarker:
+			inBlock = true
+		case strings.TrimSpace(line) == internalDnsHostsEndMarker:
+			inBlock = false
+		case !inBlock:
+			kept = append(kept, line)
+		}
+	}
+	// Splitting on "\n" leaves a trailing "" for files that end in a
+	// newline (the normal case) - drop it here and re-add exactly one
+	// newline at the end below, so re-running this doesn't accumulate
+	// blank lines.
+	for len(kept) > 0 && kept[len(kept)-1] == "" {
+		kept = kept[:len(kept)-1]
+	}
+
+	final := kept
+	if len(newBlock) > 0 {
+		final = append(final, newBlock...)
+	}
+	content := strings.Join(final, "\n") + "\n"
+	if content == string(existing) {
+		return nil
+	}
+	return os.WriteFile(hostsPath, []byte(content), 0o644)
 }
 
 // pointResolvConfAtLocalhost hands this node's own DNS resolution to the
@@ -2023,7 +2117,11 @@ func resolveInternalDnsForwarderConflict(ctx context.Context, ip string, port in
 			}
 		}
 	}
-	status, newConflict, err := ensureInternalDnsForwarder(ctx, ip, port)
+	// records is nil here - this path only ever runs after a genuine port
+	// conflict was reported, which never happens on a dnsMarkerPath node
+	// (that branch returns "active" via the /etc/hosts fallback, never
+	// "conflict"), so the records-consuming branch below can't be reached.
+	status, newConflict, err := ensureInternalDnsForwarder(ctx, ip, port, nil)
 	if err != nil {
 		return "", err
 	}
@@ -2039,7 +2137,21 @@ func handleEnsureInternalDnsRouteCommand(ctx context.Context, cmd commandPayload
 	result.ResourceID = envOrDefault("NODE_ID", "agent")
 	ip := readString(cmd.Payload, "ip")
 	port := readInt(cmd.Payload, "port", 5300)
-	data := ensureInternalDnsSplitRoute(ctx, ip, port)
+	rawRecords, _ := cmd.Payload["records"].([]interface{})
+	records := make([]internalDnsHostRecord, 0, len(rawRecords))
+	for _, raw := range rawRecords {
+		entry, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name := readString(entry, "name")
+		content := readString(entry, "content")
+		if name == "" || content == "" {
+			continue
+		}
+		records = append(records, internalDnsHostRecord{Name: name, Content: content})
+	}
+	data := ensureInternalDnsSplitRoute(ctx, ip, port, records)
 	result.Data = data
 	if data.Status == "conflict" {
 		result.Success = false
