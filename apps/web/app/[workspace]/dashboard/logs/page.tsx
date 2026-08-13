@@ -8,6 +8,7 @@ import { api, AgentLogItem, AuditLogItem } from '../../../../lib/api';
 import { usePolling } from '../../../../lib/hooks/usePolling';
 import { useLiveSocket } from '../../../../lib/hooks/useLiveSocket';
 import { PageHeader } from '../../../../components/PageHeader';
+import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
 import { Callout } from '../../../../components/Callout';
 import { SectionLabel } from '../../../../components/SectionLabel';
 import { Badge } from '../../../../components/ui';
@@ -569,14 +570,9 @@ export default function LogsPage() {
       <div className="space-y-8">
         <PageHeader
           icon={ScrollText}
-          title="Journal"
+          title={<AnimatedGradientText speed={0.6}>Journal</AnimatedGradientText>}
           description="Actions effectuées sur la flotte et logs bruts des agents, en direct."
         />
-
-        <Callout>
-          L'onglet Agents affiche les logs poussés en direct par chaque agent. Utilisez le filtre par nœud pour
-          éviter que plusieurs flux se mélangent.
-        </Callout>
 
         <Tabs defaultValue="actions" className="space-y-4">
           <TabsList>
@@ -594,7 +590,11 @@ export default function LogsPage() {
             <ActionsTab />
           </TabsContent>
 
-          <TabsContent value="agents">
+          <TabsContent value="agents" className="space-y-4">
+            <Callout>
+              Ces logs sont poussés en direct par chaque agent. Utilisez le filtre par nœud pour éviter que
+              plusieurs flux se mélangent.
+            </Callout>
             <AgentsTab />
           </TabsContent>
         </Tabs>

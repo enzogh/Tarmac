@@ -17,13 +17,19 @@ import {
   Trash2,
   History,
   Clock,
+  MoreVertical,
 } from 'lucide-react';
 import { api, API_BASE, NodeItem, SyncJobItem, SyncJobRunItem } from '../../../../lib/api';
 import { usePolling } from '../../../../lib/hooks/usePolling';
 import { PageHeader } from '../../../../components/PageHeader';
-import { Callout } from '../../../../components/Callout';
+import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
+import { RainbowButton } from '../../../../components/ui/rainbow-button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../../components/ui/card';
 import { Button } from '../../../../components/ui/button';
+import { Input } from '../../../../components/ui/input';
+import { Label } from '../../../../components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../../components/ui/select';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../../../components/ui/dropdown-menu';
 import { Alert, AlertDescription } from '../../../../components/ui/alert';
 import { Badge, StatCard } from '../../../../components/ui';
 import { CardListSkeleton, StatCardSkeleton } from '../../../../components/ui/skeleton';
@@ -99,63 +105,60 @@ export default function ReplicationPage() {
       content: (
         <div className="space-y-4">
           <div>
-            <label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-zinc-200">
               Nom
               <HelpText text="Identifiant pour cette tâche de réplication" />
-            </label>
-            <input
-              type="text"
+            </Label>
+            <Input
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               placeholder="ex: backup-vers-node-2"
-              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
+              className="h-10"
             />
           </div>
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-zinc-200">
               Nœud exécutant
               <HelpText text="Le nœud dont l'agent lancera la commande rsync" />
-            </label>
-            <select
-              value={formData.nodeId}
-              onChange={(e) => setFormData({ ...formData, nodeId: e.target.value })}
-              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
-            >
-              <option value="">-- Choisir un nœud --</option>
-              {nodes.map((node) => (
-                <option key={node.id} value={node.id}>
-                  {node.name} ({node.status}){(nodeLabels[node.id]?.length ?? 0) > 0 ? ` — ${nodeLabels[node.id].join(', ')}` : ''}
-                </option>
-              ))}
-            </select>
+            </Label>
+            <Select value={formData.nodeId} onValueChange={(value) => setFormData({ ...formData, nodeId: value })}>
+              <SelectTrigger className="h-10">
+                <SelectValue placeholder="-- Choisir un nœud --" />
+              </SelectTrigger>
+              <SelectContent>
+                {nodes.map((node) => (
+                  <SelectItem key={node.id} value={node.id}>
+                    {node.name} ({node.status}){(nodeLabels[node.id]?.length ?? 0) > 0 ? ` — ${nodeLabels[node.id].join(', ')}` : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-zinc-200">
               Dossier source
               <HelpText text="Chemin absolu à copier, sur le nœud exécutant" />
-            </label>
-            <input
-              type="text"
+            </Label>
+            <Input
               value={formData.sourcePath}
               onChange={(e) => setFormData({ ...formData, sourcePath: e.target.value })}
               placeholder="/data/movies"
-              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
+              className="h-10 font-mono text-xs"
             />
           </div>
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-zinc-200">
               Dossier destination
               <HelpText text="Chemin absolu où copier les données — un montage NFS vers un autre nœud fonctionne aussi" />
-            </label>
-            <input
-              type="text"
+            </Label>
+            <Input
               value={formData.targetPath}
               onChange={(e) => setFormData({ ...formData, targetPath: e.target.value })}
               placeholder="/mnt/replica-node-2/movies"
-              className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
+              className="h-10 font-mono text-xs"
             />
           </div>
 
@@ -172,33 +175,31 @@ export default function ReplicationPage() {
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-zinc-400">Hôte</label>
-                <input
-                  type="text"
+                <Label className="mb-1.5 block text-xs font-medium text-zinc-400">Hôte</Label>
+                <Input
                   value={formData.sourceHost}
                   onChange={(e) => setFormData({ ...formData, sourceHost: e.target.value })}
                   placeholder="monuser.ultra.cc"
-                  className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
+                  className="h-10 font-mono text-xs"
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-zinc-400">Utilisateur SSH</label>
-                <input
-                  type="text"
+                <Label className="mb-1.5 block text-xs font-medium text-zinc-400">Utilisateur SSH</Label>
+                <Input
                   value={formData.sourceUser}
                   onChange={(e) => setFormData({ ...formData, sourceUser: e.target.value })}
                   placeholder="root"
-                  className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
+                  className="h-10 font-mono text-xs"
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-zinc-400">Port SSH</label>
-                <input
+                <Label className="mb-1.5 block text-xs font-medium text-zinc-400">Port SSH</Label>
+                <Input
                   type="number"
                   value={formData.sourceSshPort}
                   onChange={(e) => setFormData({ ...formData, sourceSshPort: e.target.value })}
                   placeholder="22"
-                  className="w-full rounded-lg border border-white/[0.12] bg-zinc-950/70 px-3 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-violet-500"
+                  className="h-10 font-mono text-xs"
                 />
               </div>
             </div>
@@ -411,13 +412,13 @@ export default function ReplicationPage() {
 
         <PageHeader
           icon={RefreshCw}
-          title="Réplication"
+          title={<AnimatedGradientText speed={0.6}>Réplication</AnimatedGradientText>}
           description="Copiez des dossiers entre nœuds via rsync, à la demande."
           actions={
-            <Button onClick={() => setWizardOpen(true)} className="gap-2 bg-violet-600 text-white hover:bg-violet-500">
+            <RainbowButton onClick={() => setWizardOpen(true)} className="gap-2">
               <Plus className="w-5 h-5" />
               Nouvelle réplication
-            </Button>
+            </RainbowButton>
           }
         />
 
@@ -443,12 +444,12 @@ export default function ReplicationPage() {
           )}
         </section>
 
-        <Callout variant="info">
-          Chaque tâche copie un dossier source vers une destination via l'agent du nœud choisi. Combinez-la avec un
-          montage NFS (page Montages) pour répliquer réellement vers un autre nœud.
-        </Callout>
-
-        <SectionLabel>Tâches de réplication</SectionLabel>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <SectionLabel>Tâches de réplication</SectionLabel>
+          <p className="text-xs text-muted-foreground">
+            Combinez avec un montage NFS (page Montages) pour répliquer vers un autre nœud.
+          </p>
+        </div>
         {jobsLoading ? (
           <CardListSkeleton cards={3} />
         ) : jobs.length === 0 ? (
@@ -487,33 +488,31 @@ export default function ReplicationPage() {
                           <History className="h-3.5 w-3.5" />
                           Historique
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => openGeneralEdit(job)}>
-                          <Pencil className="h-3.5 w-3.5" />
-                          Modifier
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => openSshEdit(job)}>
-                          <Settings2 className="h-3.5 w-3.5" />
-                          Source SSH
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={busyJobId === job.id}
-                          onClick={() => rotateTriggerToken(job)}
-                        >
-                          <RotateCw className="h-3.5 w-3.5" />
-                          Lien externe
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={busyJobId === job.id}
-                          onClick={() => deleteJob(job)}
-                          className="text-rose-300 hover:text-rose-200"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          Supprimer
-                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" disabled={busyJobId === job.id} aria-label="Plus d'actions">
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => openGeneralEdit(job)}>
+                              <Pencil className="h-4 w-4" />
+                              Modifier
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openSshEdit(job)}>
+                              <Settings2 className="h-4 w-4" />
+                              Source SSH
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => rotateTriggerToken(job)}>
+                              <RotateCw className="h-4 w-4" />
+                              Lien externe
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => deleteJob(job)} className="text-rose-300 focus:text-rose-200">
+                              <Trash2 className="h-4 w-4" />
+                              Supprimer
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </div>
                   </CardHeader>

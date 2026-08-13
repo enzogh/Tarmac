@@ -7,6 +7,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Loader2,
+  MoreVertical,
   Pencil,
   PauseCircle,
   PlayCircle,
@@ -18,6 +19,9 @@ import {
 import { api, MigrationItem, NodeItem } from '../../../../lib/api';
 import { usePolling } from '../../../../lib/hooks/usePolling';
 import { PageHeader } from '../../../../components/PageHeader';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../../../components/ui/dropdown-menu';
+import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
+import { RainbowButton } from '../../../../components/ui/rainbow-button';
 import { SectionLabel } from '../../../../components/SectionLabel';
 import { Callout } from '../../../../components/Callout';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../../components/ui/card';
@@ -885,19 +889,15 @@ export default function MigrationsPage() {
 
         <PageHeader
           icon={ArrowRightLeft}
-          title="Migrations"
+          title={<AnimatedGradientText speed={0.6}>Migrations</AnimatedGradientText>}
           description="Déplacez des volumes de stockage entre nœuds, seedboxes ou Storage Boxes, avec suivi en direct."
           actions={
-            <Button onClick={() => setWizardOpen(true)} className="gap-2 bg-violet-600 text-white hover:bg-violet-500">
+            <RainbowButton onClick={() => setWizardOpen(true)} className="gap-2">
               <Plus className="h-5 w-5" />
               Nouvelle migration
-            </Button>
+            </RainbowButton>
           }
         />
-
-        <Callout variant="info">
-          Éditable tant qu’elle est en attente, relançable après un échec. Dossiers source/destination à choisir en navigation live, sans CLI.
-        </Callout>
 
         <section className="space-y-4">
           <SectionLabel>Aperçu</SectionLabel>
@@ -1006,13 +1006,6 @@ export default function MigrationsPage() {
                         </Button>
                       )}
 
-                      {canEditMigration(migration) && (
-                        <Button variant="outline" onClick={() => openEditDialog(migration)} disabled={busyId === migration.id} className="gap-2">
-                          <Pencil className="h-4 w-4" />
-                          Éditer
-                        </Button>
-                      )}
-
                       {migration.status === 'failed' && (
                         <Button variant="secondary" onClick={() => retryMigration(migration.id)} disabled={busyId === migration.id} className="gap-2">
                           {busyId === migration.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
@@ -1032,16 +1025,31 @@ export default function MigrationsPage() {
                         </Button>
                       )}
 
-                      {canDeleteMigration(migration) && (
-                        <Button
-                          variant="ghost"
-                          onClick={() => setDeleteMigration(migration)}
-                          disabled={busyId === migration.id}
-                          className="gap-2 text-rose-300 hover:text-rose-200"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          Supprimer
-                        </Button>
+                      {(canEditMigration(migration) || canDeleteMigration(migration)) && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" disabled={busyId === migration.id} aria-label="Plus d'actions">
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {canEditMigration(migration) && (
+                              <DropdownMenuItem onClick={() => openEditDialog(migration)}>
+                                <Pencil className="h-4 w-4" />
+                                Éditer
+                              </DropdownMenuItem>
+                            )}
+                            {canDeleteMigration(migration) && (
+                              <DropdownMenuItem
+                                onClick={() => setDeleteMigration(migration)}
+                                className="text-rose-300 focus:text-rose-200"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                Supprimer
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       )}
                     </div>
                   </CardContent>
@@ -1053,10 +1061,7 @@ export default function MigrationsPage() {
 
         <SectionLabel>Archives</SectionLabel>
         <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
-          <CardHeader>
-            <CardTitle className="text-lg">Migrations terminées</CardTitle>
-          </CardHeader>
-          <CardContent>
+          <CardContent className="pt-6">
             {migrationsLoading ? (
               <Table>
                 <TableHeader>

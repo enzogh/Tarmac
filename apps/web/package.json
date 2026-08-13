@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.18",
+    "@radix-ui/react-dropdown-menu": "^2.1.24",
     "@radix-ui/react-label": "^2.1.11",
     "@radix-ui/react-progress": "^1.1.11",
     "@radix-ui/react-select": "^2.3.2",
@@ -33,6 +34,7 @@
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
+    "@modern-core/ui": "^1.0.1-beta",
     "@types/leaflet": "^1.9.21",
     "@types/node": "^22.5.4",
     "@types/react": "^18.3.5",

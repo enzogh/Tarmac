@@ -1,10 +1,11 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Bell, Eye, CheckCircle2, AlertCircle, AlertTriangle, Circle, Trash2 } from 'lucide-react';
+import { Bell, Eye, CheckCircle2, AlertCircle, AlertTriangle, Trash2 } from 'lucide-react';
 import { api } from '../../../../lib/api';
 import { usePolling } from '../../../../lib/hooks/usePolling';
 import { PageHeader } from '../../../../components/PageHeader';
+import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
 import { Callout } from '../../../../components/Callout';
 import { Badge, StatCard } from '../../../../components/ui';
 import { SectionLabel } from '../../../../components/SectionLabel';
@@ -80,15 +81,6 @@ export default function AlertsPage() {
     }
   };
 
-  const getSeverityIcon = (severity: string) => {
-    switch (severity) {
-      case 'critical': return <AlertCircle className="h-5 w-5 text-rose-400" />;
-      case 'high': return <AlertTriangle className="h-5 w-5 text-amber-400" />;
-      case 'medium': return <Circle className="h-5 w-5 text-sky-400" />;
-      default: return <Circle className="h-5 w-5 text-zinc-400" />;
-    }
-  };
-
   const filtered = useMemo(() => {
     let result = alerts;
     if (severityFilter !== 'all') result = result.filter((a) => a.severity === severityFilter);
@@ -144,14 +136,9 @@ export default function AlertsPage() {
       <div className="space-y-8">
         <PageHeader
           icon={Bell}
-          title="Alertes"
+          title={<AnimatedGradientText speed={0.6}>Alertes</AnimatedGradientText>}
           description="Notifications déclenchées par vos règles de seuil (CPU, RAM, espace disque…)."
         />
-
-        <Callout>
-          Marquez une alerte comme lue pour indiquer que vous l'avez vue, résolvez-la une fois le problème corrigé,
-          ou supprimez-la pour nettoyer l'historique. Cochez plusieurs alertes pour les supprimer en une seule fois.
-        </Callout>
 
         {error && <Callout variant="danger">{error}</Callout>}
 
@@ -252,10 +239,6 @@ export default function AlertsPage() {
                     onChange={() => toggleSelected(alert.id)}
                     className="h-4 w-4 mt-1 flex-shrink-0 rounded"
                   />
-                  <div className="flex-shrink-0 mt-0.5">
-                    {getSeverityIcon(alert.severity)}
-                  </div>
-
                   <div className="flex-1">
                     <div className="flex items-start justify-between gap-4 mb-2">
                       <div>

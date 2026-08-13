@@ -1,9 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { AlertCircle, CheckCircle2, Globe, Layers, MapPin, Plus, Server, ShieldCheck } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Globe, Layers, List, MapPin, Plus, Server, ShieldCheck } from 'lucide-react';
 import { api, DnsRecordItem, DnsZoneItem } from '../../../../lib/api';
 import { PageHeader } from '../../../../components/PageHeader';
+import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
+import { RainbowButton } from '../../../../components/ui/rainbow-button';
 import { SectionLabel } from '../../../../components/SectionLabel';
 import { Alert, AlertDescription } from '../../../../components/ui/alert';
 import { Button } from '../../../../components/ui/button';
@@ -96,7 +98,7 @@ export default function DnsPage() {
 
         <PageHeader
           icon={Globe}
-          title="DNS"
+          title={<AnimatedGradientText speed={0.6}>DNS</AnimatedGradientText>}
           description="Désignez des serveurs DNS primaire/secondaire dans votre flotte, gérez vos zones et le géo-routage."
           actions={
             <div className="flex gap-2">
@@ -109,10 +111,10 @@ export default function DnsPage() {
                 <Plus className="w-4 h-4" />
                 Nouvelle zone
               </Button>
-              <Button onClick={() => setGroupDialogOpen(true)} className="gap-2 bg-violet-600 text-white hover:bg-violet-500">
-                <Plus className="w-5 h-5" />
+              <RainbowButton onClick={() => setGroupDialogOpen(true)} className="gap-2">
+                <Plus className="w-4 h-4" />
                 Nouveau groupe DNS
-              </Button>
+              </RainbowButton>
             </div>
           }
         />
@@ -120,13 +122,14 @@ export default function DnsPage() {
         <section className="space-y-4">
           <SectionLabel>Aperçu</SectionLabel>
           {groupsLoading ? (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <StatCardSkeleton />
               <StatCardSkeleton />
               <StatCardSkeleton />
               <StatCardSkeleton />
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3 animate-fade-in">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4 animate-fade-in">
               <StatCard label="Groupes DNS" value={groups.length} icon={<Layers className="h-8 w-8" />} changeType="neutral" />
               <StatCard
                 label="Groupes actifs"
@@ -134,7 +137,8 @@ export default function DnsPage() {
                 icon={<ShieldCheck className="h-8 w-8" />}
                 changeType={activeGroups === groups.length && groups.length > 0 ? 'up' : 'neutral'}
               />
-              <StatCard label="Zones / records" value={`${zones.length} / ${totalRecords}`} icon={<Globe className="h-8 w-8" />} changeType="neutral" />
+              <StatCard label="Zones" value={zones.length} icon={<Globe className="h-8 w-8" />} changeType="neutral" />
+              <StatCard label="Records" value={totalRecords} icon={<List className="h-8 w-8" />} changeType="neutral" />
             </div>
           )}
         </section>

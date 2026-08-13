@@ -18,6 +18,7 @@ import { api, NodeActivityItem, NodeHeartbeatLiveEvent, NodeMetricSample } from 
 import { usePolling } from '../../../lib/hooks/usePolling';
 import { useLiveSocket } from '../../../lib/hooks/useLiveSocket';
 import { PageHeader } from '../../../components/PageHeader';
+import { AnimatedGradientText } from '../../../components/ui/animated-gradient-text';
 import { ServerTrendCard } from '../../../components/ServerTrendCard';
 import { FleetPerformanceChart, NetworkThroughputChart, StorageBreakdownChart } from '../../../components/dashboard-charts';
 import { StatCard, Badge } from '../../../components/ui';
@@ -209,7 +210,7 @@ export default function OverviewPage() {
       <div className="space-y-10">
         <PageHeader
           icon={LayoutDashboard}
-          title="Vue d'ensemble"
+          title={<AnimatedGradientText speed={0.6}>Vue d&apos;ensemble</AnimatedGradientText>}
           description="État en direct de votre flotte de nœuds : capacité, charge, alertes et travaux en cours."
         />
 

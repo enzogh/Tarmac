@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import { SiteHeader } from '../components/SiteHeader';
 import { Button } from '../components/ui/button';
+import { RainbowButton } from '../components/ui/rainbow-button';
+import { AnimatedGradientText } from '../components/ui/animated-gradient-text';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Reveal } from '../components/motion/reveal';
 import { AnimatedCounter } from '../components/motion/animated-counter';
@@ -143,7 +145,8 @@ export default function LandingPage() {
               custom={0.08}
               variants={fadeUp}
             >
-              Pilotez vos nœuds de stockage, tous interconnectés.
+              Pilotez vos nœuds de stockage,{' '}
+              <AnimatedGradientText className="font-semibold">tous interconnectés.</AnimatedGradientText>
             </motion.h1>
 
             <motion.p
@@ -165,12 +168,12 @@ export default function LandingPage() {
               custom={0.24}
               variants={fadeUp}
             >
-              <Button size="lg" asChild>
+              <RainbowButton size="lg" asChild>
                 <Link href="/login">
                   Se connecter
                   <ArrowRight className="h-4 w-4" />
                 </Link>
-              </Button>
+              </RainbowButton>
               <Button size="lg" variant="outline" asChild>
                 <Link href="/docs">Découvrir la documentation</Link>
               </Button>

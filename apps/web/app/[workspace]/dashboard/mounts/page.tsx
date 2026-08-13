@@ -21,7 +21,8 @@ import {
 import { api, MountItem, NodeItem, VlanMember } from '../../../../lib/api';
 import { usePolling } from '../../../../lib/hooks/usePolling';
 import { PageHeader } from '../../../../components/PageHeader';
-import { Callout } from '../../../../components/Callout';
+import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
+import { RainbowButton } from '../../../../components/ui/rainbow-button';
 import { Card, CardContent } from '../../../../components/ui/card';
 import { Button } from '../../../../components/ui/button';
 import { Alert, AlertDescription } from '../../../../components/ui/alert';
@@ -1098,7 +1099,7 @@ export default function MountsPage() {
         {/* Header */}
         <PageHeader
           icon={HardDrive}
-          title="Montages"
+          title={<AnimatedGradientText speed={0.6}>Montages</AnimatedGradientText>}
           description="Montez des sources NFS, avec repli en cas de panne, sur un nœud."
           actions={
             <>
@@ -1106,10 +1107,10 @@ export default function MountsPage() {
                 <HardDrive className="h-4 w-4" />
                 Monter un partage
               </Button>
-              <Button onClick={() => openWizard('create-share')} className="gap-2 bg-violet-600 text-white hover:bg-violet-500">
+              <RainbowButton onClick={() => openWizard('create-share')} className="gap-2">
                 <Network className="h-4 w-4" />
                 Nouveau partage NFS
-              </Button>
+              </RainbowButton>
             </>
           }
         />
@@ -1140,17 +1141,6 @@ export default function MountsPage() {
             </div>
           )}
         </section>
-
-        {/* Info banner */}
-        <Callout variant="info">
-          <p>
-            <strong className="font-medium text-violet-300">Nouveau partage NFS</strong> crée et monte un dossier
-            partagé entre deux serveurs via le réseau VLAN en un seul clic.{' '}
-            <strong className="font-medium text-violet-300">Monter un partage</strong> connecte un partage NFS déjà
-            existant.
-          </p>
-          <p className="mt-1">Tous les montages sont rendus persistants automatiquement.</p>
-        </Callout>
 
         {/* Mount list */}
         <SectionLabel>Montages</SectionLabel>

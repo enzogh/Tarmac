@@ -38,7 +38,9 @@ import { GeoInfo, flagFromCountryCode, getGeoInfo, normalizeCountryCode, parseHo
 import { readNodeLabels, writeNodeLabels } from '../../../../lib/node-labels';
 import { meterTone } from '../../../../lib/utils';
 import { PageHeader } from '../../../../components/PageHeader';
+import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
 import { Callout } from '../../../../components/Callout';
+import { Alert, AlertDescription } from '../../../../components/ui/alert';
 import { SmartTrendChart } from '../../../../components/dashboard-charts';
 import { ServerTrendCard } from '../../../../components/ServerTrendCard';
 import { NodeComparisonChart } from '../../../../components/dashboard-charts';
@@ -527,20 +529,15 @@ export default function InfrastructurePage() {
       <div className="space-y-8">
         <PageHeader
           icon={Server}
-          title="Infrastructure"
+          title={<AnimatedGradientText speed={0.6}>Infrastructure</AnimatedGradientText>}
           description="Pilotage des nœuds, monitoring temps réel, scan volumétrique des dossiers et opérations agent sans CLI."
+          actions={<NodeOnboardingModal onCreated={refreshNodes} />}
         />
 
         {updateNotice && (
-          <div
-            className={`rounded-xl border px-4 py-3 text-sm ${
-              updateNotice.type === 'error'
-                ? 'border-rose-500/30 bg-rose-500/10 text-rose-200'
-                : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
-            }`}
-          >
-            {updateNotice.message}
-          </div>
+          <Alert variant={updateNotice.type === 'error' ? 'destructive' : 'success'}>
+            <AlertDescription>{updateNotice.message}</AlertDescription>
+          </Alert>
         )}
 
         <section className="space-y-4">
@@ -791,7 +788,6 @@ export default function InfrastructurePage() {
                     ({controlVersion ? `réf. ${controlVersion}` : systemVersionLoading ? 'chargement de la référence…' : 'référence indisponible sur ce contrôleur'})
                   </TooltipContent>
                 </Tooltip>
-                <NodeOnboardingModal onCreated={refreshNodes} />
               </div>
             </div>
           </CardHeader>

@@ -31,6 +31,15 @@
     --chart-4: 43 96% 56%;
     --chart-5: 351 89% 71%;
 
+    /* Rainbow-button sweep: blue -> violet -> purple, matching the
+       rgba(37,99,235,...) / rgba(168,85,247,...) accents already used in the
+       page background below, instead of a literal red-to-green rainbow. */
+    --color-1: 221 83% 60%;
+    --color-2: 234 78% 62%;
+    --color-3: 254 75% 63%;
+    --color-4: 271 76% 67%;
+    --color-5: 285 65% 68%;
+
     color-scheme: dark;
   }
 

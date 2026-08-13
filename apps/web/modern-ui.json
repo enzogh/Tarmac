@@ -1,0 +1,29 @@
+{
+  "style": "default",
+  "path": "components/ui",
+  "theme": "default",
+  "typescript": true,
+  "tailwind": true,
+  "framework": "next",
+  "aliases": {
+    "cn": "@/lib/utils",
+    "hook": "@/lib/hooks"
+  },
+  "components": [
+    {
+      "name": "animated-gradient-text",
+      "version": "manual",
+      "installedAt": "2026-08-13"
+    },
+    {
+      "name": "rainbow-button",
+      "version": "manual",
+      "installedAt": "2026-08-13"
+    },
+    {
+      "name": "dropdown-menu",
+      "version": "manual",
+      "installedAt": "2026-08-13"
+    }
+  ]
+}

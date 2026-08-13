@@ -6,6 +6,7 @@ import { AlertTriangle, Mail, Save, Settings, ShieldCheck, Trash2, Users } from 
 import { api, WorkspaceListItem, WorkspaceMember } from '../../../../lib/api';
 import { usePolling } from '../../../../lib/hooks/usePolling';
 import { PageHeader } from '../../../../components/PageHeader';
+import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../../components/ui/card';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
@@ -29,7 +30,7 @@ export default function WorkspaceSettingsPage() {
   if (!workspaces || !profile || !workspace) {
     return (
       <div className="space-y-6">
-        <PageHeader icon={Settings} title="Paramètres" description="Chargement…" />
+        <PageHeader icon={Settings} title={<AnimatedGradientText speed={0.6}>Paramètres</AnimatedGradientText>} description="Chargement…" />
       </div>
     );
   }
@@ -37,7 +38,7 @@ export default function WorkspaceSettingsPage() {
   if (!canManage) {
     return (
       <div className="space-y-6">
-        <PageHeader icon={Settings} title="Paramètres" description={workspace.name} />
+        <PageHeader icon={Settings} title={<AnimatedGradientText speed={0.6}>Paramètres</AnimatedGradientText>} description={workspace.name} />
         <Card>
           <CardContent className="flex flex-col items-center gap-2 py-16 text-center">
             <ShieldCheck className="h-8 w-8 text-muted-foreground" />
@@ -53,7 +54,7 @@ export default function WorkspaceSettingsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader icon={Settings} title="Paramètres" description={`Gère « ${workspace.name} »`} />
+      <PageHeader icon={Settings} title={<AnimatedGradientText speed={0.6}>Paramètres</AnimatedGradientText>} description={`Gère « ${workspace.name} »`} />
       <RenameCard workspace={workspace} onSaved={() => void refreshWorkspaces()} />
       <MembersCard
         workspace={workspace}

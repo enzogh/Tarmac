@@ -19,7 +19,8 @@ import {
 import { api, NodeItem, PoolItem } from '../../../../lib/api';
 import { usePolling } from '../../../../lib/hooks/usePolling';
 import { PageHeader } from '../../../../components/PageHeader';
-import { Callout } from '../../../../components/Callout';
+import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
+import { RainbowButton } from '../../../../components/ui/rainbow-button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../../components/ui/card';
 import { Button } from '../../../../components/ui/button';
 import { Alert, AlertDescription } from '../../../../components/ui/alert';
@@ -278,13 +279,13 @@ export default function StoragePage() {
 
         <PageHeader
           icon={Database}
-          title="Stockage"
+          title={<AnimatedGradientText speed={0.6}>Stockage</AnimatedGradientText>}
           description="Regroupez des nœuds en pools selon une stratégie de redondance."
           actions={
-            <Button onClick={() => setWizardOpen(true)} className="gap-2 bg-violet-600 text-white hover:bg-violet-500">
+            <RainbowButton onClick={() => setWizardOpen(true)} className="gap-2">
               <Plus className="w-5 h-5" />
               Nouveau pool
-            </Button>
+            </RainbowButton>
           }
         />
 
@@ -312,10 +313,6 @@ export default function StoragePage() {
 
         <section className="space-y-4">
           <SectionLabel>Stratégies</SectionLabel>
-          <Callout variant="info">
-            Un pool regroupe des nœuds sous une stratégie logique (miroir, RAID, simple). Le statut passe à
-            «&nbsp;actif&nbsp;» dès que l'agent de chaque nœud membre confirme la configuration.
-          </Callout>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">

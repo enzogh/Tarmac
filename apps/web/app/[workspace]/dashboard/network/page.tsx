@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Gauge,
   Globe2,
+  Info,
   Network,
   Play,
   RadioTower,
@@ -22,8 +23,10 @@ import { GeoInfo, flagFromCountryCode, geocodeCity, getGeoInfo, normalizeCountry
 import { countryCentroid } from '@/lib/country-centroids';
 import { readNodeLabels } from '../../../../lib/node-labels';
 import { PageHeader } from '../../../../components/PageHeader';
+import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
 import { SectionLabel } from '../../../../components/SectionLabel';
 import { Callout } from '../../../../components/Callout';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -1203,22 +1206,22 @@ export default function NetworkPage() {
       )}
 
       <section className="space-y-4">
-        <SectionLabel>Aperçu</SectionLabel>
-        <Callout>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p>
-              Cette page se met à jour automatiquement toutes les 5 secondes. Les nœuds communiquent via un tunnel
-              réseau privé chiffré (WireGuard) ; si un agent ne remonte pas encore ses données, une estimation
-              côté serveur est utilisée à la place.
-            </p>
-            <div className="flex items-center gap-2 text-xs text-violet-200/80">
-              <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-              {lastRefreshAt
-                ? `Dernière sync ${lastRefreshAt.toLocaleTimeString('fr-FR')}`
-                : 'Sync en attente'}
-            </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <SectionLabel>Aperçu</SectionLabel>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            {lastRefreshAt ? `Dernière sync ${lastRefreshAt.toLocaleTimeString('fr-FR')}` : 'Sync en attente'}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Info className="h-3.5 w-3.5 cursor-help" />
+              </TooltipTrigger>
+              <TooltipContent>
+                Se met à jour toutes les 5 secondes. Les nœuds communiquent via un tunnel WireGuard chiffré ; si un
+                agent ne remonte pas encore ses données, une estimation côté serveur est utilisée.
+              </TooltipContent>
+            </Tooltip>
           </div>
-        </Callout>
+        </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           <StatCard label="Nœuds actifs" value={vlanStatus.memberCount} icon={<Network className="h-8 w-8" />} changeType="neutral" />
@@ -1246,6 +1249,151 @@ export default function NetworkPage() {
           />
         </div>
       </section>
+
+      <SectionLabel>Diagnostics</SectionLabel>
+      <Card className="border-white/[0.08] bg-panel-glow backdrop-blur transition-colors hover:border-white/[0.14]">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Waves className="h-5 w-5 text-violet-400" />
+            <CardTitle className="text-base">Tests de connectivité</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div>
+              <p className="mb-1 text-xs text-muted-foreground">Depuis</p>
+              <Select
+                value={selectedTest.from}
+                onValueChange={(value) => setSelectedTest((prev) => ({ ...prev, from: value }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Sélectionner" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(vlanStatus.vlan.members || []).map((m) => (
+                    <SelectItem key={m.id} value={m.nodeId}>
+                      {(m.node?.name || m.nodeId) +
+                        ` (${m.vlanIp})` +
+                        ((nodeLabels[m.nodeId]?.length ?? 0) > 0 ? ` — ${nodeLabels[m.nodeId].join(', ')}` : '')}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <p className="mb-1 text-xs text-muted-foreground">Vers</p>
+              <Select
+                value={selectedTest.to}
+                onValueChange={(value) => setSelectedTest((prev) => ({ ...prev, to: value }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Sélectionner" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(vlanStatus.vlan.members || [])
+                    .filter((m) => m.nodeId !== selectedTest.from)
+                    .map((m) => (
+                      <SelectItem key={m.id} value={m.nodeId}>
+                        {(m.node?.name || m.nodeId) +
+                          ` (${m.vlanIp})` +
+                          ((nodeLabels[m.nodeId]?.length ?? 0) > 0 ? ` — ${nodeLabels[m.nodeId].join(', ')}` : '')}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <p className="mb-1 text-xs text-muted-foreground">Type</p>
+              <Select
+                value={selectedTest.type}
+                onValueChange={(value) => {
+                  if (isTestType(value)) {
+                    setSelectedTest((prev) => ({ ...prev, type: value }));
+                  }
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Sélectionner" />
+                </SelectTrigger>
+                <SelectContent>
+                  {TEST_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <Button onClick={handleRunTest} disabled={testRunning} className="w-full">
+            <Play className="h-4 w-4" />
+            {testRunning ? 'Test en cours...' : 'Exécuter le test'}
+          </Button>
+
+          {tests.length > 0 && (
+            <div className="space-y-2">
+              {tests.slice(0, 5).map((test) => (
+                <div
+                  key={test.id}
+                  className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="space-y-1">
+                      <p className="font-mono text-xs text-foreground">
+                        {(memberByNodeId.get(test.initiatorNodeId)?.vlanIp || test.initiatorNodeId.slice(0, 8))} →{' '}
+                        {(memberByNodeId.get(test.targetNodeId)?.vlanIp || test.targetNodeId.slice(0, 8))}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {test.testType === 'traceroute'
+                          ? `${test.hops?.length ?? 0} saut(s)`
+                          : `${formatLatency(test.latencyMs)} · ${formatLoss(test.packetLoss)}`}
+                      </p>
+                      {test.status !== 'success' && test.status !== 'pending' && test.resultMessage && (
+                        <p className="text-xs text-rose-400">{test.resultMessage}</p>
+                      )}
+                    </div>
+                    <Badge
+                      label={testStatusLabel[test.status]}
+                      type={test.status === 'success' ? 'success' : test.status === 'pending' ? 'info' : 'error'}
+                      icon={<Waves className="h-3 w-3" />}
+                    />
+                  </div>
+                  {test.testType === 'traceroute' && test.hops && test.hops.length > 0 && (
+                    <ol className="mt-3 space-y-1.5 border-t border-white/[0.06] pt-3">
+                      {test.hops.map((hop) => {
+                        const hopMember = hop.ip ? memberByVlanIp.get(hop.ip) : undefined;
+                        return (
+                          <li key={hop.hop} className="flex flex-wrap items-center gap-2 text-xs">
+                            <span className="w-5 shrink-0 text-right font-mono text-[11px] text-muted-foreground">
+                              {hop.hop}
+                            </span>
+                            <span className="font-mono text-zinc-300">{hop.ip ?? '* (aucune réponse)'}</span>
+                            {hopMember && (
+                              <span className="text-zinc-100">
+                                {hopMember.node?.name ?? hopMember.nodeId}
+                              </span>
+                            )}
+                            {hopMember?.region && (
+                              <Badge label={REGION_LABELS[hopMember.region] ?? hopMember.region} type="info" />
+                            )}
+                            {hopMember?.node?.overlayIsGateway && <Badge label="Passerelle" type="warning" />}
+                            <span className="ml-auto font-mono text-[11px] text-muted-foreground">
+                              {formatLatency(hop.latencyMs)}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <SectionLabel>Topologie</SectionLabel>
 
@@ -1853,151 +2001,6 @@ export default function NetworkPage() {
           </div>
         </CardContent>
       </Card>
-
-      <SectionLabel>Diagnostics</SectionLabel>
-      <Card className="border-white/[0.08] bg-panel-glow backdrop-blur transition-colors hover:border-white/[0.14]">
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <Waves className="h-5 w-5 text-violet-400" />
-            <CardTitle className="text-base">Tests de connectivité</CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div>
-              <p className="mb-1 text-xs text-muted-foreground">Depuis</p>
-              <Select
-                value={selectedTest.from}
-                onValueChange={(value) => setSelectedTest((prev) => ({ ...prev, from: value }))}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Sélectionner" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(vlanStatus.vlan.members || []).map((m) => (
-                    <SelectItem key={m.id} value={m.nodeId}>
-                      {(m.node?.name || m.nodeId) +
-                        ` (${m.vlanIp})` +
-                        ((nodeLabels[m.nodeId]?.length ?? 0) > 0 ? ` — ${nodeLabels[m.nodeId].join(', ')}` : '')}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <p className="mb-1 text-xs text-muted-foreground">Vers</p>
-              <Select
-                value={selectedTest.to}
-                onValueChange={(value) => setSelectedTest((prev) => ({ ...prev, to: value }))}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Sélectionner" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(vlanStatus.vlan.members || [])
-                    .filter((m) => m.nodeId !== selectedTest.from)
-                    .map((m) => (
-                      <SelectItem key={m.id} value={m.nodeId}>
-                        {(m.node?.name || m.nodeId) +
-                          ` (${m.vlanIp})` +
-                          ((nodeLabels[m.nodeId]?.length ?? 0) > 0 ? ` — ${nodeLabels[m.nodeId].join(', ')}` : '')}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <p className="mb-1 text-xs text-muted-foreground">Type</p>
-              <Select
-                value={selectedTest.type}
-                onValueChange={(value) => {
-                  if (isTestType(value)) {
-                    setSelectedTest((prev) => ({ ...prev, type: value }));
-                  }
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Sélectionner" />
-                </SelectTrigger>
-                <SelectContent>
-                  {TEST_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <Button onClick={handleRunTest} disabled={testRunning} className="w-full">
-            <Play className="h-4 w-4" />
-            {testRunning ? 'Test en cours...' : 'Exécuter le test'}
-          </Button>
-
-          {tests.length > 0 && (
-            <div className="space-y-2">
-              {tests.slice(0, 5).map((test) => (
-                <div
-                  key={test.id}
-                  className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3"
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="space-y-1">
-                      <p className="font-mono text-xs text-foreground">
-                        {(memberByNodeId.get(test.initiatorNodeId)?.vlanIp || test.initiatorNodeId.slice(0, 8))} →{' '}
-                        {(memberByNodeId.get(test.targetNodeId)?.vlanIp || test.targetNodeId.slice(0, 8))}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {test.testType === 'traceroute'
-                          ? `${test.hops?.length ?? 0} saut(s)`
-                          : `${formatLatency(test.latencyMs)} · ${formatLoss(test.packetLoss)}`}
-                      </p>
-                      {test.status !== 'success' && test.status !== 'pending' && test.resultMessage && (
-                        <p className="text-xs text-rose-400">{test.resultMessage}</p>
-                      )}
-                    </div>
-                    <Badge
-                      label={testStatusLabel[test.status]}
-                      type={test.status === 'success' ? 'success' : test.status === 'pending' ? 'info' : 'error'}
-                      icon={<Waves className="h-3 w-3" />}
-                    />
-                  </div>
-                  {test.testType === 'traceroute' && test.hops && test.hops.length > 0 && (
-                    <ol className="mt-3 space-y-1.5 border-t border-white/[0.06] pt-3">
-                      {test.hops.map((hop) => {
-                        const hopMember = hop.ip ? memberByVlanIp.get(hop.ip) : undefined;
-                        return (
-                          <li key={hop.hop} className="flex flex-wrap items-center gap-2 text-xs">
-                            <span className="w-5 shrink-0 text-right font-mono text-[11px] text-muted-foreground">
-                              {hop.hop}
-                            </span>
-                            <span className="font-mono text-zinc-300">{hop.ip ?? '* (aucune réponse)'}</span>
-                            {hopMember && (
-                              <span className="text-zinc-100">
-                                {hopMember.node?.name ?? hopMember.nodeId}
-                              </span>
-                            )}
-                            {hopMember?.region && (
-                              <Badge label={REGION_LABELS[hopMember.region] ?? hopMember.region} type="info" />
-                            )}
-                            {hopMember?.node?.overlayIsGateway && <Badge label="Passerelle" type="warning" />}
-                            <span className="ml-auto font-mono text-[11px] text-muted-foreground">
-                              {formatLatency(hop.latencyMs)}
-                            </span>
-                          </li>
-                        );
-                      })}
-                    </ol>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 
@@ -2005,7 +2008,7 @@ export default function NetworkPage() {
       <div className="space-y-6">
         <PageHeader
           icon={Network}
-          title="Réseau"
+          title={<AnimatedGradientText speed={0.6}>Réseau</AnimatedGradientText>}
           description="Visualisez le VLAN privé qui relie vos nœuds et testez la connectivité entre eux."
         />
 

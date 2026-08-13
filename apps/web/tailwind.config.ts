@@ -92,12 +92,21 @@ const config: Config = {
           '0%': { backgroundPosition: '-200% 0' },
           '100%': { backgroundPosition: '200% 0' },
         },
+        gradient: {
+          to: { backgroundPosition: 'var(--bg-size) 0' },
+        },
+        rainbow: {
+          '0%': { 'background-position': '0%' },
+          '100%': { 'background-position': '200%' },
+        },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
         'accordion-up': 'accordion-up 0.2s ease-out',
         'fade-in': 'fade-in 220ms ease-out',
         shimmer: 'shimmer 1.8s linear infinite',
+        gradient: 'gradient 8s linear infinite',
+        rainbow: 'rainbow var(--speed, 2s) infinite linear',
       },
     },
   },
