@@ -36,23 +36,32 @@ function GroupLinkLatency({
   sourceLabel: string;
   targetLabel: string;
 }) {
-  const [history, setHistory] = useState<VlanConnectionHistory | null>(null);
+  // Only the node that actively runs the WireGuard latency/loss probe gets
+  // latencyMs/packetLoss written for its direction - the mirrored reverse
+  // direction only ever gets `status` + rx bandwidth, latency stays null
+  // forever for that direction even though the link is genuinely healthy
+  // (see agents.service.ts's link-metric ingestion). A fixed
+  // source->target query can land on the unmeasured direction and render a
+  // silently blank chart under a correct-looking uptime % - fetch both
+  // directions and show whichever one actually has data.
+  const [forward, setForward] = useState<VlanConnectionHistory | null>(null);
+  const [reverse, setReverse] = useState<VlanConnectionHistory | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    api.vlan
-      .getHistory(vlanId, sourceNodeId, targetNodeId, '1h')
-      .then((h) => {
-        if (!cancelled) setHistory(h);
-      })
-      .catch(() => {
-        if (!cancelled) setHistory(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    Promise.all([
+      api.vlan.getHistory(vlanId, sourceNodeId, targetNodeId, '1h').catch(() => null),
+      api.vlan.getHistory(vlanId, targetNodeId, sourceNodeId, '1h').catch(() => null),
+    ]).then(([f, r]) => {
+      if (!cancelled) {
+        setForward(f);
+        setReverse(r);
+      }
+    }).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
     return () => {
       cancelled = true;
     };
@@ -62,19 +71,29 @@ function GroupLinkLatency({
     return <p className="text-xs text-muted-foreground">Chargement de la liaison…</p>;
   }
 
-  const chartData = (history?.samples ?? []).map((sample) => ({
+  const hasMeasuredLatency = (h: VlanConnectionHistory | null) => (h?.samples ?? []).some((s) => s.latencyMs != null);
+  const useReverse = !hasMeasuredLatency(forward) && hasMeasuredLatency(reverse);
+  const chosen = useReverse ? reverse : forward;
+  const chosenLabel = useReverse ? `${targetLabel} → ${sourceLabel}` : `${sourceLabel} → ${targetLabel}`;
+
+  const chartData = (chosen?.samples ?? []).map((sample) => ({
     label: new Date(sample.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
     latencyMs: sample.latencyMs ?? null,
     packetLoss: sample.packetLoss ?? null,
   }));
+  const noMeasurementsYet = !!chosen && chosen.samples.length > 0 && !hasMeasuredLatency(chosen);
 
   return (
     <div className="space-y-1 rounded-xl border border-white/[0.06] bg-black/10 p-3">
       <p className="font-mono text-xs text-zinc-400">
-        {sourceLabel} → {targetLabel}
-        {history ? ` · ${history.uptimePercent}% uptime (1h)` : ''}
+        {chosenLabel}
+        {chosen ? ` · ${chosen.uptimePercent}% uptime (1h)` : ''}
       </p>
-      <ConnectionHistoryChart data={chartData} />
+      {noMeasurementsYet ? (
+        <p className="text-xs text-muted-foreground">Lien actif, pas encore de mesure de latence (sondage à venir).</p>
+      ) : (
+        <ConnectionHistoryChart data={chartData} />
+      )}
     </div>
   );
 }
