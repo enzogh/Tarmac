@@ -174,6 +174,7 @@ export default function DnsPage() {
               zones={zones}
               zonesLoading={zonesLoading}
               groups={groups}
+              nodes={nodes}
               busyKey={busyKey}
               setBusyKey={setBusyKey}
               setNotice={setNotice}

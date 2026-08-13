@@ -1,9 +1,9 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronDown, Globe, KeyRound, Plus, RefreshCcw, ScrollText, ShieldCheck, Trash2 } from 'lucide-react';
+import { ChevronDown, Copy, Crown, Globe, KeyRound, Plus, RefreshCcw, ShieldCheck, Trash2 } from 'lucide-react';
 import { Cell, Pie, PieChart } from 'recharts';
-import { api, DnsRecordItem, DnsServerGroupItem, DnsZoneItem } from '@/lib/api';
+import { api, DnsRecordItem, DnsServerGroupItem, DnsZoneItem, NodeItem } from '@/lib/api';
 import { SectionLabel } from '@/components/SectionLabel';
 import { Badge } from '@/components/ui';
 import { Button } from '@/components/ui/button';
@@ -64,6 +64,7 @@ export function ZonesSection({
   zones,
   zonesLoading,
   groups,
+  nodes,
   busyKey,
   setBusyKey,
   setNotice,
@@ -76,6 +77,7 @@ export function ZonesSection({
   zones: DnsZoneItem[];
   zonesLoading: boolean;
   groups: DnsServerGroupItem[];
+  nodes: NodeItem[];
   busyKey: string | null;
   setBusyKey: (key: string | null) => void;
   setNotice: (notice: DnsNotice) => void;
@@ -85,6 +87,7 @@ export function ZonesSection({
   onOpenDelegation: (zone: DnsZoneItem) => void;
   onOpenDnssec: (zone: DnsZoneItem) => void;
 }) {
+  const nodeName = (nodeId: string) => nodes.find((n) => n.id === nodeId)?.name ?? nodeId;
   const cards = useCollapsibleCards(zones, (zone) => zone.status !== 'active' || zone.records.length === 0);
 
   const recordsByType = new Map<string, number>();
@@ -166,7 +169,6 @@ export function ZonesSection({
         <div className="grid gap-4 animate-fade-in">
           {zones.map((zone) => {
             const group = groups.find((g) => g.id === zone.groupId);
-            const primaryNodeId = group?.members.find((m) => m.role === 'primary')?.nodeId;
             const key = `zone:${zone.id}`;
             const collapsed = cards.isCollapsed(zone.id);
             return (
@@ -187,16 +189,27 @@ export function ZonesSection({
                     <div className="flex flex-wrap items-center gap-2">
                       {group && <Badge label={group.name} type="info" />}
                       <StatusIndicator status={zone.status} />
-                      {primaryNodeId && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button variant="ghost" size="icon" onClick={() => journal.toggleLogs(key, primaryNodeId)}>
-                              <ScrollText className="h-3.5 w-3.5" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>{journal.expandedLogKey === key ? 'Masquer le journal' : 'Afficher le journal'}</TooltipContent>
-                        </Tooltip>
-                      )}
+                      {group?.members.map((member) => {
+                        const memberKey = `${key}:${member.nodeId}`;
+                        const isPrimary = member.role === 'primary';
+                        return (
+                          <Tooltip key={member.nodeId}>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className={journal.expandedLogKey === memberKey ? 'text-violet-400' : ''}
+                                onClick={() => journal.toggleLogs(memberKey, member.nodeId)}
+                              >
+                                {isPrimary ? <Crown className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              Journal — {nodeName(member.nodeId)} ({isPrimary ? 'primaire' : 'secondaire'})
+                            </TooltipContent>
+                          </Tooltip>
+                        );
+                      })}
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
@@ -258,7 +271,9 @@ export function ZonesSection({
                       </Tooltip>
                     </div>
                   </div>
-                  {primaryNodeId && <JournalLogPanel journal={journal} panelKey={key} nodeId={primaryNodeId} />}
+                  {group?.members.map((member) => (
+                    <JournalLogPanel key={member.nodeId} journal={journal} panelKey={`${key}:${member.nodeId}`} nodeId={member.nodeId} />
+                  ))}
                 </CardHeader>
                 <AnimatePresence initial={false}>
                   {!collapsed && (
