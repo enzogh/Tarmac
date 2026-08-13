@@ -826,6 +826,24 @@ func applyDnsServerGroup(ctx context.Context, payload map[string]interface{}) (s
 		}
 	}
 
+	// This node may currently run this agent's own internal-DNS fallback
+	// forwarder (dnsmasq, see ensureInternalDnsForwarder) bound to port 53
+	// for *.tarmac.local. Unlike a genuinely unknown occupant, we fully own
+	// and understand this one, so there's no need to report a conflict and
+	// wait for an explicit user "kill and retry" - stop it automatically to
+	// make room for the group's own PowerDNS. *.tarmac.local doesn't stay
+	// unresolved here for long: once dnsMarkerPath is written below, the
+	// next periodic ensure_internal_dns_route tick (~30s, from
+	// InternalDnsService.tick) finds it and switches this node to the
+	// /etc/hosts fallback instead, exactly like any node that already ran
+	// its own PowerDNS from the start.
+	if _, err := os.Stat(internalDnsForwarderMarkerPath); err == nil {
+		log.Printf("dns: stopping this node's internal-DNS fallback forwarder to free port 53 for the group's own PowerDNS")
+		if err := removeInternalDnsForwarder(ctx); err != nil {
+			log.Printf("dns: could not stop internal DNS forwarder automatically (continuing, the port probe below may still report a conflict): %v", err)
+		}
+	}
+
 	if conflict := probeDnsPortConflict(); conflict != nil {
 		return "", &dnsServerGroupApplyData{PortConflict: conflict}, fmt.Errorf(
 			"port %d/%s already in use by %s",
