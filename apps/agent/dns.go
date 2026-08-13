@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -971,8 +972,59 @@ func (c *pdnsClient) patchRrsets(ctx context.Context, fqdn string, rrsets []map[
 	return nil
 }
 
+// enableDnssec is idempotent and self-healing. It used to unconditionally
+// POST a new key on every call - harmless-looking, but applyDnsZone calls it
+// on every apply (every reconciliation pass, every "Réappliquer", every
+// record edit that flips the zone back to pending), so a zone left signed
+// for any length of time accumulated one extra key per apply with the old
+// ones never removed (confirmed in production: intraced.fr had 6 active
+// keys). Now it fetches existing keys first and only creates one if none is
+// active; if it finds more than one (recovering from that old bug), it
+// keeps the most recently created key and deletes the rest - safe either
+// way since without a DS published at the parent zone (the state a zone is
+// in until the operator adds it at their registrar), no resolver has
+// anchored trust to any specific key yet.
 func (c *pdnsClient) enableDnssec(ctx context.Context, fqdn string) error {
+	existing, err := c.fetchCryptoKeys(ctx, fqdn)
+	if err != nil {
+		return err
+	}
+
+	var activeIDs []int
+	for _, key := range existing {
+		if active, ok := key["active"].(bool); ok && active {
+			if id, ok := key["id"].(float64); ok {
+				activeIDs = append(activeIDs, int(id))
+			}
+		}
+	}
+
+	if len(activeIDs) == 1 {
+		return nil
+	}
+
+	if len(activeIDs) > 1 {
+		sort.Ints(activeIDs)
+		for _, id := range activeIDs[:len(activeIDs)-1] {
+			if err := c.deleteCryptoKey(ctx, fqdn, id); err != nil {
+				log.Printf("dns: failed to remove duplicate DNSSEC key %d for %s: %v", id, fqdn, err)
+			}
+		}
+		return nil
+	}
+
 	respBody, status, err := c.request(ctx, http.MethodPost, "/zones/"+url.PathEscape(fqdn)+"/cryptokeys", map[string]interface{}{"keytype": "ksk", "active": true})
+	if err != nil {
+		return err
+	}
+	if status >= 300 {
+		return fmt.Errorf("%s", strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}
+
+func (c *pdnsClient) deleteCryptoKey(ctx context.Context, fqdn string, id int) error {
+	respBody, status, err := c.request(ctx, http.MethodDelete, "/zones/"+url.PathEscape(fqdn)+"/cryptokeys/"+strconv.Itoa(id), nil)
 	if err != nil {
 		return err
 	}
