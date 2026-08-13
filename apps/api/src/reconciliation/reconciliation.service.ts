@@ -131,7 +131,6 @@ export class ReconciliationService implements OnModuleInit {
           ...(member.role === 'secondary'
             ? { primaryVlanIp: primaryMember?.node.vlanIp ?? null, tsigKeySecret: member.group.tsigKeySecret }
             : {}),
-          ...(process.env.MAXMIND_LICENSE_KEY ? { maxmindLicenseKey: process.env.MAXMIND_LICENSE_KEY } : {}),
         },
       });
       this.logger.debug(`Sent DNS server group command for group ${member.groupId} member ${member.nodeId}`);

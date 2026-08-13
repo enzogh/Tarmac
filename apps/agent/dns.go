@@ -75,7 +75,6 @@ const (
 	pdnsLmdbFilePath      = "/var/lib/powerdns/pdns.lmdb"
 	pdnsBackendMarkerPath = "/etc/tarmac-agent/pdns-backend"
 	dnsMarkerPath         = "/etc/tarmac-agent/dns-enabled"
-	geoipConfPath         = "/etc/GeoIP.conf"
 	geoipDatabaseDir      = "/usr/share/GeoIP"
 )
 
@@ -332,46 +331,6 @@ func resolveDnsPortConflict(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("port %d/%s is still in use after attempting to free it", remaining.Port, remaining.Protocol)
 	}
 	return fmt.Sprintf("freed port %d/%s", conflict.Port, conflict.Protocol), nil
-}
-
-// ensureGeoipDatabase installs geoipupdate and refreshes the GeoLite2 MMDB
-// that PowerDNS's Lua pickclosest() geo function reads. MaxMind requires a
-// free account + license key to download it - licenseKey comes from the
-// MAXMIND_LICENSE_KEY env var on the control plane, relayed through the
-// apply_dns_server_group payload, and is only ever written to this node's
-// own /etc/GeoIP.conf, never persisted in Tarmac's database.
-func ensureGeoipDatabase(ctx context.Context, licenseKey string) error {
-	if licenseKey == "" {
-		return nil
-	}
-	if !commandExists("geoipupdate") {
-		if _, err := ensureAgentSystemPackages(ctx, []string{"geoipupdate"}); err != nil {
-			return fmt.Errorf("cannot install geoipupdate: %w", err)
-		}
-	}
-	if err := os.MkdirAll(geoipDatabaseDir, 0o755); err != nil {
-		return fmt.Errorf("cannot create geoip database dir: %w", err)
-	}
-
-	conf := fmt.Sprintf(
-		"AccountID 0\nLicenseKey %s\nEditionIDs GeoLite2-City\nDatabaseDirectory %s\n",
-		licenseKey, geoipDatabaseDir,
-	)
-	if err := os.WriteFile(geoipConfPath, []byte(conf), 0o600); err != nil {
-		return fmt.Errorf("cannot write GeoIP.conf: %w", err)
-	}
-
-	if out, err := exec.CommandContext(ctx, "geoipupdate", "-f", geoipConfPath).CombinedOutput(); err != nil {
-		return fmt.Errorf("geoipupdate failed: %s", strings.TrimSpace(string(out)))
-	}
-
-	if commandExists("systemctl") {
-		// Best-effort: keeps the database fresh going forward. The timer
-		// ships with the package on Debian/Ubuntu but isn't enabled by
-		// default.
-		_ = exec.CommandContext(ctx, "systemctl", "enable", "--now", "geoipupdate.timer").Run()
-	}
-	return nil
 }
 
 func ensurePdnsApiKey() (string, error) {
@@ -820,12 +779,6 @@ func applyDnsServerGroup(ctx context.Context, payload map[string]interface{}) (s
 		return "", nil, err
 	}
 
-	if licenseKey := readString(payload, "maxmindLicenseKey"); licenseKey != "" {
-		if err := ensureGeoipDatabase(ctx, licenseKey); err != nil {
-			log.Printf("dns: geoip database setup failed, geo records will not resolve correctly: %v", err)
-		}
-	}
-
 	allowAxfrIps := readStringSlice(payload, "groupMemberVlanIps")
 	if err := writePdnsConfig(apiKey, allowAxfrIps, backend); err != nil {
 		return "", nil, err
@@ -1104,6 +1057,16 @@ func applyDnsZone(payload map[string]interface{}) (string, error) {
 	fqdn := zoneName + "."
 	records := parseDnsRecords(payload)
 
+	for _, record := range records {
+		if !record.IsGeo {
+			continue
+		}
+		if _, err := os.Stat(geoipMmdbPath); err != nil {
+			log.Printf("dns: no geoip mmdb present yet for zone %s, isGeo records will not resolve correctly until the next refresh", zoneName)
+		}
+		break
+	}
+
 	apiKey, err := ensurePdnsApiKey()
 	if err != nil {
 		return "", err
@@ -1189,8 +1152,15 @@ func applyDnsZone(payload map[string]interface{}) (string, error) {
 			for _, value := range record.Values {
 				quoted = append(quoted, "'"+strings.ReplaceAll(value.Content, "'", "\\'")+"'")
 			}
+			// PowerDNS's LUA rrset content is "<returned-type> \"<lua
+			// expression>\"" - the type comes FIRST, unquoted, and the Lua
+			// expression itself is what's quoted. The previous
+			// "\"a\" pickclosest(...)" form (type quoted, expression bare)
+			// was rejected outright by the API ("Unknown DNS type '"a"'"),
+			// confirmed empirically against a real pdns_server 4.5.3 - isGeo
+			// records never actually worked before this fix.
 			pdnsRecords = []map[string]interface{}{{
-				"content":  fmt.Sprintf("\"a\" pickclosest({%s})", strings.Join(quoted, ", ")),
+				"content":  fmt.Sprintf("A \"pickclosest({%s})\"", strings.Join(quoted, ",")),
 				"disabled": false,
 			}}
 		} else {
@@ -1452,4 +1422,13 @@ func runDnsStartupRecheck() {
 	refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	refreshPdnsConfigOnStartup(refreshCtx)
 	refreshCancel()
+
+	// Builds/refreshes the self-hosted GeoIP mmdb isGeo records need (see
+	// dns_geoip.go) - synchronous here so a node that's never had one gets
+	// it before the first zone apply, then a background ticker keeps it
+	// current for the rest of the process's life.
+	geoipCtx, geoipCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ensureGeoipMmdbFresh(geoipCtx)
+	geoipCancel()
+	startGeoipMmdbRefreshTicker(context.Background())
 }

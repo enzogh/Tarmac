@@ -1953,7 +1953,6 @@ func ensureAgentSystemPackages(ctx context.Context, packages []string) ([]string
 		"smartmontools":        func() bool { return commandExists("smartctl") },
 		"pdns-server":          func() bool { return commandExists("pdns_server") },
 		"pdns-backend-sqlite3": func() bool { return pdnsSqliteBackendInstalled() },
-		"geoipupdate":          func() bool { return commandExists("geoipupdate") },
 	}
 
 	for _, pkg := range packages {
