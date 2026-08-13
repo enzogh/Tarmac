@@ -75,7 +75,8 @@ export interface CommandPayload {
     | 'command.dns_resolve_port_conflict'
     | 'command.setup_internal_dns'
     | 'command.remove_internal_dns'
-    | 'command.ensure_internal_dns_route';
+    | 'command.ensure_internal_dns_route'
+    | 'command.resolve_internal_dns_forwarder_conflict';
   payload: Record<string, unknown>;
 }
 
@@ -101,7 +102,12 @@ export interface CommandResultPayload {
     | 'apply_dns_zone_slave'
     | 'remove_dns_zone'
     | 'dns_get_zone_keys'
-    | 'dns_resolve_port_conflict';
+    | 'dns_resolve_port_conflict'
+    | 'uninstall_dns_node'
+    | 'setup_internal_dns'
+    | 'remove_internal_dns'
+    | 'ensure_internal_dns_route'
+    | 'resolve_internal_dns_forwarder_conflict';
   resourceType:
     | 'share'
     | 'mount'
@@ -117,7 +123,10 @@ export interface CommandResultPayload {
     | 'dns_server_group_member'
     | 'dns_zone'
     | 'dns_zone_slave'
-    | 'dns_zone_keys';
+    | 'dns_zone_keys'
+    | 'dns_node'
+    | 'internal_dns'
+    | 'internal_dns_route';
   resourceId: string;
   success: boolean;
   message?: string;

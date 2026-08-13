@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
+  AlertTriangle,
   ArrowDownToLine,
   ArrowUpToLine,
   Bell,
@@ -127,6 +128,27 @@ export default function InfrastructurePage() {
         await api.dns.internal.designate(node.id);
       }
       await refreshInternalDns();
+    } catch {
+      setUpdateNotice({
+        type: 'error',
+        message: `Impossible de mettre à jour le DNS interne pour ${node.name}.`,
+      });
+    } finally {
+      setInternalDnsBusyId(null);
+    }
+  };
+
+  const resolveInternalDnsForwarderConflict = async (node: NodeActivityItem) => {
+    setInternalDnsBusyId(node.id);
+    try {
+      await api.dns.internal.resolveForwarderConflict(node.id);
+      setUpdateNotice({ type: 'success', message: `Tentative de libération du port envoyée à ${node.name}.` });
+      await refreshNodes();
+    } catch {
+      setUpdateNotice({
+        type: 'error',
+        message: `Impossible d’envoyer la commande à ${node.name} (agent hors ligne ?).`,
+      });
     } finally {
       setInternalDnsBusyId(null);
     }
@@ -148,27 +170,61 @@ export default function InfrastructurePage() {
   // page showed 0 nodes forever despite the API and the socket both
   // working correctly.
   useLiveSocket((message) => {
-    if (message.type !== 'node.heartbeat') return;
-    if (!nodesRaw) return;
-    const update = message.payload as NodeHeartbeatLiveEvent;
-    void refreshNodes(
-      (current) =>
-        current?.map((node): NodeActivityItem =>
-          node.id === update.nodeId
-            ? {
-                ...node,
-                status: update.status,
-                lastSeenAt: update.lastSeenAt,
-                agentVersion: update.agentVersion,
-                agentVersionAt: update.agentVersionAt,
-                agentUpToDate:
-                  update.agentVersion && node.controlVersion ? update.agentVersion === node.controlVersion : null,
-                metrics: { ...update.metrics, sampledAt: update.lastSeenAt },
-              }
-            : node,
-        ) ?? current,
-      { revalidate: false },
-    );
+    if (message.type === 'node.heartbeat') {
+      if (!nodesRaw) return;
+      const update = message.payload as NodeHeartbeatLiveEvent;
+      void refreshNodes(
+        (current) =>
+          current?.map((node): NodeActivityItem =>
+            node.id === update.nodeId
+              ? {
+                  ...node,
+                  status: update.status,
+                  lastSeenAt: update.lastSeenAt,
+                  agentVersion: update.agentVersion,
+                  agentVersionAt: update.agentVersionAt,
+                  agentUpToDate:
+                    update.agentVersion && node.controlVersion ? update.agentVersion === node.controlVersion : null,
+                  metrics: { ...update.metrics, sampledAt: update.lastSeenAt },
+                }
+              : node,
+          ) ?? current,
+        { revalidate: false },
+      );
+      return;
+    }
+
+    // Patches the designated node's confirmed status (pending -> active/
+    // error) the instant the agent's command result lands, instead of
+    // waiting up to 15s for the next poll - see agents.service.ts's
+    // onCommandResult -> live.broadcast('dns.internal.status', ...).
+    if (message.type === 'dns.internal.status') {
+      const update = message.payload as { status: 'pending' | 'active' | 'error' };
+      void refreshInternalDns(
+        (current) => (current ? { ...current, internalDnsStatus: update.status } : current),
+        { revalidate: false },
+      );
+      return;
+    }
+
+    // Same pattern for a node's own fallback-forwarder status/conflict.
+    if (message.type === 'dns.internal.forwarder_status') {
+      if (!nodesRaw) return;
+      const update = message.payload as {
+        nodeId: string;
+        status: string;
+        conflict: NodeActivityItem['internalDnsForwarderConflict'];
+      };
+      void refreshNodes(
+        (current) =>
+          current?.map((node) =>
+            node.id === update.nodeId
+              ? { ...node, internalDnsForwarderStatus: update.status as NodeActivityItem['internalDnsForwarderStatus'], internalDnsForwarderConflict: update.conflict }
+              : node,
+          ) ?? current,
+        { revalidate: false },
+      );
+    }
   });
   // Fetched directly rather than derived from `nodes` (which used to leave
   // it null whenever the fleet was empty, falling back to a confusing
@@ -876,6 +932,28 @@ export default function InfrastructurePage() {
 
                     {labels.length > 0 && <NodeLabelBadges labels={labels} className="mt-3" />}
 
+                    {node.internalDnsForwarderStatus === 'conflict' && node.internalDnsForwarderConflict && (
+                      <Alert variant="destructive" className="mt-3">
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertDescription className="space-y-2">
+                          <p>
+                            DNS interne : le port {node.internalDnsForwarderConflict.port}/
+                            {node.internalDnsForwarderConflict.protocol} est déjà utilisé sur ce nœud par{' '}
+                            <strong>{node.internalDnsForwarderConflict.processName ?? 'un process inconnu'}</strong>
+                            {node.internalDnsForwarderConflict.pid ? ` (pid ${node.internalDnsForwarderConflict.pid})` : ''}{' '}
+                            — le résolveur de repli (dnsmasq) n'a pas pu démarrer.
+                          </p>
+                          <Button
+                            size="sm"
+                            disabled={internalDnsBusyId === node.id}
+                            onClick={() => void resolveInternalDnsForwarderConflict(node)}
+                          >
+                            Tuer le process et réessayer
+                          </Button>
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
                     <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
                       <NodeMeter icon={Cpu} label="CPU" value={node.metrics.cpu} />
                       <NodeMeter icon={Gauge} label="RAM" value={node.metrics.ram} />
@@ -977,19 +1055,27 @@ export default function InfrastructurePage() {
                             size="icon"
                             onClick={() => void toggleInternalDnsNode(node)}
                             disabled={internalDnsBusyId === node.id}
-                            className={`h-8 w-8 ${
-                              internalDnsNodeId === node.id
-                                ? 'text-violet-400 hover:text-violet-300'
-                                : 'text-muted-foreground hover:text-foreground'
+                            className={`h-8 w-8 transition-colors duration-500 ${
+                              internalDnsNodeId !== node.id
+                                ? 'text-muted-foreground hover:text-foreground'
+                                : internalDnsStatus?.internalDnsStatus === 'active'
+                                  ? 'text-emerald-400 hover:text-emerald-300'
+                                  : internalDnsStatus?.internalDnsStatus === 'error'
+                                    ? 'text-rose-400 hover:text-rose-300'
+                                    : 'animate-pulse text-amber-300 hover:text-amber-200'
                             }`}
                           >
                             <Network className="h-3.5 w-3.5" />
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent>
-                          {internalDnsNodeId === node.id
-                            ? 'Serveur DNS interne de la flotte (tarmac.local) — cliquer pour retirer'
-                            : 'Désigner comme serveur DNS interne de la flotte (tarmac.local)'}
+                          {internalDnsNodeId !== node.id
+                            ? 'Désigner comme serveur DNS interne de la flotte (tarmac.local)'
+                            : internalDnsStatus?.internalDnsStatus === 'active'
+                              ? 'Serveur DNS interne actif (tarmac.local) — cliquer pour retirer'
+                              : internalDnsStatus?.internalDnsStatus === 'error'
+                                ? "Échec de l'installation du DNS interne — voir le journal de l'agent, cliquer pour retirer"
+                                : 'Serveur DNS interne — installation en cours…'}
                         </TooltipContent>
                       </Tooltip>
                       <Tooltip>

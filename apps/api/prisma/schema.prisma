@@ -193,6 +193,11 @@ model Workspace {
   // since this one specific node is optionally singled out for that role.
   internalDnsNodeId String?
   internalDnsNode    Node?   @relation("InternalDnsNode", fields: [internalDnsNodeId], references: [id], onDelete: SetNull)
+  // Reports back whether command.setup_internal_dns actually succeeded on
+  // internalDnsNode, not just whether it was requested - reuses the same
+  // pending/active/error enum already used for DnsServerGroupMember.status,
+  // set from agents.service.ts's onCommandResult the same way.
+  internalDnsStatus DnsServerGroupMemberStatus @default(pending)
 
   memberships          WorkspaceMembership[]
   nodes                Node[]
@@ -264,6 +269,15 @@ model Node {
   // node designated to run the internal DNS zone (see Workspace.
   // internalDnsNode) - null means derive one from `name` instead.
   dnsHostname            String?
+  // Status of THIS node's own local fallback resolver for *.tarmac.local
+  // (a dnsmasq forwarder on port 53, only installed when systemd-resolved's
+  // per-link routing isn't usable here) - null means never attempted / not
+  // applicable (e.g. this node already runs its own PowerDNS on port 53 for
+  // a DnsServerGroup, deliberately never touched). "active" | "conflict" | "error".
+  internalDnsForwarderStatus   String?
+  // { port, protocol, pid, processName } when status is "conflict" - same
+  // shape as DnsServerGroupMember.conflictDetail, surfaced the same way.
+  internalDnsForwarderConflict Json?
   createdAt              DateTime               @default(now())
   updatedAt              DateTime               @updatedAt
   metrics                MetricSample[]

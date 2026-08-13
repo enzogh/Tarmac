@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { DnsDelegationCheckService } from '../dns/dns-delegation-check.service';
 import { DnsGroupsService } from '../dns/dns-groups.service';
+import { InternalDnsService } from '../dns/internal-dns.service';
 import { DnsZonesService } from '../dns/dns-zones.service';
 import { MigrationsService } from '../migrations/migrations.service';
 import { MountsService } from '../mounts/mounts.service';
@@ -298,6 +299,8 @@ export class AgentsService implements OnModuleInit {
     private readonly dnsZonesService: DnsZonesService,
     @Inject(forwardRef(() => DnsDelegationCheckService))
     private readonly dnsDelegationCheckService: DnsDelegationCheckService,
+    @Inject(forwardRef(() => InternalDnsService))
+    private readonly internalDnsService: InternalDnsService,
     private readonly vlanService: VlanService,
     private readonly agentLogsService: AgentLogsService,
     private readonly live: LiveWsServer,
@@ -774,6 +777,67 @@ export class AgentsService implements OnModuleInit {
         this.logger.error(
           `DNS server group member ${result.resourceId} apply failed: ${this.normalizeFailureMessage(result.message)}`,
         );
+      }
+      return;
+    }
+
+    if (result.resourceType === 'internal_dns') {
+      // resourceId is just the reporting node's own id (command.
+      // setup_internal_dns/remove_internal_dns are single-node commands,
+      // no groupId-style compound key needed). Guard against stale results
+      // by only updating if this node is STILL the workspace's designated
+      // one - this also naturally makes a command.remove_internal_dns
+      // result a no-op once clearInternalDnsNode has already nulled the
+      // field, without needing to branch on result.command.
+      const workspace = await this.prisma.workspace.findUnique({
+        where: { id: callingWorkspaceId },
+        select: { internalDnsNodeId: true },
+      });
+      if (workspace?.internalDnsNodeId !== nodeId) return;
+
+      const internalDnsStatus = result.success ? 'active' : 'error';
+      await this.internalDnsService.setStatus(callingWorkspaceId, internalDnsStatus);
+      this.live.broadcast('dns.internal.status', { status: internalDnsStatus }, callingWorkspaceId);
+      if (!result.success) {
+        this.logger.error(`Internal DNS setup on node ${nodeId} failed: ${this.normalizeFailureMessage(result.message)}`);
+      }
+      return;
+    }
+
+    if (result.resourceType === 'internal_dns_route') {
+      // resourceId is the reporting node's own id - same self-report-only
+      // ownership check as pool_member above.
+      if (result.resourceId !== nodeId) {
+        this.logCrossWorkspaceAttempt(nodeId, result.resourceType, result.resourceId);
+        return;
+      }
+      const data = result.data as { status?: string; conflict?: Record<string, unknown> } | undefined;
+      const forwarderStatus = data?.status ?? (result.success ? 'active' : 'error');
+      await this.prisma.node.update({
+        where: { id: nodeId },
+        data: {
+          internalDnsForwarderStatus: forwarderStatus,
+          internalDnsForwarderConflict: (data?.conflict as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+        },
+      });
+      this.live.broadcast(
+        'dns.internal.forwarder_status',
+        { nodeId, status: forwarderStatus, conflict: data?.conflict ?? null },
+        callingWorkspaceId,
+      );
+      if (forwarderStatus === 'conflict' && data?.conflict) {
+        const node = await this.prisma.node.findUnique({ where: { id: nodeId }, select: { name: true } });
+        const conflict = data.conflict as { port: number; protocol: string; processName?: string | null; pid?: number | null };
+        await this.createDnsPortConflictAlert({
+          nodeId,
+          nodeName: node?.name,
+          port: conflict.port,
+          protocol: conflict.protocol,
+          processName: conflict.processName,
+          pid: conflict.pid,
+        });
+      } else if (!result.success) {
+        this.logger.error(`Internal DNS forwarder on node ${nodeId} failed: ${this.normalizeFailureMessage(result.message)}`);
       }
       return;
     }

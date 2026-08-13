@@ -1834,53 +1834,238 @@ func handleRemoveInternalDnsCommand(ctx context.Context, cmd commandPayload, res
 	}
 }
 
+const (
+	internalDnsForwarderMarkerPath = "/etc/tarmac-agent/internal-dns-forwarder-enabled"
+	internalDnsDnsmasqConfigPath   = "/etc/dnsmasq.d/tarmac-internal.conf"
+)
+
+type internalDnsRouteResultData struct {
+	Status   string           `json:"status"`
+	Conflict *dnsPortConflict `json:"conflict,omitempty"`
+}
+
 // ensureInternalDnsSplitRoute points *.tarmac.local queries at the
-// workspace's designated internal DNS node over the overlay mesh, without
-// touching resolution for anything else - systemd-resolved's per-link
-// "routing domain" feature (resolvectl domain/dns), scoped to the
-// tarmacwg0 interface only. Idempotent (safe to re-run with the same or
-// different ip on every sync tick, see internal-dns.service.ts's
-// pushRouteToFleet - this is what makes an already-deployed fleet pick the
-// route up automatically the moment its agent reconnects, without any
-// first-install-only gate). Empty ip clears the route (internal DNS turned
-// off for this workspace).
-//
-// Deliberately not verified against a real systemd-resolved from this
-// environment (no systemd in the Docker sandboxes available here) - falls
-// back to a clear, non-fatal log line on distributions without resolvectl
-// rather than guessing at an alternative.
-func ensureInternalDnsSplitRoute(ctx context.Context, ip string, port int) {
-	if !commandExists("resolvectl") {
-		log.Printf("dns: resolvectl not available, skipping tarmac.local split-DNS route")
-		return
-	}
+// workspace's designated internal DNS node over the overlay mesh. Tries
+// systemd-resolved's per-link "routing domain" feature first (resolvectl
+// domain/dns on tarmacwg0 - touches nothing else on the node), and actually
+// exercises the commands rather than just checking the binary exists: a
+// node can have the resolvectl CLI installed with the resolved service
+// itself not running (confirmed in production - "Unit
+// dbus-org.freedesktop.resolve1.service not found" on a real fleet node),
+// which silently no-ops if only checked for command presence. Falls back to
+// a local dnsmasq forwarder (ensureInternalDnsForwarder) when resolvectl is
+// missing or fails. Idempotent either way - safe to re-run with the same or
+// different ip on every sync tick (see internal-dns.service.ts's
+// pushRouteToFleet), which is what makes an already-deployed fleet pick up
+// the route automatically the moment its agent reconnects. Empty ip clears
+// the route (internal DNS turned off for this workspace).
+func ensureInternalDnsSplitRoute(ctx context.Context, ip string, port int) internalDnsRouteResultData {
 	if ip == "" {
-		if out, err := exec.CommandContext(ctx, "resolvectl", "domain", "tarmacwg0", "").CombinedOutput(); err != nil {
-			log.Printf("dns: could not clear tarmac.local routing domain (continuing): %s", strings.TrimSpace(string(out)))
+		if commandExists("resolvectl") {
+			if out, err := exec.CommandContext(ctx, "resolvectl", "domain", "tarmacwg0", "").CombinedOutput(); err != nil {
+				log.Printf("dns: could not clear tarmac.local routing domain (continuing): %s", strings.TrimSpace(string(out)))
+			}
 		}
-		return
+		if err := removeInternalDnsForwarder(ctx); err != nil {
+			log.Printf("dns: could not remove internal DNS forwarder (continuing): %v", err)
+		}
+		return internalDnsRouteResultData{Status: "cleared"}
 	}
-	if out, err := exec.CommandContext(ctx, "resolvectl", "dns", "tarmacwg0", fmt.Sprintf("%s:%d", ip, port)).CombinedOutput(); err != nil {
-		log.Printf("dns: could not set tarmac.local resolver (continuing): %s", strings.TrimSpace(string(out)))
-		return
+
+	if commandExists("resolvectl") {
+		_, dnsErr := exec.CommandContext(ctx, "resolvectl", "dns", "tarmacwg0", fmt.Sprintf("%s:%d", ip, port)).CombinedOutput()
+		_, domainErr := exec.CommandContext(ctx, "resolvectl", "domain", "tarmacwg0", "~tarmac.local").CombinedOutput()
+		if dnsErr == nil && domainErr == nil {
+			return internalDnsRouteResultData{Status: "active"}
+		}
+		log.Printf("dns: resolvectl present but not usable on this node (systemd-resolved not running?), falling back to a local dnsmasq forwarder")
+	} else {
+		log.Printf("dns: resolvectl not installed, falling back to a local dnsmasq forwarder")
 	}
-	if out, err := exec.CommandContext(ctx, "resolvectl", "domain", "tarmacwg0", "~tarmac.local").CombinedOutput(); err != nil {
-		log.Printf("dns: could not set tarmac.local routing domain (continuing): %s", strings.TrimSpace(string(out)))
+
+	status, conflict, err := ensureInternalDnsForwarder(ctx, ip, port)
+	if err != nil {
+		log.Printf("dns: internal DNS forwarder fallback failed: %v", err)
+		return internalDnsRouteResultData{Status: "error"}
 	}
+	return internalDnsRouteResultData{Status: status, Conflict: conflict}
+}
+
+// ensureInternalDnsForwarder installs and configures a local dnsmasq
+// listening on 127.0.0.1:53, forwarding *.tarmac.local to the internal DNS
+// node and everything else to public resolvers (same 1.1.1.1/9.9.9.9
+// fallback already used by fixResolvConfAfterDisablingSystemdResolved) -
+// the port-53 fallback for nodes where systemd-resolved's split-DNS routing
+// isn't usable. Deliberately never touches a node that already runs this
+// agent's own PowerDNS on port 53 for a DnsServerGroup (dnsMarkerPath) -
+// that port is already legitimately ours there, and dnsmasq would only
+// fight with it; such a node is simply left uncovered rather than risking
+// that. When something else holds the port, this reports the conflict
+// (status "conflict") without touching it - killing anything is only ever
+// done via the explicit resolveInternalDnsForwarderConflict flow, the same
+// "propose, don't auto-kill" rule already followed for DnsServerGroup's own
+// port-53 use.
+func ensureInternalDnsForwarder(ctx context.Context, ip string, port int) (string, *dnsPortConflict, error) {
+	if _, err := os.Stat(dnsMarkerPath); err == nil {
+		return "skipped", nil, nil
+	}
+
+	if _, err := os.Stat(internalDnsForwarderMarkerPath); err != nil {
+		if conflict := probeDnsPortConflict(); conflict != nil {
+			return "conflict", conflict, nil
+		}
+		if _, err := ensureAgentSystemPackages(ctx, []string{"dnsmasq"}); err != nil {
+			return "", nil, fmt.Errorf("cannot install dnsmasq: %w", err)
+		}
+	}
+
+	if err := writeInternalDnsmasqConfig(ip, port); err != nil {
+		return "", nil, err
+	}
+
+	if commandExists("systemctl") {
+		if out, err := exec.CommandContext(ctx, "systemctl", "enable", "--now", "dnsmasq").CombinedOutput(); err != nil {
+			return "", nil, fmt.Errorf("cannot enable/start dnsmasq: %s", strings.TrimSpace(string(out)))
+		}
+		if out, err := exec.CommandContext(ctx, "systemctl", "restart", "dnsmasq").CombinedOutput(); err != nil {
+			return "", nil, fmt.Errorf("cannot restart dnsmasq: %s", strings.TrimSpace(string(out)))
+		}
+	}
+
+	if err := pointResolvConfAtLocalhost(); err != nil {
+		log.Printf("dns: dnsmasq is running but could not repoint resolv.conf (continuing): %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(internalDnsForwarderMarkerPath), 0o755); err == nil {
+		_ = os.WriteFile(internalDnsForwarderMarkerPath, []byte("enabled\n"), 0o600)
+	}
+	return "active", nil, nil
+}
+
+func writeInternalDnsmasqConfig(ip string, port int) error {
+	if err := os.MkdirAll(filepath.Dir(internalDnsDnsmasqConfigPath), 0o755); err != nil {
+		return fmt.Errorf("cannot create dnsmasq config dir: %w", err)
+	}
+	lines := []string{
+		"port=53",
+		"bind-interfaces",
+		"listen-address=127.0.0.1",
+		fmt.Sprintf("server=/tarmac.local/%s#%d", ip, port),
+		"server=1.1.1.1",
+		"server=9.9.9.9",
+		"no-resolv",
+	}
+	content := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(internalDnsDnsmasqConfigPath, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("cannot write dnsmasq config: %w", err)
+	}
+	return nil
+}
+
+// pointResolvConfAtLocalhost hands this node's own DNS resolution to the
+// dnsmasq forwarder just configured - same reasoning as
+// fixResolvConfAfterDisablingSystemdResolved (a static file, not a
+// symlink, since whatever previously regenerated it may no longer be
+// running), just triggered by installing our own forwarder rather than by
+// disabling a competitor.
+func pointResolvConfAtLocalhost() error {
+	if info, err := os.Lstat(resolvConfPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		if err := os.Remove(resolvConfPath); err != nil {
+			return fmt.Errorf("cannot remove existing resolv.conf symlink: %w", err)
+		}
+	}
+	content := "# Written by tarmac-agent - local dnsmasq forwarder handles *.tarmac.local\n" +
+		"# and forwards everything else to public resolvers.\n" +
+		"nameserver 127.0.0.1\n"
+	if err := os.WriteFile(resolvConfPath, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("cannot write resolv.conf: %w", err)
+	}
+	return nil
+}
+
+// removeInternalDnsForwarder is idempotent and tolerant like the rest of
+// this file's cleanup paths - a no-op if the forwarder was never installed.
+func removeInternalDnsForwarder(ctx context.Context) error {
+	if _, err := os.Stat(internalDnsForwarderMarkerPath); err != nil {
+		return nil
+	}
+	if commandExists("systemctl") {
+		if out, err := exec.CommandContext(ctx, "systemctl", "stop", "dnsmasq").CombinedOutput(); err != nil {
+			log.Printf("dns: systemctl stop dnsmasq failed (continuing): %s", strings.TrimSpace(string(out)))
+		}
+		if out, err := exec.CommandContext(ctx, "systemctl", "disable", "dnsmasq").CombinedOutput(); err != nil {
+			log.Printf("dns: systemctl disable dnsmasq failed (continuing): %s", strings.TrimSpace(string(out)))
+		}
+	}
+	_ = os.Remove(internalDnsDnsmasqConfigPath)
+	_ = os.Remove(internalDnsForwarderMarkerPath)
+	return nil
+}
+
+// resolveInternalDnsForwarderConflict is the explicit, user-triggered
+// counterpart to the "conflict" status ensureInternalDnsForwarder can
+// report - kills and permanently disables the known culprit (same
+// permanentlyDisableService/knownPort53Services already used for
+// DnsServerGroup's own port-53 conflicts), then retries directly rather
+// than waiting for another control-plane round-trip, since this whole flow
+// is self-contained on the agent.
+func resolveInternalDnsForwarderConflict(ctx context.Context, ip string, port int) (string, error) {
+	conflict := probeDnsPortConflict()
+	if conflict != nil {
+		for _, unit := range knownPort53Services(conflict.ProcessName) {
+			if err := permanentlyDisableService(ctx, unit); err != nil {
+				return "", fmt.Errorf("could not disable %s: %w", unit, err)
+			}
+			if unit == "systemd-resolved" {
+				if err := fixResolvConfAfterDisablingSystemdResolved(); err != nil {
+					log.Printf("dns: could not fix resolv.conf after disabling systemd-resolved (continuing): %v", err)
+				}
+			}
+		}
+	}
+	status, newConflict, err := ensureInternalDnsForwarder(ctx, ip, port)
+	if err != nil {
+		return "", err
+	}
+	if newConflict != nil {
+		return "", fmt.Errorf("port 53 still occupied by %s after attempting to free it", newConflict.ProcessName)
+	}
+	return status, nil
 }
 
 func handleEnsureInternalDnsRouteCommand(ctx context.Context, cmd commandPayload, result *commandResult) {
 	result.Command = "ensure_internal_dns_route"
-	result.ResourceType = "internal_dns"
+	result.ResourceType = "internal_dns_route"
 	result.ResourceID = envOrDefault("NODE_ID", "agent")
 	ip := readString(cmd.Payload, "ip")
 	port := readInt(cmd.Payload, "port", 5300)
-	ensureInternalDnsSplitRoute(ctx, ip, port)
+	data := ensureInternalDnsSplitRoute(ctx, ip, port)
+	result.Data = data
+	if data.Status == "conflict" {
+		result.Success = false
+	}
 	if ip == "" {
 		result.Message = "tarmac.local split-DNS route cleared"
 	} else {
-		result.Message = fmt.Sprintf("tarmac.local split-DNS route set to %s:%d", ip, port)
+		result.Message = fmt.Sprintf("tarmac.local split-DNS route: %s", data.Status)
 	}
+}
+
+func handleResolveInternalDnsForwarderConflictCommand(ctx context.Context, cmd commandPayload, result *commandResult) {
+	result.Command = "resolve_internal_dns_forwarder_conflict"
+	result.ResourceType = "internal_dns_route"
+	result.ResourceID = envOrDefault("NODE_ID", "agent")
+	ip := readString(cmd.Payload, "ip")
+	port := readInt(cmd.Payload, "port", 5300)
+	status, err := resolveInternalDnsForwarderConflict(ctx, ip, port)
+	if err != nil {
+		result.Success = false
+		result.Message = err.Error()
+		result.Data = internalDnsRouteResultData{Status: "conflict"}
+		return
+	}
+	result.Data = internalDnsRouteResultData{Status: status}
+	result.Message = fmt.Sprintf("internal DNS forwarder: %s", status)
 }
 
 func handleDnsGetZoneKeysCommand(cmd commandPayload, result *commandResult) {

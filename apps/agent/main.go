@@ -3827,6 +3827,8 @@ func handleCommand(ctx context.Context, cmd commandPayload, onProgress func(prog
 		handleRemoveInternalDnsCommand(ctx, cmd, &result)
 	case "command.ensure_internal_dns_route":
 		handleEnsureInternalDnsRouteCommand(ctx, cmd, &result)
+	case "command.resolve_internal_dns_forwarder_conflict":
+		handleResolveInternalDnsForwarderConflictCommand(ctx, cmd, &result)
 	case "command.dns_get_zone_keys":
 		handleDnsGetZoneKeysCommand(cmd, &result)
 	case "command.dns_resolve_port_conflict":

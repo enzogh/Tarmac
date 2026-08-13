@@ -1,4 +1,5 @@
-import { Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { WorkspaceScope } from '../auth/workspace.guard';
@@ -28,6 +29,7 @@ export class InternalDnsService implements OnModuleInit {
 
   constructor(
     private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => AgentsService))
     private readonly agentsService: AgentsService,
     private readonly auditLogsService: AuditLogsService,
   ) {}
@@ -93,7 +95,43 @@ export class InternalDnsService implements OnModuleInit {
   async getStatus(scope: WorkspaceScope) {
     const workspace = await this.prisma.workspace.findUnique({ where: { id: scope.workspaceId as string } });
     const records = await this.desiredRecords(scope.workspaceId as string);
-    return { internalDnsNodeId: workspace?.internalDnsNodeId ?? null, records };
+    return {
+      internalDnsNodeId: workspace?.internalDnsNodeId ?? null,
+      internalDnsStatus: workspace?.internalDnsStatus ?? 'pending',
+      records,
+    };
+  }
+
+  // Called from AgentsService.onCommandResult once the designated node
+  // reports back whether command.setup_internal_dns actually succeeded -
+  // this is what lets the Nodes panel icon go from "pending" (just
+  // requested) to a real "active"/"error" confirmation.
+  setStatus(workspaceId: string, status: 'active' | 'error') {
+    return this.prisma.workspace.update({ where: { id: workspaceId }, data: { internalDnsStatus: status } });
+  }
+
+  // Sent when the user picks "kill the process and retry" on a node's
+  // internal-DNS-forwarder port-conflict banner - same fire-and-forget
+  // shape as DnsGroupsService.resolvePortConflict, just targeting the
+  // dnsmasq fallback forwarder instead of the public PowerDNS group.
+  async resolveForwarderConflict(nodeId: string, scope: WorkspaceScope) {
+    const node = await this.prisma.node.findFirst({ where: { id: nodeId, workspaceId: scope.workspaceId } });
+    if (!node) throw new NotFoundException('node not found');
+    const workspace = await this.prisma.workspace.findUnique({ where: { id: scope.workspaceId as string } });
+    const internalNode = workspace?.internalDnsNodeId
+      ? await this.prisma.node.findUnique({ where: { id: workspace.internalDnsNodeId }, select: { vlanIp: true } })
+      : null;
+    if (!internalNode?.vlanIp) throw new NotFoundException('no internal DNS node configured for this workspace');
+    const sent = this.agentsService.sendCommand(nodeId, {
+      type: 'command.resolve_internal_dns_forwarder_conflict',
+      payload: { ip: internalNode.vlanIp, port: INTERNAL_DNS_PORT },
+    });
+    if (!sent) throw new NotFoundException('node is offline');
+    await this.prisma.node.update({
+      where: { id: nodeId },
+      data: { internalDnsForwarderStatus: null, internalDnsForwarderConflict: Prisma.JsonNull },
+    });
+    return { sent };
   }
 
   // Re-broadcast on every tick, not just when the designation changes - this

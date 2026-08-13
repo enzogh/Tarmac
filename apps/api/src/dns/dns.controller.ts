@@ -187,4 +187,9 @@ export class DnsController {
   clearInternalDnsNode(@CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
     return this.internalDnsService.clearInternalDnsNode(scope, req.user?.userId);
   }
+
+  @Post('internal/forwarder/:nodeId/resolve-conflict')
+  resolveInternalDnsForwarderConflict(@Param('nodeId') nodeId: string, @CurrentWorkspace() scope: WorkspaceScope) {
+    return this.internalDnsService.resolveForwarderConflict(nodeId, scope);
+  }
 }

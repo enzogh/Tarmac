@@ -42,6 +42,11 @@ export type NodeItem = {
   // Custom <dnsHostname>.tarmac.local label - see InternalDnsService on the
   // API side. Null means a slug derived from `name` is used instead.
   dnsHostname?: string | null;
+  // Status of this node's own local fallback resolver for *.tarmac.local
+  // (only relevant on nodes that can't use systemd-resolved's split-DNS
+  // routing) - null means never attempted / not applicable.
+  internalDnsForwarderStatus?: 'active' | 'conflict' | 'error' | null;
+  internalDnsForwarderConflict?: { port: number; protocol: string; pid?: number | null; processName?: string | null } | null;
 };
 
 export type SmartHistoryPoint = {
@@ -769,12 +774,16 @@ export const api = {
     recordsForNode: (nodeId: string) => request<DnsNodeRecordRef[]>(`/api/v1/dns/nodes/${nodeId}/records`),
     internal: {
       getStatus: () =>
-        request<{ internalDnsNodeId: string | null; records: Array<{ name: string; content: string }> }>(
-          '/api/v1/dns/internal',
-        ),
+        request<{
+          internalDnsNodeId: string | null;
+          internalDnsStatus: 'pending' | 'active' | 'error';
+          records: Array<{ name: string; content: string }>;
+        }>('/api/v1/dns/internal'),
       designate: (nodeId: string) =>
         request<{ nodeId: string; applySent: boolean }>(`/api/v1/dns/internal/${nodeId}`, { method: 'POST' }),
       clear: () => request<{ cleanupSent: boolean }>('/api/v1/dns/internal', { method: 'DELETE' }),
+      resolveForwarderConflict: (nodeId: string) =>
+        request<{ sent: boolean }>(`/api/v1/dns/internal/forwarder/${nodeId}/resolve-conflict`, { method: 'POST' }),
     },
   },
 

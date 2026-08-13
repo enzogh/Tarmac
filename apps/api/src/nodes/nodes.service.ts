@@ -27,6 +27,10 @@ type ActivityNode = {
   locationCountryCode: string | null;
   locationLat: number | null;
   locationLng: number | null;
+  vlanIp: string | null;
+  dnsHostname: string | null;
+  internalDnsForwarderStatus: string | null;
+  internalDnsForwarderConflict: unknown;
 };
 
 type ActivitySample = {
@@ -314,6 +318,10 @@ export class NodesService {
         agentVersion: node.agentVersion,
         agentVersionAt: node.agentVersionAt?.toISOString() ?? null,
         mutedUntil: node.mutedUntil?.toISOString() ?? null,
+        vlanIp: node.vlanIp,
+        dnsHostname: node.dnsHostname,
+        internalDnsForwarderStatus: node.internalDnsForwarderStatus,
+        internalDnsForwarderConflict: node.internalDnsForwarderConflict,
         controlVersion,
         agentUpToDate: node.agentVersion && controlVersion ? node.agentVersion === controlVersion : null,
         metrics: sample
