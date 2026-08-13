@@ -710,7 +710,7 @@ export const api = {
       list: () => request<DnsServerGroupItem[]>('/api/v1/dns/groups'),
       create: (payload: { name: string }) =>
         request<DnsServerGroupItem>('/api/v1/dns/groups', { method: 'POST', body: JSON.stringify(payload) }),
-      delete: (id: string) => request<void>(`/api/v1/dns/groups/${id}`, { method: 'DELETE' }),
+      delete: (id: string) => request<{ cleanupSent: boolean }>(`/api/v1/dns/groups/${id}`, { method: 'DELETE' }),
       addMember: (
         groupId: string,
         payload: { nodeId: string; role: 'primary' | 'secondary'; status: 'pending' | 'active' | 'error' },
@@ -720,7 +720,7 @@ export const api = {
           body: JSON.stringify(payload),
         }),
       removeMember: (groupId: string, nodeId: string) =>
-        request<void>(`/api/v1/dns/groups/${groupId}/members/${nodeId}`, { method: 'DELETE' }),
+        request<{ cleanupSent: boolean }>(`/api/v1/dns/groups/${groupId}/members/${nodeId}`, { method: 'DELETE' }),
       resolvePortConflict: (groupId: string, nodeId: string) =>
         request<DnsServerGroupMemberItem>(`/api/v1/dns/groups/${groupId}/members/${nodeId}/resolve-port-conflict`, {
           method: 'POST',

@@ -56,12 +56,19 @@ export class DnsZonesService {
 
   async deleteZone(id: string, scope: WorkspaceScope, actorUserId?: string) {
     const zone = await this.assertZoneOwned(id, scope);
-    const primary = await this.dnsGroupsService.getPrimaryMember(zone.groupId);
-    if (primary && this.agentsService.isConnected(primary.nodeId)) {
-      this.agentsService.sendCommand(primary.nodeId, {
-        type: 'command.remove_dns_zone',
-        payload: { zoneId: zone.id, zoneName: zone.name },
-      });
+    // Every member (not just the primary) has a real copy of this zone in
+    // its own PowerDNS - secondaries hold it as a slave zone via
+    // apply_dns_zone_slave. Only telling the primary left slave zones
+    // orphaned on every secondary forever (never removed, just eventually
+    // expiring per the zone's own SOA).
+    const members = await this.prisma.dnsServerGroupMember.findMany({ where: { groupId: zone.groupId } });
+    for (const member of members) {
+      if (this.agentsService.isConnected(member.nodeId)) {
+        this.agentsService.sendCommand(member.nodeId, {
+          type: 'command.remove_dns_zone',
+          payload: { zoneId: zone.id, zoneName: zone.name },
+        });
+      }
     }
     const deleted = await this.prisma.dnsZone.delete({ where: { id } });
     await this.auditLogsService.log({

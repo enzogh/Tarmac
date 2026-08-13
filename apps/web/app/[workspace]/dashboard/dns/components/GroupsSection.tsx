@@ -129,7 +129,15 @@ export function GroupsSection({
     if (!window.confirm(`Supprimer le groupe DNS « ${group.name} » ? Toutes ses zones doivent déjà être supprimées.`)) return;
     setBusyKey(`group-${group.id}`);
     try {
-      await api.dns.groups.delete(group.id);
+      const { cleanupSent } = await api.dns.groups.delete(group.id);
+      setNotice(
+        cleanupSent
+          ? { type: 'success', message: `Groupe « ${group.name} » supprimé, PowerDNS arrêté sur tous ses serveurs.` }
+          : {
+              type: 'error',
+              message: `Groupe « ${group.name} » supprimé, mais au moins un serveur était hors-ligne — PowerDNS n'a pas pu être arrêté dessus. À faire manuellement s'il redevient actif.`,
+            },
+      );
       await refreshGroups();
     } catch {
       setNotice({ type: 'error', message: "Erreur lors de la suppression du groupe (contient peut-être encore des zones)." });
@@ -141,7 +149,15 @@ export function GroupsSection({
   const removeGroupMember = async (groupId: string, nodeId: string) => {
     setBusyKey(`member-${groupId}-${nodeId}`);
     try {
-      await api.dns.groups.removeMember(groupId, nodeId);
+      const { cleanupSent } = await api.dns.groups.removeMember(groupId, nodeId);
+      setNotice(
+        cleanupSent
+          ? { type: 'success', message: 'Serveur retiré du groupe, PowerDNS arrêté dessus.' }
+          : {
+              type: 'error',
+              message: "Serveur retiré du groupe — il était hors-ligne, PowerDNS n'a pas pu être arrêté automatiquement dessus. À faire manuellement si ce nœud est toujours actif.",
+            },
+      );
       await refreshGroups();
     } catch {
       setNotice({ type: 'error', message: 'Erreur lors du retrait du serveur.' });

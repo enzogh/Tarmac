@@ -70,6 +70,7 @@ export interface CommandPayload {
     | 'command.apply_dns_zone'
     | 'command.apply_dns_zone_slave'
     | 'command.remove_dns_zone'
+    | 'command.uninstall_dns_node'
     | 'command.dns_get_zone_keys'
     | 'command.dns_resolve_port_conflict';
   payload: Record<string, unknown>;

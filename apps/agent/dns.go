@@ -1343,6 +1343,59 @@ func removeDnsZone(payload map[string]interface{}) (string, error) {
 	return fmt.Sprintf("removed zone %s", zoneName), nil
 }
 
+// uninstallDnsFromNode runs when this node is removed from a DNS server
+// group (or its group is deleted) - removes every zone this node's own
+// PowerDNS is currently serving and stops it from answering further.
+// Idempotent (safe to call more than once, e.g. a retried command): no-ops
+// entirely if dnsMarkerPath is already gone, and every step logs and
+// continues on error rather than aborting, so a single failed zone deletion
+// doesn't leave the service running or later zones un-cleaned.
+//
+// Deliberately does NOT touch the port-53 competitor
+// (knownPort53Services/permanentlyDisableService) or /etc/resolv.conf -
+// restoring the node's original resolver is out of scope for now (no way to
+// verify that against real systemd from this development environment); the
+// node is left with PowerDNS stopped/disabled but the original resolver
+// still masked, same as it is mid-lifecycle today.
+//
+// Also deliberately does NOT uninstall the pdns-server/pdns-backend-sqlite3
+// packages themselves - stop+disable is enough to free port 53 and stop it
+// answering, and leaves the node instantly reusable (no reinstall) if it
+// rejoins a group later.
+func uninstallDnsFromNode(ctx context.Context) (string, error) {
+	if _, err := os.Stat(dnsMarkerPath); err != nil {
+		return "node was not DNS-enabled, nothing to clean up", nil
+	}
+
+	zonesRemoved := 0
+	if apiKey, err := ensurePdnsApiKey(); err != nil {
+		log.Printf("dns: uninstall could not read the PowerDNS API key, skipping zone cleanup: %v", err)
+	} else if zoneNames, err := fetchPdnsZoneNames(ctx, apiKey); err != nil {
+		log.Printf("dns: uninstall could not list zones to remove, skipping zone cleanup: %v", err)
+	} else {
+		client := &pdnsClient{apiKey: apiKey}
+		for _, zoneName := range zoneNames {
+			if err := client.deleteZone(ctx, zoneName); err != nil {
+				log.Printf("dns: uninstall could not remove zone %s (continuing): %v", zoneName, err)
+				continue
+			}
+			zonesRemoved++
+		}
+	}
+
+	if commandExists("systemctl") {
+		if out, err := exec.CommandContext(ctx, "systemctl", "stop", "pdns").CombinedOutput(); err != nil {
+			log.Printf("dns: uninstall: systemctl stop pdns failed (continuing): %s", strings.TrimSpace(string(out)))
+		}
+		if out, err := exec.CommandContext(ctx, "systemctl", "disable", "pdns").CombinedOutput(); err != nil {
+			log.Printf("dns: uninstall: systemctl disable pdns failed (continuing): %s", strings.TrimSpace(string(out)))
+		}
+	}
+
+	_ = os.Remove(dnsMarkerPath)
+	return fmt.Sprintf("PowerDNS stopped, %d zone(s) removed from this node", zonesRemoved), nil
+}
+
 func fetchDnsZoneKeys(payload map[string]interface{}) (dnsZoneKeysResultData, error) {
 	zoneName := readString(payload, "zoneName")
 	if zoneName == "" {
@@ -1434,6 +1487,19 @@ func handleRemoveDnsZoneCommand(cmd commandPayload, result *commandResult) {
 	result.ResourceType = "dns_zone"
 	result.ResourceID = readString(cmd.Payload, "zoneId")
 	message, err := removeDnsZone(cmd.Payload)
+	if err != nil {
+		result.Success = false
+		result.Message = err.Error()
+	} else {
+		result.Message = message
+	}
+}
+
+func handleUninstallDnsNodeCommand(ctx context.Context, cmd commandPayload, result *commandResult) {
+	result.Command = "uninstall_dns_node"
+	result.ResourceType = "dns_node"
+	result.ResourceID = envOrDefault("NODE_ID", "agent")
+	message, err := uninstallDnsFromNode(ctx)
 	if err != nil {
 		result.Success = false
 		result.Message = err.Error()

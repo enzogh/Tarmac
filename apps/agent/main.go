@@ -3819,6 +3819,8 @@ func handleCommand(ctx context.Context, cmd commandPayload, onProgress func(prog
 		handleApplyDnsZoneSlaveCommand(cmd, &result)
 	case "command.remove_dns_zone":
 		handleRemoveDnsZoneCommand(cmd, &result)
+	case "command.uninstall_dns_node":
+		handleUninstallDnsNodeCommand(ctx, cmd, &result)
 	case "command.dns_get_zone_keys":
 		handleDnsGetZoneKeysCommand(cmd, &result)
 	case "command.dns_resolve_port_conflict":

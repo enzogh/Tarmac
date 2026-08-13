@@ -76,6 +76,8 @@ export class DnsGroupsService {
     if (zoneCount > 0) {
       throw new ConflictException('remove every zone from this group before deleting it');
     }
+    const members = await this.prisma.dnsServerGroupMember.findMany({ where: { groupId: id } });
+    const cleanupSent = members.every((member) => this.sendUninstallDnsNode(member.nodeId));
     const deleted = await this.prisma.dnsServerGroup.delete({ where: { id } });
     await this.auditLogsService.log({
       workspaceId: scope.workspaceId as string,
@@ -84,7 +86,18 @@ export class DnsGroupsService {
       resourceType: 'dns_server_group',
       resourceId: id,
     });
-    return deleted;
+    return { ...deleted, cleanupSent };
+  }
+
+  // Tells a node to stop PowerDNS and remove every zone it's currently
+  // serving - fire-and-forget by design (returns whether the command was
+  // even sent, not whether it succeeded). A node being removed from a group
+  // is very often already offline (that's frequently *why* it's being
+  // removed), so this must never block the removal itself; the caller
+  // surfaces `cleanupSent` to the frontend instead so the user knows to
+  // clean up manually if the node is still alive somewhere.
+  private sendUninstallDnsNode(nodeId: string): boolean {
+    return this.agentsService.sendCommand(nodeId, { type: 'command.uninstall_dns_node', payload: {} });
   }
 
   async upsertGroupMember(groupId: string, dto: UpsertDnsGroupMemberDto, scope: WorkspaceScope, actorUserId?: string) {
@@ -119,6 +132,7 @@ export class DnsGroupsService {
 
   async removeGroupMember(groupId: string, nodeId: string, scope: WorkspaceScope, actorUserId?: string) {
     await this.assertGroupOwned(groupId, scope);
+    const cleanupSent = this.sendUninstallDnsNode(nodeId);
     const deleted = await this.prisma.dnsServerGroupMember.delete({ where: { groupId_nodeId: { groupId, nodeId } } });
     await this.recomputeGroupStatus(groupId);
     await this.auditLogsService.log({
@@ -127,9 +141,9 @@ export class DnsGroupsService {
       action: 'dns.group_member.delete',
       resourceType: 'dns_server_group_member',
       resourceId: deleted.id,
-      details: { groupId, nodeId },
+      details: { groupId, nodeId, cleanupSent },
     });
-    return deleted;
+    return { ...deleted, cleanupSent };
   }
 
   // Sent when the user picks "kill the process and retry" on a port-conflict
