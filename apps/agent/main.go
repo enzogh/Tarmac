@@ -2565,6 +2565,19 @@ func writePdnsConfig(apiKey string, allowAxfrIps []string, backend string) error
 		"webserver-port=8081",
 		"webserver-allow-from=127.0.0.1",
 		"enable-lua-records=yes",
+		// Without these, PowerDNS still accepts API calls to create a
+		// Slave-kind zone and even accepts retrieve requests without
+		// erroring - but the background SlaveCommunicator thread that
+		// actually performs transfers never runs at all, so every retrieve
+		// request just sits queued forever with zero network activity and
+		// zero further logging (confirmed in production: a manual `dig
+		// axfr` to the same primary worked instantly, proving the network/
+		// ACL side was always fine - only PowerDNS's own retrieval
+		// mechanism was silently inert). "master"/"slave" is the
+		// terminology that works across all PowerDNS versions in the
+		// field; "primary"/"secondary" are the newer aliases from 4.5+.
+		"master=yes",
+		"slave=yes",
 		"allow-axfr-ips="+strings.Join(append([]string{"127.0.0.1"}, allowAxfrIps...), ","),
 	)
 	if len(allowAxfrIps) > 0 {
