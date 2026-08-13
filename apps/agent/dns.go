@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -68,6 +69,19 @@ func readGlueEntries(payload map[string]interface{}, key string) []dnsGlueEntry 
 // keeps answering correctly even if this agent or the control plane is
 // down.
 // ---------------------------------------------------------------------
+
+// dnsPort53Mu serializes every agent command handler that can touch port 53
+// itself (installing/removing PowerDNS or the dnsmasq fallback forwarder,
+// resolving a port conflict, writing the /etc/hosts fallback block) or the
+// dnsMarkerPath/internalDnsForwarderMarkerPath state that tracks who owns
+// it. Every incoming command runs in its own goroutine (see main.go's
+// command dispatch loop), so without this, e.g. a routine
+// ensure_internal_dns_route tick landing mid-way through an
+// apply_dns_server_group's `apt install pdns-server` could probe port 53
+// while a concurrent operation is still claiming it, producing a spurious
+// conflict or a corrupted config. Acquired at the top of each relevant
+// handleXCommand function in this file - see their doc comments.
+var dnsPort53Mu sync.Mutex
 
 const (
 	pdnsConfigPath        = "/etc/powerdns/pdns.conf"
@@ -1757,6 +1771,8 @@ func fetchDnsZoneKeys(payload map[string]interface{}) (dnsZoneKeysResultData, er
 // ---------------------------------------------------------------------
 
 func handleApplyDnsServerGroupCommand(ctx context.Context, cmd commandPayload, result *commandResult) {
+	dnsPort53Mu.Lock()
+	defer dnsPort53Mu.Unlock()
 	result.Command = "apply_dns_server_group"
 	result.ResourceType = "dns_server_group_member"
 	dnsGroupID := readString(cmd.Payload, "groupId")
@@ -1814,6 +1830,8 @@ func handleRemoveDnsZoneCommand(cmd commandPayload, result *commandResult) {
 }
 
 func handleUninstallDnsNodeCommand(ctx context.Context, cmd commandPayload, result *commandResult) {
+	dnsPort53Mu.Lock()
+	defer dnsPort53Mu.Unlock()
 	result.Command = "uninstall_dns_node"
 	result.ResourceType = "dns_node"
 	result.ResourceID = envOrDefault("NODE_ID", "agent")
@@ -1863,6 +1881,13 @@ const (
 // instead of the real /etc/hosts.
 var hostsPath = "/etc/hosts"
 
+// hostsSafeLabelRe matches exactly what slugify() on the API side already
+// constrains node names/dnsHostname to - lowercase alphanumerics and
+// hyphens, no leading/trailing hyphen. Re-checked here because /etc/hosts
+// has no escaping: a name containing whitespace or a newline could corrupt
+// the file's line structure or inject an unrelated-looking entry.
+var hostsSafeLabelRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
 type internalDnsRouteResultData struct {
 	Status   string           `json:"status"`
 	Conflict *dnsPortConflict `json:"conflict,omitempty"`
@@ -1903,6 +1928,18 @@ func ensureInternalDnsSplitRoute(ctx context.Context, ip string, port int, recor
 		_, dnsErr := exec.CommandContext(ctx, "resolvectl", "dns", "tarmacwg0", fmt.Sprintf("%s:%d", ip, port)).CombinedOutput()
 		_, domainErr := exec.CommandContext(ctx, "resolvectl", "domain", "tarmacwg0", "~tarmac.local").CombinedOutput()
 		if dnsErr == nil && domainErr == nil {
+			// resolvectl works now - clean up anything a previous, less
+			// capable state left behind (a dnsmasq forwarder installed while
+			// resolvectl was broken, or a static /etc/hosts block from
+			// before this node ran its own PowerDNS) so it doesn't linger
+			// and shadow live results forever. Best-effort: a resolving
+			// split-DNS route is the important part, this is just tidying.
+			if err := removeInternalDnsForwarder(ctx); err != nil {
+				log.Printf("dns: could not remove stale internal DNS forwarder (continuing): %v", err)
+			}
+			if err := removeInternalDnsHostsBlock(); err != nil {
+				log.Printf("dns: could not remove stale internal DNS /etc/hosts block (continuing): %v", err)
+			}
 			return internalDnsRouteResultData{Status: "active"}
 		}
 		log.Printf("dns: resolvectl present but not usable on this node (systemd-resolved not running?), trying local dnsmasq forwarder fallback")
@@ -1974,6 +2011,14 @@ func ensureInternalDnsForwarder(ctx context.Context, ip string, port int, record
 	if err := os.MkdirAll(filepath.Dir(internalDnsForwarderMarkerPath), 0o755); err == nil {
 		_ = os.WriteFile(internalDnsForwarderMarkerPath, []byte("enabled\n"), 0o600)
 	}
+	// A stale /etc/hosts block can only exist here if this node ran its own
+	// PowerDNS (dnsMarkerPath) very recently and just left that group - see
+	// applyDnsServerGroup's own port-53 handoff. Clean it up now that
+	// dnsmasq is taking over, so the old static entries don't shadow live
+	// DNS answers going forward. Best-effort, same as above.
+	if err := removeInternalDnsHostsBlock(); err != nil {
+		log.Printf("dns: could not remove stale internal DNS /etc/hosts block (continuing): %v", err)
+	}
 	return "active", nil, nil
 }
 
@@ -2013,15 +2058,32 @@ type internalDnsHostRecord struct {
 // writes matters. Idempotent: re-running with the same records is a no-op,
 // and any existing block is replaced in place rather than duplicated.
 func writeInternalDnsHostsBlock(records []internalDnsHostRecord) error {
-	lines := make([]string, 0, len(records)+2)
-	lines = append(lines, internalDnsHostsBeginMarker)
+	var entries []string
 	for _, record := range records {
 		if record.Name == "" || record.Content == "" {
 			continue
 		}
+		// Defense in depth: records arrive over the network from the
+		// control plane. The API already slugifies hostnames to [a-z0-9-]
+		// before they ever reach here, but /etc/hosts has no escaping
+		// mechanism at all - a stray space or newline in either field would
+		// corrupt the file's structure or inject an unrelated-looking
+		// entry, so validate independently rather than trust the sender.
+		if !hostsSafeLabelRe.MatchString(record.Name) {
+			log.Printf("dns: skipping internal DNS hosts entry with unexpected name %q", record.Name)
+			continue
+		}
+		if net.ParseIP(record.Content) == nil {
+			log.Printf("dns: skipping internal DNS hosts entry %q with unparseable address %q", record.Name, record.Content)
+			continue
+		}
 		fqdn := dnsRecordFqdn(strings.TrimSuffix(internalDnsZoneName, "."), record.Name)
-		lines = append(lines, fmt.Sprintf("%s %s", record.Content, fqdn))
+		entries = append(entries, fmt.Sprintf("%s %s", record.Content, fqdn))
 	}
+	if len(entries) == 0 {
+		return removeInternalDnsHostsBlock()
+	}
+	lines := append([]string{internalDnsHostsBeginMarker}, entries...)
 	lines = append(lines, internalDnsHostsEndMarker)
 	return replaceInternalDnsHostsBlock(lines)
 }
@@ -2071,7 +2133,39 @@ func replaceInternalDnsHostsBlock(newBlock []string) error {
 	if content == string(existing) {
 		return nil
 	}
-	return os.WriteFile(hostsPath, []byte(content), 0o644)
+	return atomicWriteFile(hostsPath, []byte(content), 0o644)
+}
+
+// atomicWriteFile writes via a temp file in the same directory (so the
+// final rename stays on one filesystem, which is what makes it atomic) then
+// renames it into place, instead of truncating the target in place like
+// os.WriteFile. /etc/hosts is read by every process doing name resolution
+// on the node - a crash or kill signal mid-write with a plain truncate+write
+// could leave it half-written, breaking all resolution including localhost,
+// which is a far worse failure than anything this file is trying to fix.
+func atomicWriteFile(path string, content []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".tarmac-hosts-*")
+	if err != nil {
+		return fmt.Errorf("cannot create temp file in %s: %w", dir, err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) // no-op once the rename below succeeds
+
+	if _, err := tmp.Write(content); err != nil {
+		tmp.Close()
+		return fmt.Errorf("cannot write temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("cannot close temp file: %w", err)
+	}
+	if err := os.Chmod(tmpPath, perm); err != nil {
+		return fmt.Errorf("cannot set permissions on temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("cannot rename temp file into place: %w", err)
+	}
+	return nil
 }
 
 // pointResolvConfAtLocalhost hands this node's own DNS resolution to the
@@ -2150,6 +2244,8 @@ func resolveInternalDnsForwarderConflict(ctx context.Context, ip string, port in
 }
 
 func handleEnsureInternalDnsRouteCommand(ctx context.Context, cmd commandPayload, result *commandResult) {
+	dnsPort53Mu.Lock()
+	defer dnsPort53Mu.Unlock()
 	result.Command = "ensure_internal_dns_route"
 	result.ResourceType = "internal_dns_route"
 	result.ResourceID = envOrDefault("NODE_ID", "agent")
@@ -2182,6 +2278,8 @@ func handleEnsureInternalDnsRouteCommand(ctx context.Context, cmd commandPayload
 }
 
 func handleResolveInternalDnsForwarderConflictCommand(ctx context.Context, cmd commandPayload, result *commandResult) {
+	dnsPort53Mu.Lock()
+	defer dnsPort53Mu.Unlock()
 	result.Command = "resolve_internal_dns_forwarder_conflict"
 	result.ResourceType = "internal_dns_route"
 	result.ResourceID = envOrDefault("NODE_ID", "agent")
@@ -2213,6 +2311,8 @@ func handleDnsGetZoneKeysCommand(cmd commandPayload, result *commandResult) {
 }
 
 func handleDnsResolvePortConflictCommand(ctx context.Context, cmd commandPayload, result *commandResult) {
+	dnsPort53Mu.Lock()
+	defer dnsPort53Mu.Unlock()
 	result.Command = "dns_resolve_port_conflict"
 	result.ResourceType = "dns_port_conflict"
 	result.ResourceID = fmt.Sprintf("%s:%s", readString(cmd.Payload, "groupId"), readString(cmd.Payload, "nodeId"))
