@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuard
 import { Request } from 'express';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { DnsDelegationCheckService } from './dns-delegation-check.service';
 import { DnsDelegationService } from './dns-delegation.service';
 import { DnsGroupsService } from './dns-groups.service';
 import { DnsRecordsService } from './dns-records.service';
@@ -24,6 +25,7 @@ export class DnsController {
     private readonly dnsZonesService: DnsZonesService,
     private readonly dnsRecordsService: DnsRecordsService,
     private readonly dnsDelegationService: DnsDelegationService,
+    private readonly dnsDelegationCheckService: DnsDelegationCheckService,
   ) {}
 
   @Get('groups')
@@ -133,6 +135,11 @@ export class DnsController {
   @Get('zones/:id/delegation')
   getDelegation(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope) {
     return this.dnsDelegationService.getDelegation(id, scope);
+  }
+
+  @Post('zones/:id/delegation/check')
+  recheckDelegation(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope) {
+    return this.dnsDelegationCheckService.checkZone(id, scope);
   }
 
   @Post('zones/:id/records')

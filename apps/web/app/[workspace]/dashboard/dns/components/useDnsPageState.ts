@@ -107,6 +107,21 @@ export function useDnsPageState() {
       return;
     }
 
+    if (message.type === 'dns.zone.delegation') {
+      if (!zonesRaw) return;
+      const update = message.payload as { zoneId: string; verified: boolean; checkedAt: string };
+      void refreshZones(
+        (current) =>
+          current?.map((zone) =>
+            zone.id === update.zoneId
+              ? { ...zone, delegationVerified: update.verified, delegationCheckedAt: update.checkedAt }
+              : zone,
+          ) ?? current,
+        { revalidate: false },
+      );
+      return;
+    }
+
     // Live-appends to whichever node's log panel is currently open, so a
     // user watching a "En attente" row can see exactly what the agent is
     // doing (package install, config write, service start...) instead of

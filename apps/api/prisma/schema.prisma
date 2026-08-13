@@ -477,6 +477,14 @@ model DnsZone {
   name          String
   dnssecEnabled Boolean        @default(true)
   status        DnsZoneStatus  @default(pending)
+  // Real-world delegation verification (see DnsDelegationCheckService) -
+  // distinct from `status` above, which only reflects local PowerDNS-apply
+  // success and says nothing about whether the registrar/parent zone
+  // actually points at us yet on the public internet.
+  delegationVerified  Boolean   @default(false)
+  delegationCheckedAt DateTime?
+  // Per-nameserver breakdown: [{ host, expectedIp, nsVisible, resolvedIp, matches, ok }]
+  delegationDetail    Json?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   records       DnsRecord[]
@@ -484,6 +492,7 @@ model DnsZone {
   @@unique([workspaceId, name])
   @@index([workspaceId])
   @@index([groupId])
+  @@index([status, delegationVerified])
 }
 
 // One row = one RRset (all values for a given name+type answered together).

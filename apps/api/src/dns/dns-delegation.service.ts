@@ -34,7 +34,15 @@ export class DnsDelegationService {
       .map((member, index) => ({ host: `ns${index + 1}.${zone.name}`, ip: extractExternalIp(member.node.overlayEndpoint) }))
       .filter((entry): entry is { host: string; ip: string } => Boolean(entry.ip));
 
-    return { nsHostnames: glue.map((entry) => entry.host), glue };
+    return {
+      nsHostnames: glue.map((entry) => entry.host),
+      glue,
+      // Real-world verification state (see DnsDelegationCheckService) -
+      // merged in here so the frontend doesn't need a second fetch.
+      verified: zone.delegationVerified,
+      checkedAt: zone.delegationCheckedAt,
+      detail: zone.delegationDetail,
+    };
   }
 
   // DS/DNSKEY are never persisted (see plan) - always fetched live from the

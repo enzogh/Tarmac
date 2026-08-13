@@ -2,6 +2,7 @@ import { forwardRef, Inject, Injectable, Logger, NotFoundException, OnModuleInit
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { DnsDelegationCheckService } from '../dns/dns-delegation-check.service';
 import { DnsGroupsService } from '../dns/dns-groups.service';
 import { DnsZonesService } from '../dns/dns-zones.service';
 import { MigrationsService } from '../migrations/migrations.service';
@@ -295,6 +296,8 @@ export class AgentsService implements OnModuleInit {
     private readonly dnsGroupsService: DnsGroupsService,
     @Inject(forwardRef(() => DnsZonesService))
     private readonly dnsZonesService: DnsZonesService,
+    @Inject(forwardRef(() => DnsDelegationCheckService))
+    private readonly dnsDelegationCheckService: DnsDelegationCheckService,
     private readonly vlanService: VlanService,
     private readonly agentLogsService: AgentLogsService,
     private readonly live: LiveWsServer,
@@ -789,6 +792,12 @@ export class AgentsService implements OnModuleInit {
       this.live.broadcast('dns.zone.status', { zoneId: result.resourceId, status: zoneStatus }, callingWorkspaceId);
       if (!result.success) {
         this.logger.error(`DNS zone ${result.resourceId} apply failed: ${this.normalizeFailureMessage(result.message)}`);
+      } else {
+        // The zone just went locally active - worth an immediate real-world
+        // delegation check instead of waiting for the next 60s tick.
+        // Fire-and-forget: a slow/failed check here must never block or
+        // fail this command-result handler.
+        void this.dnsDelegationCheckService.checkZoneUnscoped(result.resourceId);
       }
       return;
     }

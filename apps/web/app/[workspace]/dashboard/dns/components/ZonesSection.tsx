@@ -147,10 +147,24 @@ export function ZonesSection({
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button variant="ghost" size="icon" onClick={() => onOpenDelegation(zone)}>
-                            <KeyRound className="h-3.5 w-3.5" />
+                            <KeyRound
+                              className={`h-3.5 w-3.5 ${
+                                zone.delegationVerified
+                                  ? 'text-emerald-400'
+                                  : zone.delegationCheckedAt
+                                    ? 'animate-pulse text-amber-300'
+                                    : ''
+                              }`}
+                            />
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent>Délégation</TooltipContent>
+                        <TooltipContent>
+                          {zone.delegationVerified
+                            ? 'Délégation vérifiée sur le DNS public'
+                            : zone.delegationCheckedAt
+                              ? 'Délégation en attente de propagation'
+                              : 'Délégation — vérification en cours'}
+                        </TooltipContent>
                       </Tooltip>
                       {zone.dnssecEnabled && (
                         <Tooltip>

@@ -1,32 +1,92 @@
 'use client';
 
-import { XCircle } from 'lucide-react';
-import { DnsZoneItem } from '@/lib/api';
+import { useState } from 'react';
+import { CheckCircle2, Loader2, RefreshCcw, XCircle } from 'lucide-react';
+import { DnsDelegationNameserverResult, DnsZoneItem } from '@/lib/api';
 import { Callout } from '@/components/Callout';
+import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 export type DnsInfoPanelState = {
   zone: DnsZoneItem;
   tab: 'delegation' | 'dnssec';
-  delegation?: { nsHostnames: string[]; glue: Array<{ host: string; ip: string }> };
+  delegation?: {
+    nsHostnames: string[];
+    glue: Array<{ host: string; ip: string }>;
+    verified: boolean;
+    checkedAt: string | null;
+    detail: DnsDelegationNameserverResult[] | null;
+  };
   dnssec?: { dsRecords: string[]; dnskeyRecords: string[] };
   loading: boolean;
 };
 
+// Overall status line above the per-nameserver table - "checking" (never
+// checked yet, or the background loop/manual recheck hasn't landed a
+// result), "verified" (every nameserver passed both checks against a real
+// public resolver), or "waiting" (checked at least once, still not fully
+// correct - most commonly still-propagating registrar changes).
+function DelegationStatusLine({ delegation }: { delegation: NonNullable<DnsInfoPanelState['delegation']> }) {
+  if (delegation.checkedAt === null) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-sm text-amber-300">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        Vérification en cours…
+      </span>
+    );
+  }
+  if (delegation.verified) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-sm text-emerald-400">
+        <CheckCircle2 className="h-3.5 w-3.5" />
+        Délégation vérifiée sur le DNS public
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 text-sm text-amber-300">
+      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      En attente de propagation — nouvelle vérification automatique périodique
+    </span>
+  );
+}
+
 export function DelegationDnssecDialog({
   infoPanel,
   onClose,
+  onRecheck,
 }: {
   infoPanel: DnsInfoPanelState | null;
   onClose: () => void;
+  onRecheck: () => Promise<void>;
 }) {
+  const [rechecking, setRechecking] = useState(false);
+
+  const handleRecheck = async () => {
+    setRechecking(true);
+    try {
+      await onRecheck();
+    } finally {
+      setRechecking(false);
+    }
+  };
+
   return (
     <Dialog open={!!infoPanel} onOpenChange={(open) => !open && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>
-            {infoPanel?.tab === 'delegation' ? 'Délégation' : 'DNSSEC'} — {infoPanel?.zone.name}
-          </DialogTitle>
+          <div className="flex items-center justify-between gap-2">
+            <DialogTitle>
+              {infoPanel?.tab === 'delegation' ? 'Délégation' : 'DNSSEC'} — {infoPanel?.zone.name}
+            </DialogTitle>
+            {infoPanel?.tab === 'delegation' && infoPanel.delegation && (
+              <Button variant="ghost" size="sm" className="gap-1.5" disabled={rechecking} onClick={handleRecheck}>
+                <RefreshCcw className={`h-3.5 w-3.5 ${rechecking ? 'animate-spin' : ''}`} />
+                Revérifier
+              </Button>
+            )}
+          </div>
         </DialogHeader>
         {infoPanel?.loading ? (
           <p className="text-sm text-muted-foreground">Chargement…</p>
@@ -34,6 +94,48 @@ export function DelegationDnssecDialog({
           <div className="space-y-4 text-sm">
             {infoPanel.delegation && infoPanel.delegation.nsHostnames.length > 0 && (
               <>
+                <DelegationStatusLine delegation={infoPanel.delegation} />
+
+                {infoPanel.delegation.detail && infoPanel.delegation.detail.length > 0 && (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Nameserver</TableHead>
+                        <TableHead>NS visible</TableHead>
+                        <TableHead>Glue résout vers</TableHead>
+                        <TableHead className="w-[70px]">Statut</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {infoPanel.delegation.detail.map((entry) => (
+                        <TableRow key={entry.host}>
+                          <TableCell className="font-mono">{entry.host}</TableCell>
+                          <TableCell>
+                            {entry.nsVisible ? (
+                              <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                            ) : (
+                              <XCircle className="h-4 w-4 text-rose-400" />
+                            )}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs text-muted-foreground">
+                            {entry.resolvedIp ?? '—'}
+                            {entry.resolvedIp && !entry.matches && (
+                              <span className="ml-1.5 text-rose-400">(attendu {entry.expectedIp})</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {entry.ok ? (
+                              <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                            ) : (
+                              <XCircle className="h-4 w-4 text-rose-400" />
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+
                 <div className="space-y-2">
                   <p className="text-muted-foreground">Nameservers de cette zone :</p>
                   {infoPanel.delegation.nsHostnames.map((host) => (

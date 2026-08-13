@@ -159,6 +159,17 @@ export type DnsZoneItem = {
   dnssecEnabled: boolean;
   status: 'pending' | 'active' | 'error';
   records: DnsRecordItem[];
+  delegationVerified: boolean;
+  delegationCheckedAt: string | null;
+};
+
+export type DnsDelegationNameserverResult = {
+  host: string;
+  expectedIp: string;
+  nsVisible: boolean;
+  resolvedIp: string | null;
+  matches: boolean;
+  ok: boolean;
 };
 
 export type DnsNodeRecordRef = {
@@ -725,8 +736,17 @@ export const api = {
       getDnssecKeys: (zoneId: string) =>
         request<{ dsRecords: string[]; dnskeyRecords: string[] }>(`/api/v1/dns/zones/${zoneId}/dnssec`),
       getDelegation: (zoneId: string) =>
-        request<{ nsHostnames: string[]; glue: Array<{ host: string; ip: string }> }>(
-          `/api/v1/dns/zones/${zoneId}/delegation`,
+        request<{
+          nsHostnames: string[];
+          glue: Array<{ host: string; ip: string }>;
+          verified: boolean;
+          checkedAt: string | null;
+          detail: DnsDelegationNameserverResult[] | null;
+        }>(`/api/v1/dns/zones/${zoneId}/delegation`),
+      recheckDelegation: (zoneId: string) =>
+        request<{ verified: boolean; checkedAt: string; detail: DnsDelegationNameserverResult[] }>(
+          `/api/v1/dns/zones/${zoneId}/delegation/check`,
+          { method: 'POST' },
         ),
       upsertRecord: (
         zoneId: string,

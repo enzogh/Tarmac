@@ -55,6 +55,20 @@ export default function DnsPage() {
     }
   };
 
+  const recheckDelegation = async () => {
+    if (!infoPanel || infoPanel.tab !== 'delegation') return;
+    try {
+      const result = await api.dns.zones.recheckDelegation(infoPanel.zone.id);
+      setInfoPanel((prev) =>
+        prev && prev.tab === 'delegation' && prev.delegation
+          ? { ...prev, delegation: { ...prev.delegation, ...result } }
+          : prev,
+      );
+    } catch {
+      setNotice({ type: 'error', message: 'Erreur lors de la vérification de la délégation.' });
+    }
+  };
+
   const openDnssec = async (zone: DnsZoneItem) => {
     setInfoPanel({ zone, tab: 'dnssec', loading: true });
     try {
@@ -208,7 +222,7 @@ export default function DnsPage() {
         />
       )}
 
-      <DelegationDnssecDialog infoPanel={infoPanel} onClose={() => setInfoPanel(null)} />
+      <DelegationDnssecDialog infoPanel={infoPanel} onClose={() => setInfoPanel(null)} onRecheck={recheckDelegation} />
     </>
   );
 }
