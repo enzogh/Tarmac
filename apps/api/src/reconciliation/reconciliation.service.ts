@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { AgentsService } from '../agents/agents.service';
-import { DnsService } from '../dns/dns.service';
+import { DnsGroupsService } from '../dns/dns-groups.service';
+import { DnsZonesService } from '../dns/dns-zones.service';
 import { MountsService } from '../mounts/mounts.service';
 import { extractExternalIp } from '../nodes/extract-external-ip';
 import { PoolsService } from '../pools/pools.service';
@@ -20,7 +21,8 @@ export class ReconciliationService implements OnModuleInit {
     private readonly sharesService: SharesService,
     private readonly mountsService: MountsService,
     private readonly poolsService: PoolsService,
-    private readonly dnsService: DnsService,
+    private readonly dnsGroupsService: DnsGroupsService,
+    private readonly dnsZonesService: DnsZonesService,
     private readonly agentsService: AgentsService,
     private readonly prisma: PrismaService,
     private readonly vlanService: VlanService,
@@ -43,8 +45,8 @@ export class ReconciliationService implements OnModuleInit {
           this.sharesService.findPending(),
           this.mountsService.findPending(),
           this.poolsService.findPendingMembers(),
-          this.dnsService.findPendingGroupMembers(),
-          this.dnsService.findPendingZones(),
+          this.dnsGroupsService.findPendingGroupMembers(),
+          this.dnsZonesService.findPendingZones(),
         ]);
 
     for (const share of pendingShares) {

@@ -2,7 +2,8 @@ import { forwardRef, Inject, Injectable, Logger, NotFoundException, OnModuleInit
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { DnsService } from '../dns/dns.service';
+import { DnsGroupsService } from '../dns/dns-groups.service';
+import { DnsZonesService } from '../dns/dns-zones.service';
 import { MigrationsService } from '../migrations/migrations.service';
 import { MountsService } from '../mounts/mounts.service';
 import { PoolsService } from '../pools/pools.service';
@@ -290,8 +291,10 @@ export class AgentsService implements OnModuleInit {
     @Inject(forwardRef(() => MountsService))
     private readonly mountsService: MountsService,
     private readonly poolsService: PoolsService,
-    @Inject(forwardRef(() => DnsService))
-    private readonly dnsService: DnsService,
+    @Inject(forwardRef(() => DnsGroupsService))
+    private readonly dnsGroupsService: DnsGroupsService,
+    @Inject(forwardRef(() => DnsZonesService))
+    private readonly dnsZonesService: DnsZonesService,
     private readonly vlanService: VlanService,
     private readonly agentLogsService: AgentLogsService,
     private readonly live: LiveWsServer,
@@ -734,7 +737,7 @@ export class AgentsService implements OnModuleInit {
 
       const portConflict = result.data?.portConflict;
       const memberStatus = result.success ? 'active' : 'error';
-      await this.dnsService.setGroupMemberStatus(
+      await this.dnsGroupsService.setGroupMemberStatus(
         groupId,
         memberNodeId,
         memberStatus,
@@ -751,7 +754,7 @@ export class AgentsService implements OnModuleInit {
       );
 
       if (result.success && result.data?.dnsTsigKeySecret) {
-        await this.dnsService.setGroupTsigKeySecret(groupId, result.data.dnsTsigKeySecret);
+        await this.dnsGroupsService.setGroupTsigKeySecret(groupId, result.data.dnsTsigKeySecret);
       }
 
       if (!result.success && portConflict) {
@@ -782,7 +785,7 @@ export class AgentsService implements OnModuleInit {
         return;
       }
       const zoneStatus = result.success ? 'active' : 'error';
-      await this.dnsService.setZoneStatus(result.resourceId, zoneStatus);
+      await this.dnsZonesService.setZoneStatus(result.resourceId, zoneStatus);
       this.live.broadcast('dns.zone.status', { zoneId: result.resourceId, status: zoneStatus }, callingWorkspaceId);
       if (!result.success) {
         this.logger.error(`DNS zone ${result.resourceId} apply failed: ${this.normalizeFailureMessage(result.message)}`);

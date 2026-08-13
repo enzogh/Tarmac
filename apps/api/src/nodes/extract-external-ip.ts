@@ -1,5 +1,5 @@
-// Shared by NodesService (surfaced as NodeItem.externalIp) and DnsService
-// (default target for new DNS records / NS glue) - a node's public IP isn't
+// Shared by NodesService (surfaced as NodeItem.externalIp) and the DNS
+// services (default target for new DNS records / NS glue) - a node's public IP isn't
 // stored directly, only derived from its WireGuard overlay endpoint.
 export function extractExternalIp(endpoint: string | null | undefined): string | null {
   if (!endpoint) return null;
