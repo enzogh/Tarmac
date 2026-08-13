@@ -2077,7 +2077,15 @@ func writeInternalDnsHostsBlock(records []internalDnsHostRecord) error {
 			log.Printf("dns: skipping internal DNS hosts entry %q with unparseable address %q", record.Name, record.Content)
 			continue
 		}
-		fqdn := dnsRecordFqdn(strings.TrimSuffix(internalDnsZoneName, "."), record.Name)
+		// dnsRecordFqdn appends a trailing dot, the DNS zone-file
+		// convention for "fully qualified" (it's also used to build the
+		// real PowerDNS zone data, where that dot matters). /etc/hosts has
+		// no such convention - NSS matches hostnames there by exact string,
+		// so a stored "foo.tarmac.local." never matches a lookup for
+		// "foo.tarmac.local" (confirmed in production: every entry
+		// resolved via this block failed with "Name or service not known"
+		// until this trim was added). Strip it back off here.
+		fqdn := strings.TrimSuffix(dnsRecordFqdn(strings.TrimSuffix(internalDnsZoneName, "."), record.Name), ".")
 		entries = append(entries, fmt.Sprintf("%s %s", record.Content, fqdn))
 	}
 	if len(entries) == 0 {
