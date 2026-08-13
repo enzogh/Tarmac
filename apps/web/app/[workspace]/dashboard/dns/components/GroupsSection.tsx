@@ -1,7 +1,9 @@
 'use client';
 
-import { AlertTriangle, ChevronDown, Copy, Crown, Server, ScrollText, Trash2 } from 'lucide-react';
-import { api, DnsServerGroupItem, NodeItem } from '@/lib/api';
+import { useEffect, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { AlertTriangle, ChevronDown, Copy, Crown, Server, ScrollText, Trash2, Waves } from 'lucide-react';
+import { api, DnsServerGroupItem, NodeItem, VlanConnectionHistory } from '@/lib/api';
 import { SectionLabel } from '@/components/SectionLabel';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui';
@@ -10,15 +12,78 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CardListSkeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { HelpText } from '@/components/ui/wizard';
+import { ConnectionHistoryChart } from '@/components/dashboard-charts';
 import { JournalLogPanel } from './JournalLogPanel';
 import { StatusIndicator } from './StatusIndicator';
 import { useCollapsibleCards } from './useCollapsibleCards';
 import { DnsJournalState, DnsNotice } from './useDnsPageState';
 
+// Reuses the same overlay-mesh latency samples shown on the Network page
+// (VlanConnectionSample, via api.vlan.getHistory) for the primary<->secondary
+// link of a DNS group - a slow/lossy link directly affects AXFR transfer and
+// query-forwarding health, so it's more actionable here than an abstract
+// "network quality" number would be on its own.
+function GroupLinkLatency({
+  vlanId,
+  sourceNodeId,
+  targetNodeId,
+  sourceLabel,
+  targetLabel,
+}: {
+  vlanId: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  sourceLabel: string;
+  targetLabel: string;
+}) {
+  const [history, setHistory] = useState<VlanConnectionHistory | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api.vlan
+      .getHistory(vlanId, sourceNodeId, targetNodeId, '1h')
+      .then((h) => {
+        if (!cancelled) setHistory(h);
+      })
+      .catch(() => {
+        if (!cancelled) setHistory(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [vlanId, sourceNodeId, targetNodeId]);
+
+  if (loading) {
+    return <p className="text-xs text-muted-foreground">Chargement de la liaison…</p>;
+  }
+
+  const chartData = (history?.samples ?? []).map((sample) => ({
+    label: new Date(sample.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+    latencyMs: sample.latencyMs ?? null,
+    packetLoss: sample.packetLoss ?? null,
+  }));
+
+  return (
+    <div className="space-y-1 rounded-xl border border-white/[0.06] bg-black/10 p-3">
+      <p className="font-mono text-xs text-zinc-400">
+        {sourceLabel} → {targetLabel}
+        {history ? ` · ${history.uptimePercent}% uptime (1h)` : ''}
+      </p>
+      <ConnectionHistoryChart data={chartData} />
+    </div>
+  );
+}
+
 export function GroupsSection({
   groups,
   groupsLoading,
   nodes,
+  vlanId,
   busyKey,
   setBusyKey,
   setNotice,
@@ -28,6 +93,7 @@ export function GroupsSection({
   groups: DnsServerGroupItem[];
   groupsLoading: boolean;
   nodes: NodeItem[];
+  vlanId: string | null;
   busyKey: string | null;
   setBusyKey: (key: string | null) => void;
   setNotice: (notice: DnsNotice) => void;
@@ -150,7 +216,15 @@ export function GroupsSection({
                     </div>
                   </div>
                 </CardHeader>
-                {!collapsed && (
+                <AnimatePresence initial={false}>
+                  {!collapsed && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2, ease: 'easeInOut' }}
+                      className="overflow-hidden"
+                    >
                   <CardContent className="space-y-2">
                     {group.members.length === 0 && (
                       <p className="text-sm text-muted-foreground">Aucun serveur dans ce groupe.</p>
@@ -260,8 +334,35 @@ export function GroupsSection({
                         ))}
                       </div>
                     )}
+                    {vlanId && group.members.length >= 2 && (
+                      <div className="space-y-2 pt-1">
+                        <div className="flex items-center gap-1.5">
+                          <Waves className="h-3.5 w-3.5 text-violet-400" />
+                          <span className="text-xs font-medium text-zinc-300">Qualité de la liaison AXFR</span>
+                          <HelpText text="Latence et perte de paquets mesurées sur le réseau overlay entre le serveur primaire et chaque secondaire - une liaison lente ou instable ralentit ou bloque le transfert de zone (AXFR/IXFR)." />
+                        </div>
+                        {(() => {
+                          const primary = group.members.find((m) => m.role === 'primary');
+                          if (!primary) return null;
+                          return group.members
+                            .filter((m) => m.role !== 'primary')
+                            .map((secondary) => (
+                              <GroupLinkLatency
+                                key={secondary.nodeId}
+                                vlanId={vlanId}
+                                sourceNodeId={primary.nodeId}
+                                targetNodeId={secondary.nodeId}
+                                sourceLabel={nodeName(primary.nodeId)}
+                                targetLabel={nodeName(secondary.nodeId)}
+                              />
+                            ));
+                        })()}
+                      </div>
+                    )}
                   </CardContent>
-                )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </Card>
             );
           })}

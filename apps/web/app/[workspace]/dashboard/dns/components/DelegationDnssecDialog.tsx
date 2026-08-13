@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { CheckCircle2, Loader2, RefreshCcw, XCircle } from 'lucide-react';
 import { DnsDelegationNameserverResult, DnsZoneItem } from '@/lib/api';
 import { Callout } from '@/components/Callout';
@@ -28,27 +29,23 @@ export type DnsInfoPanelState = {
 // public resolver), or "waiting" (checked at least once, still not fully
 // correct - most commonly still-propagating registrar changes).
 function DelegationStatusLine({ delegation }: { delegation: NonNullable<DnsInfoPanelState['delegation']> }) {
-  if (delegation.checkedAt === null) {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-sm text-amber-300">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        Vérification en cours…
-      </span>
-    );
-  }
-  if (delegation.verified) {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-sm text-emerald-400">
-        <CheckCircle2 className="h-3.5 w-3.5" />
-        Délégation vérifiée sur le DNS public
-      </span>
-    );
-  }
+  const state = delegation.checkedAt === null ? 'checking' : delegation.verified ? 'verified' : 'waiting';
   return (
-    <span className="inline-flex items-center gap-1.5 text-sm text-amber-300">
-      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-      En attente de propagation — nouvelle vérification automatique périodique
-    </span>
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.span
+        key={state}
+        initial={{ opacity: 0, y: -4 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 4 }}
+        transition={{ duration: 0.2 }}
+        className={`inline-flex items-center gap-1.5 text-sm ${state === 'verified' ? 'text-emerald-400' : 'text-amber-300'}`}
+      >
+        {state === 'verified' ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+        {state === 'checking' && 'Vérification en cours…'}
+        {state === 'verified' && 'Délégation vérifiée sur le DNS public'}
+        {state === 'waiting' && 'En attente de propagation — nouvelle vérification automatique périodique'}
+      </motion.span>
+    </AnimatePresence>
   );
 }
 

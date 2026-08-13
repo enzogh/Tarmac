@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { WorkspaceScope } from '../auth/workspace.guard';
+import { extractExternalIp } from '../nodes/extract-external-ip';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpsertDnsRecordDto } from './dto/upsert-dns-record.dto';
 import { DnsZonesService } from './dns-zones.service';
@@ -18,6 +19,21 @@ export class DnsRecordsService {
     const ttl = dto.ttl ?? 3600;
     const isGeo = dto.isGeo ?? false;
 
+    // The value editor is free-text only (no node picker) - a value's
+    // content is matched against the workspace's own fleet IPs here so the
+    // reverse lookup (GET nodes/:nodeId/records, consumed by the infra page
+    // and GeoMapSection) keeps working without exposing that plumbing in the UI.
+    const nodesByIp = new Map(
+      (
+        await this.prisma.node.findMany({
+          where: { workspaceId: scope.workspaceId as string },
+          select: { id: true, overlayEndpoint: true },
+        })
+      )
+        .map((node) => [extractExternalIp(node.overlayEndpoint), node.id] as const)
+        .filter((entry): entry is [string, string] => entry[0] !== null),
+    );
+
     const recordId = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.dnsRecord.findUnique({
         where: { zoneId_name_type: { zoneId, name: dto.name, type: dto.type } },
@@ -33,7 +49,7 @@ export class DnsRecordsService {
         data: dto.values.map((value) => ({
           recordId: saved.id,
           content: value.content,
-          nodeId: value.nodeId ?? null,
+          nodeId: value.nodeId ?? nodesByIp.get(value.content) ?? null,
           priority: value.priority ?? null,
         })),
       });

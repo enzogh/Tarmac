@@ -1,4 +1,4 @@
-import { ConflictException, forwardRef, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, forwardRef, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { DnsServerGroupMemberStatus, Prisma } from '@prisma/client';
 import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
@@ -7,6 +7,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateDnsGroupDto } from './dto/create-dns-group.dto';
 import { UpdateDnsGroupDto } from './dto/update-dns-group.dto';
 import { UpsertDnsGroupMemberDto } from './dto/upsert-dns-group-member.dto';
+
+// 1 primary + up to 3 secondaries - matches what a single AXFR-fanout from
+// one primary can reasonably serve without dedicated tuning.
+const MAX_GROUP_MEMBERS = 4;
 
 // DNS server groups (primary/secondary fleet, mirrors PoolsService).
 @Injectable()
@@ -85,6 +89,16 @@ export class DnsGroupsService {
 
   async upsertGroupMember(groupId: string, dto: UpsertDnsGroupMemberDto, scope: WorkspaceScope, actorUserId?: string) {
     await this.assertGroupOwned(groupId, scope);
+    const existing = await this.prisma.dnsServerGroupMember.findUnique({
+      where: { groupId_nodeId: { groupId, nodeId: dto.nodeId } },
+      select: { id: true },
+    });
+    if (!existing) {
+      const memberCount = await this.prisma.dnsServerGroupMember.count({ where: { groupId } });
+      if (memberCount >= MAX_GROUP_MEMBERS) {
+        throw new BadRequestException(`a DNS server group can have at most ${MAX_GROUP_MEMBERS} members`);
+      }
+    }
     const member = await this.prisma.dnsServerGroupMember.upsert({
       where: { groupId_nodeId: { groupId, nodeId: dto.nodeId } },
       update: { role: dto.role, status: dto.status, conflictDetail: Prisma.JsonNull },

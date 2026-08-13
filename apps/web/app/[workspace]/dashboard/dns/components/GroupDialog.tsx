@@ -1,24 +1,31 @@
 'use client';
 
 import { useState } from 'react';
-import { api, NodeItem } from '@/lib/api';
+import { api, DnsServerGroupItem, NodeItem } from '@/lib/api';
 import { Badge } from '@/components/ui';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DnsNotice } from './useDnsPageState';
+
+// 1 primaire + jusqu'à 3 secondaires - garde-fou côté UI, le backend
+// applique la même limite (voir MAX_GROUP_MEMBERS dans dns-groups.service.ts).
+const MAX_GROUP_MEMBERS = 4;
 
 export function GroupDialog({
   open,
   onOpenChange,
   nodes,
+  groups,
   onCreated,
   onNotice,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   nodes: NodeItem[];
+  groups: DnsServerGroupItem[];
   onCreated: () => Promise<void>;
   onNotice: (notice: DnsNotice) => void;
 }) {
@@ -86,30 +93,57 @@ export function GroupDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label>Serveurs</Label>
+            <Label>
+              Serveurs{' '}
+              <span className="text-xs font-normal text-muted-foreground">
+                ({groupNodeIds.length}/{MAX_GROUP_MEMBERS})
+              </span>
+            </Label>
             <p className="text-xs text-muted-foreground">
-              Le premier nœud coché devient le primaire, les suivants sont secondaires.
+              Le premier nœud coché devient le primaire, les suivants sont secondaires (jusqu'à {MAX_GROUP_MEMBERS} serveurs).
             </p>
             <div className="space-y-2 max-h-64 overflow-y-auto">
               {nodes.map((node) => {
                 const checked = groupNodeIds.includes(node.id);
                 const index = groupNodeIds.indexOf(node.id);
-                return (
+                const ownerGroup = groups.find((g) => g.members.some((m) => m.nodeId === node.id));
+                const atCapacity = !checked && groupNodeIds.length >= MAX_GROUP_MEMBERS;
+                const disabled = !checked && (!!ownerGroup || atCapacity);
+                const row = (
                   <label
                     key={node.id}
-                    className={`flex cursor-pointer items-center justify-between rounded-lg border px-3 py-2 transition ${
-                      checked ? 'border-violet-500/50 bg-violet-500/[0.08]' : 'border-white/[0.1] bg-zinc-950/50'
-                    }`}
+                    className={`flex items-center justify-between rounded-lg border px-3 py-2 transition ${
+                      disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
+                    } ${checked ? 'border-violet-500/50 bg-violet-500/[0.08]' : 'border-white/[0.1] bg-zinc-950/50'}`}
                   >
                     <span className="flex items-center gap-2 text-sm text-foreground">
-                      <input type="checkbox" checked={checked} onChange={() => toggleGroupNode(node.id)} className="h-4 w-4 rounded" />
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={disabled}
+                        onChange={() => toggleGroupNode(node.id)}
+                        className="h-4 w-4 rounded"
+                      />
                       {node.name}
                       <span className="text-xs text-muted-foreground">({node.status})</span>
                     </span>
-                    {checked && (
+                    {checked ? (
                       <Badge label={index === 0 ? 'primaire' : 'secondaire'} type={index === 0 ? 'info' : 'success'} />
+                    ) : (
+                      ownerGroup && <Badge label={`déjà dans « ${ownerGroup.name} »`} type="warning" />
                     )}
                   </label>
+                );
+                if (!disabled) return row;
+                return (
+                  <Tooltip key={node.id}>
+                    <TooltipTrigger asChild>{row}</TooltipTrigger>
+                    <TooltipContent>
+                      {ownerGroup
+                        ? `Ce nœud exécute déjà PowerDNS pour le groupe « ${ownerGroup.name} »`
+                        : `Maximum ${MAX_GROUP_MEMBERS} serveurs par groupe`}
+                    </TooltipContent>
+                  </Tooltip>
                 );
               })}
               {nodes.length === 0 && <p className="text-sm text-muted-foreground">Aucun nœud enregistré.</p>}

@@ -24,6 +24,7 @@ export default function DnsPage() {
     nodes,
     groups,
     zones,
+    vlanId,
     groupsLoading,
     zonesLoading,
     refreshGroups,
@@ -159,6 +160,7 @@ export default function DnsPage() {
               groups={groups}
               groupsLoading={groupsLoading}
               nodes={nodes}
+              vlanId={vlanId}
               busyKey={busyKey}
               setBusyKey={setBusyKey}
               setNotice={setNotice}
@@ -193,6 +195,7 @@ export default function DnsPage() {
         open={groupDialogOpen}
         onOpenChange={setGroupDialogOpen}
         nodes={nodes}
+        groups={groups}
         onCreated={async () => {
           await refreshGroups();
         }}
@@ -213,7 +216,6 @@ export default function DnsPage() {
         <RecordDialog
           key={`${recordDialogTarget.zoneId}:${recordDialogTarget.record?.id ?? 'new'}`}
           target={recordDialogTarget}
-          nodes={nodes}
           onClose={() => setRecordDialogTarget(null)}
           onSaved={async () => {
             await refreshZones();

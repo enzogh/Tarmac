@@ -2,19 +2,20 @@
 
 import { useState } from 'react';
 import { Plus, X } from 'lucide-react';
-import { api, DnsRecordItem, DnsRecordType, NodeItem } from '@/lib/api';
+import { api, DnsRecordItem, DnsRecordType } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { HelpText } from '@/components/ui/wizard';
 import { DnsNotice } from './useDnsPageState';
 
 const RECORD_TYPES: DnsRecordType[] = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'CAA', 'SRV', 'PTR'];
 
-type RecordValueDraft = { content: string; nodeId: string; priority: string };
+type RecordValueDraft = { content: string; priority: string };
 
-const emptyValueDraft = (): RecordValueDraft => ({ content: '', nodeId: '', priority: '' });
+const emptyValueDraft = (): RecordValueDraft => ({ content: '', priority: '' });
 
 export type RecordDialogTarget = { zoneId: string; record?: DnsRecordItem };
 
@@ -24,13 +25,11 @@ export type RecordDialogTarget = { zoneId: string; record?: DnsRecordItem };
 // instead of needing a useEffect to resync state from props.
 export function RecordDialog({
   target,
-  nodes,
   onClose,
   onSaved,
   onNotice,
 }: {
   target: RecordDialogTarget;
-  nodes: NodeItem[];
   onClose: () => void;
   onSaved: () => Promise<void>;
   onNotice: (notice: DnsNotice) => void;
@@ -45,21 +44,17 @@ export function RecordDialog({
     existing?.values.length
       ? existing.values.map((v) => ({
           content: v.content,
-          nodeId: v.nodeId ?? '',
           priority: v.priority != null ? String(v.priority) : '',
         }))
       : [emptyValueDraft()],
   );
   const [saving, setSaving] = useState(false);
 
-  const nodeExternalIp = (nodeId: string) => nodes.find((n) => n.id === nodeId)?.externalIp ?? '';
-
   const saveRecord = async () => {
     const values = recordValues
       .filter((v) => v.content.trim())
       .map((v) => ({
         content: v.content.trim(),
-        ...(v.nodeId ? { nodeId: v.nodeId } : {}),
         ...(v.priority.trim() ? { priority: Number(v.priority) } : {}),
       }));
     if (!recordForm.name.trim() || values.length === 0) {
@@ -132,14 +127,15 @@ export function RecordDialog({
                 onChange={(e) => setRecordForm((prev) => ({ ...prev, ttl: Number(e.target.value) || 3600 }))}
               />
             </div>
-            <label className="flex items-end gap-2 pb-2 text-sm text-foreground">
+            <label className="flex items-end gap-1.5 pb-2 text-sm text-foreground">
               <input
                 type="checkbox"
                 checked={recordForm.isGeo}
                 onChange={(e) => setRecordForm((prev) => ({ ...prev, isGeo: e.target.checked }))}
                 className="h-4 w-4 rounded"
               />
-              Géo-routage (répond selon la localisation du client)
+              Géo-routage
+              <HelpText text="Au lieu de renvoyer toujours la même valeur, PowerDNS choisit automatiquement, à chaque requête, celle géographiquement la plus proche du client qui interroge. Utile quand plusieurs serveurs dans des régions différentes servent le même nom : un visiteur en Europe reçoit l'IP du serveur européen, un visiteur aux US celle du serveur américain." />
             </label>
           </div>
 
@@ -147,32 +143,6 @@ export function RecordDialog({
             <Label>Valeurs {recordForm.isGeo && '(candidats géo-routés)'}</Label>
             {recordValues.map((value, index) => (
               <div key={index} className="flex flex-wrap items-center gap-2 rounded-lg border border-white/[0.08] bg-zinc-950/50 p-2">
-                <Select
-                  value={value.nodeId || '__manual__'}
-                  onValueChange={(nodeId) => {
-                    setRecordValues((prev) =>
-                      prev.map((v, i) =>
-                        i === index
-                          ? nodeId === '__manual__'
-                            ? { ...v, nodeId: '' }
-                            : { ...v, nodeId, content: nodeExternalIp(nodeId) || v.content }
-                          : v,
-                      ),
-                    );
-                  }}
-                >
-                  <SelectTrigger className="w-44 shrink-0">
-                    <SelectValue placeholder="Nœud (optionnel)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__manual__">Saisie manuelle</SelectItem>
-                    {nodes.map((node) => (
-                      <SelectItem key={node.id} value={node.id}>
-                        {node.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
                 <Input
                   value={value.content}
                   onChange={(e) =>

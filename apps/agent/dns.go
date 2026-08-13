@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -435,6 +436,15 @@ func ensurePdnsSqliteDatabase(ctx context.Context) error {
 // gsqlite3 serializes every write behind a single lock, which becomes the
 // query-response-time bottleneck under real load, whereas lmdb is a
 // memory-mapped B+tree with much better read concurrency.
+// go.mod pins go 1.18 (matches the apt-installed golang-go on production
+// nodes, see mmdbwriter pin above) - no builtin max() until Go 1.21.
+func pdnsDistributorThreads() int {
+	if n := runtime.NumCPU(); n > 2 {
+		return n
+	}
+	return 2
+}
+
 func writePdnsConfig(apiKey string, allowAxfrIps []string, backend string) error {
 	if err := os.MkdirAll(filepath.Dir(pdnsConfigPath), 0o755); err != nil {
 		return fmt.Errorf("cannot create powerdns config dir: %w", err)
@@ -481,6 +491,23 @@ func writePdnsConfig(apiKey string, allowAxfrIps []string, backend string) error
 		"master=yes",
 		"slave=yes",
 		"allow-axfr-ips="+strings.Join(append([]string{"127.0.0.1"}, allowAxfrIps...), ","),
+		// distributor-threads defaults to 3 regardless of the machine's real
+		// core count (confirmed against the actual shipped default via a
+		// PowerDNS 4.5.5 spike - the same version `apt install pdns-server`
+		// resolves to on the Ubuntu 22.04 nodes this agent targets). Sizing
+		// it to the node's own core count costs nothing on small VPS (still
+		// resolves to the same default) and removes a real bottleneck on
+		// bigger boxes, without needing to know the fleet's hardware ahead
+		// of time - runtime.NumCPU() reads it locally on each node.
+		fmt.Sprintf("distributor-threads=%d", pdnsDistributorThreads()),
+		// Packet-cache TTL, default 20s (also confirmed via the same spike):
+		// raised to 60s since it's an independent cap under the record's own
+		// TTL, not a floor - a record's own TTL (e.g. Tarmac's 3600s default)
+		// still governs correctness. 60s cuts backend/gsqlite3 lookups for
+		// repeat identical queries by 3x versus the default without working
+		// against the ~15s reconciliation cycle that already pushes out
+		// legitimate record changes.
+		"cache-ttl=60",
 	)
 	if len(allowAxfrIps) > 0 {
 		lines = append(lines, "also-notify="+strings.Join(allowAxfrIps, ","))
