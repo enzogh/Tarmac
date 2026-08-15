@@ -1,65 +1,207 @@
 import Link from 'next/link';
-import { ArrowRight, Server, Database, Network, RefreshCw } from 'lucide-react';
+import {
+  ArrowRight,
+  Server,
+  Database,
+  Network,
+  RefreshCw,
+  Globe,
+  LayoutGrid,
+  ScrollText,
+  Bell,
+  HardDrive,
+  ArrowRightLeft,
+  BookOpen,
+} from 'lucide-react';
 import { PageHeader } from '../../components/PageHeader';
 import { Callout } from '../../components/Callout';
+import { SectionLabel } from '../../components/SectionLabel';
+import { AnimatedGradientText } from '../../components/ui/animated-gradient-text';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
+import { Diagram, DBox, DFrame, DLink, DNote } from '../../components/docs/Diagram';
+
+const QUICK_START = [
+  {
+    title: 'Choisissez un workspace',
+    text: "Chaque workspace est une flotte isolée : ses propres nœuds, son propre sous-réseau privé, ses propres zones DNS. L'URL du tableau de bord commence par son identifiant.",
+    href: '/docs/workspaces',
+  },
+  {
+    title: 'Ajoutez un nœud',
+    text: "Infrastructure → Ajouter un nœud : adresse IP et identifiants SSH d'un serveur Ubuntu 22.04. Tarmac installe l'agent, le rattache au VLAN et lui attribue une IP privée.",
+    href: '/docs/concepts',
+  },
+  {
+    title: 'Exposez du stockage ou du DNS',
+    text: "Partagez un dossier en NFS, montez une source distante, ou désignez des serveurs DNS primaire/secondaire pour héberger vos propres zones.",
+    href: '/docs/dns',
+  },
+  {
+    title: 'Supervisez',
+    text: "CPU, RAM, réseau, SMART et latence VLAN en direct. Les règles de seuil déclenchent des alertes, et le Journal conserve actions et logs d'agents.",
+    href: '/docs/concepts',
+  },
+];
+
+const MODULES: { group: string; items: { icon: typeof Server; title: string; text: string; href: string; isNew?: boolean }[] }[] = [
+  {
+    group: 'Infrastructure',
+    items: [
+      { icon: Server, title: 'Nœuds', text: 'Onboarding SSH, agents, disques et santé SMART.', href: '/docs/concepts' },
+      { icon: Network, title: 'Réseau', text: 'Mesh WireGuard, graphe, carte du monde, passerelles régionales, ping/traceroute.', href: '/docs/concepts' },
+      { icon: Globe, title: 'DNS', text: 'Groupes primaire/secondaire, zones, DNSSEC, délégation vérifiée, GeoDNS.', href: '/docs/dns', isNew: true },
+    ],
+  },
+  {
+    group: 'Stockage',
+    items: [
+      { icon: Database, title: 'Stockage', text: 'Partages NFS, capacité agrégée et prévision de saturation.', href: '/docs/concepts' },
+      { icon: HardDrive, title: 'Montages', text: 'Sources NFS, CIFS ou SFTP montées sur un nœud, avec sources de secours.', href: '/docs/concepts' },
+      { icon: RefreshCw, title: 'Réplication', text: 'Pools de nœuds, rôles primary/replica et tâches de synchronisation planifiées.', href: '/docs/concepts' },
+      { icon: ArrowRightLeft, title: 'Migrations', text: 'Déplacement de volumes entre nœuds, seedbox ou Storage Box.', href: '/docs/concepts' },
+    ],
+  },
+  {
+    group: 'Supervision & organisation',
+    items: [
+      { icon: Bell, title: 'Alertes', text: 'Règles de seuil évaluées chaque minute, canaux e-mail / webhook / Slack.', href: '/docs/concepts' },
+      { icon: ScrollText, title: 'Journal', text: "Actions d'administration et logs d'agents en direct, filtrables et exportables.", href: '/docs/concepts', isNew: true },
+      { icon: LayoutGrid, title: 'Workspaces', text: 'Cloisonnement multi-flottes, membres, propriétaires et connexion SSO Authentik.', href: '/docs/workspaces', isNew: true },
+    ],
+  },
+];
 
 export default function DocsHomePage() {
   return (
-    <div className="space-y-10">
+    <div className="space-y-12">
       <PageHeader
-        title="Documentation Tarmac"
-        description="Tarmac orchestre une flotte de serveurs de stockage interconnectés : partages NFS, montages, réplication, migrations et supervision réseau, le tout depuis un seul tableau de bord."
+        icon={BookOpen}
+        title={<AnimatedGradientText speed={0.6}>Documentation Tarmac</AnimatedGradientText>}
+        description="Tarmac orchestre une flotte de serveurs interconnectés : réseau privé, DNS faisant autorité, partages NFS, montages, réplication, migrations et supervision — le tout depuis un seul tableau de bord."
       />
 
       <Callout>
-        Nouveau sur Tarmac ? Commencez par le concept de <strong className="text-violet-100">nœud</strong> ci-dessous,
-        puis consultez la <Link href="/docs/concepts" className="underline underline-offset-2">page Concepts clés</Link>
-        {' '}pour comprendre comment les partages, montages et pools s'articulent entre eux.
+        Nouveau sur Tarmac ? Commencez par les{' '}
+        <Link href="/docs/concepts" className="underline underline-offset-2">
+          concepts clés
+        </Link>
+        . Les nouveautés récentes ont leur propre page :{' '}
+        <Link href="/docs/workspaces" className="underline underline-offset-2">
+          workspaces &amp; SSO
+        </Link>{' '}
+        et{' '}
+        <Link href="/docs/dns" className="underline underline-offset-2">
+          DNS
+        </Link>
+        .
       </Callout>
 
       <section className="space-y-4">
-        <h2 className="text-lg font-semibold tracking-tight text-foreground">Démarrage rapide</h2>
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <Card>
-            <CardHeader>
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-600/15 text-sm font-semibold text-violet-300">1</div>
-              <CardTitle className="pt-3 text-base">Ajoutez un nœud</CardTitle>
-              <CardDescription>
-                Depuis Infrastructure → Ajouter un nœud, renseignez l'adresse IP et les identifiants SSH d'un serveur
-                Ubuntu 22.04. Tarmac installe l'agent automatiquement.
-              </CardDescription>
-            </CardHeader>
-          </Card>
-          <Card>
-            <CardHeader>
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-600/15 text-sm font-semibold text-violet-300">2</div>
-              <CardTitle className="pt-3 text-base">Créez un partage ou un montage</CardTitle>
-              <CardDescription>
-                Une fois le nœud en ligne, exposez un dossier en NFS (Stockage) ou montez une source existante sur ce
-                nœud (Montages).
-              </CardDescription>
-            </CardHeader>
-          </Card>
-          <Card>
-            <CardHeader>
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-600/15 text-sm font-semibold text-violet-300">3</div>
-              <CardTitle className="pt-3 text-base">Supervisez</CardTitle>
-              <CardDescription>
-                Le tableau de bord remonte CPU, RAM, réseau et stockage en direct, et déclenche des alertes selon les
-                seuils que vous définissez.
-              </CardDescription>
-            </CardHeader>
-          </Card>
+        <SectionLabel>Architecture</SectionLabel>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Comment les pièces s&apos;assemblent</CardTitle>
+            <CardDescription>
+              Un control plane central, un agent léger par serveur, et un réseau privé qui relie toute la flotte.
+              Les agents ne sont jamais exposés : ils ouvrent eux-mêmes une connexion sortante vers le control plane.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Diagram
+              viewBox="0 0 720 300"
+              label="Schéma d'architecture : le navigateur parle au control plane, qui pilote un agent sur chaque nœud, les nœuds étant reliés entre eux par un mesh WireGuard privé"
+            >
+              <DBox x={16} y={110} w={150} h={64} title="Navigateur" sub="tableau de bord" tone="accent" glow />
+
+              <DFrame x={222} y={16} w={264} h={268} label="Control plane" />
+              <DBox x={242} y={52} w={224} h={54} title="Web (Next.js)" sub="interface" />
+              <DBox x={242} y={120} w={224} h={54} title="API (NestJS)" sub="REST /api/v1 + WebSockets" tone="accent" />
+              <DBox x={242} y={210} w={224} h={54} title="PostgreSQL" sub="état de la flotte, historique" />
+
+              <DFrame x={530} y={16} w={174} h={268} label="Flotte" />
+              <DBox x={548} y={52} w={138} h={54} title="Nœud A" sub={['agent Go', '10.x.0.1']} tone="accent" />
+              <DBox x={548} y={126} w={138} h={54} title="Nœud B" sub={['agent Go', '10.x.0.2']} />
+              <DBox x={548} y={200} w={138} h={54} title="Nœud C" sub={['agent Go', '10.x.0.3']} />
+
+              <DLink x1={168} y1={142} x2={238} y2={142} label="HTTPS" sublabel="+ WS live" labelDy={-22} />
+              <DLink x1={354} y1={108} x2={354} y2={116} arrow="both" tone="default" />
+              <DLink x1={354} y1={176} x2={354} y2={206} tone="default" />
+
+              <DLink x1={470} y1={140} x2={544} y2={82} label="/agents-ws" labelDy={-12} />
+              <DLink x1={470} y1={147} x2={544} y2={152} />
+              <DLink x1={470} y1={154} x2={544} y2={222} />
+
+              {/* WireGuard mesh between the nodes, drawn to the right of the fleet frame. */}
+              <path d="M 690 79 C 716 100 716 130 690 153" fill="none" stroke="rgb(139 92 246 / 0.55)" strokeWidth="2" strokeDasharray="6 6">
+                <animate attributeName="stroke-dashoffset" values="24;0" dur="1.6s" repeatCount="indefinite" />
+              </path>
+              <path d="M 690 153 C 716 174 716 204 690 227" fill="none" stroke="rgb(139 92 246 / 0.55)" strokeWidth="2" strokeDasharray="6 6">
+                <animate attributeName="stroke-dashoffset" values="24;0" dur="1.6s" repeatCount="indefinite" />
+              </path>
+              <DNote x={617} y={278} tone="accent">
+                mesh WireGuard privé
+              </DNote>
+            </Diagram>
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="space-y-4">
+        <SectionLabel>Démarrage rapide</SectionLabel>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {QUICK_START.map((step, index) => (
+            <Link key={step.title} href={step.href} className="group">
+              <Card className="h-full bg-panel-glow transition-colors group-hover:border-white/[0.14]">
+                <CardHeader>
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-600/15 text-sm font-semibold text-violet-300">
+                    {index + 1}
+                  </div>
+                  <CardTitle className="flex items-center gap-2 pt-3 text-base">
+                    {step.title}
+                    <ArrowRight className="h-3.5 w-3.5 text-zinc-600 transition-transform group-hover:translate-x-0.5" />
+                  </CardTitle>
+                  <CardDescription>{step.text}</CardDescription>
+                </CardHeader>
+              </Card>
+            </Link>
+          ))}
         </div>
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-lg font-semibold tracking-tight text-foreground">Installation manuelle de l'agent (avancé)</h2>
+        <SectionLabel>Modules du tableau de bord</SectionLabel>
+        {MODULES.map((section) => (
+          <div key={section.group} className="space-y-3">
+            <h3 className="text-sm font-medium text-zinc-300">{section.group}</h3>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {section.items.map((item) => (
+                <Link key={item.title} href={item.href} className="group panel flex items-start gap-3 p-4">
+                  <item.icon className="mt-0.5 h-4 w-4 shrink-0 text-violet-400" />
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+                      {item.title}
+                      {item.isNew && (
+                        <span className="rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-300">
+                          Nouveau
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-sm text-muted-foreground">{item.text}</p>
+                  </div>
+                  <ArrowRight className="ml-auto mt-0.5 h-4 w-4 shrink-0 text-zinc-600 transition-transform group-hover:translate-x-0.5" />
+                </Link>
+              ))}
+            </div>
+          </div>
+        ))}
+      </section>
+
+      <section className="space-y-4">
+        <SectionLabel>Installation manuelle de l&apos;agent</SectionLabel>
         <p className="text-sm text-muted-foreground">
-          L'onboarding depuis l'interface suffit dans la grande majorité des cas. Pour une installation manuelle en
-          service systemd (redémarrage automatique inclus), utilisez le script d'installation sur un serveur Ubuntu
-          22.04 :
+          L&apos;onboarding depuis l&apos;interface suffit dans la grande majorité des cas. Pour une installation
+          manuelle en service systemd (redémarrage automatique inclus), utilisez le script d&apos;installation sur un
+          serveur Ubuntu 22.04 :
         </p>
         <pre className="code-block">
 {`curl -fsSL https://raw.githubusercontent.com/enzogh/Tarmac/main/apps/agent/scripts/install-agent-service.sh \\
@@ -69,31 +211,17 @@ export default function DocsHomePage() {
   --agent-token "<AGENT_SHARED_TOKEN>"`}
         </pre>
         <p className="text-sm text-muted-foreground">
-          Le script installe les dépendances requises (NFS, CIFS, WireGuard), compile l'agent et active le service
+          Le script installe les dépendances requises (NFS, CIFS, rsync, WireGuard, traceroute), compile l&apos;agent
+          et active le service
           <code className="mx-1 rounded bg-white/[0.06] px-1.5 py-0.5 text-xs">tarmac-agent</code>
-          avec redémarrage automatique.
+          avec redémarrage automatique. Les composants DNS (PowerDNS) ne sont installés qu&apos;au moment où le nœud
+          rejoint un groupe DNS.
         </p>
-      </section>
-
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold tracking-tight text-foreground">Modules du tableau de bord</h2>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {[
-            { icon: Server, title: 'Infrastructure', href: '/docs/concepts', text: 'Nœuds, agents et pools de stockage.' },
-            { icon: Database, title: 'Stockage & montages', href: '/docs/concepts', text: 'Partages NFS et montages multi-sources.' },
-            { icon: RefreshCw, title: 'Réplication & migrations', href: '/docs/concepts', text: 'Duplication et déplacement de volumes.' },
-            { icon: Network, title: 'Réseau', href: '/docs/concepts', text: 'VLAN privé, carte du monde, passerelles régionales et tests ping/traceroute.' },
-          ].map((item) => (
-            <Link key={item.title} href={item.href} className="group panel flex items-start gap-3 p-4">
-              <item.icon className="mt-0.5 h-4 w-4 shrink-0 text-violet-400" />
-              <div>
-                <p className="text-sm font-medium text-foreground">{item.title}</p>
-                <p className="text-sm text-muted-foreground">{item.text}</p>
-              </div>
-              <ArrowRight className="ml-auto mt-0.5 h-4 w-4 shrink-0 text-zinc-600 transition-transform group-hover:translate-x-0.5" />
-            </Link>
-          ))}
-        </div>
+        <Callout variant="warning">
+          Une fois l&apos;agent en place, gardez-le à jour depuis Infrastructure → « Mettre à jour tous les agents » :
+          la version du control plane et celle des agents sont comparées en permanence, et un écart est signalé
+          directement dans l&apos;interface.
+        </Callout>
       </section>
     </div>
   );

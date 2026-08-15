@@ -1,301 +1,416 @@
-import { Server, Share2, HardDrive, RefreshCw, ArrowRightLeft, Network, Bell, Thermometer, BellOff, Globe, Waypoints } from 'lucide-react';
+import {
+  Server,
+  Share2,
+  HardDrive,
+  RefreshCw,
+  ArrowRightLeft,
+  Network,
+  Bell,
+  Thermometer,
+  BellOff,
+  Globe,
+  Waypoints,
+  LayoutGrid,
+  KeyRound,
+  Repeat,
+  ScrollText,
+  Cpu,
+  Boxes,
+  type LucideIcon,
+} from 'lucide-react';
+import Link from 'next/link';
 import { PageHeader } from '../../../components/PageHeader';
+import { SectionLabel } from '../../../components/SectionLabel';
+import { AnimatedGradientText } from '../../../components/ui/animated-gradient-text';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../../components/ui/card';
+import { Diagram, DBox, DFrame, DLink, DNote } from '../../../components/docs/Diagram';
 
-const CONCEPTS = [
+type Concept = { icon: LucideIcon; title: string; description: string; isNew?: boolean; href?: string };
+
+const SECTIONS: { label: string; concepts: Concept[] }[] = [
   {
-    icon: Server,
-    title: 'Nœud',
-    description:
-      "Un nœud est un serveur physique ou virtuel enregistré dans Tarmac. Un petit agent tourne dessus et remonte en continu son état (CPU, RAM, disques, réseau). C'est la brique de base : tout le reste (partages, montages, réplication) s'organise entre nœuds.",
+    label: 'Organisation',
+    concepts: [
+      {
+        icon: LayoutGrid,
+        title: 'Workspace',
+        isNew: true,
+        href: '/docs/workspaces',
+        description:
+          "Un workspace est une flotte complète et cloisonnée : ses nœuds, son sous-réseau privé, ses partages, ses zones DNS et son journal n'existent que pour lui. L'adresse du tableau de bord commence par l'identifiant du workspace, et on bascule de l'un à l'autre depuis le sélecteur en haut de la barre latérale.",
+      },
+      {
+        icon: KeyRound,
+        title: 'Membres & connexion SSO',
+        isNew: true,
+        href: '/docs/workspaces',
+        description:
+          "On se connecte soit par e-mail/mot de passe, soit via Authentik (OpenID Connect). Un workspace a un propriétaire, des membres, et peut se voir rattacher un groupe Authentik : toute personne appartenant à ce groupe devient membre automatiquement à sa prochaine connexion.",
+      },
+    ],
   },
   {
-    icon: Share2,
-    title: 'Partage NFS',
-    description:
-      "Un partage rend un dossier d'un nœud accessible par le réseau via le protocole NFS. Vous choisissez le dossier à exposer et les clients autorisés à y accéder (lecture seule, lecture/écriture, ou accès refusé).",
+    label: 'Infrastructure',
+    concepts: [
+      {
+        icon: Server,
+        title: 'Nœud',
+        description:
+          "Un nœud est un serveur physique ou virtuel enregistré dans Tarmac. Un petit agent tourne dessus et remonte en continu son état (CPU, RAM, disques, réseau). C'est la brique de base : tout le reste — partages, montages, réplication, DNS — s'organise entre nœuds.",
+      },
+      {
+        icon: Cpu,
+        title: 'Agent',
+        description:
+          "Le programme installé sur chaque nœud. Il ouvre lui-même une connexion sortante vers le control plane (aucun port entrant à ouvrir), remonte la télémétrie et exécute les commandes reçues : monter un partage, lancer une migration, configurer WireGuard ou PowerDNS. Sa version est comparée à celle du control plane, et il se met à jour à distance en un clic.",
+      },
+      {
+        icon: Thermometer,
+        title: 'Santé SMART',
+        description:
+          "Chaque disque physique est interrogé via smartctl (température, secteurs réalloués/en attente). Un disque qui passe en état critique déclenche une alerte et une migration de sécurisation suggérée vers le nœud le moins chargé — jamais démarrée automatiquement. Un disque virtualisé (VPS) sans données SMART réelles est classé « inconnu », jamais « critique » par défaut.",
+      },
+      {
+        icon: BellOff,
+        title: 'Fenêtre de maintenance',
+        description:
+          "Mettre un nœud « en silence » suspend temporairement ses alertes de règles et SMART, le temps d'une intervention planifiée, sans désactiver la supervision elle-même.",
+      },
+    ],
   },
   {
-    icon: HardDrive,
-    title: 'Montage',
-    description:
-      "Un montage attache un partage NFS (ou plusieurs sources de secours) à un dossier local sur un autre nœud, comme s'il s'agissait d'un disque local. Si la source principale tombe, une source de secours peut prendre le relais.",
+    label: 'Stockage',
+    concepts: [
+      {
+        icon: Share2,
+        title: 'Partage NFS',
+        description:
+          "Un partage rend un dossier d'un nœud accessible par le réseau via le protocole NFS. Vous choisissez le dossier à exposer et les clients autorisés à y accéder (lecture seule, lecture/écriture, ou accès refusé).",
+      },
+      {
+        icon: HardDrive,
+        title: 'Montage',
+        description:
+          "Un montage attache une source distante — NFS, CIFS, ou SFTP via rclone — à un dossier local sur un nœud, comme s'il s'agissait d'un disque local. Plusieurs sources de secours peuvent être déclarées : si la principale tombe, une autre prend le relais.",
+      },
+      {
+        icon: RefreshCw,
+        title: 'Pool & réplication',
+        description:
+          "Un pool regroupe plusieurs nœuds autour d'une même stratégie de stockage. La réplication copie les données d'un nœud primaire vers un ou plusieurs nœuds secondaires, pour la redondance ou la répartition de charge.",
+      },
+      {
+        icon: Repeat,
+        title: 'Tâche de synchronisation',
+        description:
+          "Une copie rsync planifiée entre deux chemins, avec son historique d'exécutions. Elle peut aussi être déclenchée depuis l'extérieur par un jeton dédié — typiquement le script « on completion » d'un client torrent, qui ne synchronise alors que le sous-dossier concerné.",
+      },
+      {
+        icon: ArrowRightLeft,
+        title: 'Migration',
+        description:
+          "Une migration déplace un volume d'un endroit à un autre : entre deux nœuds Tarmac, ou depuis/vers un service externe (seedbox, Hetzner Storage Box). La progression du transfert est visible en direct.",
+      },
+    ],
   },
   {
-    icon: RefreshCw,
-    title: 'Pool & réplication',
-    description:
-      "Un pool regroupe plusieurs nœuds autour d'une même stratégie de stockage. La réplication copie les données d'un nœud primaire vers un ou plusieurs nœuds secondaires, pour la redondance ou la répartition de charge.",
+    label: 'Réseau',
+    concepts: [
+      {
+        icon: Network,
+        title: 'Réseau privé (VLAN)',
+        description:
+          "Les nœuds sont reliés entre eux sur un mesh WireGuard privé, isolé d'Internet, avec une IP dédiée par nœud. Chaque workspace dispose de son propre sous-réseau, ce qui empêche deux flottes de se voir. Tarmac visualise ce réseau sous forme de graphe (positions déplaçables et mémorisées) et permet de tester deux nœuds entre eux, en latence/perte de paquets (ping) ou saut par saut (traceroute).",
+      },
+      {
+        icon: Globe,
+        title: 'Carte du monde',
+        description:
+          "Une vue géographique de la flotte, en plus du graphe : chaque nœud est placé sur sa position réelle (ou approximative, déduite du pays via une base GeoIP auto-hébergée, en attendant d'être précisée à la souris) et les liens VLAN s'animent en direct selon leur état — sain, dégradé ou hors ligne.",
+      },
+      {
+        icon: Waypoints,
+        title: 'Régions & passerelles',
+        description:
+          "Au-delà de deux continents, relier chaque nœud à tous les autres en direct devient coûteux. Tarmac regroupe automatiquement les membres du VLAN par région géographique (Europe, Amérique du Nord…) : au sein d'une région, le maillage reste complet ; entre deux régions, seuls les nœuds désignés « passerelle » se relient. Sans passerelle désignée, tout reste en maillage direct comme avant.",
+      },
+    ],
   },
   {
-    icon: ArrowRightLeft,
-    title: 'Migration',
-    description:
-      "Une migration déplace un volume d'un endroit à un autre : entre deux nœuds Tarmac, ou depuis/vers un service externe (seedbox, Hetzner Storage Box). La progression du transfert est visible en direct.",
+    label: 'DNS',
+    concepts: [
+      {
+        icon: Boxes,
+        title: 'Groupe DNS',
+        isNew: true,
+        href: '/docs/dns',
+        description:
+          "Un groupe désigne, parmi vos nœuds, un serveur DNS primaire et jusqu'à trois secondaires. Tarmac y installe et configure PowerDNS, puis maintient la synchronisation des zones du primaire vers les secondaires par transfert AXFR.",
+      },
+      {
+        icon: Globe,
+        title: 'Zone, enregistrements & GeoDNS',
+        isNew: true,
+        href: '/docs/dns',
+        description:
+          "Une zone est un domaine que vos serveurs font autorité à résoudre, avec ses enregistrements (A, AAAA, CNAME, MX, TXT, NS, CAA, SRV, PTR). Un enregistrement peut viser directement un nœud de la flotte, et être marqué « géo » : le serveur renvoie alors l'adresse du nœud le plus proche de la personne qui interroge.",
+      },
+      {
+        icon: Network,
+        title: 'DNS interne (tarmac.local)',
+        isNew: true,
+        href: '/docs/dns',
+        description:
+          "Indépendamment de vos zones publiques, un nœud du workspace peut être désigné résolveur interne : chaque serveur devient joignable par son nom en <nom>.tarmac.local sur le VLAN, sans avoir à retenir les IP privées. La liste est resynchronisée automatiquement à chaque changement de la flotte.",
+      },
+    ],
   },
   {
-    icon: Network,
-    title: 'Réseau privé (VLAN)',
-    description:
-      "Les nœuds sont reliés entre eux sur un mesh WireGuard privé, isolé d'Internet, avec une IP dédiée par nœud. Tarmac visualise ce réseau sous forme de graphe (positions déplaçables et mémorisées) et permet de tester deux nœuds entre eux, en latence/perte de paquets (ping) ou saut par saut (traceroute).",
-  },
-  {
-    icon: Globe,
-    title: 'Carte du monde',
-    description:
-      "Une vue géographique de la flotte, en plus du graphe : chaque nœud est placé sur sa position réelle (ou approximative, déduite du pays, en attendant d'être précisée à la souris) et les liens VLAN s'animent en direct selon leur état — sain, dégradé ou hors ligne.",
-  },
-  {
-    icon: Waypoints,
-    title: 'Régions & passerelles',
-    description:
-      "Au-delà de deux continents, relier chaque nœud à tous les autres en direct devient coûteux. Tarmac regroupe automatiquement les membres du VLAN par région géographique (Europe, Amérique du Nord…) : au sein d'une région, le maillage reste complet ; entre deux régions, seuls les nœuds désignés « passerelle » se relient. Sans passerelle désignée, tout reste en maillage direct comme avant.",
-  },
-  {
-    icon: Bell,
-    title: 'Alertes',
-    description:
-      "Une règle de seuil (ex: CPU > 90%) est évaluée automatiquement chaque minute sur les nœuds ciblés. L'alerte créée se résout d'elle-même dès le retour sous le seuil, et peut être notifiée par e-mail, webhook ou Slack.",
-  },
-  {
-    icon: Thermometer,
-    title: 'Santé SMART',
-    description:
-      "Chaque disque physique est interrogé via smartctl (température, secteurs réalloués/en attente). Un disque qui passe en état critique déclenche une alerte et une migration de sécurisation suggérée vers le nœud le moins chargé — jamais démarrée automatiquement. Un disque virtualisé (VPS) sans données SMART réelles est classé « inconnu », jamais « critique » par défaut.",
-  },
-  {
-    icon: BellOff,
-    title: 'Fenêtre de maintenance',
-    description:
-      "Mettre un nœud « en silence » suspend temporairement ses alertes de règles et SMART, le temps d'une intervention planifiée, sans désactiver la supervision elle-même.",
+    label: 'Supervision',
+    concepts: [
+      {
+        icon: Bell,
+        title: 'Alertes',
+        description:
+          "Une règle de seuil (ex: CPU > 90%) est évaluée automatiquement chaque minute sur les nœuds ciblés. L'alerte créée se résout d'elle-même dès le retour sous le seuil, et peut être notifiée par e-mail, webhook ou Slack.",
+      },
+      {
+        icon: ScrollText,
+        title: 'Journal & audit',
+        isNew: true,
+        description:
+          "Deux flux dans un même écran : le journal d'actions (qui a créé, modifié ou supprimé quoi, avec le détail de la requête) et les logs remontés par les agents. Les deux arrivent en direct par WebSocket, se filtrent par nœud, niveau, action ou période, et s'exportent en CSV ou JSON.",
+      },
+    ],
   },
 ];
 
 export default function ConceptsPage() {
   return (
-    <div className="space-y-10">
+    <div className="space-y-12">
       <PageHeader
-        title="Concepts clés"
+        icon={Boxes}
+        title={<AnimatedGradientText speed={0.6}>Concepts clés</AnimatedGradientText>}
         description="Le vocabulaire de Tarmac, expliqué simplement — pas besoin d'être expert réseau pour s'y retrouver."
       />
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        {CONCEPTS.map((concept) => (
-          <Card key={concept.title}>
-            <CardHeader>
-              <div className="flex items-center gap-2.5">
-                <concept.icon className="h-4 w-4 text-violet-400" />
-                <CardTitle className="text-base">{concept.title}</CardTitle>
-              </div>
-              <CardDescription className="pt-1">{concept.description}</CardDescription>
-            </CardHeader>
-          </Card>
-        ))}
-      </div>
+      {SECTIONS.map((section) => (
+        <section key={section.label} className="space-y-4">
+          <SectionLabel>{section.label}</SectionLabel>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {section.concepts.map((concept) => {
+              const body = (
+                <Card className="h-full bg-panel-glow transition-colors hover:border-white/[0.14]">
+                  <CardHeader>
+                    <div className="flex items-center gap-2.5">
+                      <concept.icon className="h-4 w-4 shrink-0 text-violet-400" />
+                      <CardTitle className="text-base">{concept.title}</CardTitle>
+                      {concept.isNew && (
+                        <span className="rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-300">
+                          Nouveau
+                        </span>
+                      )}
+                    </div>
+                    <CardDescription className="pt-1">{concept.description}</CardDescription>
+                  </CardHeader>
+                </Card>
+              );
+              return concept.href ? (
+                <Link key={concept.title} href={concept.href} className="block">
+                  {body}
+                </Link>
+              ) : (
+                <div key={concept.title}>{body}</div>
+              );
+            })}
+          </div>
+        </section>
+      ))}
 
-      <div className="space-y-1">
-        <h2 className="text-lg font-semibold tracking-tight text-foreground">Comment ces briques s'articulent</h2>
+      <section className="space-y-4">
+        <SectionLabel>Comment ces briques s&apos;articulent</SectionLabel>
         <p className="text-sm text-muted-foreground">
-          Cinq scénarios types, du partage de fichiers simple à la remédiation automatique d'un disque défaillant.
+          Sept scénarios types, du partage de fichiers simple à la remédiation automatique d&apos;un disque
+          défaillant. Les schémas propres au DNS sont sur la{' '}
+          <Link href="/docs/dns" className="underline underline-offset-2">
+            page DNS
+          </Link>
+          .
         </p>
-      </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Partage exposé, puis monté</CardTitle>
+              <CardDescription>Deux nœuds interconnectés : un partage exposé sur l&apos;un, monté sur l&apos;autre.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Diagram
+                viewBox="0 0 640 190"
+                label="Schéma d'un partage NFS monté entre deux nœuds interconnectés par VLAN"
+              >
+                <DBox x={20} y={55} w={180} h={80} title="Nœud A" sub="partage NFS /data" tone="accent" glow />
+                <DBox x={440} y={55} w={180} h={80} title="Nœud B" sub="montage /mnt/data" />
+                <DLink x1={204} y1={95} x2={436} y2={95} label="NFS via VLAN privé" flow />
+                <DNote x={320} y={128}>lecture seule, lecture/écriture ou refusé</DNote>
+              </Diagram>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Pool en réplication miroir</CardTitle>
+              <CardDescription>Un nœud primaire réplique en continu vers un ou plusieurs nœuds replica.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Diagram
+                viewBox="0 0 640 190"
+                label="Schéma d'un pool en réplication miroir depuis un nœud primaire vers deux replicas"
+              >
+                <DBox x={20} y={57} w={175} h={76} title="Nœud primaire" sub="rôle : primary" tone="accent" glow />
+                <DBox x={445} y={14} w={175} h={62} title="Replica A" sub="rôle : replica" />
+                <DBox x={445} y={114} w={175} h={62} title="Replica B" sub="rôle : replica" />
+                <DLink x1={199} y1={86} x2={441} y2={46} flow labelDy={-10} />
+                <DLink x1={199} y1={106} x2={441} y2={146} flow />
+                <DNote x={320} y={100} tone="accent">réplication miroir</DNote>
+              </Diagram>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Migration entre deux endroits</CardTitle>
+              <CardDescription>La source peut être un nœud Tarmac, une seedbox ou un Storage Box.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Diagram
+                viewBox="0 0 640 190"
+                label="Schéma d'une migration d'un volume depuis une source vers un nœud cible"
+              >
+                <DBox x={20} y={55} w={190} h={80} title="Source" sub={['nœud, seedbox', 'ou Storage Box']} />
+                <DBox x={430} y={55} w={190} h={80} title="Nœud cible" sub="destination du volume" tone="accent" glow />
+                <DLink x1={214} y1={95} x2={426} y2={95} label="transfert" sublabel="progression en direct" flow />
+              </Diagram>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Réseau privé (VLAN)</CardTitle>
+              <CardDescription>Les nœuds membres se voient entre eux et peuvent être testés deux à deux.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Diagram
+                viewBox="0 0 640 190"
+                label="Schéma d'un maillage de trois nœuds reliés par un VLAN privé, avec un test de latence entre deux d'entre eux"
+              >
+                <DLink x1={110} y1={78} x2={320} y2={128} tone="default" arrow="none" />
+                <DLink x1={530} y1={78} x2={320} y2={128} tone="default" arrow="none" />
+                <DLink x1={190} y1={48} x2={450} y2={48} arrow="none" flow />
+                <DNote x={320} y={30} tone="accent">test ping : 2 ms, 0 % de perte</DNote>
+
+                <DBox x={30} y={22} w={160} h={56} title="Nœud A" sub="10.10.0.1" tone="accent" />
+                <DBox x={450} y={22} w={160} h={56} title="Nœud B" sub="10.10.0.2" tone="accent" />
+                <DBox x={240} y={126} w={160} h={56} title="Nœud C" sub="10.10.0.3" />
+              </Diagram>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Segmentation régionale via passerelles</CardTitle>
+              <CardDescription>Maillage complet au sein de chaque région, un seul lien entre les deux passerelles.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Diagram
+                viewBox="0 0 640 215"
+                label="Schéma de deux régions VLAN, chacune en maillage complet en interne, reliées uniquement par leurs nœuds passerelle respectifs"
+              >
+                <DFrame x={14} y={14} w={272} h={186} label="Région : Europe" />
+                <DFrame x={354} y={14} w={272} h={186} label="Région : Amérique du Nord" />
+
+                <DLink x1={105} y1={116} x2={105} y2={150} tone="default" arrow="none" />
+                <DLink x1={443} y1={116} x2={443} y2={150} tone="default" arrow="none" />
+
+                <DBox x={44} y={56} w={122} h={60} title="Nœud A" badge="Passerelle" tone="accent" glow />
+                <DBox x={44} y={148} w={122} h={44} title="Nœud B" />
+                <DBox x={382} y={56} w={122} h={60} title="Nœud C" badge="Passerelle" tone="accent" glow />
+                <DBox x={382} y={148} w={122} h={44} title="Nœud D" />
+
+                <DLink x1={170} y1={86} x2={378} y2={86} arrow="both" flow />
+                <DNote x={274} y={68} tone="accent">seul lien inter-régions</DNote>
+              </Diagram>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Journal en direct et export</CardTitle>
+              <CardDescription>
+                Actions d&apos;administration et logs d&apos;agents convergent vers le même écran, poussés en direct.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Diagram
+                viewBox="0 0 640 215"
+                label="Schéma du journal : les agents et l'API alimentent l'historique, qui est poussé en direct au navigateur et exportable en CSV ou JSON"
+              >
+                <DBox x={16} y={24} w={150} h={54} title="Agents" sub="logs de service" />
+                <DBox x={16} y={110} w={150} h={54} title="API" sub="actions admin" tone="accent" />
+                <DBox x={240} y={66} w={150} h={56} title="Historique" sub="par workspace" tone="accent" glow />
+                <DBox x={464} y={20} w={160} h={54} title="Navigateur" sub="poussé en direct" />
+                <DBox x={464} y={114} w={160} h={54} title="Export" sub="CSV ou JSON" tone="success" />
+
+                <DLink x1={170} y1={51} x2={236} y2={80} />
+                <DLink x1={170} y1={137} x2={236} y2={108} />
+                <DLink x1={394} y1={84} x2={460} y2={47} label="WebSocket" labelDy={-16} flow />
+                <DLink x1={394} y1={104} x2={460} y2={141} tone="success" />
+                <DNote x={320} y={166}>filtres : nœud, niveau, action, période</DNote>
+              </Diagram>
+            </CardContent>
+          </Card>
+        </div>
+
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Partage exposé, puis monté</CardTitle>
-            <CardDescription>Deux nœuds interconnectés : un partage exposé sur l'un, monté sur l'autre.</CardDescription>
+            <CardTitle className="text-base">Alertes : d&apos;une métrique à la remédiation</CardTitle>
+            <CardDescription>
+              Les règles de seuil sont évaluées chaque minute ; un disque SMART critique peut aussi déclencher une
+              migration de sécurisation, toujours en attente de validation manuelle.
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <svg viewBox="0 0 640 200" className="w-full" role="img" aria-label="Schéma d'un partage NFS monté entre deux nœuds interconnectés par VLAN">
-              <defs>
-                <marker id="arrow-share" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="rgb(139 92 246 / 0.7)" />
-                </marker>
-              </defs>
+            <Diagram
+              viewBox="0 0 700 235"
+              label="Schéma du flux d'alerte, de la métrique surveillée à la notification, avec une branche vers une migration de sécurisation suggérée en cas de disque SMART critique"
+            >
+              <DBox x={10} y={52} w={152} h={72} title="Métrique" sub={['cpu, ram, disque', 'état SMART']} />
+              <DBox x={194} y={52} w={152} h={72} title="Évaluateur" sub={['règles de seuil', 'toutes les minutes']} tone="accent" />
+              <DBox x={378} y={52} w={152} h={72} title="Alerte" sub={['créée, puis résolue', 'au retour sous seuil']} tone="warning" />
+              <DBox x={562} y={52} w={128} h={72} title="Notification" sub={['e-mail, webhook', 'ou Slack']} tone="success" />
 
-              <rect x="20" y="60" width="180" height="80" rx="16" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
-              <text x="110" y="95" textAnchor="middle" fill="rgb(244 244 245)" fontSize="14" fontWeight="600">Nœud A</text>
-              <text x="110" y="115" textAnchor="middle" fill="rgb(161 161 170)" fontSize="11">Partage NFS /data</text>
+              <DLink x1={166} y1={88} x2={190} y2={88} />
+              <DLink x1={350} y1={88} x2={374} y2={88} tone="warning" />
+              <DLink x1={534} y1={88} x2={558} y2={88} tone="success" />
 
-              <rect x="440" y="60" width="180" height="80" rx="16" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
-              <text x="530" y="95" textAnchor="middle" fill="rgb(244 244 245)" fontSize="14" fontWeight="600">Nœud B</text>
-              <text x="530" y="115" textAnchor="middle" fill="rgb(161 161 170)" fontSize="11">Montage /mnt/data</text>
-
-              <line x1="200" y1="100" x2="435" y2="100" stroke="rgb(139 92 246 / 0.7)" strokeWidth="2" markerEnd="url(#arrow-share)" />
-              <text x="320" y="85" textAnchor="middle" fill="rgb(196 181 253)" fontSize="11">NFS via VLAN privé</text>
-            </svg>
+              <DLink x1={454} y1={128} x2={454} y2={162} tone="danger" />
+              <DNote x={520} y={150} tone="danger">si SMART critique</DNote>
+              <DBox
+                x={378}
+                y={164}
+                w={152}
+                h={58}
+                title="Migration suggérée"
+                sub="en attente — jamais auto-démarrée"
+                tone="danger"
+              />
+              <DNote x={10} y={214} anchor="start">
+                Un nœud en maintenance ne déclenche ni règle ni alerte SMART.
+              </DNote>
+            </Diagram>
           </CardContent>
         </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Pool en réplication miroir</CardTitle>
-            <CardDescription>Un nœud primaire réplique en continu vers un ou plusieurs nœuds replica.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <svg viewBox="0 0 640 200" className="w-full" role="img" aria-label="Schéma d'un pool en réplication miroir depuis un nœud primaire vers deux replicas">
-              <defs>
-                <marker id="arrow-pool" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="rgb(139 92 246 / 0.7)" />
-                </marker>
-              </defs>
-
-              <rect x="20" y="60" width="180" height="80" rx="16" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
-              <text x="110" y="95" textAnchor="middle" fill="rgb(244 244 245)" fontSize="14" fontWeight="600">Nœud primaire</text>
-              <text x="110" y="115" textAnchor="middle" fill="rgb(161 161 170)" fontSize="11">rôle : primary</text>
-
-              <rect x="440" y="15" width="180" height="65" rx="16" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
-              <text x="530" y="42" textAnchor="middle" fill="rgb(244 244 245)" fontSize="13" fontWeight="600">Replica A</text>
-              <text x="530" y="60" textAnchor="middle" fill="rgb(161 161 170)" fontSize="10">rôle : replica</text>
-
-              <rect x="440" y="120" width="180" height="65" rx="16" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
-              <text x="530" y="147" textAnchor="middle" fill="rgb(244 244 245)" fontSize="13" fontWeight="600">Replica B</text>
-              <text x="530" y="165" textAnchor="middle" fill="rgb(161 161 170)" fontSize="10">rôle : replica</text>
-
-              <line x1="200" y1="90" x2="435" y2="48" stroke="rgb(139 92 246 / 0.7)" strokeWidth="2" markerEnd="url(#arrow-pool)" />
-              <line x1="200" y1="110" x2="435" y2="152" stroke="rgb(139 92 246 / 0.7)" strokeWidth="2" markerEnd="url(#arrow-pool)" />
-              <text x="300" y="105" textAnchor="middle" fill="rgb(196 181 253)" fontSize="11">réplication miroir</text>
-            </svg>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Migration entre deux endroits</CardTitle>
-            <CardDescription>La source peut être un nœud Tarmac, une seedbox ou un Storage Box.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <svg viewBox="0 0 640 200" className="w-full" role="img" aria-label="Schéma d'une migration d'un volume depuis une source vers un nœud cible">
-              <defs>
-                <marker id="arrow-migration" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="rgb(139 92 246 / 0.7)" />
-                </marker>
-              </defs>
-
-              <rect x="20" y="60" width="180" height="80" rx="16" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
-              <text x="110" y="95" textAnchor="middle" fill="rgb(244 244 245)" fontSize="14" fontWeight="600">Source</text>
-              <text x="110" y="115" textAnchor="middle" fill="rgb(161 161 170)" fontSize="11">nœud, seedbox ou Storage Box</text>
-
-              <rect x="440" y="60" width="180" height="80" rx="16" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
-              <text x="530" y="95" textAnchor="middle" fill="rgb(244 244 245)" fontSize="14" fontWeight="600">Nœud cible</text>
-              <text x="530" y="115" textAnchor="middle" fill="rgb(161 161 170)" fontSize="11">destination du volume</text>
-
-              <line x1="200" y1="100" x2="435" y2="100" stroke="rgb(139 92 246 / 0.7)" strokeWidth="2" markerEnd="url(#arrow-migration)" />
-              <text x="320" y="85" textAnchor="middle" fill="rgb(196 181 253)" fontSize="11">transfert, progression en direct</text>
-            </svg>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Réseau privé (VLAN)</CardTitle>
-            <CardDescription>Les nœuds membres se voient entre eux et peuvent être testés deux à deux.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <svg viewBox="0 0 640 200" className="w-full" role="img" aria-label="Schéma d'un maillage de trois nœuds reliés par un VLAN privé avec un test de latence">
-              <line x1="110" y1="48" x2="530" y2="48" stroke="rgb(255 255 255 / 0.12)" strokeWidth="2" />
-              <line x1="110" y1="48" x2="320" y2="158" stroke="rgb(255 255 255 / 0.12)" strokeWidth="2" />
-              <line x1="530" y1="48" x2="320" y2="158" stroke="rgb(255 255 255 / 0.12)" strokeWidth="2" />
-              <line x1="110" y1="48" x2="530" y2="48" stroke="rgb(139 92 246 / 0.7)" strokeWidth="2" strokeDasharray="5 5" />
-              <text x="320" y="35" textAnchor="middle" fill="rgb(196 181 253)" fontSize="11">test : latence 2 ms</text>
-
-              <rect x="30" y="18" width="160" height="60" rx="14" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
-              <text x="110" y="44" textAnchor="middle" fill="rgb(244 244 245)" fontSize="13" fontWeight="600">Nœud A</text>
-              <text x="110" y="62" textAnchor="middle" fill="rgb(161 161 170)" fontSize="10">10.10.0.1</text>
-
-              <rect x="450" y="18" width="160" height="60" rx="14" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
-              <text x="530" y="44" textAnchor="middle" fill="rgb(244 244 245)" fontSize="13" fontWeight="600">Nœud B</text>
-              <text x="530" y="62" textAnchor="middle" fill="rgb(161 161 170)" fontSize="10">10.10.0.2</text>
-
-              <rect x="240" y="128" width="160" height="60" rx="14" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
-              <text x="320" y="154" textAnchor="middle" fill="rgb(244 244 245)" fontSize="13" fontWeight="600">Nœud C</text>
-              <text x="320" y="172" textAnchor="middle" fill="rgb(161 161 170)" fontSize="10">10.10.0.3</text>
-            </svg>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Segmentation régionale via passerelles</CardTitle>
-            <CardDescription>Maillage complet au sein de chaque région, un seul lien entre les deux passerelles.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <svg viewBox="0 0 640 220" className="w-full" role="img" aria-label="Schéma de deux régions VLAN, chacune en maillage complet en interne, reliées uniquement par leurs nœuds passerelle respectifs">
-              <rect x="16" y="16" width="270" height="188" rx="16" fill="rgb(255 255 255 / 0.015)" stroke="rgb(255 255 255 / 0.08)" strokeDasharray="4 4" />
-              <text x="151" y="36" textAnchor="middle" fill="rgb(161 161 170)" fontSize="11" fontWeight="600">Région : Europe</text>
-
-              <rect x="354" y="16" width="270" height="188" rx="16" fill="rgb(255 255 255 / 0.015)" stroke="rgb(255 255 255 / 0.08)" strokeDasharray="4 4" />
-              <text x="489" y="36" textAnchor="middle" fill="rgb(161 161 170)" fontSize="11" fontWeight="600">Région : Amérique du Nord</text>
-
-              <line x1="105" y1="90" x2="105" y2="160" stroke="rgb(255 255 255 / 0.12)" strokeWidth="2" />
-              <line x1="443" y1="90" x2="443" y2="160" stroke="rgb(255 255 255 / 0.12)" strokeWidth="2" />
-
-              <rect x="46" y="60" width="118" height="52" rx="12" fill="rgb(139 92 246 / 0.12)" stroke="rgb(139 92 246 / 0.6)" />
-              <text x="105" y="82" textAnchor="middle" fill="rgb(244 244 245)" fontSize="12" fontWeight="600">Nœud A</text>
-              <text x="105" y="98" textAnchor="middle" fill="rgb(196 181 253)" fontSize="9">Passerelle ✓</text>
-
-              <rect x="46" y="150" width="118" height="42" rx="12" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
-              <text x="105" y="176" textAnchor="middle" fill="rgb(244 244 245)" fontSize="12" fontWeight="600">Nœud B</text>
-
-              <rect x="384" y="60" width="118" height="52" rx="12" fill="rgb(139 92 246 / 0.12)" stroke="rgb(139 92 246 / 0.6)" />
-              <text x="443" y="82" textAnchor="middle" fill="rgb(244 244 245)" fontSize="12" fontWeight="600">Nœud C</text>
-              <text x="443" y="98" textAnchor="middle" fill="rgb(196 181 253)" fontSize="9">Passerelle ✓</text>
-
-              <rect x="384" y="150" width="118" height="42" rx="12" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
-              <text x="443" y="176" textAnchor="middle" fill="rgb(244 244 245)" fontSize="12" fontWeight="600">Nœud D</text>
-
-              <line x1="164" y1="86" x2="384" y2="86" stroke="rgb(139 92 246 / 0.8)" strokeWidth="2.5" />
-              <text x="274" y="72" textAnchor="middle" fill="rgb(196 181 253)" fontSize="10">seul lien inter-régions</text>
-            </svg>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Alertes : d'une métrique à la remédiation</CardTitle>
-          <CardDescription>
-            Les règles de seuil sont évaluées chaque minute ; un disque SMART critique peut aussi déclencher une
-            migration de sécurisation, toujours en attente de validation manuelle.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <svg viewBox="0 0 700 230" className="w-full" role="img" aria-label="Schéma du flux d'alerte, de la métrique surveillée à la notification, avec une branche vers une migration de sécurisation suggérée en cas de SMART critique">
-            <defs>
-              <marker id="arrow-alert" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="rgb(139 92 246 / 0.7)" />
-              </marker>
-            </defs>
-
-            <rect x="10" y="55" width="150" height="70" rx="14" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
-            <text x="85" y="85" textAnchor="middle" fill="rgb(244 244 245)" fontSize="13" fontWeight="600">Métrique</text>
-            <text x="85" y="102" textAnchor="middle" fill="rgb(161 161 170)" fontSize="10">cpu, ram, disk, SMART</text>
-
-            <rect x="195" y="55" width="150" height="70" rx="14" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
-            <text x="270" y="85" textAnchor="middle" fill="rgb(244 244 245)" fontSize="13" fontWeight="600">Évaluateur</text>
-            <text x="270" y="102" textAnchor="middle" fill="rgb(161 161 170)" fontSize="10">règles, toutes les 1 min</text>
-
-            <rect x="380" y="55" width="150" height="70" rx="14" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
-            <text x="455" y="85" textAnchor="middle" fill="rgb(244 244 245)" fontSize="13" fontWeight="600">Alerte</text>
-            <text x="455" y="102" textAnchor="middle" fill="rgb(161 161 170)" fontSize="10">créée, résolue si retour sous seuil</text>
-
-            <rect x="565" y="55" width="130" height="70" rx="14" fill="rgb(255 255 255 / 0.03)" stroke="rgb(255 255 255 / 0.1)" />
-            <text x="630" y="85" textAnchor="middle" fill="rgb(244 244 245)" fontSize="13" fontWeight="600">Notification</text>
-            <text x="630" y="102" textAnchor="middle" fill="rgb(161 161 170)" fontSize="10">e-mail, webhook, Slack</text>
-
-            <line x1="160" y1="90" x2="192" y2="90" stroke="rgb(139 92 246 / 0.7)" strokeWidth="2" markerEnd="url(#arrow-alert)" />
-            <line x1="345" y1="90" x2="377" y2="90" stroke="rgb(139 92 246 / 0.7)" strokeWidth="2" markerEnd="url(#arrow-alert)" />
-            <line x1="530" y1="90" x2="562" y2="90" stroke="rgb(139 92 246 / 0.7)" strokeWidth="2" markerEnd="url(#arrow-alert)" />
-
-            <line x1="455" y1="125" x2="455" y2="163" stroke="rgb(244 63 94 / 0.6)" strokeWidth="2" markerEnd="url(#arrow-alert)" />
-            <text x="500" y="148" textAnchor="middle" fill="rgb(253 164 175)" fontSize="10">si SMART critique</text>
-            <rect x="380" y="165" width="150" height="55" rx="14" fill="rgb(244 63 94 / 0.06)" stroke="rgb(244 63 94 / 0.25)" />
-            <text x="455" y="188" textAnchor="middle" fill="rgb(253 164 175)" fontSize="12" fontWeight="600">Migration suggérée</text>
-            <text x="455" y="205" textAnchor="middle" fill="rgb(161 161 170)" fontSize="10">en attente — jamais auto-démarrée</text>
-          </svg>
-        </CardContent>
-      </Card>
+      </section>
     </div>
   );
 }

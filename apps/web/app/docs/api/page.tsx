@@ -11,10 +11,17 @@ import {
   Bell,
   History,
   Cpu,
+  Code2,
+  Globe,
+  LayoutGrid,
+  ScrollText,
+  Info,
   type LucideIcon,
 } from 'lucide-react';
 import { PageHeader } from '../../../components/PageHeader';
 import { Callout } from '../../../components/Callout';
+import { SectionLabel } from '../../../components/SectionLabel';
+import { AnimatedGradientText } from '../../../components/ui/animated-gradient-text';
 import { Badge } from '../../../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../../components/ui/card';
 import { cn } from '../../../lib/utils';
@@ -35,8 +42,22 @@ type Module = {
   base: string;
   icon: LucideIcon;
   description: string;
+  // Whole module added recently — badged once on the module rather than on
+  // each of its endpoints, which would just be a wall of green.
+  isNew?: boolean;
   endpoints: Endpoint[];
 };
+
+// Anchor id for the summary links above — accent-insensitive so "Nœuds"
+// doesn't end up as a percent-encoded href.
+function moduleAnchor(name: string) {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+}
 
 const METHOD_VARIANT: Record<Method, 'info' | 'success' | 'warning' | 'destructive'> = {
   GET: 'info',
@@ -74,6 +95,78 @@ const MODULES: Module[] = [
         body: 'email?, currentPassword?, newPassword?',
         description: "Met à jour l'e-mail et/ou le mot de passe (l'ancien mot de passe est requis pour en changer).",
       },
+      {
+        method: 'GET',
+        path: '/auth/sso/login',
+        auth: 'public',
+        description: "Démarre la connexion Authentik (OIDC + PKCE) et redirige vers le fournisseur d'identité.",
+        isNew: true,
+      },
+      {
+        method: 'GET',
+        path: '/auth/sso/silent',
+        auth: 'public',
+        description:
+          "Même flux, mais sans interaction (prompt=none) : utilisé au chargement de l'interface pour reprendre une session Authentik existante sans écran de connexion.",
+        isNew: true,
+      },
+      {
+        method: 'GET',
+        path: '/auth/sso/callback',
+        auth: 'public',
+        description:
+          "Retour du fournisseur d'identité : échange le code, crée ou retrouve le compte, synchronise les workspaces déduits des groupes Authentik, puis pose le cookie de session.",
+        isNew: true,
+      },
+    ],
+  },
+  {
+    name: 'Workspaces',
+    base: '/workspaces',
+    isNew: true,
+    icon: LayoutGrid,
+    description:
+      "Flottes cloisonnées : chaque workspace a son sous-réseau privé, ses ressources et ses membres. L'en-tête X-Workspace-Id sélectionne celui sur lequel porte la requête.",
+    endpoints: [
+      {
+        method: 'GET',
+        path: '/workspaces',
+        description: "Liste les workspaces accessibles à l'appelant (tous, pour un administrateur de plateforme).",
+      },
+      {
+        method: 'POST',
+        path: '/workspaces',
+        body: 'name',
+        description:
+          "Crée un workspace, lui alloue un sous-réseau privé libre et provisionne son VLAN. Réservé aux administrateurs de plateforme.",
+      },
+      {
+        method: 'PATCH',
+        path: '/workspaces/:id',
+        body: 'name?, ssoGroupClaim?',
+        description:
+          "Renomme le workspace et/ou change le groupe Authentik qui accorde automatiquement l'accès. Propriétaire ou administrateur de plateforme.",
+      },
+      { method: 'GET', path: '/workspaces/users', description: 'Liste tous les comptes (administrateur de plateforme).' },
+      { method: 'GET', path: '/workspaces/:id/members', description: "Liste les membres d'un workspace." },
+      {
+        method: 'POST',
+        path: '/workspaces/:id/members/:userId',
+        description: "Rattache un compte existant par son identifiant (administrateur de plateforme).",
+      },
+      {
+        method: 'POST',
+        path: '/workspaces/:id/invite',
+        body: 'email',
+        description:
+          "Ajoute par e-mail un compte déjà existant — le chemin en libre-service du propriétaire. Aucun e-mail n'est envoyé, l'accès est immédiat.",
+      },
+      { method: 'DELETE', path: '/workspaces/:id/members/:userId', description: "Retire un membre (un propriétaire ne peut pas se retirer lui-même)." },
+      {
+        method: 'DELETE',
+        path: '/workspaces/:id',
+        description: "Supprime le workspace, uniquement s'il est réellement vide (aucun nœud, partage, zone ni tâche).",
+      },
     ],
   },
   {
@@ -89,8 +182,9 @@ const MODULES: Module[] = [
       {
         method: 'PATCH',
         path: '/nodes/:id',
-        body: 'name?, role?, status?, locationCity?, locationCountry?, locationCountryCode?, locationLat?, locationLng?, graphX?, graphY?',
-        description: 'Met à jour un nœud (statut, rôle, localisation). graphX/graphY et locationLat/locationLng mémorisent respectivement la position glissée sur le graphe topologique et sur la carte du monde (envoyer null pour réinitialiser).',
+        body: 'name?, role?, status?, dnsHostname?, locationCity?, locationCountry?, locationCountryCode?, locationLat?, locationLng?, graphX?, graphY?',
+        description:
+          "Met à jour un nœud (statut, rôle, localisation). graphX/graphY et locationLat/locationLng mémorisent respectivement la position glissée sur le graphe topologique et sur la carte du monde (envoyer null pour réinitialiser). dnsHostname personnalise le nom du nœud en <nom>.tarmac.local sur le DNS interne.",
       },
       { method: 'DELETE', path: '/nodes/:id', description: 'Supprime un nœud.' },
       { method: 'POST', path: '/nodes/:id/rotate-token', description: "Régénère le jeton d'authentification de l'agent pour ce nœud." },
@@ -255,6 +349,74 @@ const MODULES: Module[] = [
     ],
   },
   {
+    name: 'DNS',
+    base: '/dns',
+    isNew: true,
+    icon: Globe,
+    description:
+      "Serveurs DNS de la flotte (PowerDNS), zones faisant autorité, enregistrements, DNSSEC et délégation — ainsi que le résolveur interne *.tarmac.local.",
+    endpoints: [
+      { method: 'GET', path: '/dns/groups', description: 'Liste les groupes DNS, avec leurs membres et leurs zones.' },
+      { method: 'POST', path: '/dns/groups', body: 'name', description: 'Crée un groupe de serveurs DNS.' },
+      { method: 'PATCH', path: '/dns/groups/:id', body: 'name?', description: 'Renomme un groupe.' },
+      {
+        method: 'DELETE',
+        path: '/dns/groups/:id',
+        description: "Supprime un groupe — refusé tant qu'il lui reste une zone. Désinstalle PowerDNS sur chaque membre.",
+      },
+      {
+        method: 'POST',
+        path: '/dns/groups/:id/members',
+        body: 'nodeId, role (primary | secondary), status?',
+        description: "Ajoute un serveur au groupe (1 primaire + 3 secondaires maximum) et provisionne PowerDNS sur le nœud.",
+      },
+      { method: 'PATCH', path: '/dns/groups/:id/members/:nodeId', body: 'role?, status?', description: "Change le rôle ou le statut d'un membre." },
+      { method: 'DELETE', path: '/dns/groups/:id/members/:nodeId', description: 'Retire un serveur du groupe et nettoie sa configuration DNS.' },
+      {
+        method: 'POST',
+        path: '/dns/groups/:id/members/:nodeId/resolve-port-conflict',
+        description:
+          "Demande au nœud de libérer le port 53 occupé par un autre résolveur (systemd-resolved, PowerDNS installé hors Tarmac…), puis relance le provisionnement.",
+      },
+      { method: 'GET', path: '/dns/zones?groupId=', description: 'Liste les zones, avec leurs enregistrements et les valeurs rattachées à un nœud.' },
+      { method: 'POST', path: '/dns/zones', body: 'groupId, name, dnssecEnabled?', description: 'Crée une zone sur le groupe indiqué (DNSSEC activé par défaut).' },
+      { method: 'POST', path: '/dns/zones/:id/reapply', description: 'Repousse la zone complète sur tous les serveurs du groupe.' },
+      { method: 'DELETE', path: '/dns/zones/:id', description: 'Supprime la zone, y compris sur les serveurs secondaires qui en détiennent une copie.' },
+      {
+        method: 'GET',
+        path: '/dns/zones/:id/dnssec',
+        description: "Clés DS/DNSKEY à publier chez le registrar, lues en direct sur le serveur primaire (jamais stockées côté control plane).",
+      },
+      {
+        method: 'GET',
+        path: '/dns/zones/:id/delegation',
+        description: "Serveurs de noms à déclarer (ns1/ns2…), leurs glue records, et le dernier résultat de vérification de la délégation.",
+      },
+      { method: 'POST', path: '/dns/zones/:id/delegation/check', description: 'Relance immédiatement la vérification de la délégation depuis Internet.' },
+      {
+        method: 'POST',
+        path: '/dns/zones/:id/records',
+        body: 'name, type, ttl?, isGeo?, values[] (content, nodeId?, priority?)',
+        description:
+          "Crée ou met à jour un enregistrement. isGeo rend la réponse géolocalisée (le nœud le plus proche du demandeur) ; nodeId rattache une valeur à un nœud de la flotte.",
+      },
+      { method: 'DELETE', path: '/dns/zones/:id/records/:recordId', description: 'Supprime un enregistrement.' },
+      { method: 'GET', path: '/dns/nodes/:nodeId/records', description: 'Recherche inverse : quels enregistrements pointent vers ce nœud.' },
+      { method: 'GET', path: '/dns/internal', description: 'État du résolveur interne du workspace (nœud désigné, statut, noms servis).' },
+      {
+        method: 'POST',
+        path: '/dns/internal/:nodeId',
+        description: "Désigne ce nœud comme résolveur interne *.tarmac.local et diffuse la route DNS à toute la flotte.",
+      },
+      { method: 'DELETE', path: '/dns/internal', description: 'Retire le résolveur interne et nettoie la configuration des nœuds.' },
+      {
+        method: 'POST',
+        path: '/dns/internal/forwarder/:nodeId/resolve-conflict',
+        description: "Libère le port du transitaire interne quand un autre service DNS a été installé par-dessus.",
+      },
+    ],
+  },
+  {
     name: 'Stockage',
     base: '/storage',
     icon: Database,
@@ -291,13 +453,58 @@ const MODULES: Module[] = [
     ],
   },
   {
-    name: 'Topologie & audit',
-    base: '/topology, /audit-logs',
-    icon: History,
-    description: 'Vue graphe de la flotte et historique des actions administrateur.',
+    name: 'Journal',
+    base: '/audit-logs, /agent-logs',
+    icon: ScrollText,
+    description:
+      "Les deux flux de l'écran Journal : les actions d'administration et les logs remontés par les agents. Tous deux filtrables et exportables.",
     endpoints: [
-      { method: 'GET', path: '/topology', description: 'Graphe nœuds / pools / partages / montages.' },
-      { method: 'GET', path: '/audit-logs?limit=', description: "Historique d'actions récentes (défaut: 200)." },
+      {
+        method: 'GET',
+        path: '/audit-logs?before=&from=&limit=&actorUserId=&action=&resourceType=&q=',
+        description: "Historique d'actions, paginé et filtrable par acteur, type d'action, ressource ou recherche libre (défaut: 200).",
+      },
+      {
+        method: 'GET',
+        path: '/audit-logs/export?from=&to=&format=',
+        description: "Export du journal d'actions sur une période, en csv ou json (téléchargement).",
+        isNew: true,
+      },
+      {
+        method: 'GET',
+        path: '/agent-logs?nodeId=&level=&before=&from=&limit=',
+        description: 'Logs remontés par les agents, filtrables par nœud, niveau et période.',
+        isNew: true,
+      },
+      {
+        method: 'GET',
+        path: '/agent-logs/export?from=&to=&format=&nodeId=',
+        description: 'Export des logs agents sur une période, en csv ou json (téléchargement).',
+        isNew: true,
+      },
+    ],
+  },
+  {
+    name: 'Topologie',
+    base: '/topology',
+    icon: History,
+    description: 'Vue graphe de la flotte.',
+    endpoints: [{ method: 'GET', path: '/topology', description: 'Graphe nœuds / pools / partages / montages.' }],
+  },
+  {
+    name: 'Système',
+    base: '/system',
+    icon: Info,
+    description: "Informations sur l'installation elle-même.",
+    endpoints: [
+      {
+        method: 'GET',
+        path: '/system/version',
+        auth: 'public',
+        description:
+          "Version du control plane, servie sans session : c'est la référence unique affichée dans l'interface et comparée à la version de chaque agent.",
+        isNew: true,
+      },
     ],
   },
 ];
@@ -306,28 +513,44 @@ export default function ApiReferencePage() {
   return (
     <div className="space-y-10">
       <PageHeader
-        title="Référence API"
+        icon={Code2}
+        title={<AnimatedGradientText speed={0.6}>Référence API</AnimatedGradientText>}
         description="Toutes les routes REST exposées par l'API Tarmac, préfixées par /api/v1."
       />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Card>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Card className="bg-panel-glow">
           <CardContent className="pt-6 text-sm">
             <p className="font-medium text-foreground">URL de base</p>
             <code className="mt-1 block text-xs text-muted-foreground">https://votre-api/api/v1</code>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="bg-panel-glow">
           <CardContent className="pt-6 text-sm">
             <p className="font-medium text-foreground">Authentification</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Cookie de session httpOnly posé par <code>POST /auth/login</code> (5 tentatives/min max), envoyé
-              automatiquement par le navigateur. Aucun jeton à gérer côté client — toutes les routes ci-dessous
-              l'exigent, sauf mention « publique » ou « jeton dédié ».
+              Cookie de session httpOnly posé par <code>POST /auth/login</code> (5 tentatives/min max) ou par le retour
+              SSO Authentik, envoyé automatiquement par le navigateur. Aucun jeton à gérer côté client — toutes les
+              routes ci-dessous l'exigent, sauf mention « publique » ou « jeton dédié ».
             </p>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="bg-panel-glow">
+          <CardContent className="pt-6 text-sm">
+            <p className="flex items-center gap-2 font-medium text-foreground">
+              Workspace
+              <span className="rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-300">
+                Nouveau
+              </span>
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              L'en-tête <code>X-Workspace-Id</code> choisit le workspace sur lequel porte la requête ; sans lui, un
+              workspace par défaut est retenu. Toute route de ressource est filtrée sur ce workspace — y compris pour un
+              administrateur de plateforme.
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="bg-panel-glow">
           <CardContent className="pt-6 text-sm">
             <p className="font-medium text-foreground">Validation</p>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -337,16 +560,38 @@ export default function ApiReferencePage() {
         </Card>
       </div>
 
+      <section className="space-y-3">
+        <SectionLabel>Sommaire</SectionLabel>
+        <div className="flex flex-wrap gap-2">
+          {MODULES.map((module) => (
+            <a
+              key={module.name}
+              href={`#${moduleAnchor(module.name)}`}
+              className="flex items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:border-violet-500/40 hover:text-violet-200"
+            >
+              <module.icon className="h-3.5 w-3.5 text-violet-400" />
+              {module.name}
+              <span className={cn('text-zinc-600', module.isNew && 'text-emerald-400/70')}>{module.endpoints.length}</span>
+            </a>
+          ))}
+        </div>
+      </section>
+
       <Callout>
-        Les agents installés sur chaque nœud communiquent via un canal temps réel dédié (WebSocket, chemin{' '}
-        <code>/agents-ws</code>) plutôt que par ces routes REST — ils remontent l'état matériel (disques, SMART) et
-        reçoivent des commandes (montage, migration, mise à jour). Ce canal utilise un jeton d'agent, pas le cookie
-        de session utilisateur.
+        Deux canaux temps réel doublent ces routes REST. Les agents installés sur chaque nœud utilisent{' '}
+        <code>/agents-ws</code> (authentifié par un jeton d'agent) pour remonter l'état matériel et recevoir des
+        commandes — montage, migration, configuration DNS, mise à jour. Le navigateur, lui, ouvre{' '}
+        <code>/live-ws?workspaceId=…</code> avec le cookie de session pour recevoir en direct les nouvelles entrées de
+        journal, les logs d'agents et les battements de cœur des nœuds du workspace affiché.
       </Callout>
 
       <div className="space-y-6">
         {MODULES.map((module) => (
-          <Card key={module.name} className="overflow-hidden transition-colors hover:border-white/[0.14]">
+          <Card
+            key={module.name}
+            id={moduleAnchor(module.name)}
+            className="scroll-mt-24 overflow-hidden transition-colors hover:border-white/[0.14]"
+          >
             <CardHeader>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-3">
@@ -354,6 +599,11 @@ export default function ApiReferencePage() {
                     <module.icon className="h-4 w-4" />
                   </div>
                   <CardTitle>{module.name}</CardTitle>
+                  {module.isNew && (
+                    <span className="rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-300">
+                      Nouveau
+                    </span>
+                  )}
                 </div>
                 <code className="text-xs text-muted-foreground">{module.base}</code>
               </div>
@@ -365,11 +615,11 @@ export default function ApiReferencePage() {
                   key={`${endpoint.method}-${endpoint.path}`}
                   className="flex flex-col gap-1.5 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 sm:flex-row sm:items-center sm:gap-4"
                 >
-                  <div className="flex shrink-0 items-center gap-2 sm:w-72">
+                  <div className="flex shrink-0 items-start gap-2 sm:w-80">
                     <Badge variant={METHOD_VARIANT[endpoint.method]} className={cn('w-16 shrink-0 justify-center font-mono')}>
                       {endpoint.method}
                     </Badge>
-                    <code className="truncate text-xs text-foreground/90">{endpoint.path}</code>
+                    <code className="break-all text-xs leading-5 text-foreground/90">{endpoint.path}</code>
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-1.5">
