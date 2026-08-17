@@ -1227,6 +1227,63 @@ func dnsRecordFqdn(zoneName, label string) string {
 	return label + "." + zoneName + "."
 }
 
+// pdnsTargetTypes are the record types whose content ends with a hostname
+// that PowerDNS requires in canonical (root-anchored) form. MX and SRV are
+// handled separately because their content is prefixed with a priority, but
+// the same rule applies to their target.
+var pdnsTargetTypes = map[string]bool{
+	"CNAME": true,
+	"DNAME": true,
+	"NS":    true,
+	"PTR":   true,
+}
+
+// pdnsQuotedTypes are the record types whose content PowerDNS requires as
+// one or more quoted character-strings rather than a bare value.
+var pdnsQuotedTypes = map[string]bool{
+	"TXT": true,
+	"SPF": true,
+}
+
+// pdnsQualifyTarget appends the root dot to the hostname at the end of a
+// record's content. PowerDNS's API rejects a non-canonical target outright
+// instead of normalising it - "Record intraced.fr./MX '10 mail.intraced.fr':
+// Not in expected format (parsed as '10 mail.intraced.fr.')" - and since
+// applyDnsZone PATCHes the whole zone as a single atomic request, one
+// unqualified target rejects every other record in the zone along with it
+// (confirmed in production: an MX added to intraced.fr blocked the TXT/SPF
+// record created a minute later from ever being published).
+//
+// Only the LAST whitespace-separated field is touched: SRV content reaches
+// here as "<weight> <port> <target>", so qualifying the whole string would
+// corrupt the numeric fields. A target that is already canonical - including
+// the bare "." that means "no service" in SRV - is returned unchanged.
+func pdnsQualifyTarget(content string) string {
+	fields := strings.Fields(content)
+	if len(fields) == 0 {
+		return content
+	}
+	if last := fields[len(fields)-1]; !strings.HasSuffix(last, ".") {
+		fields[len(fields)-1] = last + "."
+	}
+	return strings.Join(fields, " ")
+}
+
+// pdnsQuoteTxt wraps TXT/SPF content in the quoted form PowerDNS demands
+// ("Data field in DNS should start with quote (\") at position 0 of
+// 'v=spf1 mx ~all'" - same production zone, same atomic-PATCH consequence as
+// pdnsQualifyTarget). Content that is already quoted is passed through
+// untouched so an operator can still hand-write the multi-string form
+// ("chunk one" "chunk two") that long DKIM keys need.
+func pdnsQuoteTxt(content string) string {
+	if strings.HasPrefix(strings.TrimSpace(content), "\"") {
+		return content
+	}
+	escaped := strings.ReplaceAll(content, "\\", "\\\\")
+	escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
+	return "\"" + escaped + "\""
+}
+
 // applyDnsZone pushes the zone's complete record set on every call (like
 // applyOverlay's full peer-list push), not a diff - simpler and safer over
 // an unreliable channel, at the cost of re-writing the whole zone for a
@@ -1293,7 +1350,10 @@ func applyDnsZone(payload map[string]interface{}) (string, error) {
 	}
 	nsRecords := make([]map[string]interface{}, 0, len(nameservers))
 	for _, ns := range nameservers {
-		nsRecords = append(nsRecords, map[string]interface{}{"content": ns + ".", "disabled": false})
+		// pdnsQualifyTarget rather than a bare ns+"." so a nameserver that
+		// already arrives canonical doesn't become "ns1.example.com.." and
+		// take the whole atomic zone PATCH down with it.
+		nsRecords = append(nsRecords, map[string]interface{}{"content": pdnsQualifyTarget(ns), "disabled": false})
 	}
 	rrsets = append(rrsets, map[string]interface{}{
 		"name":       fqdn,
@@ -1348,8 +1408,13 @@ func applyDnsZone(payload map[string]interface{}) (string, error) {
 		} else {
 			for _, value := range record.Values {
 				content := value.Content
-				if record.Type == "MX" || record.Type == "SRV" {
-					content = fmt.Sprintf("%d %s", value.Priority, value.Content)
+				switch {
+				case record.Type == "MX" || record.Type == "SRV":
+					content = fmt.Sprintf("%d %s", value.Priority, pdnsQualifyTarget(content))
+				case pdnsTargetTypes[record.Type]:
+					content = pdnsQualifyTarget(content)
+				case pdnsQuotedTypes[record.Type]:
+					content = pdnsQuoteTxt(content)
 				}
 				pdnsRecords = append(pdnsRecords, map[string]interface{}{"content": content, "disabled": false})
 			}
