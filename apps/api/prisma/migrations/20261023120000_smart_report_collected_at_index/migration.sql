@@ -1,0 +1,11 @@
+-- Supports NodesService.pruneOldSmartReports, which filters on collectedAt
+-- alone; the existing (nodeId, collectedAt) / (nodeId, diskName, collectedAt)
+-- indexes can't serve a query with no nodeId predicate.
+--
+-- Note: SmartReport had no retention until this release, so on the first
+-- deploy this index is built over the whole accumulated backlog and the
+-- statement can take a while (it briefly blocks agent writes to this table).
+-- The backlog itself is deleted in chunks by the service's startup prune,
+-- not here, to keep this migration's transaction short.
+-- CreateIndex
+CREATE INDEX "SmartReport_collectedAt_idx" ON "SmartReport"("collectedAt");

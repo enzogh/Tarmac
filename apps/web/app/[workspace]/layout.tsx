@@ -4,6 +4,7 @@ import { ReactNode, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ApiError, api, getCurrentWorkspaceId, setCurrentWorkspaceId, WorkspaceListItem } from '../../lib/api';
 import { DashboardLayout } from '../../components/DashboardLayout';
+import { ChartCardSkeleton, Skeleton, StatCardSkeleton } from '../../components/ui/skeleton';
 
 // Resolves the `[workspace]` URL segment (slug or id, either is a valid
 // link) against the caller's accessible workspaces, then keeps the
@@ -63,7 +64,29 @@ export default function WorkspaceLayout({ children }: { children: ReactNode }) {
     };
   }, [params.workspace, router]);
 
-  if (!ready) return null;
+  // The shell (sidebar, header, workspace switcher) is built entirely from
+  // the URL's own `[workspace]` segment, so it can paint immediately -
+  // returning null for the whole subtree until api.workspaces.list()
+  // resolved meant every hard navigation into the dashboard showed a blank
+  // page for a full API round-trip. Only `children` genuinely has to wait,
+  // because their API calls need the X-Workspace-Id header this effect
+  // sets; they get a skeleton in the content area meanwhile.
+  return <DashboardLayout>{ready ? children : <PageSkeleton />}</DashboardLayout>;
+}
 
-  return <DashboardLayout>{children}</DashboardLayout>;
+function PageSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="space-y-3">
+        <Skeleton className="h-7 w-64" />
+        <Skeleton className="h-4 w-96 max-w-full" />
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <StatCardSkeleton key={index} />
+        ))}
+      </div>
+      <ChartCardSkeleton />
+    </div>
+  );
 }

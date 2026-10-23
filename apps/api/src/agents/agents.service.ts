@@ -88,6 +88,11 @@ const AGENT_CRITICAL_COMMANDS = new Set(['update_agent', 'uninstall_agent', 'rot
 
 @Injectable()
 export class AgentsService implements OnModuleInit {
+  // Longest gap tolerated between two stored SMART reports for the same
+  // disk when nothing changed, so smartHistory still has a point every so
+  // often instead of a flat line with one sample. 15min x 200 points
+  // (smartHistory's take) is ~2 days of history per disk.
+  private static readonly SMART_REPORT_HEARTBEAT_MS = 15 * 60 * 1000;
   private readonly logger = new Logger(AgentsService.name);
   private readonly senders = new Map<string, SendFn>();
   private readonly overlaySyncAt = new Map<string, number>();
@@ -589,17 +594,54 @@ export class AgentsService implements OnModuleInit {
     }
 
     if (payload.smartReports.length > 0) {
-      await this.prisma.smartReport.createMany({
-        data: payload.smartReports.map((report) => ({
+      // Agents send a full state report every 20s, but SMART attributes
+      // (temperature aside) move on the scale of hours - appending every
+      // one of those meant ~4,300 rows/disk/day of near-duplicates. Keep a
+      // new row only when something actually changed, or when the last one
+      // is old enough to still give smartHistory a usable time series.
+      // Scoped to the heartbeat window on purpose: a disk with no row in it
+      // needs a new one regardless (either it's brand new, or its last
+      // report is stale enough that we want a fresh time-series point), and
+      // the bound is what keeps this lookup off the full history. Prisma's
+      // `distinct` is applied in memory, so without it this would read every
+      // SMART row this node ever produced on every state report.
+      const heartbeatCutoff = new Date(Date.now() - AgentsService.SMART_REPORT_HEARTBEAT_MS);
+      const recentPerDisk = await this.prisma.smartReport.findMany({
+        where: {
           nodeId,
-          diskName: report.diskName,
-          temperatureC: report.temperatureC,
-          reallocatedSectors: report.reallocatedSectors,
-          pendingSectors: report.pendingSectors,
-          powerOnHours: report.powerOnHours,
-          overall: report.overall,
-        })),
+          diskName: { in: payload.smartReports.map((report) => report.diskName) },
+          collectedAt: { gte: heartbeatCutoff },
+        },
+        orderBy: [{ diskName: 'asc' }, { collectedAt: 'desc' }],
+        distinct: ['diskName'],
       });
+      const latestByDiskName = new Map(recentPerDisk.map((report) => [report.diskName, report]));
+
+      const changed = payload.smartReports.filter((report) => {
+        const previous = latestByDiskName.get(report.diskName);
+        if (!previous) return true;
+        return (
+          previous.temperatureC !== report.temperatureC ||
+          previous.reallocatedSectors !== report.reallocatedSectors ||
+          previous.pendingSectors !== report.pendingSectors ||
+          previous.powerOnHours !== report.powerOnHours ||
+          previous.overall !== report.overall
+        );
+      });
+
+      if (changed.length > 0) {
+        await this.prisma.smartReport.createMany({
+          data: changed.map((report) => ({
+            nodeId,
+            diskName: report.diskName,
+            temperatureC: report.temperatureC,
+            reallocatedSectors: report.reallocatedSectors,
+            pendingSectors: report.pendingSectors,
+            powerOnHours: report.powerOnHours,
+            overall: report.overall,
+          })),
+        });
+      }
 
       for (const report of payload.smartReports) {
         if (report.overall !== 'warning' && report.overall !== 'critical') continue;

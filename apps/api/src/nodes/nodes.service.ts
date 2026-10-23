@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { NodeStatus, Prisma } from '@prisma/client';
 import { AgentTokenService } from '../agents/agent-token.service';
@@ -71,7 +71,7 @@ type ActivitySmartReport = {
 };
 
 @Injectable()
-export class NodesService {
+export class NodesService implements OnModuleInit {
   private readonly logger = new Logger(NodesService.name);
 
   constructor(
@@ -245,23 +245,44 @@ export class NodesService {
     };
     const ms = ranges[range] ?? ranges['1h'];
 
+    const workspaceId = scope.workspaceId as string;
+
+    // The two "latest row per group" lookups below are raw DISTINCT ON
+    // queries rather than Prisma's `distinct`, because Prisma applies
+    // `distinct` IN MEMORY: it fetches every matching row, ships it all to
+    // Node, and only then dedupes. For the SMART reports that meant reading
+    // the ENTIRE SmartReport table (no time filter, one row per disk every
+    // 20s per node, no retention until now) on every 5s poll of this
+    // endpoint - the single reason /nodes/activity took ~45-60s in
+    // production. DISTINCT ON lets PostgreSQL walk the existing
+    // (nodeId, diskName, collectedAt) / (nodeId, createdAt) indexes and
+    // return only the handful of rows actually used.
     const [nodes, latestSamples, disks, smartReports] = (await Promise.all([
       this.prisma.node.findMany({ where: scopeWhere(scope), orderBy: { createdAt: 'desc' } }),
-      this.prisma.metricSample.findMany({
-        where: { createdAt: { gte: new Date(now - ms) }, ...scopeWhereViaNode(scope) },
-        orderBy: [{ nodeId: 'asc' }, { createdAt: 'desc' }],
-        distinct: ['nodeId'],
-      }),
+      this.prisma.$queryRaw<ActivitySample[]>`
+        SELECT DISTINCT ON (s."nodeId")
+          s."nodeId", s."cpu", s."ram", s."disk", s."networkRx", s."networkTx",
+          s."ioRead", s."ioWrite", s."createdAt"
+        FROM "MetricSample" s
+        JOIN "Node" n ON n."id" = s."nodeId"
+        WHERE n."workspaceId" = ${workspaceId}
+          AND s."createdAt" >= ${new Date(now - ms)}
+        ORDER BY s."nodeId", s."createdAt" DESC
+      `,
       this.prisma.disk.findMany({
         where: scopeWhereViaNode(scope),
         include: { node: true },
         orderBy: [{ nodeId: 'asc' }, { mountPath: 'asc' }],
       }),
-      this.prisma.smartReport.findMany({
-        where: scopeWhereViaNode(scope),
-        orderBy: [{ nodeId: 'asc' }, { diskName: 'asc' }, { collectedAt: 'desc' }],
-        distinct: ['nodeId', 'diskName'],
-      }),
+      this.prisma.$queryRaw<ActivitySmartReport[]>`
+        SELECT DISTINCT ON (r."nodeId", r."diskName")
+          r."nodeId", r."diskName", r."temperatureC", r."reallocatedSectors",
+          r."pendingSectors", r."powerOnHours", r."overall", r."collectedAt"
+        FROM "SmartReport" r
+        JOIN "Node" n ON n."id" = r."nodeId"
+        WHERE n."workspaceId" = ${workspaceId}
+        ORDER BY r."nodeId", r."diskName", r."collectedAt" DESC
+      `,
     ])) as [ActivityNode[], ActivitySample[], ActivityDisk[], ActivitySmartReport[]];
 
     const sampleByNode = new Map(latestSamples.map((sample) => [sample.nodeId, sample]));
@@ -471,5 +492,52 @@ export class NodesService {
     if (count > 0) {
       this.logger.log(`Pruned ${count} metric sample(s) older than ${NodesService.METRIC_SAMPLE_RETENTION_DAYS} days`);
     }
+  }
+
+  // SmartReport had no retention at all while every agent appends one row
+  // per disk every 20s (see the agent's stateTicker), so the table grew
+  // without bound - millions of rows that /nodes/activity then had to read
+  // in full on every poll. 7 days comfortably covers smartHistory's
+  // `take: 200` window (200 points at the deduped write cadence below) and
+  // keeps the table in the low thousands of rows.
+  private static readonly SMART_REPORT_RETENTION_DAYS = 7;
+  // Deleting a multi-million-row backlog in a single statement would hold a
+  // long transaction and a lot of locks on first run; chunking keeps each
+  // statement short enough to stay out of the way of live agent writes.
+  private static readonly PRUNE_BATCH_SIZE = 20_000;
+
+  @Cron(CronExpression.EVERY_HOUR)
+  async pruneOldSmartReports() {
+    const cutoff = new Date(Date.now() - NodesService.SMART_REPORT_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    let total = 0;
+    for (;;) {
+      const deleted = await this.prisma.$executeRaw`
+        DELETE FROM "SmartReport"
+        WHERE "id" IN (
+          SELECT "id" FROM "SmartReport"
+          WHERE "collectedAt" < ${cutoff}
+          LIMIT ${NodesService.PRUNE_BATCH_SIZE}
+        )
+      `;
+      total += deleted;
+      if (deleted < NodesService.PRUNE_BATCH_SIZE) break;
+    }
+    if (total > 0) {
+      this.logger.log(`Pruned ${total} SMART report(s) older than ${NodesService.SMART_REPORT_RETENTION_DAYS} days`);
+    }
+  }
+
+  // The hourly crons above only start firing an hour after boot, which on
+  // the deploy that introduces SMART retention would leave the existing
+  // backlog (and the slow /nodes/activity it causes) in place for that
+  // whole hour. Run both once at startup, detached so a slow first prune
+  // never delays the app coming up.
+  onModuleInit() {
+    void this.pruneOldSmartReports().catch((error) =>
+      this.logger.error(`Initial SMART report prune failed: ${String(error)}`),
+    );
+    void this.pruneOldMetricSamples().catch((error) =>
+      this.logger.error(`Initial metric sample prune failed: ${String(error)}`),
+    );
   }
 }

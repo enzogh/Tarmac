@@ -237,6 +237,12 @@ export default function InfrastructurePage() {
   });
   const controlVersion = systemVersion?.version ?? null;
 
+  // Which tab is actually on screen. Both the Performance tab's metrics
+  // poll and the Exploration tab's remote directory listing are expensive
+  // (one request per node, and a live round-trip to an agent) and used to
+  // run on mount no matter which tab the user was looking at.
+  const [activeTab, setActiveTab] = useState('nodes');
+
   const sortedByCpu = useMemo(
     () => [...nodes].sort((left, right) => right.metrics.cpu - left.metrics.cpu),
     [nodes],
@@ -245,7 +251,7 @@ export default function InfrastructurePage() {
   const nodeDetailGrid = useMemo(() => sortedByCpu.slice(0, 6), [sortedByCpu]);
 
   const { data: samplesByNode = {} } = usePolling(
-    topNodeIds.length > 0 ? `metrics:${topNodeIds.join(',')}:6h` : null,
+    activeTab === 'performance' && topNodeIds.length > 0 ? `metrics:${topNodeIds.join(',')}:6h` : null,
     async () => {
       const histories = await Promise.all(
         topNodeIds.map(async (id) => [id, await api.nodes.metrics(id, '6h')] as const),
@@ -345,20 +351,24 @@ export default function InfrastructurePage() {
   const [scanLoading, setScanLoading] = useState(false);
   const [scanResults, setScanResults] = useState<DirectoryScanEntry[]>([]);
   const [scanTruncated, setScanTruncated] = useState(false);
+  // Explorer failures belong to the Exploration panel, not to the page-wide
+  // `updateNotice` banner that reports agent-update results: a node whose
+  // agent simply can't be browsed is normal, and surfacing it at the top of
+  // the page made every visit to Infrastructure open on a red error about
+  // something the user never asked for.
+  const [explorerError, setExplorerError] = useState<string | null>(null);
 
   const loadNodeDirectories = async (nodeId: string, basePath: string) => {
     if (!nodeId) return;
     setDirectoryLoading(true);
+    setExplorerError(null);
     try {
       const payload = await api.migrations.listDirectories(nodeId, basePath || '/');
       setBrowsePath(payload.basePath);
       setDirectories([...payload.directories].sort((a, b) => a.localeCompare(b)));
     } catch {
       setDirectories([]);
-      setUpdateNotice({
-        type: 'error',
-        message: 'Navigation distante indisponible sur ce nœud (agent offline ou accès refusé).',
-      });
+      setExplorerError('Navigation distante indisponible sur ce nœud (agent offline ou accès refusé).');
     } finally {
       setDirectoryLoading(false);
     }
@@ -367,6 +377,7 @@ export default function InfrastructurePage() {
   const runDirectoryScan = async () => {
     if (!selectedExplorerNodeId) return;
     setScanLoading(true);
+    setExplorerError(null);
     try {
       const payload = await api.migrations.scanDirectories(selectedExplorerNodeId, selectedPath || browsePath, 20);
       setScanResults(payload.entries);
@@ -374,10 +385,7 @@ export default function InfrastructurePage() {
     } catch {
       setScanResults([]);
       setScanTruncated(false);
-      setUpdateNotice({
-        type: 'error',
-        message: 'Scan volumétrique indisponible. Vérifiez la connectivité de l’agent.',
-      });
+      setExplorerError('Scan volumétrique indisponible. Vérifiez la connectivité de l’agent.');
     } finally {
       setScanLoading(false);
     }
@@ -401,9 +409,10 @@ export default function InfrastructurePage() {
   }, [nodes, selectedExplorerNodeId]);
 
   useEffect(() => {
-    if (!selectedExplorerNodeId) return;
+    if (activeTab !== 'exploration' || !selectedExplorerNodeId) return;
     void loadNodeDirectories(selectedExplorerNodeId, '/');
-  }, [selectedExplorerNodeId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, selectedExplorerNodeId]);
 
   useEffect(() => {
     const ips = Array.from(
@@ -671,7 +680,7 @@ export default function InfrastructurePage() {
           )}
         </section>
 
-        <Tabs defaultValue="nodes" className="space-y-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList>
             <TabsTrigger value="nodes" className="gap-1.5">
               <Server className="h-3.5 w-3.5" />
@@ -739,6 +748,11 @@ export default function InfrastructurePage() {
           <Callout>
             Parcourez les dossiers d'un nœud puis lancez un scan volumétrique pour repérer les répertoires les plus lourds.
           </Callout>
+          {explorerError && (
+            <Alert variant="destructive" className="mt-4">
+              <AlertDescription>{explorerError}</AlertDescription>
+            </Alert>
+          )}
           <div className="grid gap-4 xl:grid-cols-[1.25fr_minmax(0,1fr)]">
           <Card className="border-white/[0.08] bg-zinc-900/65">
             <CardHeader>

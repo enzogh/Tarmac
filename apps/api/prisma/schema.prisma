@@ -412,6 +412,11 @@ model SmartReport {
 
   @@index([nodeId, collectedAt])
   @@index([nodeId, diskName, collectedAt])
+  // Supports NodesService.pruneOldSmartReports' retention cron, which
+  // filters on collectedAt alone - the composite indexes above don't help a
+  // query that doesn't also filter on nodeId (same pattern as MetricSample
+  // and AgentLog, which both carry this index for exactly this reason).
+  @@index([collectedAt])
 }
 
 model Pool {
