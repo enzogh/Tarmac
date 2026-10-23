@@ -37,6 +37,9 @@ export type NodeItem = {
   controlVersion?: string | null;
   agentUpToDate?: boolean | null;
   mutedUntil?: string | null;
+  // False when this node's SMART readings are meaningless (virtualised
+  // storage) and its operator has opted out of disk alerts for it.
+  smartMonitoringEnabled?: boolean;
   overlayIsGateway?: boolean;
   vlanIp?: string | null;
   // Custom <dnsHostname>.tarmac.local label - see InternalDnsService on the
@@ -649,6 +652,7 @@ export const api = {
         graphX?: number | null;
         graphY?: number | null;
         dnsHostname?: string | null;
+        smartMonitoringEnabled?: boolean;
       },
     ) =>
       request<NodeItem>(`/api/v1/nodes/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),

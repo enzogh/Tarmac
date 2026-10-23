@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { Bell, Eye, CheckCircle2, AlertCircle, AlertTriangle, Trash2 } from 'lucide-react';
 import { api } from '../../../../lib/api';
 import { usePolling } from '../../../../lib/hooks/usePolling';
+import { ALERT_STATUS, SEVERITY, describe } from '../../../../components/ui/status';
 import { PageHeader } from '../../../../components/PageHeader';
 import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
 import { Callout } from '../../../../components/Callout';
@@ -64,22 +65,11 @@ export default function AlertsPage() {
     }
   };
 
-  const getSeverityLabel = (severity: string): string => {
-    switch (severity) {
-      case 'critical': return 'Critique';
-      case 'high': return 'Grave';
-      case 'medium': return 'Moyen';
-      default: return 'Faible';
-    }
-  };
-
-  const getStatusLabel = (status: string): string => {
-    switch (status) {
-      case 'resolved': return 'Résolu';
-      case 'acknowledged': return 'Reconnu';
-      default: return 'Ouvert';
-    }
-  };
+  // Deferred to the shared vocabularies so a severity reads the same on
+  // this page as on the overview's alert list - the two had drifted into
+  // "Grave"/"Moyen" here and "Élevée"/"Moyenne" there for the same enum.
+  const getSeverityLabel = (severity: string): string => describe(SEVERITY, severity).label;
+  const getStatusLabel = (status: string): string => describe(ALERT_STATUS, status).label;
 
   const filtered = useMemo(() => {
     let result = alerts;
@@ -200,10 +190,10 @@ export default function AlertsPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Toutes</SelectItem>
-                      <SelectItem value="critical">Critique</SelectItem>
-                      <SelectItem value="high">Grave</SelectItem>
-                      <SelectItem value="medium">Moyen</SelectItem>
-                      <SelectItem value="low">Faible</SelectItem>
+                      <SelectItem value="critical">{describe(SEVERITY, 'critical').label}</SelectItem>
+                      <SelectItem value="high">{describe(SEVERITY, 'high').label}</SelectItem>
+                      <SelectItem value="medium">{describe(SEVERITY, 'medium').label}</SelectItem>
+                      <SelectItem value="low">{describe(SEVERITY, 'low').label}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -215,9 +205,9 @@ export default function AlertsPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Tous</SelectItem>
-                      <SelectItem value="open">Ouvert</SelectItem>
-                      <SelectItem value="acknowledged">Reconnu</SelectItem>
-                      <SelectItem value="resolved">Résolu</SelectItem>
+                      <SelectItem value="open">{describe(ALERT_STATUS, 'open').label}</SelectItem>
+                      <SelectItem value="acknowledged">{describe(ALERT_STATUS, 'acknowledged').label}</SelectItem>
+                      <SelectItem value="resolved">{describe(ALERT_STATUS, 'resolved').label}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

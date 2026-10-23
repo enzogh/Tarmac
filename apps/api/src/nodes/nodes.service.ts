@@ -22,6 +22,7 @@ type ActivityNode = {
   agentVersion: string | null;
   agentVersionAt: Date | null;
   mutedUntil: Date | null;
+  smartMonitoringEnabled: boolean;
   locationCity: string | null;
   locationCountry: string | null;
   locationCountryCode: string | null;
@@ -135,9 +136,24 @@ export class NodesService implements OnModuleInit {
       // Slugified server-side (not just trusted from the frontend) since
       // this value flows directly into a DNS record name.
       ...(dto.dnsHostname !== undefined ? { dnsHostname: dto.dnsHostname ? slugify(dto.dnsHostname) || null : null } : {}),
+      ...(dto.smartMonitoringEnabled !== undefined ? { smartMonitoringEnabled: dto.smartMonitoringEnabled } : {}),
     };
 
     const updated = await this.prisma.node.update({ where: { id }, data });
+
+    // Turning monitoring off is how you say "I know, and this disk is not a
+    // problem". Leaving the alerts it already raised sitting open would
+    // keep the fleet counter red for a condition the operator has just
+    // dismissed, so they are closed out with it.
+    if (dto.smartMonitoringEnabled === false) {
+      const { count } = await this.prisma.alert.updateMany({
+        where: { nodeId: id, status: { not: 'resolved' }, message: { startsWith: 'SMART' } },
+        data: { status: 'resolved', resolvedAt: new Date() },
+      });
+      if (count > 0) {
+        this.logger.log(`Resolved ${count} SMART alert(s) after disabling monitoring on node ${id}`);
+      }
+    }
 
     await this.auditLogsService.log({
       workspaceId: scope.workspaceId as string,
@@ -346,6 +362,7 @@ export class NodesService implements OnModuleInit {
         agentVersion: node.agentVersion,
         agentVersionAt: node.agentVersionAt?.toISOString() ?? null,
         mutedUntil: node.mutedUntil?.toISOString() ?? null,
+        smartMonitoringEnabled: node.smartMonitoringEnabled,
         vlanIp: node.vlanIp,
         dnsHostname: node.dnsHostname,
         internalDnsForwarderStatus: node.internalDnsForwarderStatus,

@@ -156,82 +156,96 @@ function ActionsTab() {
 
   return (
     <Card className="border-border transition-colors hover:border-border">
-      <CardHeader className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <History className="h-5 w-5 text-muted-foreground" />
-            <CardTitle className="text-base">Journal d&apos;actions</CardTitle>
-            {!loading && (
-              <Badge label={`${items.length} entrée${items.length > 1 ? 's' : ''}`} type="info" />
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Label className="text-xs text-muted-foreground">Export jusqu&apos;au</Label>
-            <Input type="date" className="w-40" value={exportTo} onChange={(e) => setExportTo(e.target.value)} />
-            <Button variant="secondary" size="sm" onClick={() => openExport('csv')} className="gap-2">
-              <Download className="h-3.5 w-3.5" />
-              CSV
-            </Button>
-            <Button variant="secondary" size="sm" onClick={() => openExport('json')} className="gap-2">
-              <Download className="h-3.5 w-3.5" />
-              JSON
-            </Button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface-2 p-3 md:grid-cols-2 xl:grid-cols-5">
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Recherche</Label>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                className="pl-8"
-                placeholder="action, ressource…"
-                value={filters.q}
-                onChange={(e) => setFilters((prev) => ({ ...prev, q: e.target.value }))}
-              />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Acteur (ID)</Label>
-            <Input
-              value={filters.actorUserId}
-              onChange={(e) => setFilters((prev) => ({ ...prev, actorUserId: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Action</Label>
-            <Input
-              placeholder="ex: node.create"
-              value={filters.action}
-              onChange={(e) => setFilters((prev) => ({ ...prev, action: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Ressource</Label>
-            <Input
-              placeholder="ex: migration"
-              value={filters.resourceType}
-              onChange={(e) => setFilters((prev) => ({ ...prev, resourceType: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Depuis</Label>
-            <Input
-              type="date"
-              value={filters.from}
-              onChange={(e) => setFilters((prev) => ({ ...prev, from: e.target.value }))}
-            />
-          </div>
+      <CardHeader>
+        <CardTitle>
+          <History className="h-4 w-4 text-muted-foreground" />
+          Journal d&apos;actions
+        </CardTitle>
+        <div className="flex flex-wrap items-center gap-2">
+          {!loading && (
+            <span className="tabular text-2xs text-muted-foreground">
+              {items.length} entrée{items.length > 1 ? 's' : ''}
+            </span>
+          )}
+          <Label className="text-2xs text-muted-foreground">Export jusqu&apos;au</Label>
+          <Input type="date" className="h-8 w-36" value={exportTo} onChange={(e) => setExportTo(e.target.value)} />
+          <Button variant="secondary" size="sm" onClick={() => openExport('csv')} className="gap-1.5">
+            <Download className="h-3.5 w-3.5" />
+            CSV
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => openExport('json')} className="gap-1.5">
+            <Download className="h-3.5 w-3.5" />
+            JSON
+          </Button>
         </div>
       </CardHeader>
-      <CardContent>
+
+      {/* The filters were a five-column grid in a box of its own, inset a
+          further 12px inside the card's padding. Five evenly-sized fields
+          sitting directly above a five-column table read as column
+          headers, but the table's columns are nothing like even, so every
+          field pointed at the wrong column. They are a toolbar now: one
+          band, sized by what each field holds, visually separate from the
+          header above and the table below. */}
+      <div className="flex flex-wrap items-end gap-2 border-b border-border px-4 py-3 lg:px-5">
+        <div className="min-w-[14rem] flex-1 space-y-1">
+          <Label className="text-2xs text-muted-foreground">Recherche</Label>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="h-8 pl-8"
+              placeholder="action, ressource…"
+              value={filters.q}
+              onChange={(e) => setFilters((prev) => ({ ...prev, q: e.target.value }))}
+            />
+          </div>
+        </div>
+        <div className="w-44 space-y-1">
+          <Label className="text-2xs text-muted-foreground">Action</Label>
+          <Input
+            className="h-8"
+            placeholder="ex: node.create"
+            value={filters.action}
+            onChange={(e) => setFilters((prev) => ({ ...prev, action: e.target.value }))}
+          />
+        </div>
+        <div className="w-36 space-y-1">
+          <Label className="text-2xs text-muted-foreground">Ressource</Label>
+          <Input
+            className="h-8"
+            placeholder="ex: migration"
+            value={filters.resourceType}
+            onChange={(e) => setFilters((prev) => ({ ...prev, resourceType: e.target.value }))}
+          />
+        </div>
+        <div className="w-44 space-y-1">
+          <Label className="text-2xs text-muted-foreground">Acteur (ID)</Label>
+          <Input
+            className="h-8"
+            value={filters.actorUserId}
+            onChange={(e) => setFilters((prev) => ({ ...prev, actorUserId: e.target.value }))}
+          />
+        </div>
+        <div className="w-36 space-y-1">
+          <Label className="text-2xs text-muted-foreground">Depuis</Label>
+          <Input
+            className="h-8"
+            type="date"
+            value={filters.from}
+            onChange={(e) => setFilters((prev) => ({ ...prev, from: e.target.value }))}
+          />
+        </div>
+      </div>
+
+      <CardContent className="p-0">
         {loading ? (
-          <ListSkeleton rows={6} />
+          <div className="p-4 lg:p-5">
+            <ListSkeleton rows={6} />
+          </div>
         ) : items.length === 0 ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">Aucune action trouvée.</p>
+          <p className="py-12 text-center text-sm text-muted-foreground">Aucune action trouvée.</p>
         ) : (
-          <div className="animate-fade-in overflow-hidden rounded-xl border border-border">
+          <div className="animate-fade-in">
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>

@@ -251,8 +251,13 @@ export class AgentsService implements OnModuleInit {
 
     const node = await this.prisma.node.findUnique({
       where: { id: params.nodeId },
-      select: { name: true, mutedUntil: true },
+      select: { name: true, mutedUntil: true, smartMonitoringEnabled: true },
     });
+    // A node whose storage is virtualised reports SMART attributes that
+    // belong to the hypervisor, or none at all; its operator can opt out
+    // (see Node.smartMonitoringEnabled) rather than live with a disk alert
+    // that will never be actionable.
+    if (node && !node.smartMonitoringEnabled) return;
     if (node?.mutedUntil && node.mutedUntil.getTime() > Date.now()) return;
     const nodeName = node?.name ?? params.nodeId;
     const severity = params.overall === 'critical' ? 'critical' : 'medium';

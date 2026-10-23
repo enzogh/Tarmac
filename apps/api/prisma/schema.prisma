@@ -265,6 +265,13 @@ model Node {
   agentTokenGraceUntil   DateTime?
   agentTokenRotatedAt    DateTime?
   mutedUntil             DateTime?
+  // Opt out of SMART for this node. A VPS usually sits on virtualised
+  // storage whose SMART attributes are either absent or the hypervisor's,
+  // so a permanent "disque en échec" on a machine with no physical disk is
+  // noise that trains people to ignore the real ones. Disabling stops the
+  // alerts and the red state; the reports keep being stored, so turning it
+  // back on doesn't lose the history.
+  smartMonitoringEnabled Boolean                @default(true)
   // Custom label for <dnsHostname>.tarmac.local when this workspace has a
   // node designated to run the internal DNS zone (see Workspace.
   // internalDnsNode) - null means derive one from `name` instead.

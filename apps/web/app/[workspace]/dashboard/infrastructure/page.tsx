@@ -544,6 +544,27 @@ export default function InfrastructurePage() {
     }
   };
 
+  const [smartToggleBusy, setSmartToggleBusy] = useState(false);
+
+  const toggleSmartMonitoring = async (node: NodeActivityItem) => {
+    const next = node.smartMonitoringEnabled === false;
+    setSmartToggleBusy(true);
+    try {
+      await api.nodes.update(node.id, { smartMonitoringEnabled: next });
+      // Keep the open dialog in step with the list behind it; the polled
+      // refresh below replaces both with server truth on its next tick.
+      setSmartNode((current) => (current ? { ...current, smartMonitoringEnabled: next } : current));
+      await refreshNodes();
+    } catch {
+      setUpdateNotice({
+        type: 'error',
+        message: `Impossible de modifier la surveillance SMART de ${node.name}.`,
+      });
+    } finally {
+      setSmartToggleBusy(false);
+    }
+  };
+
   const isMuted = (node: NodeActivityItem) => !!node.mutedUntil && new Date(node.mutedUntil).getTime() > Date.now();
 
   const toggleMute = async (node: NodeActivityItem) => {
@@ -573,9 +594,14 @@ export default function InfrastructurePage() {
     const upToDateNodes = nodes.filter((node) => node.agentUpToDate === true).length;
     const outdatedNodes = nodes.filter((node) => node.agentUpToDate === false).length;
     const fleetVersionAligned = nodes.length > 0 && outdatedNodes === 0 && upToDateNodes === nodes.length;
+    // Nodes that opted out of SMART (see Node.smartMonitoringEnabled) are
+    // excluded: counting a disk the operator has explicitly dismissed keeps
+    // the fleet tile red forever and teaches people to ignore it.
     const disksWithSmartIssues = nodes.reduce(
       (acc, node) =>
-        acc + node.storage.disks.filter((disk) => disk.smart && disk.smart.overall !== 'healthy').length,
+        node.smartMonitoringEnabled === false
+          ? acc
+          : acc + node.storage.disks.filter((disk) => disk.smart && disk.smart.overall !== 'healthy').length,
       0,
     );
 
@@ -918,7 +944,9 @@ export default function InfrastructurePage() {
                 const geo = getNodeGeo(node);
                 const labels = nodeLabels[node.id] ?? [];
                 const nodeStatus = describe(NODE_STATUS, node.status);
-                const smartIssue = node.storage.disks.some((disk) => disk.smart && disk.smart.overall !== 'healthy');
+                const smartEnabled = node.smartMonitoringEnabled !== false;
+                const smartIssue =
+                  smartEnabled && node.storage.disks.some((disk) => disk.smart && disk.smart.overall !== 'healthy');
 
                 return (
                   <div
@@ -1048,13 +1076,19 @@ export default function InfrastructurePage() {
                             size="icon"
                             onClick={() => setSmartNode(node)}
                             className={`h-8 w-8 ${
-                              smartIssue ? 'text-rose-400 hover:text-rose-300' : 'text-muted-foreground hover:text-muted-foreground'
+                              !smartEnabled
+                                ? 'text-muted-foreground/40 hover:text-muted-foreground'
+                                : smartIssue
+                                  ? 'text-[hsl(var(--danger))] hover:text-[hsl(var(--danger))]'
+                                  : 'text-muted-foreground hover:text-foreground'
                             }`}
                           >
                             <Thermometer className="h-3.5 w-3.5" />
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent>Santé SMART détaillée des disques</TooltipContent>
+                        <TooltipContent>
+                          {smartEnabled ? 'Santé SMART détaillée des disques' : 'SMART désactivé sur ce nœud'}
+                        </TooltipContent>
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -1324,6 +1358,35 @@ export default function InfrastructurePage() {
             </DialogHeader>
             {smartNode && (
               <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">Surveillance SMART</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {smartNode.smartMonitoringEnabled === false
+                        ? 'Désactivée : aucune alerte disque ne sera levée pour ce nœud.'
+                        : 'Sur un VPS, les attributs SMART sont ceux de l’hyperviseur ou absents — désactivez-la si les alertes ne sont pas exploitables.'}
+                    </p>
+                  </div>
+                  <Button
+                    variant={smartNode.smartMonitoringEnabled === false ? 'default' : 'secondary'}
+                    size="sm"
+                    disabled={smartToggleBusy}
+                    onClick={() => void toggleSmartMonitoring(smartNode)}
+                    className="shrink-0 gap-2"
+                  >
+                    {smartNode.smartMonitoringEnabled === false ? (
+                      <>
+                        <Thermometer className="h-3.5 w-3.5" />
+                        Réactiver
+                      </>
+                    ) : (
+                      <>
+                        <BellOff className="h-3.5 w-3.5" />
+                        Désactiver
+                      </>
+                    )}
+                  </Button>
+                </div>
                 {smartNode.storage.disks.length === 0 && (
                   <p className="rounded-xl border border-dashed border-border bg-surface-2 px-3 py-4 text-center text-xs text-muted-foreground">
                     Aucun disque remonté par l’agent.

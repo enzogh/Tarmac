@@ -1,4 +1,4 @@
-import { IsIn, IsNumber, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsIn, IsNumber, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class UpdateNodeDto {
   @IsOptional()
@@ -50,4 +50,10 @@ export class UpdateNodeDto {
   @IsOptional()
   @IsString()
   dnsHostname?: string | null;
+
+  // See Node.smartMonitoringEnabled: lets a node whose SMART data is
+  // meaningless (a VPS on virtualised storage) stop raising disk alerts.
+  @IsOptional()
+  @IsBoolean()
+  smartMonitoringEnabled?: boolean;
 }

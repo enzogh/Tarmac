@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" width="180" height="180">
+  <!-- iOS draws its own rounded mask over this, so the tile is a full
+       square and the glyph keeps a wide safe margin. -->
+  <rect width="180" height="180" fill="#7c5cff"/>
+  <g fill="none" stroke="#ffffff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M90 42 44 64l46 22 46-22-46-22Z"/>
+    <path d="M44 90l46 22 46-22"/>
+    <path d="M44 116l46 22 46-22"/>
+  </g>
+</svg>
