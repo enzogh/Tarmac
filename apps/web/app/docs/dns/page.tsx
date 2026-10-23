@@ -47,8 +47,7 @@ export default function DnsDocsPage() {
   return (
     <div className="space-y-12">
       <PageHeader
-        icon={Globe}
-        title={<AnimatedGradientText speed={0.6}>DNS</AnimatedGradientText>}
+        title="DNS"
         description="Hébergez vos propres domaines sur votre flotte : serveurs primaire/secondaire, zones signées DNSSEC, réponses géolocalisées — et un résolveur interne pour joindre vos nœuds par leur nom."
       />
 
@@ -103,9 +102,9 @@ export default function DnsDocsPage() {
         <SectionLabel>Mise en route</SectionLabel>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {STEPS.map((step, index) => (
-            <Card key={step.title} className="bg-panel-glow">
+            <Card key={step.title} className="">
               <CardHeader>
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-600/15 text-xs font-semibold text-violet-300">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-600/15 text-xs font-semibold text-primary">
                   {index + 1}
                 </div>
                 <CardTitle className="pt-3 text-base">{step.title}</CardTitle>
@@ -113,7 +112,7 @@ export default function DnsDocsPage() {
               </CardHeader>
             </Card>
           ))}
-          <Card className="bg-panel-glow">
+          <Card className="">
             <CardHeader>
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-300">
                 <ListChecks className="h-4 w-4" />
@@ -133,7 +132,7 @@ export default function DnsDocsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
-              <ShieldCheck className="h-4 w-4 text-violet-400" />
+              <ShieldCheck className="h-4 w-4 text-muted-foreground" />
               Rendre la zone réellement joignable
             </CardTitle>
             <CardDescription>
@@ -190,7 +189,7 @@ export default function DnsDocsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
-              <MapPin className="h-4 w-4 text-violet-400" />
+              <MapPin className="h-4 w-4 text-muted-foreground" />
               Un enregistrement, plusieurs nœuds, la réponse la plus proche
             </CardTitle>
             <CardDescription>
@@ -227,7 +226,7 @@ export default function DnsDocsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
-              <Network className="h-4 w-4 text-violet-400" />
+              <Network className="h-4 w-4 text-muted-foreground" />
               Joindre vos serveurs par leur nom, sur le réseau privé
             </CardTitle>
             <CardDescription>

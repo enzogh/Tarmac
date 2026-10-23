@@ -97,8 +97,7 @@ export default function DnsPage() {
         )}
 
         <PageHeader
-          icon={Globe}
-          title={<AnimatedGradientText speed={0.6}>DNS</AnimatedGradientText>}
+          title="DNS"
           description="Désignez des serveurs DNS primaire/secondaire dans votre flotte, gérez vos zones et le géo-routage."
           actions={
             <div className="flex gap-2">
@@ -122,14 +121,14 @@ export default function DnsPage() {
         <section className="space-y-4">
           <SectionLabel>Aperçu</SectionLabel>
           {groupsLoading ? (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
               <StatCardSkeleton />
               <StatCardSkeleton />
               <StatCardSkeleton />
               <StatCardSkeleton />
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4 animate-fade-in">
+            <div className="grid grid-cols-2 gap-3 xl:grid-cols-4 animate-fade-in">
               <StatCard label="Groupes DNS" value={groups.length} icon={<Layers className="h-8 w-8" />} changeType="neutral" />
               <StatCard
                 label="Groupes actifs"

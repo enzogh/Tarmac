@@ -134,7 +134,7 @@ export default function StoragePage() {
       content: (
         <div className="space-y-4">
           <div>
-            <label className="mb-2 block text-sm font-medium text-zinc-200">
+            <label className="mb-2 block text-sm font-medium text-foreground/90">
               Nom du pool
               <HelpText text="Identifiant unique pour ce pool de stockage" />
             </label>
@@ -148,7 +148,7 @@ export default function StoragePage() {
           </div>
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-zinc-200">
+            <label className="mb-2 block text-sm font-medium text-foreground/90">
               Nœuds membres
               <HelpText text="Le premier nœud sélectionné devient le nœud principal (primary), les autres sont ajoutés en replica." />
             </label>
@@ -160,7 +160,7 @@ export default function StoragePage() {
                   <label
                     key={node.id}
                     className={`flex cursor-pointer items-center justify-between rounded-lg border px-3 py-2 transition ${
-                      checked ? 'border-violet-500/50 bg-violet-500/[0.08]' : 'border-white/[0.1] bg-zinc-950/50'
+                      checked ? 'border-violet-500/50 bg-violet-500/[0.08]' : 'border-white/[0.1] bg-surface-2'
                     }`}
                   >
                     <span className="flex items-center gap-2 text-sm text-foreground">
@@ -189,7 +189,7 @@ export default function StoragePage() {
       description: 'Confirmer la création du pool',
       content: (
         <div className="space-y-4">
-          <div className="space-y-3 rounded-lg border border-white/[0.08] bg-zinc-900/60 p-4 text-sm">
+          <div className="space-y-3 rounded-lg border border-border bg-zinc-900/60 p-4 text-sm">
             <div className="flex justify-between border-b pb-2">
               <span className="text-muted-foreground">Pool :</span>
               <span className="font-mono font-semibold">{formData.name || '—'}</span>
@@ -278,8 +278,7 @@ export default function StoragePage() {
         )}
 
         <PageHeader
-          icon={Database}
-          title={<AnimatedGradientText speed={0.6}>Stockage</AnimatedGradientText>}
+          title="Stockage"
           description="Regroupez des nœuds en pools selon une stratégie de redondance."
           actions={
             <RainbowButton onClick={() => setWizardOpen(true)} className="gap-2">
@@ -315,7 +314,7 @@ export default function StoragePage() {
           <SectionLabel>Stratégies</SectionLabel>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+            <Card className="border-border bg-surface-1 backdrop-blur">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Shield className="w-5 h-5 text-red-500" />
@@ -329,7 +328,7 @@ export default function StoragePage() {
               </CardContent>
             </Card>
 
-            <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+            <Card className="border-border bg-surface-1 backdrop-blur">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Zap className="w-5 h-5 text-yellow-500" />
@@ -349,7 +348,7 @@ export default function StoragePage() {
         {poolsLoading ? (
           <CardListSkeleton cards={2} />
         ) : pools.length === 0 ? (
-          <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+          <Card className="border-border bg-surface-1 backdrop-blur">
             <CardContent className="pt-12 pb-12 text-center">
               <HardDrive className="mx-auto mb-4 h-12 w-12 text-muted-foreground/50" />
               <p className="font-medium text-muted-foreground">Aucun pool créé</p>
@@ -361,11 +360,11 @@ export default function StoragePage() {
             {pools.map((pool) => {
               const statusBadge = STATUS_BADGE[pool.status] ?? STATUS_BADGE.pending;
               return (
-                <Card key={pool.id} className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+                <Card key={pool.id} className="border-border bg-surface-1 backdrop-blur">
                   <CardHeader>
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <CardTitle className="flex items-center gap-2">
-                        <Grid3x3 className="w-5 h-5 text-violet-400" />
+                        <Grid3x3 className="w-5 h-5 text-muted-foreground" />
                         {pool.name}
                       </CardTitle>
                       <div className="flex flex-wrap items-center gap-2">
@@ -393,7 +392,7 @@ export default function StoragePage() {
                       return (
                         <div
                           key={member.nodeId}
-                          className="flex items-center justify-between rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-sm"
+                          className="flex items-center justify-between rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm"
                         >
                           <span className="flex items-center gap-2">
                             {member.role === 'primary' ? (

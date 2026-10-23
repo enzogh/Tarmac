@@ -1,28 +1,32 @@
 import { ReactNode } from 'react';
-import { LucideIcon } from 'lucide-react';
+import { cn } from '../lib/utils';
 
 interface PageHeaderProps {
-  icon?: LucideIcon;
   title: ReactNode;
   description?: string;
   actions?: ReactNode;
+  /** Status pills, counts or filters that belong with the title. */
+  meta?: ReactNode;
+  className?: string;
 }
 
-export function PageHeader({ icon: Icon, title, description, actions }: PageHeaderProps) {
+/**
+ * The header is a label for the page, not a feature of it: no boxed icon,
+ * no gradient fill on the title. Those cost a full band of vertical space
+ * at the top of every screen and competed with the data underneath for
+ * attention - the one thing a monitoring console should never do.
+ */
+export function PageHeader({ title, description, actions, meta, className }: PageHeaderProps) {
   return (
-    <div className="flex flex-col gap-4 pb-2 sm:flex-row sm:items-start sm:justify-between">
-      <div className="flex items-start gap-3">
-        {Icon && (
-          <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] text-violet-400">
-            <Icon className="h-5 w-5" />
-          </div>
-        )}
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
-          {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
+    <header className={cn('flex flex-wrap items-start justify-between gap-x-6 gap-y-3', className)}>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <h1 className="truncate text-xl font-semibold tracking-tight text-foreground">{title}</h1>
+          {meta}
         </div>
+        {description && <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{description}</p>}
       </div>
       {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
-    </div>
+    </header>
   );
 }

@@ -4,19 +4,19 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
 const alertVariants = cva(
-  'relative w-full rounded-xl border p-4 [&>svg~*]:pl-7 [&>svg+div]:translate-y-[-2px] [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg]:text-foreground',
+  'relative w-full rounded-lg border px-4 py-3 text-sm [&>svg~*]:pl-7 [&>svg+div]:translate-y-[-2px] [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg]:text-foreground',
   {
     variants: {
       variant: {
-        default: 'border-white/[0.08] bg-zinc-900/70 text-foreground',
+        default: 'border-border bg-surface-1 text-foreground',
         destructive:
-          'border-rose-500/30 bg-rose-500/[0.08] text-rose-100 [&>svg]:text-rose-300',
+          'border-[hsl(var(--danger))]/30 bg-[hsl(var(--danger))]/10 text-[hsl(var(--danger))] [&>svg]:text-[hsl(var(--danger))]',
         success:
-          'border-emerald-500/30 bg-emerald-500/[0.08] text-emerald-100 [&>svg]:text-emerald-300',
+          'border-[hsl(var(--ok))]/30 bg-[hsl(var(--ok))]/10 text-[hsl(var(--ok))] [&>svg]:text-[hsl(var(--ok))]',
         warning:
-          'border-amber-500/30 bg-amber-500/[0.08] text-amber-100 [&>svg]:text-amber-300',
+          'border-[hsl(var(--warn))]/30 bg-[hsl(var(--warn))]/10 text-[hsl(var(--warn))] [&>svg]:text-[hsl(var(--warn))]',
         info:
-          'border-sky-500/30 bg-sky-500/[0.08] text-sky-100 [&>svg]:text-sky-300',
+          'border-[hsl(var(--info))]/30 bg-[hsl(var(--info))]/10 text-[hsl(var(--info))] [&>svg]:text-[hsl(var(--info))]',
       },
     },
     defaultVariants: {

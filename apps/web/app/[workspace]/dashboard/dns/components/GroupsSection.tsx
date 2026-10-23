@@ -84,8 +84,8 @@ function GroupLinkLatency({
   const noMeasurementsYet = !!chosen && chosen.samples.length > 0 && !hasMeasuredLatency(chosen);
 
   return (
-    <div className="space-y-1 rounded-xl border border-white/[0.06] bg-black/10 p-3">
-      <p className="font-mono text-xs text-zinc-400">
+    <div className="space-y-1 rounded-xl border border-border bg-black/10 p-3">
+      <p className="font-mono text-xs text-muted-foreground">
         {chosenLabel}
         {chosen ? ` · ${chosen.uptimePercent}% uptime (1h)` : ''}
       </p>
@@ -206,7 +206,7 @@ export function GroupsSection({
       {groupsLoading ? (
         <CardListSkeleton cards={2} />
       ) : groups.length === 0 ? (
-        <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+        <Card className="border-border bg-surface-1 backdrop-blur">
           <CardContent className="pt-12 pb-12 text-center">
             <Server className="mx-auto mb-4 h-12 w-12 text-muted-foreground/50" />
             <p className="font-medium text-muted-foreground">Aucun groupe DNS créé</p>
@@ -218,7 +218,7 @@ export function GroupsSection({
           {groups.map((group) => {
             const collapsed = cards.isCollapsed(group.id);
             return (
-              <Card key={group.id} className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+              <Card key={group.id} className="border-border bg-surface-1 backdrop-blur">
                 <CardHeader>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <button
@@ -228,7 +228,7 @@ export function GroupsSection({
                     >
                       <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${collapsed ? '-rotate-90' : ''}`} />
                       <CardTitle className="flex items-center gap-2">
-                        <Server className="w-5 h-5 text-violet-400" />
+                        <Server className="w-5 h-5 text-muted-foreground" />
                         {group.name}
                       </CardTitle>
                     </button>
@@ -268,7 +268,7 @@ export function GroupsSection({
                       const key = `member:${group.id}:${member.nodeId}`;
                       return (
                         <div key={member.nodeId} className="space-y-2">
-                          <div className="flex items-center justify-between rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-sm">
+                          <div className="flex items-center justify-between rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm">
                             <span className="flex items-center gap-2">
                               {member.role === 'primary' ? (
                                 <Crown className="h-3.5 w-3.5 text-amber-400" />
@@ -372,7 +372,7 @@ export function GroupsSection({
                     {vlanId && group.members.length >= 2 && (
                       <div className="space-y-2 pt-1">
                         <div className="flex items-center gap-1.5">
-                          <Waves className="h-3.5 w-3.5 text-violet-400" />
+                          <Waves className="h-3.5 w-3.5 text-muted-foreground" />
                           <span className="text-xs font-medium text-zinc-300">Qualité de la liaison AXFR</span>
                           <HelpText text="Latence et perte de paquets mesurées sur le réseau overlay entre le serveur primaire et chaque secondaire - une liaison lente ou instable ralentit ou bloque le transfert de zone (AXFR/IXFR)." />
                         </div>

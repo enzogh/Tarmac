@@ -155,11 +155,11 @@ function ActionsTab() {
   };
 
   return (
-    <Card className="border-white/[0.08] transition-colors hover:border-white/[0.14]">
+    <Card className="border-border transition-colors hover:border-border">
       <CardHeader className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <History className="h-5 w-5 text-violet-400" />
+            <History className="h-5 w-5 text-muted-foreground" />
             <CardTitle className="text-base">Journal d&apos;actions</CardTitle>
             {!loading && (
               <Badge label={`${items.length} entrée${items.length > 1 ? 's' : ''}`} type="info" />
@@ -179,7 +179,7 @@ function ActionsTab() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 md:grid-cols-2 xl:grid-cols-5">
+        <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface-2 p-3 md:grid-cols-2 xl:grid-cols-5">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Recherche</Label>
             <div className="relative">
@@ -231,7 +231,7 @@ function ActionsTab() {
         ) : items.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">Aucune action trouvée.</p>
         ) : (
-          <div className="animate-fade-in overflow-hidden rounded-xl border border-white/[0.06]">
+          <div className="animate-fade-in overflow-hidden rounded-xl border border-border">
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
@@ -259,7 +259,7 @@ function ActionsTab() {
                           </TableCell>
                           <TableCell>
                             {route ? (
-                              <Link href={route} className="text-violet-300 underline-offset-2 hover:underline">
+                              <Link href={route} className="text-primary underline-offset-2 hover:underline">
                                 {entry.resourceType}
                                 {entry.resourceId ? ` · ${entry.resourceId.slice(0, 8)}` : ''}
                               </Link>
@@ -286,7 +286,7 @@ function ActionsTab() {
                         </TableRow>
                         {expandedId === entry.id && (
                           <TableRow>
-                            <TableCell colSpan={5} className="bg-white/[0.02]">
+                            <TableCell colSpan={5} className="bg-surface-2">
                               <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-xs text-zinc-300">
                                 {JSON.stringify(entry.details, null, 2)}
                               </pre>
@@ -300,7 +300,7 @@ function ActionsTab() {
               </Table>
             </div>
             {cursor && (
-              <div className="flex justify-center border-t border-white/[0.06] bg-white/[0.02] py-3">
+              <div className="flex justify-center border-t border-border bg-surface-2 py-3">
                 <Button variant="secondary" size="sm" onClick={() => void loadMore()} disabled={loadingMore}>
                   {loadingMore ? 'Chargement…' : 'Charger plus'}
                 </Button>
@@ -434,11 +434,11 @@ function AgentsTab() {
   };
 
   return (
-    <Card className="border-white/[0.08] transition-colors hover:border-white/[0.14]">
+    <Card className="border-border transition-colors hover:border-border">
       <CardHeader className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <Server className="h-5 w-5 text-violet-400" />
+            <Server className="h-5 w-5 text-muted-foreground" />
             <CardTitle className="text-base">Logs agents</CardTitle>
             {!loading && !paused && (
               <span className="flex items-center gap-1.5 text-xs text-emerald-400">
@@ -474,7 +474,7 @@ function AgentsTab() {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-end gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+        <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-surface-2 p-3">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Nœud</Label>
             <Select value={nodeFilter} onValueChange={setNodeFilter}>
@@ -520,8 +520,8 @@ function AgentsTab() {
         {loading ? (
           <ListSkeleton rows={6} />
         ) : (
-          <div className="overflow-hidden rounded-xl border border-white/[0.06] bg-zinc-950/70">
-            <div className="flex items-center gap-3 border-b border-white/[0.06] bg-white/[0.02] px-3 py-2">
+          <div className="overflow-hidden rounded-xl border border-border bg-zinc-950/70">
+            <div className="flex items-center gap-3 border-b border-border bg-surface-2 px-3 py-2">
               <div className="flex gap-1.5">
                 <span className="h-2.5 w-2.5 rounded-full bg-rose-400/70" />
                 <span className="h-2.5 w-2.5 rounded-full bg-amber-400/70" />
@@ -547,8 +547,8 @@ function AgentsTab() {
               )}
               {lines.map((line) => (
                 <div key={line.id} className="flex items-baseline gap-2 whitespace-pre-wrap break-all py-0.5">
-                  <span className="shrink-0 text-zinc-500">[{formatTime(line.createdAt)}]</span>
-                  <span className="shrink-0 text-violet-300">[{nodeName(line.nodeId)}]</span>
+                  <span className="shrink-0 text-muted-foreground">[{formatTime(line.createdAt)}]</span>
+                  <span className="shrink-0 text-primary">[{nodeName(line.nodeId)}]</span>
                   <Badge
                     label={LEVEL_LABEL[line.level] ?? line.level.toUpperCase()}
                     type={LEVEL_BADGE_TYPE[line.level] ?? 'info'}
@@ -569,8 +569,7 @@ export default function LogsPage() {
   return (
       <div className="space-y-8">
         <PageHeader
-          icon={ScrollText}
-          title={<AnimatedGradientText speed={0.6}>Journal</AnimatedGradientText>}
+          title="Journal"
           description="Actions effectuées sur la flotte et logs bruts des agents, en direct."
         />
 

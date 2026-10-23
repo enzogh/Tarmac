@@ -105,7 +105,7 @@ export default function ReplicationPage() {
       content: (
         <div className="space-y-4">
           <div>
-            <Label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-foreground/90">
               Nom
               <HelpText text="Identifiant pour cette tâche de réplication" />
             </Label>
@@ -118,7 +118,7 @@ export default function ReplicationPage() {
           </div>
 
           <div>
-            <Label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-foreground/90">
               Nœud exécutant
               <HelpText text="Le nœud dont l'agent lancera la commande rsync" />
             </Label>
@@ -137,7 +137,7 @@ export default function ReplicationPage() {
           </div>
 
           <div>
-            <Label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-foreground/90">
               Dossier source
               <HelpText text="Chemin absolu à copier, sur le nœud exécutant" />
             </Label>
@@ -150,7 +150,7 @@ export default function ReplicationPage() {
           </div>
 
           <div>
-            <Label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-foreground/90">
               Dossier destination
               <HelpText text="Chemin absolu où copier les données — un montage NFS vers un autre nœud fonctionne aussi" />
             </Label>
@@ -162,9 +162,9 @@ export default function ReplicationPage() {
             />
           </div>
 
-          <div className="space-y-4 rounded-lg border border-white/[0.08] bg-white/[0.02] p-4">
+          <div className="space-y-4 rounded-lg border border-border bg-surface-2 p-4">
             <div>
-              <p className="text-sm font-medium text-zinc-200">
+              <p className="text-sm font-medium text-foreground/90">
                 Source distante (SSH) <span className="text-xs font-normal text-muted-foreground">— optionnel</span>
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
@@ -175,7 +175,7 @@ export default function ReplicationPage() {
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
-                <Label className="mb-1.5 block text-xs font-medium text-zinc-400">Hôte</Label>
+                <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">Hôte</Label>
                 <Input
                   value={formData.sourceHost}
                   onChange={(e) => setFormData({ ...formData, sourceHost: e.target.value })}
@@ -184,7 +184,7 @@ export default function ReplicationPage() {
                 />
               </div>
               <div>
-                <Label className="mb-1.5 block text-xs font-medium text-zinc-400">Utilisateur SSH</Label>
+                <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">Utilisateur SSH</Label>
                 <Input
                   value={formData.sourceUser}
                   onChange={(e) => setFormData({ ...formData, sourceUser: e.target.value })}
@@ -193,7 +193,7 @@ export default function ReplicationPage() {
                 />
               </div>
               <div>
-                <Label className="mb-1.5 block text-xs font-medium text-zinc-400">Port SSH</Label>
+                <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">Port SSH</Label>
                 <Input
                   type="number"
                   value={formData.sourceSshPort}
@@ -218,7 +218,7 @@ export default function ReplicationPage() {
       description: 'Confirmer la création de la tâche',
       content: (
         <div className="space-y-4">
-          <div className="space-y-3 rounded-lg border border-white/[0.08] bg-zinc-900/60 p-4 text-sm">
+          <div className="space-y-3 rounded-lg border border-border bg-zinc-900/60 p-4 text-sm">
             <div className="flex justify-between border-b pb-2">
               <span className="text-muted-foreground">Nom :</span>
               <span className="font-mono font-semibold">{formData.name || '—'}</span>
@@ -411,8 +411,7 @@ export default function ReplicationPage() {
         )}
 
         <PageHeader
-          icon={RefreshCw}
-          title={<AnimatedGradientText speed={0.6}>Réplication</AnimatedGradientText>}
+          title="Réplication"
           description="Copiez des dossiers entre nœuds via rsync, à la demande."
           actions={
             <RainbowButton onClick={() => setWizardOpen(true)} className="gap-2">
@@ -453,7 +452,7 @@ export default function ReplicationPage() {
         {jobsLoading ? (
           <CardListSkeleton cards={3} />
         ) : jobs.length === 0 ? (
-          <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+          <Card className="border-border bg-surface-1 backdrop-blur">
             <CardContent className="pt-12 pb-12 text-center">
               <Copy className="mx-auto mb-4 h-12 w-12 text-muted-foreground/50" />
               <p className="font-medium text-muted-foreground">Aucune réplication active</p>
@@ -466,11 +465,11 @@ export default function ReplicationPage() {
               const statusBadge = STATUS_BADGE[job.status] ?? STATUS_BADGE.pending;
               const runs = runsByJob[job.id] ?? [];
               return (
-                <Card key={job.id} className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+                <Card key={job.id} className="border-border bg-surface-1 backdrop-blur">
                   <CardHeader>
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <CardTitle className="flex items-center gap-2">
-                        <Copy className="w-5 h-5 text-violet-400" />
+                        <Copy className="w-5 h-5 text-muted-foreground" />
                         {job.name}
                       </CardTitle>
                       <div className="flex flex-wrap items-center gap-2">
@@ -539,7 +538,7 @@ export default function ReplicationPage() {
                     )}
 
                     {job.sourceHost && (
-                      <div className="space-y-2 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
+                      <div className="space-y-2 rounded-lg border border-border bg-surface-2 p-3">
                         <p className="flex items-center gap-1.5 text-xs text-foreground/90">
                           <Link2 className="h-3.5 w-3.5" />
                           Source SSH distante : <span className="font-mono">{job.sourceUser || 'root'}@{job.sourceHost}:{job.sourceSshPort || 22}</span>
@@ -563,7 +562,7 @@ export default function ReplicationPage() {
                                 )}
                               </Button>
                             </div>
-                            <p className="truncate rounded border border-white/[0.06] bg-zinc-950/70 px-2 py-1.5 font-mono text-[11px] text-foreground/80">
+                            <p className="truncate rounded border border-border bg-zinc-950/70 px-2 py-1.5 font-mono text-2xs text-foreground/80">
                               {job.node.overlaySshPublicKey}
                             </p>
                           </div>
@@ -577,7 +576,7 @@ export default function ReplicationPage() {
                     )}
 
                     {expandedJobId === job.id && (
-                      <div className="space-y-1.5 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
+                      <div className="space-y-1.5 rounded-lg border border-border bg-surface-2 p-3">
                         {runs.length === 0 && <p className="text-xs">Aucune exécution pour le moment.</p>}
                         {runs.map((run) => {
                           const runBadge = STATUS_BADGE[run.status] ?? STATUS_BADGE.pending;
@@ -626,7 +625,7 @@ export default function ReplicationPage() {
             <div className="space-y-4">
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
-                  <label className="text-xs font-medium text-zinc-400">URL</label>
+                  <label className="text-xs font-medium text-muted-foreground">URL</label>
                   <Button
                     variant="secondary"
                     size="sm"
@@ -638,14 +637,14 @@ export default function ReplicationPage() {
                     Copier
                   </Button>
                 </div>
-                <p className="break-all rounded-lg border border-white/[0.08] bg-zinc-950/70 px-3 py-2 font-mono text-xs text-foreground/90">
+                <p className="break-all rounded-lg border border-border bg-zinc-950/70 px-3 py-2 font-mono text-xs text-foreground/90">
                   {API_BASE}/api/v1/sync-jobs/{revealSecret.job.id}/trigger
                 </p>
               </div>
 
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
-                  <label className="text-xs font-medium text-zinc-400">En-tête X-Trigger-Token</label>
+                  <label className="text-xs font-medium text-muted-foreground">En-tête X-Trigger-Token</label>
                   <Button
                     variant="secondary"
                     size="sm"
@@ -655,14 +654,14 @@ export default function ReplicationPage() {
                     Copier
                   </Button>
                 </div>
-                <p className="break-all rounded-lg border border-white/[0.08] bg-zinc-950/70 px-3 py-2 font-mono text-xs text-foreground/90">
+                <p className="break-all rounded-lg border border-border bg-zinc-950/70 px-3 py-2 font-mono text-xs text-foreground/90">
                   {revealSecret.token}
                 </p>
               </div>
 
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
-                  <label className="text-xs font-medium text-zinc-400">
+                  <label className="text-xs font-medium text-muted-foreground">
                     Commande qBittorrent (curl) — ne resynchronise que le torrent terminé
                   </label>
                   <Button
@@ -679,7 +678,7 @@ export default function ReplicationPage() {
                     Copier
                   </Button>
                 </div>
-                <p className="break-all rounded-lg border border-white/[0.08] bg-zinc-950/70 px-3 py-2 font-mono text-xs text-foreground/90">
+                <p className="break-all rounded-lg border border-border bg-zinc-950/70 px-3 py-2 font-mono text-xs text-foreground/90">
                   curl -sS -X POST -H &quot;X-Trigger-Token: {revealSecret.token}&quot; -G --data-urlencode
                   &quot;relativePath=%N&quot; &quot;{API_BASE}/api/v1/sync-jobs/{revealSecret.job.id}/trigger&quot;
                 </p>
@@ -713,7 +712,7 @@ export default function ReplicationPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-zinc-400">Hôte</label>
+              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Hôte</label>
               <input
                 type="text"
                 value={sshForm.sourceHost}
@@ -724,7 +723,7 @@ export default function ReplicationPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-zinc-400">Utilisateur SSH</label>
+                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Utilisateur SSH</label>
                 <input
                   type="text"
                   value={sshForm.sourceUser}
@@ -734,7 +733,7 @@ export default function ReplicationPage() {
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-zinc-400">Port SSH</label>
+                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Port SSH</label>
                 <input
                   type="number"
                   value={sshForm.sourceSshPort}
@@ -766,7 +765,7 @@ export default function ReplicationPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-zinc-400">Nom</label>
+              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Nom</label>
               <input
                 type="text"
                 value={generalForm.name}
@@ -775,7 +774,7 @@ export default function ReplicationPage() {
               />
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-zinc-400">Dossier destination</label>
+              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Dossier destination</label>
               <input
                 type="text"
                 value={generalForm.targetPath}

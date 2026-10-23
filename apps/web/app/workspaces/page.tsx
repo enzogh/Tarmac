@@ -107,11 +107,11 @@ export default function WorkspacesHomePage() {
 
   return (
     <div className="min-h-screen bg-zinc-950">
-      <header className="border-b border-white/[0.06] bg-gradient-to-b from-violet-600/[0.07] to-transparent">
+      <header className="border-b border-border bg-gradient-to-b from-violet-600/[0.07] to-transparent">
         <div className="mx-auto max-w-6xl px-6 pb-8 pt-10 sm:px-8">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <div className="mb-3 flex items-center gap-2 text-xs font-medium text-violet-400">
+              <div className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-foreground">
                 <Layers className="h-3.5 w-3.5" />
                 Tarmac
               </div>
@@ -178,7 +178,7 @@ export default function WorkspacesHomePage() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 animate-fade-in">
             {filtered.map((workspace) => {
               return (
-                <Card key={workspace.id} className="flex flex-col transition-colors hover:border-white/[0.14]">
+                <Card key={workspace.id} className="flex flex-col transition-colors hover:border-border">
                   <CardHeader className="flex-row items-start justify-between gap-3 space-y-0">
                     <div className="flex min-w-0 items-center gap-3">
                       <WorkspaceTile id={workspace.id} name={workspace.name} />

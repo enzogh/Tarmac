@@ -73,10 +73,10 @@ export function DirectoryBrowser({
   }, [directories, search]);
 
   return (
-    <div className="space-y-3 rounded-xl border border-white/[0.08] bg-zinc-900/60 p-4">
+    <div className="space-y-3 rounded-xl border border-border bg-zinc-900/60 p-4">
       <div className="space-y-1">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-sm font-medium text-zinc-100">{title}</p>
+          <p className="text-sm font-medium text-foreground">{title}</p>
           {selectedPath && (
             <Badge variant="info" className="font-mono text-[10px]">
               sélection: {selectedPath}
@@ -93,7 +93,7 @@ export function DirectoryBrowser({
             type="button"
             disabled={disabled || loading}
             onClick={() => onBrowse(item.path)}
-            className="rounded-md border border-white/[0.1] bg-zinc-950/70 px-2 py-1 font-mono text-[11px] text-zinc-300 transition hover:border-violet-400/40 hover:text-violet-200 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-md border border-white/[0.1] bg-zinc-950/70 px-2 py-1 font-mono text-2xs text-zinc-300 transition hover:border-violet-400/40 hover:text-violet-200 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {item.label}
           </button>
@@ -145,7 +145,7 @@ export function DirectoryBrowser({
       </div>
 
       <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input
           value={search}
           disabled={disabled || loading}
@@ -155,7 +155,7 @@ export function DirectoryBrowser({
         />
       </div>
 
-      <div className="max-h-56 space-y-1 overflow-auto rounded-lg border border-white/[0.08] bg-zinc-950/60 p-2">
+      <div className="max-h-56 space-y-1 overflow-auto rounded-lg border border-border bg-background p-2">
         <button
           type="button"
           disabled={disabled || loading}
@@ -163,12 +163,12 @@ export function DirectoryBrowser({
           className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition ${
             selectedPath === currentPath
               ? 'bg-violet-500/15 text-violet-100'
-              : 'text-zinc-200 hover:bg-white/[0.05]'
+              : 'text-foreground/90 hover:bg-surface-2'
           }`}
         >
-          <FolderOpen className="h-4 w-4 text-violet-300" />
+          <FolderOpen className="h-4 w-4 text-primary" />
           <span className="flex-1 truncate font-mono">{currentPath}</span>
-          <span className="text-[10px] uppercase tracking-wide text-zinc-400">dossier courant</span>
+          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">dossier courant</span>
         </button>
 
         {loading ? (
@@ -188,12 +188,12 @@ export function DirectoryBrowser({
               className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition ${
                 selectedPath === dirPath
                   ? 'bg-violet-500/15 text-violet-100'
-                  : 'text-zinc-200 hover:bg-white/[0.05]'
+                  : 'text-foreground/90 hover:bg-surface-2'
               }`}
             >
               <FolderOpen className="h-4 w-4 text-emerald-300" />
               <span className="flex-1 truncate font-mono">{dirPath}</span>
-              <ChevronRight className="h-3.5 w-3.5 text-zinc-500" />
+              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
             </button>
           ))
         )}

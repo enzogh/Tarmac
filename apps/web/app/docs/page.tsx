@@ -75,8 +75,7 @@ export default function DocsHomePage() {
   return (
     <div className="space-y-12">
       <PageHeader
-        icon={BookOpen}
-        title={<AnimatedGradientText speed={0.6}>Documentation Tarmac</AnimatedGradientText>}
+        title="Documentation Tarmac"
         description="Tarmac orchestre une flotte de serveurs interconnectés : réseau privé, DNS faisant autorité, partages NFS, montages, réplication, migrations et supervision — le tout depuis un seul tableau de bord."
       />
 
@@ -151,9 +150,9 @@ export default function DocsHomePage() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {QUICK_START.map((step, index) => (
             <Link key={step.title} href={step.href} className="group">
-              <Card className="h-full bg-panel-glow transition-colors group-hover:border-white/[0.14]">
+              <Card className="h-full transition-colors group-hover:border-border">
                 <CardHeader>
-                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-600/15 text-sm font-semibold text-violet-300">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-600/15 text-sm font-semibold text-primary">
                     {index + 1}
                   </div>
                   <CardTitle className="flex items-center gap-2 pt-3 text-base">
@@ -176,7 +175,7 @@ export default function DocsHomePage() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {section.items.map((item) => (
                 <Link key={item.title} href={item.href} className="group panel flex items-start gap-3 p-4">
-                  <item.icon className="mt-0.5 h-4 w-4 shrink-0 text-violet-400" />
+                  <item.icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                   <div className="min-w-0">
                     <p className="flex items-center gap-2 text-sm font-medium text-foreground">
                       {item.title}

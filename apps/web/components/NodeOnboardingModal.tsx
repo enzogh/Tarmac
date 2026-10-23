@@ -244,7 +244,7 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
                 </p>
               </div>
 
-              <div className="space-y-2 rounded-xl border border-white/[0.08] bg-zinc-900/60 p-4">
+              <div className="space-y-2 rounded-xl border border-border bg-zinc-900/60 p-4">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-medium text-foreground">Clé publique deploy</p>
                   <Button type="button" variant="secondary" size="sm" onClick={copyPublicKey}>
@@ -282,8 +282,8 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
 
           {step === 'installing' && (
             <div className="space-y-3 py-4">
-              <div className="flex items-center gap-2 text-sm text-zinc-200">
-                <Loader2 className="h-4 w-4 animate-spin text-violet-400" />
+              <div className="flex items-center gap-2 text-sm text-foreground/90">
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                 Installation automatique en cours sur le serveur distant…
               </div>
               <p className="text-xs text-muted-foreground">
@@ -304,7 +304,7 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
                 </div>
               </div>
 
-              <pre className="max-h-56 overflow-auto rounded-xl border border-white/[0.08] bg-zinc-950/70 p-3 text-xs text-zinc-300">
+              <pre className="max-h-56 overflow-auto rounded-xl border border-border bg-zinc-950/70 p-3 text-xs text-zinc-300">
                 {installResult.output}
               </pre>
 

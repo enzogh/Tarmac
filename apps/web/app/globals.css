@@ -4,36 +4,54 @@
 
 @layer base {
   :root {
-    --background: 240 10% 3.9%;
+    /* Surfaces. A console is read for hours, so the chrome stays flat and
+       quiet and the only saturated pixels on screen belong to data. */
+    --background: 240 6% 4%;
     --foreground: 0 0% 98%;
-    --card: 240 10% 5%;
+    --surface-1: 240 6% 7%;
+    --surface-2: 240 5% 10%;
+    --surface-3: 240 5% 14%;
+    --card: 240 6% 7%;
     --card-foreground: 0 0% 98%;
-    --popover: 240 10% 5%;
+    --popover: 240 6% 9%;
     --popover-foreground: 0 0% 98%;
-    --primary: 263 70% 50%;
-    --primary-foreground: 210 20% 98%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
+
+    --primary: 258 85% 64%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 5% 14%;
+    --secondary-foreground: 0 0% 92%;
+    --muted: 240 5% 14%;
+    /* Lifted from 64.9% so secondary labels clear WCAG AA on the card
+       surface - most of this app's text is "muted", and at the old value
+       half the interface sat just under the threshold. */
+    --muted-foreground: 240 5% 69%;
+    --accent: 240 5% 14%;
     --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 263 70% 50%;
-    --radius: 0.75rem;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 240 5% 17%;
+    --input: 240 5% 17%;
+    --ring: 258 85% 64%;
+    --radius: 0.625rem;
 
-    --chart-1: 258 90% 66%;
-    --chart-2: 199 89% 64%;
-    --chart-3: 158 64% 52%;
-    --chart-4: 43 96% 56%;
-    --chart-5: 351 89% 71%;
+    /* Status. One hue per meaning, used for every badge, meter, node dot,
+       chart series and alert row, so a colour always says the same thing. */
+    --ok: 158 64% 46%;
+    --warn: 38 92% 55%;
+    --danger: 0 84% 63%;
+    --info: 199 89% 58%;
+    --neutral: 240 4% 46%;
 
-    /* Rainbow-button sweep: blue -> violet -> purple, matching the
-       rgba(37,99,235,...) / rgba(168,85,247,...) accents already used in the
-       page background below, instead of a literal red-to-green rainbow. */
+    /* Categorical series, ordered by how far apart they read at small
+       sizes - see lib/chart-colors.ts, which is the only consumer. */
+    --chart-1: 258 85% 68%;
+    --chart-2: 199 89% 60%;
+    --chart-3: 158 64% 50%;
+    --chart-4: 38 92% 58%;
+    --chart-5: 330 75% 65%;
+    --chart-6: 174 62% 47%;
+    --chart-7: 25 90% 60%;
+
     --color-1: 221 83% 60%;
     --color-2: 234 78% 62%;
     --color-3: 254 75% 63%;
@@ -45,10 +63,7 @@
 
   html {
     color-scheme: dark;
-    background:
-      radial-gradient(circle at top, rgba(37, 99, 235, 0.16), transparent 26%),
-      radial-gradient(circle at right, rgba(168, 85, 247, 0.12), transparent 22%),
-      #09090b;
+    background-color: hsl(var(--background));
   }
 
   *,
@@ -63,73 +78,66 @@
     color: hsl(var(--foreground));
     background-color: hsl(var(--background));
     min-height: 100vh;
-    background-image:
-      radial-gradient(circle at top, rgba(37, 99, 235, 0.18), transparent 22%),
-      radial-gradient(circle at 80% 0%, rgba(168, 85, 247, 0.12), transparent 18%),
-      linear-gradient(180deg, rgba(9, 9, 11, 0.94), rgba(9, 9, 11, 1));
-    /* Without `fixed`, the radial gradients size themselves against the full
-       scrollable body height (their default "farthest-corner" radius), so a
-       long page (e.g. a 100-row table) spreads the glow much further and
-       brighter than a short one (e.g. a capped-height console) — the exact
-       mismatch reported between the Journal page's two tabs. Pinning the
-       background to the viewport makes the glow's size viewport-based only,
-       identical no matter how tall the page's content is. */
+    /* A single, barely-there wash at the top edge. The previous two radial
+       glows plus a grid overlay tinted every surface differently depending
+       on where it sat on the page, which is what made cards look like they
+       belonged to different palettes. */
+    background-image: radial-gradient(120% 60% at 50% 0%, rgba(124, 92, 255, 0.06), transparent 70%);
     background-attachment: fixed;
-  }
-
-  body::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    background-image:
-      linear-gradient(rgba(148, 163, 184, 0.025) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(148, 163, 184, 0.025) 1px, transparent 1px);
-    background-size: 72px 72px;
-    mask-image: radial-gradient(circle at center, black, transparent 92%);
-    opacity: 0.4;
   }
 
   a {
     @apply text-inherit no-underline;
   }
 
+  /* Figures line up in columns only with fixed-width digits, and a metric
+     that twitches sideways as it polls reads as noise. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+
   ::selection {
-    background: rgba(109, 40, 217, 0.35);
+    background: hsl(var(--primary) / 0.35);
     color: #f5f3ff;
   }
 
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
   }
 
   ::-webkit-scrollbar-track {
-    background: rgba(9, 9, 11, 0.6);
+    background: transparent;
   }
 
   ::-webkit-scrollbar-thumb {
-    background: rgba(63, 63, 70, 0.8);
+    background: hsl(var(--surface-3));
     border-radius: 9999px;
-    border: 2px solid rgba(9, 9, 11, 0.6);
+    border: 3px solid hsl(var(--background));
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(240 5% 22%);
   }
 }
 
 @layer components {
   .panel {
-    @apply relative overflow-hidden rounded-2xl border border-white/[0.08] bg-zinc-900/80 shadow-panel backdrop-blur-xl;
-  }
-
-  .panel::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.03), transparent 40%);
-    pointer-events: none;
+    @apply relative rounded-xl border border-border bg-[hsl(var(--surface-1))];
   }
 
   .code-block {
-    @apply overflow-auto rounded-xl border border-white/[0.08] bg-zinc-950/90 p-4 font-mono text-xs leading-6 text-zinc-200;
+    @apply overflow-auto rounded-lg border border-border bg-[hsl(var(--background))] p-4 font-mono text-xs leading-6 text-zinc-200;
+  }
+
+  /* Column header for every dense table in the app. */
+  .th {
+    @apply whitespace-nowrap px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground;
+  }
+
+  .td {
+    @apply px-3 py-2.5 align-middle text-sm text-foreground/90;
   }
 }
 

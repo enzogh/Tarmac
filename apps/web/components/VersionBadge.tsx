@@ -31,9 +31,13 @@ export function VersionBadge({ fallback }: { fallback: string }) {
     };
   }, []);
 
+  // Pinned to the corner at z-50, this sat on top of whatever the page had
+  // in its bottom-right - on the overview, the last row of the alerts card.
+  // It stays available but out of the way: dimmed until hovered, and small
+  // enough not to read as content.
   return (
-    <div className="pointer-events-none fixed bottom-3 right-3 z-50 rounded-md border border-white/10 bg-zinc-950/90 px-2.5 py-1 text-xs text-zinc-300 shadow-lg">
-      Version {version}
+    <div className="pointer-events-none fixed bottom-2 right-2 z-20 select-none rounded border border-border bg-background/80 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/50 transition-opacity hover:opacity-100">
+      {version}
     </div>
   );
 }

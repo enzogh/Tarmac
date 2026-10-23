@@ -159,7 +159,7 @@ function NodeCard({
           ? 'border-violet-500/60 bg-violet-500/[0.1] ring-1 ring-violet-500/20'
           : disabled
           ? 'border-white/[0.05] bg-zinc-900/30'
-          : 'border-white/[0.08] bg-zinc-900/50 hover:border-white/20 hover:bg-zinc-900/70'
+          : 'border-border bg-zinc-900/50 hover:border-border hover:bg-surface-1'
       }`}
     >
       <div
@@ -167,7 +167,7 @@ function NodeCard({
           selected ? 'bg-violet-500/20' : 'bg-zinc-800'
         }`}
       >
-        <Server className={`h-4 w-4 ${selected ? 'text-violet-400' : 'text-zinc-400'}`} />
+        <Server className={`h-4 w-4 ${selected ? 'text-muted-foreground' : 'text-muted-foreground'}`} />
       </div>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{node.name}</p>
@@ -177,11 +177,11 @@ function NodeCard({
             {vlanIp}
           </p>
         ) : (
-          <p className="text-xs text-zinc-500">Non connecté au VLAN</p>
+          <p className="text-xs text-muted-foreground">Non connecté au VLAN</p>
         )}
         <NodeLabelBadges labels={labels} className="mt-1" />
       </div>
-      {selected && <CheckCircle2 className="h-4 w-4 shrink-0 text-violet-400" />}
+      {selected && <CheckCircle2 className="h-4 w-4 shrink-0 text-muted-foreground" />}
     </button>
   );
 }
@@ -548,7 +548,7 @@ export default function MountsPage() {
       content: (
         <div className="space-y-5">
           <div>
-            <Label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-foreground/90">
               Nom du partage
               <HelpText text="Exemple : media-principal, backup-nuit" />
             </Label>
@@ -560,7 +560,7 @@ export default function MountsPage() {
           </div>
 
           <div>
-            <Label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-foreground/90">
               Serveur exportateur (NFS Server)
               <HelpText text="Ce serveur va exposer le dossier NFS. Il doit être connecté au VLAN." />
             </Label>
@@ -591,7 +591,7 @@ export default function MountsPage() {
           </div>
 
           <div>
-            <Label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-foreground/90">
               Dossier à exporter
               <HelpText text="Chemin absolu du répertoire qui sera partagé en NFS. Il sera créé s'il n'existe pas." />
             </Label>
@@ -617,7 +617,7 @@ export default function MountsPage() {
       content: (
         <div className="space-y-5">
           <div>
-            <Label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-foreground/90">
               Serveur client (NFS Client)
               <HelpText text="Ce serveur va monter le partage NFS exposé par le serveur exportateur." />
             </Label>
@@ -645,7 +645,7 @@ export default function MountsPage() {
           </div>
 
           <div>
-            <Label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-foreground/90">
               Point de montage local
               <HelpText text="Dossier local sur le serveur client où le partage sera accessible." />
             </Label>
@@ -663,36 +663,36 @@ export default function MountsPage() {
           </div>
 
           {shareForm.exportNodeId && shareForm.mountNodeId && (
-            <div className="rounded-xl border border-white/[0.08] bg-zinc-950/60 p-4 space-y-3">
+            <div className="rounded-xl border border-border bg-background p-4 space-y-3">
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Connexion VLAN prévue
               </p>
               <div className="flex items-center gap-3">
-                <div className="flex-1 min-w-0 rounded-lg bg-zinc-900/80 p-2.5 text-center">
+                <div className="flex-1 min-w-0 rounded-lg bg-surface-1 p-2.5 text-center">
                   <p className="truncate text-sm font-semibold">
                     {nodes.find((n) => n.id === shareForm.exportNodeId)?.name}
                   </p>
-                  <p className="font-mono text-xs text-violet-300">
+                  <p className="font-mono text-xs text-primary">
                     {nodeVlanIps[shareForm.exportNodeId] ?? '—'}
                   </p>
-                  <p className="mt-0.5 text-[10px] text-zinc-500">NFS Server</p>
+                  <p className="mt-0.5 text-[10px] text-muted-foreground">NFS Server</p>
                 </div>
                 <div className="flex flex-col items-center gap-0.5">
                   <ArrowRight className="h-4 w-4 text-emerald-400" />
                   <span className="font-mono text-[10px] text-emerald-400">VLAN</span>
                 </div>
-                <div className="flex-1 min-w-0 rounded-lg bg-zinc-900/80 p-2.5 text-center">
+                <div className="flex-1 min-w-0 rounded-lg bg-surface-1 p-2.5 text-center">
                   <p className="truncate text-sm font-semibold">
                     {nodes.find((n) => n.id === shareForm.mountNodeId)?.name}
                   </p>
                   <p className="font-mono text-xs text-sky-300">
                     {nodeVlanIps[shareForm.mountNodeId] ?? '—'}
                   </p>
-                  <p className="mt-0.5 text-[10px] text-zinc-500">NFS Client</p>
+                  <p className="mt-0.5 text-[10px] text-muted-foreground">NFS Client</p>
                 </div>
               </div>
               <div className="rounded-lg bg-zinc-900/50 px-3 py-2">
-                <p className="font-mono text-[11px] text-zinc-400 break-all">
+                <p className="font-mono text-2xs text-muted-foreground break-all">
                   {nodeVlanIps[shareForm.exportNodeId] ?? '<ip>'}:{shareForm.exportPath || '<chemin>'}
                   {' → '}
                   {shareForm.mountPath || '<point de montage>'}
@@ -703,7 +703,7 @@ export default function MountsPage() {
 
           <AdvancedOptions label="Options NFS avancées">
             <div>
-              <Label className="mb-2 block text-sm font-medium text-zinc-200">
+              <Label className="mb-2 block text-sm font-medium text-foreground/90">
                 Type de système de fichiers
                 <HelpText text="NFS4 est recommandé pour la sécurité et les performances." />
               </Label>
@@ -722,7 +722,7 @@ export default function MountsPage() {
               </Select>
             </div>
             <div>
-              <Label className="mb-2 block text-sm font-medium text-zinc-200">
+              <Label className="mb-2 block text-sm font-medium text-foreground/90">
                 Options de montage
                 <HelpText text="Conservez la valeur par défaut si vous n'êtes pas sûr." />
               </Label>
@@ -750,7 +750,7 @@ export default function MountsPage() {
             ]}
           />
 
-          <div className="space-y-2 rounded-xl border border-white/[0.08] bg-zinc-900/60 p-4 text-sm">
+          <div className="space-y-2 rounded-xl border border-border bg-zinc-900/60 p-4 text-sm">
             {[
               ['Nom', shareForm.name || '—'],
               ['Serveur NFS', nodes.find((n) => n.id === shareForm.exportNodeId)?.name ?? '—'],
@@ -803,7 +803,7 @@ export default function MountsPage() {
       content: (
         <div className="space-y-4">
           <div>
-            <Label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-foreground/90">
               Nom du montage
               <HelpText text="Exemple : backup-db, media-store" />
             </Label>
@@ -815,7 +815,7 @@ export default function MountsPage() {
           </div>
 
           <div>
-            <Label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-foreground/90">
               Type de montage
               <HelpText text="NFS/CIFS pour un partage réseau classique. SSH distant pour un hôte externe sans agent Tarmac (ex: seedbox)." />
             </Label>
@@ -841,7 +841,7 @@ export default function MountsPage() {
           </div>
 
           <div>
-            <Label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-foreground/90">
               {mountForm.mountType === 'rclone-sftp' ? 'Chemin sur l\'hôte distant' : 'Chemin source'}
               <HelpText
                 text={
@@ -862,7 +862,7 @@ export default function MountsPage() {
           </div>
 
           <div>
-            <Label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-foreground/90">
               Point de montage local
               <HelpText text="Où monter le partage sur le serveur destination" />
             </Label>
@@ -880,7 +880,7 @@ export default function MountsPage() {
           </div>
 
           <div>
-            <Label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-foreground/90">
               Serveur de montage
               <HelpText text="Nœud où sera monté le partage" />
             </Label>
@@ -904,9 +904,9 @@ export default function MountsPage() {
           </div>
 
           {mountForm.mountType === 'rclone-sftp' && (
-            <div className="space-y-4 rounded-lg border border-white/[0.08] bg-white/[0.02] p-4">
+            <div className="space-y-4 rounded-lg border border-border bg-surface-2 p-4">
               <div>
-                <p className="text-sm font-medium text-zinc-200">Source distante (SSH)</p>
+                <p className="text-sm font-medium text-foreground/90">Source distante (SSH)</p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Le fichier reste sur l&apos;hôte distant, jamais supprimé ni modifié — seul un accès en lecture via
                   FUSE est monté localement.
@@ -914,7 +914,7 @@ export default function MountsPage() {
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div>
-                  <Label className="mb-1.5 block text-xs font-medium text-zinc-400">Hôte</Label>
+                  <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">Hôte</Label>
                   <Input
                     value={mountForm.remoteHost}
                     onChange={(e) => setMountForm((prev) => ({ ...prev, remoteHost: e.target.value }))}
@@ -923,7 +923,7 @@ export default function MountsPage() {
                   />
                 </div>
                 <div>
-                  <Label className="mb-1.5 block text-xs font-medium text-zinc-400">Utilisateur SSH</Label>
+                  <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">Utilisateur SSH</Label>
                   <Input
                     value={mountForm.remoteUser}
                     onChange={(e) => setMountForm((prev) => ({ ...prev, remoteUser: e.target.value }))}
@@ -932,7 +932,7 @@ export default function MountsPage() {
                   />
                 </div>
                 <div>
-                  <Label className="mb-1.5 block text-xs font-medium text-zinc-400">Port SSH</Label>
+                  <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">Port SSH</Label>
                   <Input
                     type="number"
                     value={mountForm.remoteSshPort}
@@ -968,7 +968,7 @@ export default function MountsPage() {
                           )}
                         </Button>
                       </div>
-                      <p className="truncate rounded border border-white/[0.06] bg-zinc-950/70 px-2 py-1.5 font-mono text-[11px] text-foreground/80">
+                      <p className="truncate rounded border border-border bg-zinc-950/70 px-2 py-1.5 font-mono text-2xs text-foreground/80">
                         {pubKey}
                       </p>
                     </div>
@@ -991,7 +991,7 @@ export default function MountsPage() {
             <AdvancedOptions label={mountForm.mountType === 'nfs' ? 'Options NFS avancées' : 'Options de montage'}>
               {mountForm.mountType === 'nfs' && (
                 <div>
-                  <Label className="mb-2 block text-sm font-medium text-zinc-200">
+                  <Label className="mb-2 block text-sm font-medium text-foreground/90">
                     Type de système de fichiers
                     <HelpText text="NFS4 est recommandé." />
                   </Label>
@@ -1011,7 +1011,7 @@ export default function MountsPage() {
                 </div>
               )}
               <div>
-                <Label className="mb-2 block text-sm font-medium text-zinc-200">
+                <Label className="mb-2 block text-sm font-medium text-foreground/90">
                   Options de montage
                   <HelpText text="Conservez la valeur par défaut si vous n'êtes pas sûr." />
                 </Label>
@@ -1039,7 +1039,7 @@ export default function MountsPage() {
               { id: 'verify', title: 'Vérification et test', description: 'Test du montage et enregistrement' },
             ]}
           />
-          <div className="space-y-2 rounded-xl border border-white/[0.08] bg-zinc-900/60 p-4 text-sm">
+          <div className="space-y-2 rounded-xl border border-border bg-zinc-900/60 p-4 text-sm">
             {[
               ['Nom', mountForm.name || '—'],
               ['Type', mountForm.mountType === 'rclone-sftp' ? 'Distant SSH (rclone)' : mountForm.mountType === 'cifs' ? 'CIFS / SMB' : 'NFS'],
@@ -1098,8 +1098,7 @@ export default function MountsPage() {
 
         {/* Header */}
         <PageHeader
-          icon={HardDrive}
-          title={<AnimatedGradientText speed={0.6}>Montages</AnimatedGradientText>}
+          title="Montages"
           description="Montez des sources NFS, avec repli en cas de panne, sur un nœud."
           actions={
             <>
@@ -1147,14 +1146,14 @@ export default function MountsPage() {
         {mountsLoading ? (
           <CardListSkeleton cards={3} />
         ) : mounts.length === 0 ? (
-          <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+          <Card className="border-border bg-surface-1 backdrop-blur">
             <CardContent className="py-16 text-center">
               <div className="mb-4 text-5xl">📂</div>
               <p className="font-medium text-muted-foreground">Aucun montage configuré</p>
               <p className="mt-2 text-sm text-muted-foreground">
                 Créez votre premier partage NFS en cliquant sur{' '}
                 <button
-                  className="text-violet-400 underline hover:text-violet-300"
+                  className="text-muted-foreground underline hover:text-primary"
                   onClick={() => openWizard('create-share')}
                 >
                   Nouveau partage NFS
@@ -1168,7 +1167,7 @@ export default function MountsPage() {
             {mounts.map((mount) => {
               const sc = statusConfig[mount.status as keyof typeof statusConfig] ?? { label: mount.status, variant: 'secondary' as const };
               return (
-                <Card key={mount.id} className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+                <Card key={mount.id} className="border-border bg-surface-1 backdrop-blur">
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0 flex-1">
@@ -1178,16 +1177,16 @@ export default function MountsPage() {
                         </div>
                         <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
                           <div>
-                            <p className="mb-0.5 font-medium text-zinc-400">Source</p>
+                            <p className="mb-0.5 font-medium text-muted-foreground">Source</p>
                             <p className="font-mono text-zinc-300 break-all">{mount.sourcePath}</p>
                           </div>
                           <div>
-                            <p className="mb-0.5 font-medium text-zinc-400">Point de montage</p>
+                            <p className="mb-0.5 font-medium text-muted-foreground">Point de montage</p>
                             <p className="font-mono text-zinc-300">{mount.targetPath}</p>
                           </div>
                         </div>
                         {mount.remoteHost && (
-                          <div className="mt-3 space-y-2 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
+                          <div className="mt-3 space-y-2 rounded-lg border border-border bg-surface-2 p-3">
                             <p className="flex items-center gap-1.5 text-xs text-foreground/90">
                               Source SSH distante :{' '}
                               <span className="font-mono">
@@ -1230,7 +1229,7 @@ export default function MountsPage() {
                           <button
                             onClick={() => retryMount(mount.id)}
                             disabled={busyId === mount.id}
-                            className="rounded-lg p-2 text-zinc-500 transition-colors hover:bg-violet-500/10 hover:text-violet-400 disabled:opacity-40"
+                            className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-violet-500/10 hover:text-muted-foreground disabled:opacity-40"
                             title="Réessayer"
                           >
                             {busyId === mount.id ? (
@@ -1244,7 +1243,7 @@ export default function MountsPage() {
                           <button
                             onClick={() => openSshEdit(mount)}
                             disabled={busyId === mount.id}
-                            className="rounded-lg p-2 text-zinc-500 transition-colors hover:bg-violet-500/10 hover:text-violet-400 disabled:opacity-40"
+                            className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-violet-500/10 hover:text-muted-foreground disabled:opacity-40"
                             title="Modifier la source SSH"
                           >
                             <Settings2 className="h-4 w-4" />
@@ -1253,7 +1252,7 @@ export default function MountsPage() {
                         <button
                           onClick={() => deleteMount(mount.id)}
                           disabled={busyId === mount.id}
-                          className="rounded-lg p-2 text-zinc-500 transition-colors hover:bg-rose-500/10 hover:text-rose-400 disabled:opacity-40"
+                          className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-400 disabled:opacity-40"
                           title="Supprimer"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -1303,7 +1302,7 @@ export default function MountsPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label className="mb-1.5 block text-xs font-medium text-zinc-400">Hôte</Label>
+              <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">Hôte</Label>
               <Input
                 value={sshEditForm.remoteHost}
                 onChange={(e) => setSshEditForm({ ...sshEditForm, remoteHost: e.target.value })}
@@ -1313,7 +1312,7 @@ export default function MountsPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="mb-1.5 block text-xs font-medium text-zinc-400">Utilisateur SSH</Label>
+                <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">Utilisateur SSH</Label>
                 <Input
                   value={sshEditForm.remoteUser}
                   onChange={(e) => setSshEditForm({ ...sshEditForm, remoteUser: e.target.value })}
@@ -1322,7 +1321,7 @@ export default function MountsPage() {
                 />
               </div>
               <div>
-                <Label className="mb-1.5 block text-xs font-medium text-zinc-400">Port SSH</Label>
+                <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">Port SSH</Label>
                 <Input
                   type="number"
                   value={sshEditForm.remoteSshPort}

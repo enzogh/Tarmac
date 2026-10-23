@@ -279,12 +279,12 @@ function ClusterMarker({
 function NodePopup({ node }: { node: WorldMapNode }) {
   return (
     <div className="min-w-[190px] font-sans">
-      <p className="text-sm font-semibold text-zinc-100">{node.label}</p>
-      <p className="mt-0.5 text-xs text-zinc-400">
+      <p className="text-sm font-semibold text-foreground">{node.label}</p>
+      <p className="mt-0.5 text-xs text-muted-foreground">
         {flagFromCountryCode(node.countryCode)} {node.city}
         {node.country ? `, ${node.country}` : ''}
       </p>
-      <p className="mt-1.5 font-mono text-[11px] text-zinc-400">{node.vlanIp}</p>
+      <p className="mt-1.5 font-mono text-2xs text-muted-foreground">{node.vlanIp}</p>
       {node.isPositionApproximate && (
         <p className="mt-2 text-[10px] leading-snug text-amber-300">
           Position approximative (pays détecté) — glissez le point pour la préciser.
@@ -356,7 +356,7 @@ export function WorldMap({ nodes, links = [], onNodeDrag, onSelectNode, classNam
   }, [links, resolvedPositionByNodeId]);
 
   return (
-    <div className={cn('tarmac-map overflow-hidden rounded-xl border border-white/[0.08]', className)}>
+    <div className={cn('tarmac-map overflow-hidden rounded-xl border border-border', className)}>
       <MapContainer
         center={DEFAULT_CENTER}
         zoom={DEFAULT_ZOOM}

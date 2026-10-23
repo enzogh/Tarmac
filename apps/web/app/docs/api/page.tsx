@@ -107,7 +107,7 @@ const MODULES: Module[] = [
         path: '/auth/sso/silent',
         auth: 'public',
         description:
-          "Même flux, mais sans interaction (prompt=none) : utilisé au chargement de l'interface pour reprendre une session Authentik existante sans écran de connexion.",
+"Même flux, mais sans interaction (prompt=none) : utilisé au chargement de l'interface pour reprendre une session Authentik existante sans écran de connexion.",
         isNew: true,
       },
       {
@@ -115,7 +115,7 @@ const MODULES: Module[] = [
         path: '/auth/sso/callback',
         auth: 'public',
         description:
-          "Retour du fournisseur d'identité : échange le code, crée ou retrouve le compte, synchronise les workspaces déduits des groupes Authentik, puis pose le cookie de session.",
+"Retour du fournisseur d'identité : échange le code, crée ou retrouve le compte, synchronise les workspaces déduits des groupes Authentik, puis pose le cookie de session.",
         isNew: true,
       },
     ],
@@ -126,7 +126,7 @@ const MODULES: Module[] = [
     isNew: true,
     icon: LayoutGrid,
     description:
-      "Flottes cloisonnées : chaque workspace a son sous-réseau privé, ses ressources et ses membres. L'en-tête X-Workspace-Id sélectionne celui sur lequel porte la requête.",
+"Flottes cloisonnées : chaque workspace a son sous-réseau privé, ses ressources et ses membres. L'en-tête X-Workspace-Id sélectionne celui sur lequel porte la requête.",
     endpoints: [
       {
         method: 'GET',
@@ -138,14 +138,14 @@ const MODULES: Module[] = [
         path: '/workspaces',
         body: 'name',
         description:
-          "Crée un workspace, lui alloue un sous-réseau privé libre et provisionne son VLAN. Réservé aux administrateurs de plateforme.",
+"Crée un workspace, lui alloue un sous-réseau privé libre et provisionne son VLAN. Réservé aux administrateurs de plateforme.",
       },
       {
         method: 'PATCH',
         path: '/workspaces/:id',
         body: 'name?, ssoGroupClaim?',
         description:
-          "Renomme le workspace et/ou change le groupe Authentik qui accorde automatiquement l'accès. Propriétaire ou administrateur de plateforme.",
+"Renomme le workspace et/ou change le groupe Authentik qui accorde automatiquement l'accès. Propriétaire ou administrateur de plateforme.",
       },
       { method: 'GET', path: '/workspaces/users', description: 'Liste tous les comptes (administrateur de plateforme).' },
       { method: 'GET', path: '/workspaces/:id/members', description: "Liste les membres d'un workspace." },
@@ -159,7 +159,7 @@ const MODULES: Module[] = [
         path: '/workspaces/:id/invite',
         body: 'email',
         description:
-          "Ajoute par e-mail un compte déjà existant — le chemin en libre-service du propriétaire. Aucun e-mail n'est envoyé, l'accès est immédiat.",
+"Ajoute par e-mail un compte déjà existant — le chemin en libre-service du propriétaire. Aucun e-mail n'est envoyé, l'accès est immédiat.",
       },
       { method: 'DELETE', path: '/workspaces/:id/members/:userId', description: "Retire un membre (un propriétaire ne peut pas se retirer lui-même)." },
       {
@@ -184,7 +184,7 @@ const MODULES: Module[] = [
         path: '/nodes/:id',
         body: 'name?, role?, status?, dnsHostname?, locationCity?, locationCountry?, locationCountryCode?, locationLat?, locationLng?, graphX?, graphY?',
         description:
-          "Met à jour un nœud (statut, rôle, localisation). graphX/graphY et locationLat/locationLng mémorisent respectivement la position glissée sur le graphe topologique et sur la carte du monde (envoyer null pour réinitialiser). dnsHostname personnalise le nom du nœud en <nom>.tarmac.local sur le DNS interne.",
+"Met à jour un nœud (statut, rôle, localisation). graphX/graphY et locationLat/locationLng mémorisent respectivement la position glissée sur le graphe topologique et sur la carte du monde (envoyer null pour réinitialiser). dnsHostname personnalise le nom du nœud en <nom>.tarmac.local sur le DNS interne.",
       },
       { method: 'DELETE', path: '/nodes/:id', description: 'Supprime un nœud.' },
       { method: 'POST', path: '/nodes/:id/rotate-token', description: "Régénère le jeton d'authentification de l'agent pour ce nœud." },
@@ -354,7 +354,7 @@ const MODULES: Module[] = [
     isNew: true,
     icon: Globe,
     description:
-      "Serveurs DNS de la flotte (PowerDNS), zones faisant autorité, enregistrements, DNSSEC et délégation — ainsi que le résolveur interne *.tarmac.local.",
+"Serveurs DNS de la flotte (PowerDNS), zones faisant autorité, enregistrements, DNSSEC et délégation — ainsi que le résolveur interne *.tarmac.local.",
     endpoints: [
       { method: 'GET', path: '/dns/groups', description: 'Liste les groupes DNS, avec leurs membres et leurs zones.' },
       { method: 'POST', path: '/dns/groups', body: 'name', description: 'Crée un groupe de serveurs DNS.' },
@@ -376,7 +376,7 @@ const MODULES: Module[] = [
         method: 'POST',
         path: '/dns/groups/:id/members/:nodeId/resolve-port-conflict',
         description:
-          "Demande au nœud de libérer le port 53 occupé par un autre résolveur (systemd-resolved, PowerDNS installé hors Tarmac…), puis relance le provisionnement.",
+"Demande au nœud de libérer le port 53 occupé par un autre résolveur (systemd-resolved, PowerDNS installé hors Tarmac…), puis relance le provisionnement.",
       },
       { method: 'GET', path: '/dns/zones?groupId=', description: 'Liste les zones, avec leurs enregistrements et les valeurs rattachées à un nœud.' },
       { method: 'POST', path: '/dns/zones', body: 'groupId, name, dnssecEnabled?', description: 'Crée une zone sur le groupe indiqué (DNSSEC activé par défaut).' },
@@ -398,7 +398,7 @@ const MODULES: Module[] = [
         path: '/dns/zones/:id/records',
         body: 'name, type, ttl?, isGeo?, values[] (content, nodeId?, priority?)',
         description:
-          "Crée ou met à jour un enregistrement. isGeo rend la réponse géolocalisée (le nœud le plus proche du demandeur) ; nodeId rattache une valeur à un nœud de la flotte.",
+"Crée ou met à jour un enregistrement. isGeo rend la réponse géolocalisée (le nœud le plus proche du demandeur) ; nodeId rattache une valeur à un nœud de la flotte.",
       },
       { method: 'DELETE', path: '/dns/zones/:id/records/:recordId', description: 'Supprime un enregistrement.' },
       { method: 'GET', path: '/dns/nodes/:nodeId/records', description: 'Recherche inverse : quels enregistrements pointent vers ce nœud.' },
@@ -457,7 +457,7 @@ const MODULES: Module[] = [
     base: '/audit-logs, /agent-logs',
     icon: ScrollText,
     description:
-      "Les deux flux de l'écran Journal : les actions d'administration et les logs remontés par les agents. Tous deux filtrables et exportables.",
+"Les deux flux de l'écran Journal : les actions d'administration et les logs remontés par les agents. Tous deux filtrables et exportables.",
     endpoints: [
       {
         method: 'GET',
@@ -502,7 +502,7 @@ const MODULES: Module[] = [
         path: '/system/version',
         auth: 'public',
         description:
-          "Version du control plane, servie sans session : c'est la référence unique affichée dans l'interface et comparée à la version de chaque agent.",
+"Version du control plane, servie sans session : c'est la référence unique affichée dans l'interface et comparée à la version de chaque agent.",
         isNew: true,
       },
     ],
@@ -513,19 +513,18 @@ export default function ApiReferencePage() {
   return (
     <div className="space-y-10">
       <PageHeader
-        icon={Code2}
-        title={<AnimatedGradientText speed={0.6}>Référence API</AnimatedGradientText>}
+        title="Référence API"
         description="Toutes les routes REST exposées par l'API Tarmac, préfixées par /api/v1."
       />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Card className="bg-panel-glow">
+        <Card className="">
           <CardContent className="pt-6 text-sm">
             <p className="font-medium text-foreground">URL de base</p>
             <code className="mt-1 block text-xs text-muted-foreground">https://votre-api/api/v1</code>
           </CardContent>
         </Card>
-        <Card className="bg-panel-glow">
+        <Card className="">
           <CardContent className="pt-6 text-sm">
             <p className="font-medium text-foreground">Authentification</p>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -535,7 +534,7 @@ export default function ApiReferencePage() {
             </p>
           </CardContent>
         </Card>
-        <Card className="bg-panel-glow">
+        <Card className="">
           <CardContent className="pt-6 text-sm">
             <p className="flex items-center gap-2 font-medium text-foreground">
               Workspace
@@ -550,7 +549,7 @@ export default function ApiReferencePage() {
             </p>
           </CardContent>
         </Card>
-        <Card className="bg-panel-glow">
+        <Card className="">
           <CardContent className="pt-6 text-sm">
             <p className="font-medium text-foreground">Validation</p>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -567,9 +566,9 @@ export default function ApiReferencePage() {
             <a
               key={module.name}
               href={`#${moduleAnchor(module.name)}`}
-              className="flex items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:border-violet-500/40 hover:text-violet-200"
+              className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:border-violet-500/40 hover:text-violet-200"
             >
-              <module.icon className="h-3.5 w-3.5 text-violet-400" />
+              <module.icon className="h-3.5 w-3.5 text-muted-foreground" />
               {module.name}
               <span className={cn('text-zinc-600', module.isNew && 'text-emerald-400/70')}>{module.endpoints.length}</span>
             </a>
@@ -590,12 +589,12 @@ export default function ApiReferencePage() {
           <Card
             key={module.name}
             id={moduleAnchor(module.name)}
-            className="scroll-mt-24 overflow-hidden transition-colors hover:border-white/[0.14]"
+            className="scroll-mt-24 overflow-hidden transition-colors hover:border-border"
           >
             <CardHeader>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-600/15 text-violet-300">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-600/15 text-primary">
                     <module.icon className="h-4 w-4" />
                   </div>
                   <CardTitle>{module.name}</CardTitle>
@@ -613,7 +612,7 @@ export default function ApiReferencePage() {
               {module.endpoints.map((endpoint) => (
                 <div
                   key={`${endpoint.method}-${endpoint.path}`}
-                  className="flex flex-col gap-1.5 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 sm:flex-row sm:items-center sm:gap-4"
+                  className="flex flex-col gap-1.5 rounded-xl border border-border bg-surface-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-4"
                 >
                   <div className="flex shrink-0 items-start gap-2 sm:w-80">
                     <Badge variant={METHOD_VARIANT[endpoint.method]} className={cn('w-16 shrink-0 justify-center font-mono')}>
@@ -629,19 +628,19 @@ export default function ApiReferencePage() {
                         </Badge>
                       )}
                       {endpoint.auth === 'public' && (
-                        <Badge variant="outline" className="px-1.5 py-0 text-[10px] uppercase tracking-wide text-zinc-400">
+                        <Badge variant="outline" className="px-1.5 py-0 text-[10px] uppercase tracking-wide text-muted-foreground">
                           Publique
                         </Badge>
                       )}
                       {endpoint.auth === 'token' && (
-                        <Badge variant="outline" className="px-1.5 py-0 text-[10px] uppercase tracking-wide text-zinc-400">
+                        <Badge variant="outline" className="px-1.5 py-0 text-[10px] uppercase tracking-wide text-muted-foreground">
                           Jeton dédié
                         </Badge>
                       )}
                     </div>
                     <p className="text-sm text-muted-foreground">{endpoint.description}</p>
                     {endpoint.body && (
-                      <p className="mt-0.5 truncate text-xs text-zinc-500">
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
                         <span className="text-zinc-600">Corps : </span>
                         {endpoint.body}
                       </p>

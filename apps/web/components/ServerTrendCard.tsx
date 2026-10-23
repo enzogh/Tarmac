@@ -4,8 +4,10 @@ import { useId, useMemo } from 'react';
 import { ArrowDownToLine, ArrowUpToLine, Cpu, Gauge, HardDrive } from 'lucide-react';
 import { NodeActivityItem, NodeMetricSample } from '../lib/api';
 import { cn, meterTone } from '../lib/utils';
-import { Badge, NodeLabelBadges } from './ui';
+import { NodeLabelBadges } from './ui';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { NODE_STATUS, StatusPill, describe } from './ui/status';
+import { formatCapacity, formatRelative, formatThroughput } from '../lib/format';
 
 type SparklineProps = {
   values: number[];
@@ -104,8 +106,6 @@ type ServerTrendCardProps = {
   className?: string;
 };
 
-const formatRate = (value: number) => `${((value * 8) / 1_000_000).toFixed(2)} MB/s`;
-
 export function ServerTrendCard({ node, samples, labels = [], className }: ServerTrendCardProps) {
   const cpuSeries = samples.map((sample) => sample.cpu);
   const ramSeries = samples.map((sample) => sample.ram);
@@ -116,68 +116,70 @@ export function ServerTrendCard({ node, samples, labels = [], className }: Serve
   const cpuTone = meterTone(cpuNow);
   const ramTone = meterTone(ramNow);
 
+  const status = describe(NODE_STATUS, node.status);
+
   return (
-    <Card className={cn('bg-panel-glow', className)}>
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <CardTitle className="text-base">{node.name}</CardTitle>
-            <p className="mt-1 text-xs text-muted-foreground capitalize">
-              {node.role}
-              {node.lastSeenAt ? ` · ${new Date(node.lastSeenAt).toLocaleString('fr-FR')}` : ''}
-            </p>
-            {labels.length > 0 && <NodeLabelBadges labels={labels} className="mt-2" />}
-          </div>
-          <Badge
-            label={node.status}
-            type={node.status === 'online' ? 'success' : node.status === 'degraded' ? 'warning' : 'error'}
-          />
+    <Card className={cn(className)}>
+      <CardHeader>
+        <div className="min-w-0">
+          <CardTitle className="truncate" title={node.name}>
+            {node.name}
+          </CardTitle>
+          <p className="mt-0.5 truncate text-2xs text-muted-foreground">
+            <span className="capitalize">{node.role}</span>
+            {node.lastSeenAt ? ` · vu ${formatRelative(node.lastSeenAt)}` : ''}
+          </p>
         </div>
+        <StatusPill tone={status.tone}>{status.label}</StatusPill>
+        {labels.length > 0 && <NodeLabelBadges labels={labels} />}
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
-            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-lg border border-border bg-surface-2 p-3">
+            <div className="flex items-center justify-between text-2xs text-muted-foreground">
               <span className="flex items-center gap-1.5">
                 <Cpu className="h-3.5 w-3.5" />
                 CPU
               </span>
-              <span className={cn('font-medium', cpuTone.text)}>
-                {Math.round(cpuNow)}%{' '}
-                <span className="text-muted-foreground">
+              <span className={cn('tabular font-medium', cpuTone.text)}>
+                {Math.round(cpuNow)} %
+                <span className="ml-1 text-muted-foreground">
                   ({cpuDelta >= 0 ? '+' : ''}
                   {cpuDelta.toFixed(1)})
                 </span>
               </span>
             </div>
-            <Sparkline values={cpuSeries} className="mt-2 text-violet-300" height={44} minValue={0} maxValue={100} />
+            <Sparkline values={cpuSeries} className="mt-2 text-[hsl(var(--chart-1))]" height={40} minValue={0} maxValue={100} />
           </div>
-          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
-            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+          <div className="rounded-lg border border-border bg-surface-2 p-3">
+            <div className="flex items-center justify-between text-2xs text-muted-foreground">
               <span className="flex items-center gap-1.5">
                 <Gauge className="h-3.5 w-3.5" />
                 RAM
               </span>
-              <span className={cn('font-medium', ramTone.text)}>{Math.round(ramNow)}%</span>
+              <span className={cn('tabular font-medium', ramTone.text)}>{Math.round(ramNow)} %</span>
             </div>
-            <Sparkline values={ramSeries} className="mt-2 text-cyan-300" height={44} minValue={0} maxValue={100} />
+            <Sparkline values={ramSeries} className="mt-2 text-[hsl(var(--chart-2))]" height={40} minValue={0} maxValue={100} />
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-white/[0.06] pt-3 text-[11px] text-muted-foreground">
-          <span className="flex items-center gap-1">
+        <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-3 text-2xs text-muted-foreground">
+          <div className="flex items-center gap-1.5">
             <ArrowDownToLine className="h-3 w-3" />
-            {formatRate(node.metrics.networkRx)}
-          </span>
-          <span className="flex items-center gap-1">
+            <dd className="tabular">{formatThroughput(node.metrics.networkRx)}</dd>
+          </div>
+          <div className="flex items-center gap-1.5">
             <ArrowUpToLine className="h-3 w-3" />
-            {formatRate(node.metrics.networkTx)}
-          </span>
-          <span className="flex items-center gap-1">
+            <dd className="tabular">{formatThroughput(node.metrics.networkTx)}</dd>
+          </div>
+          <div className="flex items-center gap-1.5">
             <HardDrive className="h-3 w-3" />
-            {node.storage.totalUsedGb} / {node.storage.totalCapacityGb} GB ({Math.round(diskRatio)}%)
-          </span>
-        </div>
+            <dd className="tabular">
+              {formatCapacity(node.storage.totalUsedGb)} / {formatCapacity(node.storage.totalCapacityGb)}
+              <span className="ml-1">({Math.round(diskRatio)} %)</span>
+            </dd>
+          </div>
+        </dl>
       </CardContent>
     </Card>
   );

@@ -79,14 +79,16 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
       <Link
         key={item.href}
         href={item.href}
+        aria-current={isActive ? 'page' : undefined}
         className={cn(
-          'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150',
+          'relative flex items-center gap-2.5 rounded-md py-1.5 pl-3 pr-2 text-sm transition-colors',
           isActive
-            ? 'bg-violet-600/15 text-violet-300 shadow-[inset_0_0_0_1px_rgba(139,92,246,0.2)]'
-            : 'text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-100'
+            ? 'bg-surface-2 font-medium text-foreground'
+            : 'text-muted-foreground hover:bg-surface-2/60 hover:text-foreground',
         )}
       >
-        <Icon className={cn('h-4 w-4 shrink-0', isActive ? 'text-violet-400' : 'text-zinc-500')} />
+        {isActive && <span className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-primary" aria-hidden />}
+        <Icon className={cn('h-4 w-4 shrink-0', isActive ? 'text-primary' : 'text-muted-foreground/70')} />
         {item.label}
       </Link>
     );
@@ -107,17 +109,17 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
         {/* Sidebar */}
         <aside
           className={cn(
-            'fixed inset-y-0 left-0 z-30 flex w-64 flex-col border-r border-white/[0.06] bg-zinc-950/95 backdrop-blur-2xl transition-transform duration-200 lg:sticky lg:top-0 lg:z-10 lg:h-screen lg:translate-x-0 lg:self-start lg:bg-zinc-950/80',
+            'fixed inset-y-0 left-0 z-30 flex w-60 flex-col border-r border-border bg-surface-1 transition-transform duration-200 lg:sticky lg:top-0 lg:z-10 lg:h-screen lg:translate-x-0 lg:self-start',
             mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
           )}
         >
           {/* Logo - compact, since WorkspaceSwitcher right below now carries
               the "which workspace am I in" identity that used to sit here as
               a generic "Storage dashboard" subtitle. */}
-          <div className="border-b border-white/[0.06] px-5 py-4">
+          <div className="border-b border-border px-3 py-3">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
-                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600 to-indigo-600 shadow-glow">
+                <div className="flex h-6 w-6 items-center justify-center rounded-md bg-primary">
                   <Layers className="h-3.5 w-3.5 text-white" />
                 </div>
                 <h1 className="text-sm font-semibold tracking-tight text-foreground">Tarmac</h1>
@@ -125,7 +127,7 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
               <button
                 type="button"
                 onClick={() => setMobileNavOpen(false)}
-                className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100 lg:hidden"
+                className="rounded-md p-1.5 text-muted-foreground hover:bg-surface-2 hover:text-foreground lg:hidden"
                 aria-label="Fermer le menu"
               >
                 <X className="h-5 w-5" />
@@ -138,11 +140,11 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
               intrinsic height inside the flex column so overflow-y-auto
               actually activates internal scrolling, instead of growing the
               whole <aside> (and pushing the footer below the fold). */}
-          <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-4">
+          <nav className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 py-3">
             {navGroups.map((group, groupIndex) => {
               if (!group.label) {
                 return (
-                  <div key={`group-${groupIndex}`} className="space-y-0.5 pb-3">
+                  <div key={`group-${groupIndex}`} className="space-y-0.5 pb-2">
                     {group.items.map(renderNavLink)}
                   </div>
                 );
@@ -154,20 +156,20 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
                 <div
                   key={group.label}
                   className={cn(
-                    'space-y-0.5 border-t border-white/[0.04] pt-3',
-                    groupIsActive && isCollapsed && 'rounded-lg bg-white/[0.02]'
+                    'space-y-0.5 border-t border-border pt-2',
+                    groupIsActive && isCollapsed && 'rounded-md bg-surface-2/50',
                   )}
                 >
                   <button
                     type="button"
                     onClick={() => toggleGroup(group.label as string)}
                     className={cn(
-                      'flex w-full items-center justify-between gap-2 rounded-lg px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider transition-colors',
-                      groupIsActive ? 'text-violet-400' : 'text-zinc-600 hover:text-zinc-400'
+                      'flex w-full items-center justify-between gap-2 rounded-md px-3 py-1 text-2xs font-semibold uppercase tracking-wider transition-colors',
+                      groupIsActive ? 'text-foreground/70' : 'text-muted-foreground/60 hover:text-muted-foreground',
                     )}
                   >
                     <span className="flex items-center gap-2">
-                      {GroupIcon && <GroupIcon className="h-3.5 w-3.5" />}
+                      {GroupIcon && <GroupIcon className="h-3 w-3" />}
                       {group.label}
                     </span>
                     <ChevronDown className={cn('h-3 w-3 transition-transform', isCollapsed && '-rotate-90')} />
@@ -182,14 +184,14 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
               <aside> is now locked to viewport height (lg:h-screen above),
               so Documentation/Déconnexion are always visible without
               scrolling, no matter how many nav items exist. */}
-          <div className="shrink-0 space-y-1 border-t border-white/[0.06] p-3">
+          <div className="shrink-0 space-y-0.5 border-t border-border p-2">
             <Tooltip>
               <TooltipTrigger asChild>
                 <Link
                   href="/docs"
-                  className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-100"
+                  className="flex items-center gap-2.5 rounded-md py-1.5 pl-3 pr-2 text-sm text-muted-foreground transition-colors hover:bg-surface-2/60 hover:text-foreground"
                 >
-                  <BookOpen className="h-4 w-4 shrink-0 text-zinc-500" />
+                  <BookOpen className="h-4 w-4 shrink-0 text-muted-foreground/70" />
                   Documentation
                 </Link>
               </TooltipTrigger>
@@ -200,7 +202,7 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
                 <Button
                   variant="ghost"
                   onClick={handleLogout}
-                  className="w-full justify-start gap-3 text-zinc-400 hover:text-zinc-100"
+                  className="h-auto w-full justify-start gap-2.5 py-1.5 pl-3 pr-2 font-normal text-muted-foreground hover:text-foreground"
                 >
                   <LogOut className="h-4 w-4" />
                   Déconnexion
@@ -214,38 +216,40 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
         {/* Main Content */}
         <div className="relative z-10 flex flex-1 flex-col overflow-hidden">
           {/* Top Bar */}
-          <header className="flex items-center justify-between gap-2 border-b border-white/[0.06] bg-zinc-950/60 px-4 py-3.5 backdrop-blur-xl sm:px-6">
+          <header className="sticky top-0 z-10 flex h-12 items-center justify-between gap-2 border-b border-border bg-surface-1/90 px-4 backdrop-blur sm:px-6">
             <div className="flex min-w-0 items-center gap-2">
               <button
                 type="button"
                 onClick={() => setMobileNavOpen(true)}
-                className="-ml-1 mr-1 rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100 lg:hidden"
+                className="-ml-1 rounded-md p-1.5 text-muted-foreground hover:bg-surface-2 hover:text-foreground lg:hidden"
                 aria-label="Ouvrir le menu"
               >
                 <Menu className="h-5 w-5" />
               </button>
-              <div className="h-2 w-2 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
-              <span className="hidden text-sm font-medium text-foreground sm:inline">Tarmac</span>
-              <span className="hidden text-sm text-zinc-600 sm:inline">/</span>
-              <span className="truncate text-sm text-muted-foreground">
-                {navItems.find(isNavItemActive)?.label ?? 'Dashboard'}
-              </span>
+              {/* The breadcrumb is the only thing in this bar that tells you
+                  where you are, so it gets the full width it needs; the
+                  decorative "live" dot and the current date that used to sit
+                  here said nothing a monitoring console doesn't already show
+                  on the page itself. */}
+              <nav aria-label="Fil d'Ariane" className="flex min-w-0 items-center gap-1.5 text-sm">
+                <Link href="/workspaces" className="shrink-0 text-muted-foreground transition-colors hover:text-foreground">
+                  Tarmac
+                </Link>
+                <span className="shrink-0 text-muted-foreground/40">/</span>
+                <span className="truncate font-medium text-foreground">
+                  {navItems.find(isNavItemActive)?.label ?? 'Tableau de bord'}
+                </span>
+              </nav>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <div className="hidden items-center gap-1.5 rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-xs text-muted-foreground sm:flex">
-                <Search className="h-3 w-3" />
-                <span>Rechercher</span>
-                <kbd className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 font-mono text-[10px]">⌘K</kbd>
-              </div>
-              <div className="hidden rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-xs text-muted-foreground sm:block">
-                {new Date().toLocaleDateString('fr-FR', {
-                  weekday: 'short',
-                  year: 'numeric',
-                  month: 'short',
-                  day: 'numeric',
-                })}
-              </div>
-            </div>
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent('tarmac:open-command-palette'))}
+              className="flex shrink-0 items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+            >
+              <Search className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Rechercher</span>
+              <kbd className="rounded border border-border bg-surface-3 px-1.5 py-px font-mono text-[10px]">⌘K</kbd>
+            </button>
           </header>
 
           {/* Content */}

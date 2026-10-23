@@ -22,7 +22,7 @@ function initials(name: string): string {
 
 function WorkspaceTile({ name }: { name: string }) {
   return (
-    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600/90 to-indigo-600/90 text-[11px] font-semibold text-white shadow-glow">
+    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-surface-3 text-2xs font-semibold text-foreground">
       {initials(name)}
     </span>
   );
@@ -46,25 +46,25 @@ export function WorkspaceSwitcher() {
     return (
       <Link
         href="/workspaces"
-        className="mt-3 flex items-center gap-2.5 rounded-xl border border-white/[0.06] bg-white/[0.02] px-2.5 py-2 transition-colors hover:border-white/[0.12] hover:bg-white/[0.05]"
+        className="mt-2 flex items-center gap-2.5 rounded-md border border-border bg-surface-2 px-2 py-1.5 transition-colors hover:bg-surface-3"
       >
         <WorkspaceTile name={activeName} />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-xs font-medium text-zinc-200">{activeName}</span>
-          <span className="block text-[10px] text-zinc-500">Workspace actif</span>
+          <span className="block truncate text-xs font-medium text-foreground">{activeName}</span>
+          <span className="block text-[10px] text-muted-foreground">Workspace actif</span>
         </span>
       </Link>
     );
   }
 
   return (
-    <div className="mt-3">
+    <div className="mt-2">
       <Select value={currentWorkspaceId ?? undefined} onValueChange={switchWorkspace}>
-        <SelectTrigger className="h-auto w-full gap-2.5 rounded-xl border-white/[0.06] bg-white/[0.02] px-2.5 py-2 hover:border-white/[0.12] hover:bg-white/[0.05] [&>span]:line-clamp-none">
+        <SelectTrigger className="h-auto w-full gap-2.5 rounded-md border-border bg-surface-2 px-2 py-1.5 hover:bg-surface-3 [&>span]:line-clamp-none">
           <WorkspaceTile name={activeName} />
           <span className="min-w-0 flex-1 text-left">
-            <span className="block truncate text-xs font-medium text-zinc-200">{activeName}</span>
-            <span className="block text-[10px] text-zinc-500">Changer de workspace</span>
+            <span className="block truncate text-xs font-medium text-foreground">{activeName}</span>
+            <span className="block text-[10px] text-muted-foreground">Changer de workspace</span>
           </span>
         </SelectTrigger>
         <SelectContent>

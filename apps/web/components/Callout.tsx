@@ -10,7 +10,7 @@ const VARIANTS: Record<CalloutVariant, { border: string; bg: string; text: strin
     bg: 'bg-violet-500/[0.07]',
     text: 'text-violet-200/90',
     icon: Info,
-    iconColor: 'text-violet-300',
+    iconColor: 'text-primary',
   },
   success: {
     border: 'border-emerald-500/20',

@@ -30,7 +30,7 @@ export default function WorkspaceSettingsPage() {
   if (!workspaces || !profile || !workspace) {
     return (
       <div className="space-y-6">
-        <PageHeader icon={Settings} title={<AnimatedGradientText speed={0.6}>Paramètres</AnimatedGradientText>} description="Chargement…" />
+        <PageHeader title="Paramètres" description="Chargement…" />
       </div>
     );
   }
@@ -38,7 +38,7 @@ export default function WorkspaceSettingsPage() {
   if (!canManage) {
     return (
       <div className="space-y-6">
-        <PageHeader icon={Settings} title={<AnimatedGradientText speed={0.6}>Paramètres</AnimatedGradientText>} description={workspace.name} />
+        <PageHeader title="Paramètres" description={workspace.name} />
         <Card>
           <CardContent className="flex flex-col items-center gap-2 py-16 text-center">
             <ShieldCheck className="h-8 w-8 text-muted-foreground" />
@@ -54,7 +54,7 @@ export default function WorkspaceSettingsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader icon={Settings} title={<AnimatedGradientText speed={0.6}>Paramètres</AnimatedGradientText>} description={`Gère « ${workspace.name} »`} />
+      <PageHeader title="Paramètres" description={`Gère « ${workspace.name} »`} />
       <RenameCard workspace={workspace} onSaved={() => void refreshWorkspaces()} />
       <MembersCard
         workspace={workspace}
@@ -244,7 +244,7 @@ function MembersCard({
             return (
               <div
                 key={member.id}
-                className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5"
+                className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2.5"
               >
                 <div className="min-w-0">
                   <p className="truncate text-sm text-foreground">
@@ -265,7 +265,7 @@ function MembersCard({
                     variant="ghost"
                     size="icon"
                     disabled={!canRemove}
-                    title={canRemove ? 'Retirer' : 'Un propriétaire ne peut pas se retirer lui-même'}
+                    title="canRemove ? 'Retirer' : 'Un propriétaire ne peut pas se retirer lui-même'"
                     onClick={() => setMemberToRemove(member)}
                   >
                     <Trash2 className={canRemove ? 'h-4 w-4 text-rose-400' : 'h-4 w-4 text-muted-foreground'} />

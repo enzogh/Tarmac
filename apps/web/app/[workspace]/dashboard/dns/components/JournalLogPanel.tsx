@@ -9,7 +9,7 @@ export function JournalLogPanel({ journal, panelKey, nodeId }: { journal: DnsJou
   if (journal.expandedLogKey !== panelKey) return null;
   const entries = journal.logsByNode[nodeId];
   return (
-    <div className="mt-2 max-h-56 space-y-1.5 overflow-y-auto rounded-lg border border-white/[0.08] bg-zinc-950/70 p-2.5 font-mono text-xs">
+    <div className="mt-2 max-h-56 space-y-1.5 overflow-y-auto rounded-lg border border-border bg-zinc-950/70 p-2.5 font-mono text-xs">
       {journal.logsLoadingNodeId === nodeId ? (
         <p className="text-muted-foreground">Chargement…</p>
       ) : !entries || entries.length === 0 ? (

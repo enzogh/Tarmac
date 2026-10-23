@@ -13,7 +13,7 @@ import type { WorldMapNode } from '@/components/WorldMap';
 const WorldMap = dynamic(() => import('@/components/WorldMap').then((mod) => mod.WorldMap), {
   ssr: false,
   loading: () => (
-    <div className="flex h-[420px] items-center justify-center rounded-xl border border-white/[0.08] bg-zinc-950/50 text-sm text-muted-foreground">
+    <div className="flex h-[420px] items-center justify-center rounded-xl border border-border bg-surface-2 text-sm text-muted-foreground">
       Chargement de la carte…
     </div>
   ),
@@ -79,7 +79,7 @@ export function GeoMapSection({ nodes, groups, zones }: { nodes: NodeItem[]; gro
           <HelpText text="Clique sur un marqueur pour voir quelles zones/records le ciblent." />
         </p>
         {dnsWorldMapNodes.length === 0 ? (
-          <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+          <Card className="border-border bg-surface-1 backdrop-blur">
             <CardContent className="pt-12 pb-12 text-center">
               <MapPin className="mx-auto mb-4 h-12 w-12 text-muted-foreground/50" />
               <p className="font-medium text-muted-foreground">Aucun nœud géolocalisé impliqué dans le DNS</p>
@@ -89,7 +89,7 @@ export function GeoMapSection({ nodes, groups, zones }: { nodes: NodeItem[]; gro
             </CardContent>
           </Card>
         ) : (
-          <Card className="overflow-hidden border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+          <Card className="overflow-hidden border-border bg-surface-1 backdrop-blur">
             <WorldMap nodes={dnsWorldMapNodes} onSelectNode={openGeoNode} className="h-[420px] w-full" />
           </Card>
         )}
@@ -107,9 +107,9 @@ export function GeoMapSection({ nodes, groups, zones }: { nodes: NodeItem[]; gro
               {geoPanel.records.map((record) => (
                 <div
                   key={record.recordId}
-                  className="flex flex-wrap items-center gap-2 rounded-xl border border-white/[0.08] bg-zinc-950/50 p-2.5 text-sm"
+                  className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface-2 p-2.5 text-sm"
                 >
-                  <span className="font-mono text-zinc-200">
+                  <span className="font-mono text-foreground/90">
                     {record.recordName === '@' ? record.zoneName : `${record.recordName}.${record.zoneName}`}
                   </span>
                   <Badge label={record.type} type="info" />

@@ -37,7 +37,7 @@ const SECTIONS: { label: string; concepts: Concept[] }[] = [
         isNew: true,
         href: '/docs/workspaces',
         description:
-          "Un workspace est une flotte complète et cloisonnée : ses nœuds, son sous-réseau privé, ses partages, ses zones DNS et son journal n'existent que pour lui. L'adresse du tableau de bord commence par l'identifiant du workspace, et on bascule de l'un à l'autre depuis le sélecteur en haut de la barre latérale.",
+"Un workspace est une flotte complète et cloisonnée : ses nœuds, son sous-réseau privé, ses partages, ses zones DNS et son journal n'existent que pour lui. L'adresse du tableau de bord commence par l'identifiant du workspace, et on bascule de l'un à l'autre depuis le sélecteur en haut de la barre latérale.",
       },
       {
         icon: KeyRound,
@@ -45,7 +45,7 @@ const SECTIONS: { label: string; concepts: Concept[] }[] = [
         isNew: true,
         href: '/docs/workspaces',
         description:
-          "On se connecte soit par e-mail/mot de passe, soit via Authentik (OpenID Connect). Un workspace a un propriétaire, des membres, et peut se voir rattacher un groupe Authentik : toute personne appartenant à ce groupe devient membre automatiquement à sa prochaine connexion.",
+"On se connecte soit par e-mail/mot de passe, soit via Authentik (OpenID Connect). Un workspace a un propriétaire, des membres, et peut se voir rattacher un groupe Authentik : toute personne appartenant à ce groupe devient membre automatiquement à sa prochaine connexion.",
       },
     ],
   },
@@ -56,25 +56,25 @@ const SECTIONS: { label: string; concepts: Concept[] }[] = [
         icon: Server,
         title: 'Nœud',
         description:
-          "Un nœud est un serveur physique ou virtuel enregistré dans Tarmac. Un petit agent tourne dessus et remonte en continu son état (CPU, RAM, disques, réseau). C'est la brique de base : tout le reste — partages, montages, réplication, DNS — s'organise entre nœuds.",
+"Un nœud est un serveur physique ou virtuel enregistré dans Tarmac. Un petit agent tourne dessus et remonte en continu son état (CPU, RAM, disques, réseau). C'est la brique de base : tout le reste — partages, montages, réplication, DNS — s'organise entre nœuds.",
       },
       {
         icon: Cpu,
         title: 'Agent',
         description:
-          "Le programme installé sur chaque nœud. Il ouvre lui-même une connexion sortante vers le control plane (aucun port entrant à ouvrir), remonte la télémétrie et exécute les commandes reçues : monter un partage, lancer une migration, configurer WireGuard ou PowerDNS. Sa version est comparée à celle du control plane, et il se met à jour à distance en un clic.",
+"Le programme installé sur chaque nœud. Il ouvre lui-même une connexion sortante vers le control plane (aucun port entrant à ouvrir), remonte la télémétrie et exécute les commandes reçues : monter un partage, lancer une migration, configurer WireGuard ou PowerDNS. Sa version est comparée à celle du control plane, et il se met à jour à distance en un clic.",
       },
       {
         icon: Thermometer,
         title: 'Santé SMART',
         description:
-          "Chaque disque physique est interrogé via smartctl (température, secteurs réalloués/en attente). Un disque qui passe en état critique déclenche une alerte et une migration de sécurisation suggérée vers le nœud le moins chargé — jamais démarrée automatiquement. Un disque virtualisé (VPS) sans données SMART réelles est classé « inconnu », jamais « critique » par défaut.",
+"Chaque disque physique est interrogé via smartctl (température, secteurs réalloués/en attente). Un disque qui passe en état critique déclenche une alerte et une migration de sécurisation suggérée vers le nœud le moins chargé — jamais démarrée automatiquement. Un disque virtualisé (VPS) sans données SMART réelles est classé « inconnu », jamais « critique » par défaut.",
       },
       {
         icon: BellOff,
         title: 'Fenêtre de maintenance',
         description:
-          "Mettre un nœud « en silence » suspend temporairement ses alertes de règles et SMART, le temps d'une intervention planifiée, sans désactiver la supervision elle-même.",
+"Mettre un nœud « en silence » suspend temporairement ses alertes de règles et SMART, le temps d'une intervention planifiée, sans désactiver la supervision elle-même.",
       },
     ],
   },
@@ -85,31 +85,31 @@ const SECTIONS: { label: string; concepts: Concept[] }[] = [
         icon: Share2,
         title: 'Partage NFS',
         description:
-          "Un partage rend un dossier d'un nœud accessible par le réseau via le protocole NFS. Vous choisissez le dossier à exposer et les clients autorisés à y accéder (lecture seule, lecture/écriture, ou accès refusé).",
+"Un partage rend un dossier d'un nœud accessible par le réseau via le protocole NFS. Vous choisissez le dossier à exposer et les clients autorisés à y accéder (lecture seule, lecture/écriture, ou accès refusé).",
       },
       {
         icon: HardDrive,
         title: 'Montage',
         description:
-          "Un montage attache une source distante — NFS, CIFS, ou SFTP via rclone — à un dossier local sur un nœud, comme s'il s'agissait d'un disque local. Plusieurs sources de secours peuvent être déclarées : si la principale tombe, une autre prend le relais.",
+"Un montage attache une source distante — NFS, CIFS, ou SFTP via rclone — à un dossier local sur un nœud, comme s'il s'agissait d'un disque local. Plusieurs sources de secours peuvent être déclarées : si la principale tombe, une autre prend le relais.",
       },
       {
         icon: RefreshCw,
         title: 'Pool & réplication',
         description:
-          "Un pool regroupe plusieurs nœuds autour d'une même stratégie de stockage. La réplication copie les données d'un nœud primaire vers un ou plusieurs nœuds secondaires, pour la redondance ou la répartition de charge.",
+"Un pool regroupe plusieurs nœuds autour d'une même stratégie de stockage. La réplication copie les données d'un nœud primaire vers un ou plusieurs nœuds secondaires, pour la redondance ou la répartition de charge.",
       },
       {
         icon: Repeat,
         title: 'Tâche de synchronisation',
         description:
-          "Une copie rsync planifiée entre deux chemins, avec son historique d'exécutions. Elle peut aussi être déclenchée depuis l'extérieur par un jeton dédié — typiquement le script « on completion » d'un client torrent, qui ne synchronise alors que le sous-dossier concerné.",
+"Une copie rsync planifiée entre deux chemins, avec son historique d'exécutions. Elle peut aussi être déclenchée depuis l'extérieur par un jeton dédié — typiquement le script « on completion » d'un client torrent, qui ne synchronise alors que le sous-dossier concerné.",
       },
       {
         icon: ArrowRightLeft,
         title: 'Migration',
         description:
-          "Une migration déplace un volume d'un endroit à un autre : entre deux nœuds Tarmac, ou depuis/vers un service externe (seedbox, Hetzner Storage Box). La progression du transfert est visible en direct.",
+"Une migration déplace un volume d'un endroit à un autre : entre deux nœuds Tarmac, ou depuis/vers un service externe (seedbox, Hetzner Storage Box). La progression du transfert est visible en direct.",
       },
     ],
   },
@@ -120,19 +120,19 @@ const SECTIONS: { label: string; concepts: Concept[] }[] = [
         icon: Network,
         title: 'Réseau privé (VLAN)',
         description:
-          "Les nœuds sont reliés entre eux sur un mesh WireGuard privé, isolé d'Internet, avec une IP dédiée par nœud. Chaque workspace dispose de son propre sous-réseau, ce qui empêche deux flottes de se voir. Tarmac visualise ce réseau sous forme de graphe (positions déplaçables et mémorisées) et permet de tester deux nœuds entre eux, en latence/perte de paquets (ping) ou saut par saut (traceroute).",
+"Les nœuds sont reliés entre eux sur un mesh WireGuard privé, isolé d'Internet, avec une IP dédiée par nœud. Chaque workspace dispose de son propre sous-réseau, ce qui empêche deux flottes de se voir. Tarmac visualise ce réseau sous forme de graphe (positions déplaçables et mémorisées) et permet de tester deux nœuds entre eux, en latence/perte de paquets (ping) ou saut par saut (traceroute).",
       },
       {
         icon: Globe,
         title: 'Carte du monde',
         description:
-          "Une vue géographique de la flotte, en plus du graphe : chaque nœud est placé sur sa position réelle (ou approximative, déduite du pays via une base GeoIP auto-hébergée, en attendant d'être précisée à la souris) et les liens VLAN s'animent en direct selon leur état — sain, dégradé ou hors ligne.",
+"Une vue géographique de la flotte, en plus du graphe : chaque nœud est placé sur sa position réelle (ou approximative, déduite du pays via une base GeoIP auto-hébergée, en attendant d'être précisée à la souris) et les liens VLAN s'animent en direct selon leur état — sain, dégradé ou hors ligne.",
       },
       {
         icon: Waypoints,
         title: 'Régions & passerelles',
         description:
-          "Au-delà de deux continents, relier chaque nœud à tous les autres en direct devient coûteux. Tarmac regroupe automatiquement les membres du VLAN par région géographique (Europe, Amérique du Nord…) : au sein d'une région, le maillage reste complet ; entre deux régions, seuls les nœuds désignés « passerelle » se relient. Sans passerelle désignée, tout reste en maillage direct comme avant.",
+"Au-delà de deux continents, relier chaque nœud à tous les autres en direct devient coûteux. Tarmac regroupe automatiquement les membres du VLAN par région géographique (Europe, Amérique du Nord…) : au sein d'une région, le maillage reste complet ; entre deux régions, seuls les nœuds désignés « passerelle » se relient. Sans passerelle désignée, tout reste en maillage direct comme avant.",
       },
     ],
   },
@@ -145,7 +145,7 @@ const SECTIONS: { label: string; concepts: Concept[] }[] = [
         isNew: true,
         href: '/docs/dns',
         description:
-          "Un groupe désigne, parmi vos nœuds, un serveur DNS primaire et jusqu'à trois secondaires. Tarmac y installe et configure PowerDNS, puis maintient la synchronisation des zones du primaire vers les secondaires par transfert AXFR.",
+"Un groupe désigne, parmi vos nœuds, un serveur DNS primaire et jusqu'à trois secondaires. Tarmac y installe et configure PowerDNS, puis maintient la synchronisation des zones du primaire vers les secondaires par transfert AXFR.",
       },
       {
         icon: Globe,
@@ -153,7 +153,7 @@ const SECTIONS: { label: string; concepts: Concept[] }[] = [
         isNew: true,
         href: '/docs/dns',
         description:
-          "Une zone est un domaine que vos serveurs font autorité à résoudre, avec ses enregistrements (A, AAAA, CNAME, MX, TXT, NS, CAA, SRV, PTR). Un enregistrement peut viser directement un nœud de la flotte, et être marqué « géo » : le serveur renvoie alors l'adresse du nœud le plus proche de la personne qui interroge.",
+"Une zone est un domaine que vos serveurs font autorité à résoudre, avec ses enregistrements (A, AAAA, CNAME, MX, TXT, NS, CAA, SRV, PTR). Un enregistrement peut viser directement un nœud de la flotte, et être marqué « géo » : le serveur renvoie alors l'adresse du nœud le plus proche de la personne qui interroge.",
       },
       {
         icon: Network,
@@ -161,7 +161,7 @@ const SECTIONS: { label: string; concepts: Concept[] }[] = [
         isNew: true,
         href: '/docs/dns',
         description:
-          "Indépendamment de vos zones publiques, un nœud du workspace peut être désigné résolveur interne : chaque serveur devient joignable par son nom en <nom>.tarmac.local sur le VLAN, sans avoir à retenir les IP privées. La liste est resynchronisée automatiquement à chaque changement de la flotte.",
+"Indépendamment de vos zones publiques, un nœud du workspace peut être désigné résolveur interne : chaque serveur devient joignable par son nom en <nom>.tarmac.local sur le VLAN, sans avoir à retenir les IP privées. La liste est resynchronisée automatiquement à chaque changement de la flotte.",
       },
     ],
   },
@@ -172,14 +172,14 @@ const SECTIONS: { label: string; concepts: Concept[] }[] = [
         icon: Bell,
         title: 'Alertes',
         description:
-          "Une règle de seuil (ex: CPU > 90%) est évaluée automatiquement chaque minute sur les nœuds ciblés. L'alerte créée se résout d'elle-même dès le retour sous le seuil, et peut être notifiée par e-mail, webhook ou Slack.",
+"Une règle de seuil (ex: CPU > 90%) est évaluée automatiquement chaque minute sur les nœuds ciblés. L'alerte créée se résout d'elle-même dès le retour sous le seuil, et peut être notifiée par e-mail, webhook ou Slack.",
       },
       {
         icon: ScrollText,
         title: 'Journal & audit',
         isNew: true,
         description:
-          "Deux flux dans un même écran : le journal d'actions (qui a créé, modifié ou supprimé quoi, avec le détail de la requête) et les logs remontés par les agents. Les deux arrivent en direct par WebSocket, se filtrent par nœud, niveau, action ou période, et s'exportent en CSV ou JSON.",
+"Deux flux dans un même écran : le journal d'actions (qui a créé, modifié ou supprimé quoi, avec le détail de la requête) et les logs remontés par les agents. Les deux arrivent en direct par WebSocket, se filtrent par nœud, niveau, action ou période, et s'exportent en CSV ou JSON.",
       },
     ],
   },
@@ -189,8 +189,7 @@ export default function ConceptsPage() {
   return (
     <div className="space-y-12">
       <PageHeader
-        icon={Boxes}
-        title={<AnimatedGradientText speed={0.6}>Concepts clés</AnimatedGradientText>}
+        title="Concepts clés"
         description="Le vocabulaire de Tarmac, expliqué simplement — pas besoin d'être expert réseau pour s'y retrouver."
       />
 
@@ -200,10 +199,10 @@ export default function ConceptsPage() {
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {section.concepts.map((concept) => {
               const body = (
-                <Card className="h-full bg-panel-glow transition-colors hover:border-white/[0.14]">
+                <Card className="h-full transition-colors hover:border-border">
                   <CardHeader>
                     <div className="flex items-center gap-2.5">
-                      <concept.icon className="h-4 w-4 shrink-0 text-violet-400" />
+                      <concept.icon className="h-4 w-4 shrink-0 text-muted-foreground" />
                       <CardTitle className="text-base">{concept.title}</CardTitle>
                       {concept.isNew && (
                         <span className="rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-300">

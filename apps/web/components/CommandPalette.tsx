@@ -45,8 +45,16 @@ export function CommandPalette() {
         setOpen((prev) => !prev);
       }
     };
+    // The header's search affordance advertised ⌘K but wasn't clickable;
+    // it now opens the palette through this event rather than needing the
+    // layout and the palette to share state.
+    const onOpenRequest = () => setOpen(true);
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener('tarmac:open-command-palette', onOpenRequest);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('tarmac:open-command-palette', onOpenRequest);
+    };
   }, []);
 
   useEffect(() => {
@@ -125,7 +133,7 @@ export function CommandPalette() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="max-w-lg p-0">
-        <div className="flex items-center gap-2 border-b border-white/[0.08] px-4 py-3">
+        <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <Search className="h-4 w-4 text-muted-foreground" />
           <input
             ref={inputRef}
@@ -157,12 +165,12 @@ export function CommandPalette() {
               >
                 <Icon className="h-4 w-4 shrink-0" />
                 <span className="flex-1 truncate">{result.label}</span>
-                {result.sublabel && <span className="shrink-0 text-xs text-zinc-500">{result.sublabel}</span>}
+                {result.sublabel && <span className="shrink-0 text-xs text-muted-foreground">{result.sublabel}</span>}
               </button>
             );
           })}
         </div>
-        <div className="border-t border-white/[0.08] px-4 py-2 text-xs text-zinc-600">
+        <div className="border-t border-border px-4 py-2 text-xs text-zinc-600">
           ↑↓ naviguer · Entrée ouvrir · Échap fermer
         </div>
       </DialogContent>

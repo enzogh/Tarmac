@@ -2,7 +2,8 @@
 
 import { ReactNode } from 'react';
 import { Tags } from 'lucide-react';
-import { Card as ShadCard, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Card as ShadCard } from './ui/card';
+import { Stat, type StatTone } from './ui/stat';
 import { Badge as ShadBadge } from './ui/badge';
 import { cn } from '../lib/utils';
 
@@ -17,36 +18,16 @@ interface StatCardProps {
   changeType?: 'up' | 'down' | 'neutral';
 }
 
+/**
+ * The original KPI tile, kept as a thin adapter over `Stat` so the ~45
+ * existing call sites across the dashboard pages pick up the new tile
+ * without each having to be rewritten. New code should use `Stat`
+ * directly, which takes a semantic `tone` rather than this up/down/neutral
+ * vocabulary borrowed from financial deltas.
+ */
 export function StatCard({ label, value, icon, change, changeType }: StatCardProps) {
-  return (
-    <ShadCard className="bg-panel-glow">
-      <CardContent className="pt-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-sm text-muted-foreground">{label}</p>
-            <p className="mt-2 text-3xl font-semibold tracking-tight text-foreground">{value}</p>
-            {change && (
-              <p
-                className={cn(
-                  'mt-2 text-xs font-medium',
-                  changeType === 'up'
-                    ? 'text-emerald-400'
-                    : changeType === 'down'
-                      ? 'text-rose-400'
-                      : 'text-muted-foreground'
-                )}
-              >
-                {change}
-              </p>
-            )}
-          </div>
-          {icon && (
-            <div className="text-muted-foreground opacity-70">{icon}</div>
-          )}
-        </div>
-      </CardContent>
-    </ShadCard>
-  );
+  const tone: StatTone = changeType === 'up' ? 'ok' : changeType === 'down' ? 'danger' : 'neutral';
+  return <Stat label={label} value={value} hint={change} iconNode={icon} tone={tone} />;
 }
 
 interface BadgeProps {
@@ -81,7 +62,7 @@ export function NodeLabelBadges({ labels, className }: { labels: string[]; class
       {labels.map((label) => (
         <span
           key={label}
-          className="inline-flex items-center gap-1 rounded-full border border-violet-400/30 bg-violet-500/15 px-2 py-0.5 text-[11px] text-violet-100"
+          className="inline-flex items-center gap-1 rounded-full border border-violet-400/30 bg-violet-500/15 px-2 py-0.5 text-2xs text-violet-100"
         >
           <Tags className="h-3 w-3" />
           {label}
@@ -101,7 +82,7 @@ export function Table({ headers, rows }: TableProps) {
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-white/[0.08]">
+          <tr className="border-b border-border">
             {headers.map((header, i) => (
               <th key={i} className="px-4 py-3 text-left font-semibold text-muted-foreground text-xs">
                 {header}
@@ -111,7 +92,7 @@ export function Table({ headers, rows }: TableProps) {
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={i} className="border-b border-white/[0.06] transition-colors hover:bg-white/[0.02]">
+            <tr key={i} className="border-b border-border transition-colors hover:bg-surface-2">
               {row.map((cell, j) => (
                 <td key={j} className="px-4 py-3 text-foreground/90">{cell}</td>
               ))}

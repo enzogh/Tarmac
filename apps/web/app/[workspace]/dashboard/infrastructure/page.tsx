@@ -46,7 +46,10 @@ import { Alert, AlertDescription } from '../../../../components/ui/alert';
 import { SmartTrendChart } from '../../../../components/dashboard-charts';
 import { ServerTrendCard } from '../../../../components/ServerTrendCard';
 import { NodeComparisonChart } from '../../../../components/dashboard-charts';
-import { StatCard, Badge, NodeLabelBadges } from '../../../../components/ui';
+import { Badge, NodeLabelBadges } from '../../../../components/ui';
+import { Stat, StatRow } from '../../../../components/ui/stat';
+import { NODE_STATUS, StatusDot, StatusPill, describe } from '../../../../components/ui/status';
+import { formatCapacity, formatRelative, formatThroughput } from '../../../../lib/format';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../../components/ui/card';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
@@ -85,24 +88,28 @@ function NodeMeter({
   label,
   value,
   suffix,
+  className,
 }: {
   icon: LucideIcon;
   label: string;
   value: number;
   suffix?: string;
+  className?: string;
 }) {
   const tone = meterTone(value);
   return (
-    <div>
-      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+    <div className={`rounded-lg border border-border bg-surface-2 px-3 py-2 ${className ?? ''}`}>
+      <div className="flex items-center justify-between text-2xs text-muted-foreground">
         <span className="flex items-center gap-1.5">
           <Icon className="h-3.5 w-3.5" />
           {label}
         </span>
-        <span className={`font-medium ${tone.text}`}>{Math.round(value)}%</span>
+        <span className="flex items-center gap-2">
+          {suffix && <span className="tabular truncate text-muted-foreground">{suffix}</span>}
+          <span className={`tabular font-medium ${tone.text}`}>{Math.round(value)} %</span>
+        </span>
       </div>
-      <Progress value={value} className="mt-1.5 h-1.5" indicatorClassName={`bg-gradient-to-r ${tone.bar}`} />
-      {suffix && <p className="mt-1 truncate text-[11px] text-muted-foreground">{suffix}</p>}
+      <Progress value={value} className="mt-1.5 h-1" indicatorClassName={`bg-gradient-to-r ${tone.bar}`} />
     </div>
   );
 }
@@ -619,8 +626,7 @@ export default function InfrastructurePage() {
   return (
       <div className="space-y-8">
         <PageHeader
-          icon={Server}
-          title={<AnimatedGradientText speed={0.6}>Infrastructure</AnimatedGradientText>}
+          title="Infrastructure"
           description="Pilotage des nœuds, monitoring temps réel, scan volumétrique des dossiers et opérations agent sans CLI."
           actions={<NodeOnboardingModal onCreated={refreshNodes} />}
         />
@@ -631,40 +637,58 @@ export default function InfrastructurePage() {
           </Alert>
         )}
 
-        <section className="space-y-4">
-          <SectionLabel>Aperçu</SectionLabel>
-          {nodesLoading ? (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
-              {Array.from({ length: 6 }).map((_, index) => (
-                <StatCardSkeleton key={index} />
-              ))}
-            </div>
-          ) : (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6 animate-fade-in">
-            <StatCard label="Nœuds online" value={onlineNodes} icon={<Server className="h-8 w-8" />} changeType="up" />
-            <StatCard
-              label="Nœuds dégradés"
-              value={degradedNodes}
-              icon={<Gauge className="h-8 w-8" />}
-              changeType={degradedNodes > 0 ? 'neutral' : 'up'}
+        {nodesLoading ? (
+          <StatRow className="xl:grid-cols-5">
+            {Array.from({ length: 5 }).map((_, index) => (
+              <StatCardSkeleton key={index} />
+            ))}
+          </StatRow>
+        ) : (
+          /* Five tiles, not six: "Nœuds dégradés" is the same fact as
+"Nœuds online" seen from the other side, and at six columns
+             every label wrapped onto three lines. */
+          <StatRow className="animate-fade-in xl:grid-cols-5">
+            <Stat
+              label="Nœuds en ligne"
+              value={onlineNodes}
+              unit={`/ ${nodes.length}`}
+              icon={Server}
+              tone={degradedNodes > 0 || onlineNodes < nodes.length ? 'warn' : 'ok'}
+              hint={degradedNodes > 0 ? `${degradedNodes} dégradé${degradedNodes > 1 ? 's' : ''}` : 'Tous nominaux'}
             />
-            <StatCard label="CPU moyen" value={`${Math.round(avgCpu)}%`} icon={<Cpu className="h-8 w-8" />} changeType="neutral" />
-            <StatCard label="RAM moyenne" value={`${Math.round(avgRam)}%`} icon={<HardDrive className="h-8 w-8" />} changeType="neutral" />
-            <StatCard
-              label="Disques en alerte SMART"
+            <Stat
+              label="CPU moyen"
+              value={Math.round(avgCpu)}
+              unit="%"
+              icon={Cpu}
+              tone={avgCpu >= 85 ? 'danger' : avgCpu >= 65 ? 'warn' : 'neutral'}
+              hint="Sur les nœuds joignables"
+            />
+            <Stat
+              label="RAM moyenne"
+              value={Math.round(avgRam)}
+              unit="%"
+              icon={Gauge}
+              tone={avgRam >= 85 ? 'danger' : avgRam >= 65 ? 'warn' : 'neutral'}
+              hint="Sur les nœuds joignables"
+            />
+            <Stat
+              label="Disques SMART"
               value={disksWithSmartIssues}
-              icon={<HardDrive className="h-8 w-8" />}
-              changeType={disksWithSmartIssues > 0 ? 'down' : 'up'}
+              icon={HardDrive}
+              tone={disksWithSmartIssues > 0 ? 'danger' : 'ok'}
+              hint={disksWithSmartIssues > 0 ? 'À remplacer rapidement' : 'Aucune anomalie'}
             />
             <Tooltip>
               <TooltipTrigger asChild>
                 <div>
-                  <StatCard
-                    label="Version agent"
-                    value={`${upToDateNodes}/${nodes.length}`}
-                    change={controlVersion ? `réf. ${controlVersion}` : undefined}
-                    changeType={nodes.length === 0 ? 'neutral' : fleetVersionAligned ? 'up' : 'down'}
-                    icon={<GitCommitHorizontal className="h-8 w-8" />}
+                  <Stat
+                    label="Agents à jour"
+                    value={upToDateNodes}
+                    unit={`/ ${nodes.length}`}
+                    icon={GitCommitHorizontal}
+                    tone={nodes.length === 0 ? 'neutral' : fleetVersionAligned ? 'ok' : 'warn'}
+                    hint={controlVersion ? `réf. ${controlVersion}` : 'Version de référence inconnue'}
                   />
                 </div>
               </TooltipTrigger>
@@ -676,9 +700,8 @@ export default function InfrastructurePage() {
                     : `${outdatedNodes} nœud(s) à mettre à jour vers ${controlVersion ?? 'la dernière version'}`}
               </TooltipContent>
             </Tooltip>
-          </div>
-          )}
-        </section>
+          </StatRow>
+        )}
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList>
@@ -712,7 +735,7 @@ export default function InfrastructurePage() {
                 <span className="font-medium text-foreground">{Math.round(avgRam)}% RAM</span>
               </p>
             </div>
-            <Card className="border-white/[0.08] bg-panel-glow">
+            <Card className="border-border ">
               <CardContent className="pt-6">
                 <NodeComparisonChart data={nodeComparisonData} />
               </CardContent>
@@ -754,10 +777,10 @@ export default function InfrastructurePage() {
             </Alert>
           )}
           <div className="grid gap-4 xl:grid-cols-[1.25fr_minmax(0,1fr)]">
-          <Card className="border-white/[0.08] bg-zinc-900/65">
+          <Card className="border-border bg-surface-1">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
-                <FolderSearch className="h-4 w-4 text-violet-300" />
+                <FolderSearch className="h-4 w-4 text-primary" />
                 Navigateur de dossiers par nœud
               </CardTitle>
             </CardHeader>
@@ -780,11 +803,11 @@ export default function InfrastructurePage() {
                       className={`rounded-xl border px-3 py-2 text-left transition ${
                         selected
                           ? 'border-violet-400/40 bg-violet-500/15 text-violet-100'
-                          : 'border-white/[0.08] bg-zinc-950/50 text-zinc-200 hover:border-violet-400/25'
+                          : 'border-border bg-surface-2 text-foreground/90 hover:border-violet-400/25'
                       }`}
                     >
                       <p className="truncate text-sm font-medium">{node.name}</p>
-                      <p className="truncate text-[11px] text-muted-foreground">{node.role}</p>
+                      <p className="truncate text-2xs text-muted-foreground">{node.role}</p>
                     </button>
                   );
                 })}
@@ -807,16 +830,16 @@ export default function InfrastructurePage() {
             </CardContent>
           </Card>
 
-          <Card className="border-white/[0.08] bg-zinc-900/65">
+          <Card className="border-border bg-surface-1">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
-                <HardDrive className="h-4 w-4 text-cyan-300" />
+                <HardDrive className="h-4 w-4 text-muted-foreground" />
                 Scan dossiers volumineux
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3 text-xs text-muted-foreground">
-                <p className="font-mono text-zinc-200">{selectedPath || browsePath}</p>
+              <div className="rounded-xl border border-border bg-surface-2 p-3 text-xs text-muted-foreground">
+                <p className="font-mono text-foreground/90">{selectedPath || browsePath}</p>
                 <p className="mt-1">
                   Lance un top des dossiers les plus lourds du chemin courant pour accélérer le diagnostic.
                 </p>
@@ -832,21 +855,21 @@ export default function InfrastructurePage() {
 
               <div className="space-y-2">
                 {scanResults.map((entry) => (
-                  <div key={entry.path} className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3">
+                  <div key={entry.path} className="rounded-xl border border-border bg-surface-2 p-3">
                     <div className="mb-2 flex items-center justify-between gap-2 text-xs">
-                      <p className="truncate font-mono text-zinc-200">{entry.path}</p>
+                      <p className="truncate font-mono text-foreground/90">{entry.path}</p>
                       <p className="shrink-0 font-semibold text-cyan-200">{formatBytes(entry.sizeBytes)}</p>
                     </div>
                     <Progress value={(entry.sizeBytes / scanMax) * 100} className="h-1.5" />
                   </div>
                 ))}
                 {!scanLoading && scanResults.length === 0 && (
-                  <p className="rounded-xl border border-dashed border-white/10 bg-zinc-950/40 px-3 py-4 text-center text-xs text-muted-foreground">
+                  <p className="rounded-xl border border-dashed border-border bg-surface-2 px-3 py-4 text-center text-xs text-muted-foreground">
                     Aucun résultat de scan pour le moment.
                   </p>
                 )}
                 {scanTruncated && (
-                  <p className="text-[11px] text-amber-300">
+                  <p className="text-2xs text-amber-300">
                     Résultat partiel: scan borné pour préserver la réactivité.
                   </p>
                 )}
@@ -857,13 +880,13 @@ export default function InfrastructurePage() {
           </TabsContent>
 
           <TabsContent value="nodes">
-          <Card className="border-white/[0.08] bg-zinc-900/65">
+          <Card>
           <CardHeader>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Server className="h-5 w-5 text-violet-400" />
-                <CardTitle>Nœuds (serveurs)</CardTitle>
-              </div>
+              <CardTitle>
+                <Server className="h-4 w-4 text-muted-foreground" />
+                Nœuds ({nodes.length})
+              </CardTitle>
               <div className="flex flex-wrap items-center gap-2">
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -894,25 +917,21 @@ export default function InfrastructurePage() {
               {nodes.map((node) => {
                 const geo = getNodeGeo(node);
                 const labels = nodeLabels[node.id] ?? [];
-                const statusDotClass =
-                  node.status === 'online' ? 'bg-emerald-400' : node.status === 'degraded' ? 'bg-amber-400' : 'bg-rose-400';
+                const nodeStatus = describe(NODE_STATUS, node.status);
                 const smartIssue = node.storage.disks.some((disk) => disk.smart && disk.smart.overall !== 'healthy');
 
                 return (
                   <div
                     key={node.id}
-                    className="rounded-2xl border border-white/[0.08] bg-panel-glow p-5 transition-colors hover:border-white/[0.14]"
+                    className="rounded-xl border border-border bg-surface-1 p-4 transition-colors hover:bg-surface-2/40"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-2.5">
-                        <span className="relative flex h-2.5 w-2.5 shrink-0">
-                          {node.status === 'online' && (
-                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-                          )}
-                          <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${statusDotClass}`} />
-                        </span>
+                        <StatusDot tone={nodeStatus.tone} pulse={node.status === 'online'} />
                         <div className="min-w-0">
-                          <p className="truncate text-base font-semibold text-zinc-100">{node.name}</p>
+                          <p className="truncate text-sm font-semibold text-foreground" title={node.name}>
+                            {node.name}
+                          </p>
                           <p className="truncate text-xs text-muted-foreground">
                             <span className="capitalize">{node.role}</span>
                             {geo && (
@@ -937,10 +956,9 @@ export default function InfrastructurePage() {
                             {node.agentVersionAt && <p>Depuis : {formatDateTime(node.agentVersionAt)}</p>}
                           </TooltipContent>
                         </Tooltip>
-                        <Badge
-                          label={node.status}
-                          type={node.status === 'online' ? 'success' : node.status === 'degraded' ? 'warning' : 'error'}
-                        />
+                        <StatusPill tone={nodeStatus.tone} dot={false}>
+                          {nodeStatus.label}
+                        </StatusPill>
                       </div>
                     </div>
 
@@ -968,44 +986,55 @@ export default function InfrastructurePage() {
                       </Alert>
                     )}
 
-                    <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    {/* Two cards per row leaves ~280px per node, which is not
+                        enough for three meters side by side: the percentage
+                        wrapped under its own label and the capacity line was
+                        cut off mid-number. CPU and RAM pair up; storage, which
+                        carries a second figure, spans the full width. */}
+                    <div className="mt-3 grid grid-cols-2 gap-2">
                       <NodeMeter icon={Cpu} label="CPU" value={node.metrics.cpu} />
                       <NodeMeter icon={Gauge} label="RAM" value={node.metrics.ram} />
                       <NodeMeter
+                        className="col-span-2"
                         icon={HardDrive}
                         label="Stockage"
                         value={node.storage.usageRatio * 100}
-                        suffix={`${node.storage.totalUsedGb} / ${node.storage.totalCapacityGb} GB`}
+                        suffix={`${formatCapacity(node.storage.totalUsedGb)} sur ${formatCapacity(node.storage.totalCapacityGb)}`}
                       />
                     </div>
 
-                    <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-white/[0.06] pt-3 text-[11px] text-muted-foreground">
-                      <span className="flex items-center gap-1 font-mono">
+                    {/* The node's opaque cuid used to sit here in full, eating
+                        a third of the row for something nobody reads at a
+                        glance; it moved into the detail drawer. */}
+                    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border pt-3 text-2xs text-muted-foreground">
+                      <span className="tabular flex items-center gap-1 font-mono">
                         <Globe2 className="h-3 w-3" />
                         {getExternalIp(node)}
                       </span>
-                      <span className="flex items-center gap-1">
+                      <span className="tabular flex items-center gap-1">
                         <ArrowDownToLine className="h-3 w-3" />
-                        {formatMbps(node.metrics.networkRx)}
+                        {formatThroughput(node.metrics.networkRx)}
                       </span>
-                      <span className="flex items-center gap-1">
+                      <span className="tabular flex items-center gap-1">
                         <ArrowUpToLine className="h-3 w-3" />
-                        {formatMbps(node.metrics.networkTx)}
+                        {formatThroughput(node.metrics.networkTx)}
                       </span>
-                      <span className="truncate font-mono" title={node.id}>
-                        {node.id}
-                      </span>
-                      <span className="ml-auto shrink-0">Vu {formatDateTime(node.lastSeenAt)}</span>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="ml-auto shrink-0 cursor-default">Vu {formatRelative(node.lastSeenAt)}</span>
+                        </TooltipTrigger>
+                        <TooltipContent>{formatDateTime(node.lastSeenAt)}</TooltipContent>
+                      </Tooltip>
                     </div>
 
-                    <div className="mt-3 flex items-center justify-end gap-1 border-t border-white/[0.06] pt-3">
+                    <div className="mt-3 flex items-center justify-end gap-0.5 border-t border-border pt-2">
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
                             variant="ghost"
                             size="icon"
                             onClick={() => setInspectingNode(node)}
-                            className="h-8 w-8 text-muted-foreground hover:text-cyan-300"
+                            className="h-8 w-8 text-muted-foreground hover:text-muted-foreground"
                           >
                             <Eye className="h-3.5 w-3.5" />
                           </Button>
@@ -1019,7 +1048,7 @@ export default function InfrastructurePage() {
                             size="icon"
                             onClick={() => setSmartNode(node)}
                             className={`h-8 w-8 ${
-                              smartIssue ? 'text-rose-400 hover:text-rose-300' : 'text-muted-foreground hover:text-cyan-300'
+                              smartIssue ? 'text-rose-400 hover:text-rose-300' : 'text-muted-foreground hover:text-muted-foreground'
                             }`}
                           >
                             <Thermometer className="h-3.5 w-3.5" />
@@ -1149,27 +1178,27 @@ export default function InfrastructurePage() {
             {inspectingNode && (
               <div className="space-y-4">
                 <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
-                  <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3">
+                  <div className="rounded-xl border border-border bg-surface-2 p-3">
                     <p className="text-xs uppercase tracking-wide text-muted-foreground">Node ID</p>
-                    <p className="mt-1 break-all font-mono text-zinc-200">{inspectingNode.id}</p>
+                    <p className="mt-1 break-all font-mono text-foreground/90">{inspectingNode.id}</p>
                   </div>
-                  <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3">
+                  <div className="rounded-xl border border-border bg-surface-2 p-3">
                     <p className="text-xs uppercase tracking-wide text-muted-foreground">IP externe</p>
-                    <p className="mt-1 font-mono text-zinc-200">{getExternalIp(inspectingNode)}</p>
+                    <p className="mt-1 font-mono text-foreground/90">{getExternalIp(inspectingNode)}</p>
                   </div>
-                  <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3">
+                  <div className="rounded-xl border border-border bg-surface-2 p-3">
                     <p className="text-xs uppercase tracking-wide text-muted-foreground">Endpoint overlay</p>
-                    <p className="mt-1 break-all font-mono text-zinc-200">{inspectingNode.overlayEndpoint || '-'}</p>
+                    <p className="mt-1 break-all font-mono text-foreground/90">{inspectingNode.overlayEndpoint || '-'}</p>
                   </div>
-                  <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3">
+                  <div className="rounded-xl border border-border bg-surface-2 p-3">
                     <p className="text-xs uppercase tracking-wide text-muted-foreground">Dernière activité</p>
-                    <p className="mt-1 text-zinc-200">{formatDateTime(inspectingNode.lastSeenAt)}</p>
+                    <p className="mt-1 text-foreground/90">{formatDateTime(inspectingNode.lastSeenAt)}</p>
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  <p className="flex items-center gap-2 text-sm font-medium text-zinc-100">
-                    <Globe className="h-4 w-4 text-violet-400" />
+                  <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    <Globe className="h-4 w-4 text-muted-foreground" />
                     Enregistrements DNS pointant ici
                   </p>
                   {dnsRecordsLoading ? (
@@ -1179,9 +1208,9 @@ export default function InfrastructurePage() {
                       {dnsRecordsForNode.map((record) => (
                         <div
                           key={record.recordId}
-                          className="flex flex-wrap items-center gap-2 rounded-xl border border-white/[0.08] bg-zinc-950/50 p-2.5 text-xs"
+                          className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface-2 p-2.5 text-xs"
                         >
-                          <span className="font-mono text-zinc-200">
+                          <span className="font-mono text-foreground/90">
                             {record.recordName === '@' ? record.zoneName : `${record.recordName}.${record.zoneName}`}
                           </span>
                           <Badge label={record.type} type="info" />
@@ -1195,15 +1224,15 @@ export default function InfrastructurePage() {
                 </div>
 
                 <div className="space-y-2">
-                  <p className="text-sm font-medium text-zinc-100">Disques</p>
+                  <p className="text-sm font-medium text-foreground">Disques</p>
                   <div className="space-y-2">
                     {inspectingNode.storage.disks.map((disk) => (
                       <div
                         key={disk.id}
-                        className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3 text-xs text-muted-foreground"
+                        className="rounded-xl border border-border bg-surface-2 p-3 text-xs text-muted-foreground"
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <p className="font-mono text-zinc-200">{disk.mountPath}</p>
+                          <p className="font-mono text-foreground/90">{disk.mountPath}</p>
                           <p className="capitalize">{disk.type}</p>
                         </div>
                         <div className="mt-2 flex items-center justify-between gap-2">
@@ -1242,14 +1271,14 @@ export default function InfrastructurePage() {
                             <button
                               type="button"
                               onClick={() => toggleSmartHistory(inspectingNode.id, disk)}
-                              className="ml-auto text-xs font-medium text-violet-300 hover:text-violet-200"
+                              className="ml-auto text-xs font-medium text-primary hover:text-violet-200"
                             >
                               {expandedSmartDiskId === disk.id ? 'Masquer l’historique' : 'Historique SMART'}
                             </button>
                           </div>
                         )}
                         {expandedSmartDiskId === disk.id && (
-                          <div className="mt-3 rounded-lg border border-white/[0.06] bg-zinc-950/60 p-2">
+                          <div className="mt-3 rounded-lg border border-border bg-background p-2">
                             {smartHistoryLoading === disk.id ? (
                               <p className="py-6 text-center text-xs text-muted-foreground">Chargement…</p>
                             ) : (
@@ -1272,7 +1301,7 @@ export default function InfrastructurePage() {
                       </div>
                     ))}
                     {inspectingNode.storage.disks.length === 0 && (
-                      <p className="rounded-xl border border-dashed border-white/10 bg-zinc-950/40 px-3 py-4 text-center text-xs text-muted-foreground">
+                      <p className="rounded-xl border border-dashed border-border bg-surface-2 px-3 py-4 text-center text-xs text-muted-foreground">
                         Aucun disque remonté par l’agent.
                       </p>
                     )}
@@ -1296,14 +1325,14 @@ export default function InfrastructurePage() {
             {smartNode && (
               <div className="space-y-3">
                 {smartNode.storage.disks.length === 0 && (
-                  <p className="rounded-xl border border-dashed border-white/10 bg-zinc-950/40 px-3 py-4 text-center text-xs text-muted-foreground">
+                  <p className="rounded-xl border border-dashed border-border bg-surface-2 px-3 py-4 text-center text-xs text-muted-foreground">
                     Aucun disque remonté par l’agent.
                   </p>
                 )}
                 {smartNode.storage.disks.map((disk) => (
-                  <div key={disk.id} className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3">
+                  <div key={disk.id} className="rounded-xl border border-border bg-surface-2 p-3">
                     <div className="flex items-center justify-between gap-2">
-                      <p className="font-mono text-sm text-zinc-200">{disk.mountPath}</p>
+                      <p className="font-mono text-sm text-foreground/90">{disk.mountPath}</p>
                       <p className="text-xs capitalize text-muted-foreground">{disk.type}</p>
                     </div>
                     {disk.smart ? (
@@ -1335,7 +1364,7 @@ export default function InfrastructurePage() {
                           <span>{Math.round(disk.smart.powerOnHours / 24)} j. d’activité</span>
                           <span>Relevé {formatDateTime(disk.smart.collectedAt)}</span>
                         </div>
-                        <div className="mt-3 rounded-lg border border-white/[0.06] bg-zinc-950/60 p-2">
+                        <div className="mt-3 rounded-lg border border-border bg-background p-2">
                           {smartHistoryByDisk[disk.id] ? (
                             <SmartTrendChart
                               data={smartHistoryByDisk[disk.id].map((point) => ({

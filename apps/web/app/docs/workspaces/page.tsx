@@ -30,8 +30,7 @@ export default function WorkspacesDocsPage() {
   return (
     <div className="space-y-12">
       <PageHeader
-        icon={LayoutGrid}
-        title={<AnimatedGradientText speed={0.6}>Workspaces &amp; accès</AnimatedGradientText>}
+        title="Workspaces &amp; accès"
         description="Plusieurs flottes indépendantes dans une même installation Tarmac : chacune avec ses serveurs, son réseau privé, ses zones DNS et ses membres."
       />
 
@@ -82,7 +81,7 @@ export default function WorkspacesDocsPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
-                <Network className="h-4 w-4 text-violet-400" />
+                <Network className="h-4 w-4 text-muted-foreground" />
                 Un sous-réseau par workspace
               </CardTitle>
               <CardDescription>
@@ -96,7 +95,7 @@ export default function WorkspacesDocsPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
-                <ShieldAlert className="h-4 w-4 text-violet-400" />
+                <ShieldAlert className="h-4 w-4 text-muted-foreground" />
                 Suppression protégée
               </CardTitle>
               <CardDescription>
@@ -114,7 +113,7 @@ export default function WorkspacesDocsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
-              <KeyRound className="h-4 w-4 text-violet-400" />
+              <KeyRound className="h-4 w-4 text-muted-foreground" />
               Mot de passe ou SSO Authentik
             </CardTitle>
             <CardDescription>
@@ -150,7 +149,7 @@ export default function WorkspacesDocsPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
-                <Users className="h-4 w-4 text-violet-400" />
+                <Users className="h-4 w-4 text-muted-foreground" />
                 Ajout manuel
               </CardTitle>
               <CardDescription>
@@ -163,7 +162,7 @@ export default function WorkspacesDocsPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
-                <KeyRound className="h-4 w-4 text-violet-400" />
+                <KeyRound className="h-4 w-4 text-muted-foreground" />
                 Rattachement par groupe SSO
               </CardTitle>
               <CardDescription>

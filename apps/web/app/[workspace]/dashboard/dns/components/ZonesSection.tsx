@@ -142,7 +142,7 @@ export function ZonesSection({
     <section className="space-y-4">
       <SectionLabel>Zones</SectionLabel>
       {!zonesLoading && recordTypeBreakdown.length > 0 && (
-        <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+        <Card className="border-border bg-surface-1 backdrop-blur">
           <CardHeader>
             <CardTitle className="text-sm font-medium text-zinc-300">Répartition des enregistrements par type</CardTitle>
           </CardHeader>
@@ -154,7 +154,7 @@ export function ZonesSection({
       {zonesLoading ? (
         <CardListSkeleton cards={2} />
       ) : zones.length === 0 ? (
-        <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+        <Card className="border-border bg-surface-1 backdrop-blur">
           <CardContent className="pt-12 pb-12 text-center">
             <Globe className="mx-auto mb-4 h-12 w-12 text-muted-foreground/50" />
             <p className="font-medium text-muted-foreground">Aucune zone créée</p>
@@ -172,7 +172,7 @@ export function ZonesSection({
             const key = `zone:${zone.id}`;
             const collapsed = cards.isCollapsed(zone.id);
             return (
-              <Card key={zone.id} className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+              <Card key={zone.id} className="border-border bg-surface-1 backdrop-blur">
                 <CardHeader>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <button
@@ -182,7 +182,7 @@ export function ZonesSection({
                     >
                       <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${collapsed ? '-rotate-90' : ''}`} />
                       <CardTitle className="flex items-center gap-2">
-                        <Globe className="w-5 h-5 text-violet-400" />
+                        <Globe className="w-5 h-5 text-muted-foreground" />
                         {zone.name}
                       </CardTitle>
                     </button>
@@ -198,7 +198,7 @@ export function ZonesSection({
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className={journal.expandedLogKey === memberKey ? 'text-violet-400' : ''}
+                                className={journal.expandedLogKey === memberKey ? 'text-muted-foreground' : ''}
                                 onClick={() => journal.toggleLogs(memberKey, member.nodeId)}
                               >
                                 {isPrimary ? <Crown className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}

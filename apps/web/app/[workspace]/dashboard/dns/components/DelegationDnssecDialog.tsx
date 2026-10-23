@@ -136,7 +136,7 @@ export function DelegationDnssecDialog({
                 <div className="space-y-2">
                   <p className="text-muted-foreground">Nameservers de cette zone :</p>
                   {infoPanel.delegation.nsHostnames.map((host) => (
-                    <div key={host} className="rounded-lg border border-white/[0.08] bg-zinc-950/60 px-3 py-2 font-mono">
+                    <div key={host} className="rounded-lg border border-border bg-background px-3 py-2 font-mono">
                       {host}
                     </div>
                   ))}
@@ -192,7 +192,7 @@ export function DelegationDnssecDialog({
             </p>
             {infoPanel?.dnssec?.dsRecords.length ? (
               infoPanel.dnssec.dsRecords.map((ds) => (
-                <div key={ds} className="rounded-lg border border-white/[0.08] bg-zinc-950/60 px-3 py-2 font-mono text-xs break-all">
+                <div key={ds} className="rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs break-all">
                   {ds}
                 </div>
               ))

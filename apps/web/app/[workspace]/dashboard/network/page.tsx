@@ -46,7 +46,7 @@ import type { WorldMapLink, WorldMapNode } from '@/components/WorldMap';
 const WorldMap = dynamic(() => import('@/components/WorldMap').then((mod) => mod.WorldMap), {
   ssr: false,
   loading: () => (
-    <div className="flex h-[560px] items-center justify-center rounded-xl border border-white/[0.08] bg-zinc-950/50 text-sm text-muted-foreground">
+    <div className="flex h-[560px] items-center justify-center rounded-xl border border-border bg-surface-2 text-sm text-muted-foreground">
       Chargement de la carte…
     </div>
   ),
@@ -203,7 +203,7 @@ const matrixCellTone = (status?: VlanConnection['status']) => {
   if (status === 'healthy') return 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100';
   if (status === 'degraded') return 'border-amber-400/30 bg-amber-500/10 text-amber-100';
   if (status === 'offline') return 'border-rose-400/30 bg-rose-500/10 text-rose-100';
-  return 'border-white/10 bg-zinc-900/60 text-zinc-400';
+  return 'border-border bg-zinc-900/60 text-muted-foreground';
 };
 
 const clampScale = (value: number) => Math.max(0.45, Math.min(3.2, value));
@@ -1178,7 +1178,7 @@ export default function NetworkPage() {
 
   const content = initialLoading ? (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <StatCardSkeleton />
         <StatCardSkeleton />
         <StatCardSkeleton />
@@ -1187,9 +1187,9 @@ export default function NetworkPage() {
       <ChartCardSkeleton height="h-96" />
     </div>
   ) : !vlanStatus ? (
-    <Card className="border-white/[0.08] bg-panel-glow backdrop-blur transition-colors hover:border-white/[0.14]">
+    <Card className="border-border backdrop-blur transition-colors hover:border-border">
       <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-        <AlertTriangle className="h-8 w-8 text-violet-400" />
+        <AlertTriangle className="h-8 w-8 text-muted-foreground" />
         <h3 className="text-xl font-semibold text-foreground">Aucun réseau VLAN trouvé</h3>
         <p className="max-w-md text-sm text-muted-foreground">
           Déployez des agents pour initialiser le VLAN. Les liens et métriques apparaîtront automatiquement.
@@ -1223,7 +1223,7 @@ export default function NetworkPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <StatCard label="Nœuds actifs" value={vlanStatus.memberCount} icon={<Network className="h-8 w-8" />} changeType="neutral" />
           <StatCard
             label="Liens sains"
@@ -1251,10 +1251,10 @@ export default function NetworkPage() {
       </section>
 
       <SectionLabel>Diagnostics</SectionLabel>
-      <Card className="border-white/[0.08] bg-panel-glow backdrop-blur transition-colors hover:border-white/[0.14]">
+      <Card className="border-border backdrop-blur transition-colors hover:border-border">
         <CardHeader>
           <div className="flex items-center gap-2">
-            <Waves className="h-5 w-5 text-violet-400" />
+            <Waves className="h-5 w-5 text-muted-foreground" />
             <CardTitle className="text-base">Tests de connectivité</CardTitle>
           </div>
         </CardHeader>
@@ -1338,7 +1338,7 @@ export default function NetworkPage() {
               {tests.slice(0, 5).map((test) => (
                 <div
                   key={test.id}
-                  className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3"
+                  className="rounded-xl border border-border bg-surface-2 px-4 py-3"
                 >
                   <div className="flex items-start justify-between">
                     <div className="space-y-1">
@@ -1362,17 +1362,17 @@ export default function NetworkPage() {
                     />
                   </div>
                   {test.testType === 'traceroute' && test.hops && test.hops.length > 0 && (
-                    <ol className="mt-3 space-y-1.5 border-t border-white/[0.06] pt-3">
+                    <ol className="mt-3 space-y-1.5 border-t border-border pt-3">
                       {test.hops.map((hop) => {
                         const hopMember = hop.ip ? memberByVlanIp.get(hop.ip) : undefined;
                         return (
                           <li key={hop.hop} className="flex flex-wrap items-center gap-2 text-xs">
-                            <span className="w-5 shrink-0 text-right font-mono text-[11px] text-muted-foreground">
+                            <span className="w-5 shrink-0 text-right font-mono text-2xs text-muted-foreground">
                               {hop.hop}
                             </span>
                             <span className="font-mono text-zinc-300">{hop.ip ?? '* (aucune réponse)'}</span>
                             {hopMember && (
-                              <span className="text-zinc-100">
+                              <span className="text-foreground">
                                 {hopMember.node?.name ?? hopMember.nodeId}
                               </span>
                             )}
@@ -1380,7 +1380,7 @@ export default function NetworkPage() {
                               <Badge label={REGION_LABELS[hopMember.region] ?? hopMember.region} type="info" />
                             )}
                             {hopMember?.node?.overlayIsGateway && <Badge label="Passerelle" type="warning" />}
-                            <span className="ml-auto font-mono text-[11px] text-muted-foreground">
+                            <span className="ml-auto font-mono text-2xs text-muted-foreground">
                               {formatLatency(hop.latencyMs)}
                             </span>
                           </li>
@@ -1404,9 +1404,9 @@ export default function NetworkPage() {
               <p key={`${a.region}-${b.region}`} className="flex flex-wrap items-center gap-1.5">
                 <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
                 Segmentation active : {REGION_LABELS[a.region] ?? a.region} ↔ {REGION_LABELS[b.region] ?? b.region} via{' '}
-                <span className="font-medium text-zinc-100">{a.gateway?.node?.name ?? a.gateway?.nodeId}</span>
+                <span className="font-medium text-foreground">{a.gateway?.node?.name ?? a.gateway?.nodeId}</span>
                 <span>↔</span>
-                <span className="font-medium text-zinc-100">{b.gateway?.node?.name ?? b.gateway?.nodeId}</span>
+                <span className="font-medium text-foreground">{b.gateway?.node?.name ?? b.gateway?.nodeId}</span>
               </p>
             ))}
             {meshedRegionSummaries.map((summary) => (
@@ -1420,18 +1420,18 @@ export default function NetworkPage() {
         </Callout>
       )}
 
-      <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
+      <Card className="border-border transition-colors hover:border-border">
         <CardHeader>
           <div className="flex items-center gap-2">
-            <Globe2 className="h-5 w-5 text-violet-400" />
+            <Globe2 className="h-5 w-5 text-muted-foreground" />
             <CardTitle className="text-base">Régions &amp; passerelles</CardTitle>
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
           {regionSummaries.map(({ region, members, gateway }) => (
-            <div key={region} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+            <div key={region} className="rounded-xl border border-border bg-surface-2 p-3">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-medium text-zinc-100">
+                <p className="text-sm font-medium text-foreground">
                   {region === 'unknown' ? 'Région inconnue' : REGION_LABELS[region] ?? region}
                 </p>
                 <span className="text-xs text-muted-foreground">
@@ -1464,7 +1464,7 @@ export default function NetworkPage() {
                     })}
                   </div>
                   {!gateway && (
-                    <p className="mt-2 text-[11px] text-muted-foreground">
+                    <p className="mt-2 text-2xs text-muted-foreground">
                       Aucune passerelle désignée dans cette région — clique un nœud ci-dessus pour l’activer.
                     </p>
                   )}
@@ -1476,7 +1476,7 @@ export default function NetworkPage() {
       </Card>
 
       <div className="grid gap-4 xl:grid-cols-[1.6fr_minmax(0,1fr)]">
-        <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
+        <Card className="border-border transition-colors hover:border-border">
           <CardHeader className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <Tabs value={mapView} onValueChange={(value) => setMapView(value === 'graph' ? 'graph' : 'map')}>
@@ -1533,7 +1533,7 @@ export default function NetworkPage() {
                 className="h-[560px] w-full"
               />
             ) : (
-            <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-4">
+            <div className="rounded-xl border border-border bg-surface-2 p-4">
               <svg
                 ref={svgRef}
                 viewBox={`0 0 ${MIND_MAP_WIDTH} ${MIND_MAP_HEIGHT}`}
@@ -1692,9 +1692,9 @@ export default function NetworkPage() {
               </svg>
             </div>
             )}
-            <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3">
+            <div className="rounded-xl border border-border bg-surface-2 p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
-                <p className="text-xs font-medium text-zinc-200">Localisation manuelle des nœuds</p>
+                <p className="text-xs font-medium text-foreground/90">Localisation manuelle des nœuds</p>
                 <Button
                   size="sm"
                   variant="outline"
@@ -1719,10 +1719,10 @@ export default function NetworkPage() {
                   const region = member?.region ?? null;
                   const isGateway = Boolean(member?.node?.overlayIsGateway);
                   return (
-                    <div key={`override-${node.id}`} className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-2">
+                    <div key={`override-${node.id}`} className="rounded-lg border border-border bg-surface-2 p-2">
                       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-xs font-medium text-zinc-100">{node.label}</p>
-                        <p className="text-[10px] font-mono text-zinc-400">{node.vlanIp}</p>
+                        <p className="text-xs font-medium text-foreground">{node.label}</p>
+                        <p className="text-[10px] font-mono text-muted-foreground">{node.vlanIp}</p>
                       </div>
                       <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-[1fr_1fr_88px_auto]">
                         <Input
@@ -1772,10 +1772,10 @@ export default function NetworkPage() {
           </CardContent>
         </Card>
 
-        <Card className="border-white/[0.08] bg-panel-glow backdrop-blur transition-colors hover:border-white/[0.14]">
+        <Card className="border-border backdrop-blur transition-colors hover:border-border">
           <CardHeader>
             <div className="flex items-center gap-2">
-              <Activity className="h-5 w-5 text-violet-400" />
+              <Activity className="h-5 w-5 text-muted-foreground" />
               <CardTitle className="text-base">Flux actifs</CardTitle>
             </div>
           </CardHeader>
@@ -1787,24 +1787,24 @@ export default function NetworkPage() {
               return (
                 <div
                   key={`${flow.key}-card`}
-                  className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3"
+                  className="rounded-xl border border-border bg-surface-2 p-3"
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-medium text-zinc-100">
+                    <p className="text-sm font-medium text-foreground">
                       {source.label} → {target.label}
                     </p>
                     <Badge label={getConnectionLabel(flow.status)} type={getConnectionBadgeVariant(flow.status)} />
                   </div>
                   <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
-                    <div className="rounded-lg border border-white/[0.06] bg-black/25 px-2 py-1.5">
+                    <div className="rounded-lg border border-border bg-black/25 px-2 py-1.5">
                       <p className="text-[10px] text-muted-foreground">Latence</p>
                       <p className="font-mono">{formatLatency(flow.latencyMs)}</p>
                     </div>
-                    <div className="rounded-lg border border-white/[0.06] bg-black/25 px-2 py-1.5">
+                    <div className="rounded-lg border border-border bg-black/25 px-2 py-1.5">
                       <p className="text-[10px] text-muted-foreground">Perte</p>
                       <p className="font-mono">{formatLoss(flow.packetLoss)}</p>
                     </div>
-                    <div className="rounded-lg border border-white/[0.06] bg-black/25 px-2 py-1.5">
+                    <div className="rounded-lg border border-border bg-black/25 px-2 py-1.5">
                       <p className="text-[10px] text-muted-foreground">Débit</p>
                       <p className="font-mono">{formatBandwidth(flow.bandwidth)}</p>
                     </div>
@@ -1832,11 +1832,11 @@ export default function NetworkPage() {
       </div>
 
       <SectionLabel>Historique</SectionLabel>
-      <Card className="border-white/[0.08] bg-panel-glow backdrop-blur transition-colors hover:border-white/[0.14]">
+      <Card className="border-border backdrop-blur transition-colors hover:border-border">
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <Waves className="h-5 w-5 text-violet-400" />
+              <Waves className="h-5 w-5 text-muted-foreground" />
               <CardTitle className="text-base">Historique du lien</CardTitle>
             </div>
             <Tabs value={historyRange} onValueChange={(value) => setHistoryRange(value as '1h' | '24h' | '7d')}>
@@ -1873,7 +1873,7 @@ export default function NetworkPage() {
                   </SelectContent>
                 </Select>
                 {!selectedPairKey && (
-                  <p className="text-[11px] text-muted-foreground">
+                  <p className="text-2xs text-muted-foreground">
                     Lien le plus actif — choisissez-en un autre ci-dessus ou dans la topologie.
                   </p>
                 )}
@@ -1891,14 +1891,14 @@ export default function NetworkPage() {
                       {getNodeDisplayName(flow.sourceNodeId)} → {getNodeDisplayName(flow.targetNodeId)}
                     </p>
                     <div className="grid gap-4 sm:grid-cols-[auto_1fr] sm:items-stretch">
-                      <div className="flex flex-col items-center justify-center gap-1 rounded-xl border border-white/[0.06] bg-black/20 px-8 py-4 sm:min-w-[150px]">
-                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Uptime</p>
-                        <p className={`text-3xl font-semibold tabular-nums ${history ? uptimeToneClass(history.uptimePercent) : 'text-zinc-500'}`}>
+                      <div className="flex flex-col items-center justify-center gap-1 rounded-xl border border-border bg-black/20 px-8 py-4 sm:min-w-[150px]">
+                        <p className="text-2xs uppercase tracking-wide text-muted-foreground">Uptime</p>
+                        <p className={`text-3xl font-semibold tabular-nums ${history ? uptimeToneClass(history.uptimePercent) : 'text-muted-foreground'}`}>
                           {history ? `${history.uptimePercent}%` : '—'}
                         </p>
-                        <p className="text-[11px] text-muted-foreground">sur {HISTORY_RANGE_LABELS[historyRange]}</p>
+                        <p className="text-2xs text-muted-foreground">sur {HISTORY_RANGE_LABELS[historyRange]}</p>
                       </div>
-                      <div className="rounded-xl border border-white/[0.06] bg-black/10 p-3">
+                      <div className="rounded-xl border border-border bg-black/10 p-3">
                         <ConnectionHistoryChart data={chartData} />
                       </div>
                     </div>
@@ -1916,44 +1916,44 @@ export default function NetworkPage() {
         </CardContent>
       </Card>
 
-      <Card className="border-white/[0.08] bg-panel-glow backdrop-blur transition-colors hover:border-white/[0.14]">
+      <Card className="border-border backdrop-blur transition-colors hover:border-border">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
-            <Zap className="h-4 w-4 text-violet-300" />
+            <Zap className="h-4 w-4 text-primary" />
             Matrice de connexion (vue grille)
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="overflow-auto rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3">
+          <div className="overflow-auto rounded-xl border border-border bg-surface-2 p-3">
             <div
               className="grid min-w-[760px] gap-2"
               style={{ gridTemplateColumns: `220px repeat(${graph.nodes.length}, minmax(128px, 1fr))` }}
             >
-              <div className="sticky left-0 z-10 rounded-lg border border-white/[0.08] bg-zinc-900/95 px-3 py-2 text-xs font-medium text-muted-foreground">
+              <div className="sticky left-0 z-10 rounded-lg border border-border bg-zinc-900/95 px-3 py-2 text-xs font-medium text-muted-foreground">
                 Source \ Cible
               </div>
               {graph.nodes.map((col) => (
                 <div
                   key={`col-${col.id}`}
-                  className="rounded-lg border border-white/[0.08] bg-zinc-900/85 px-3 py-2 text-xs"
+                  className="rounded-lg border border-border bg-zinc-900/85 px-3 py-2 text-xs"
                 >
-                  <p className="truncate font-medium text-zinc-100">{col.label}</p>
-                  <p className="truncate font-mono text-[10px] text-zinc-400">{col.vlanIp}</p>
+                  <p className="truncate font-medium text-foreground">{col.label}</p>
+                  <p className="truncate font-mono text-[10px] text-muted-foreground">{col.vlanIp}</p>
                 </div>
               ))}
 
               {graph.nodes.map((row) => (
                 <div key={`row-${row.id}`} className="contents">
-                  <div className="sticky left-0 z-10 rounded-lg border border-white/[0.08] bg-zinc-900/95 px-3 py-2 text-xs">
-                    <p className="truncate font-medium text-zinc-100">{row.label}</p>
-                    <p className="truncate font-mono text-[10px] text-zinc-400">{row.vlanIp}</p>
+                  <div className="sticky left-0 z-10 rounded-lg border border-border bg-zinc-900/95 px-3 py-2 text-xs">
+                    <p className="truncate font-medium text-foreground">{row.label}</p>
+                    <p className="truncate font-mono text-[10px] text-muted-foreground">{row.vlanIp}</p>
                   </div>
                   {graph.nodes.map((col) => {
                     if (row.id === col.id) {
                       return (
                         <div
                           key={`cell-${row.id}-${col.id}`}
-                          className="rounded-lg border border-dashed border-white/10 bg-zinc-900/40 px-3 py-2 text-center text-[10px] text-zinc-500"
+                          className="rounded-lg border border-dashed border-border bg-zinc-900/40 px-3 py-2 text-center text-[10px] text-muted-foreground"
                         >
                           même nœud
                         </div>
@@ -1964,7 +1964,7 @@ export default function NetworkPage() {
                       return (
                         <div
                           key={`cell-${row.id}-${col.id}`}
-                          className="rounded-lg border border-dashed border-white/10 bg-zinc-900/40 px-3 py-2 text-center text-[10px] text-zinc-500"
+                          className="rounded-lg border border-dashed border-border bg-zinc-900/40 px-3 py-2 text-center text-[10px] text-muted-foreground"
                         >
                           Relayé via passerelle
                         </div>
@@ -1988,8 +1988,8 @@ export default function NetworkPage() {
                         <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
                           {direct ? getConnectionLabel(direct.status) : 'Aucune route'}
                         </p>
-                        <p className="font-mono text-[11px]">{formatLatency(direct?.latencyMs)}</p>
-                        <p className="font-mono text-[10px] text-zinc-400">
+                        <p className="font-mono text-2xs">{formatLatency(direct?.latencyMs)}</p>
+                        <p className="font-mono text-[10px] text-muted-foreground">
                           {formatLoss(direct?.packetLoss)} · {formatBandwidth(direct?.bandwidth)}
                         </p>
                       </button>
@@ -2007,8 +2007,7 @@ export default function NetworkPage() {
   return (
       <div className="space-y-6">
         <PageHeader
-          icon={Network}
-          title={<AnimatedGradientText speed={0.6}>Réseau</AnimatedGradientText>}
+          title="Réseau"
           description="Visualisez le VLAN privé qui relie vos nœuds et testez la connectivité entre eux."
         />
 

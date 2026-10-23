@@ -6,11 +6,7 @@ import {
   ArrowRightLeft,
   Bell,
   CheckCircle2,
-  Cpu,
-  Gauge,
   HardDrive,
-  LayoutDashboard,
-  Network,
   RefreshCcw,
   Server,
 } from 'lucide-react';
@@ -18,17 +14,18 @@ import { api, NodeActivityItem, NodeHeartbeatLiveEvent, NodeMetricSample } from 
 import { usePolling } from '../../../lib/hooks/usePolling';
 import { useLiveSocket } from '../../../lib/hooks/useLiveSocket';
 import { PageHeader } from '../../../components/PageHeader';
-import { AnimatedGradientText } from '../../../components/ui/animated-gradient-text';
 import { ServerTrendCard } from '../../../components/ServerTrendCard';
 import { FleetPerformanceChart, NetworkThroughputChart, StorageBreakdownChart } from '../../../components/dashboard-charts';
-import { StatCard, Badge } from '../../../components/ui';
-import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Stat, StatRow } from '../../../components/ui/stat';
+import { ALERT_STATUS, RESOURCE_STATUS, SEVERITY, StatusPill, describe } from '../../../components/ui/status';
 import { Progress } from '../../../components/ui/progress';
 import { CardListSkeleton, ChartCardSkeleton, ListSkeleton, StatCardSkeleton } from '../../../components/ui/skeleton';
 import { readNodeLabels } from '../../../lib/node-labels';
 import { SectionLabel } from '../../../components/SectionLabel';
+import { formatCapacityGb, formatInt, formatRelative, formatTime as formatClock } from '../../../lib/format';
 
-const formatTime = (iso: string) => new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+const formatTime = (iso: string) => formatClock(iso);
 
 // Network I/O is naturally bursty sample-to-sample; a trailing moving average
 // smooths the chart into a readable trend instead of a jagged spike train,
@@ -206,263 +203,273 @@ export default function OverviewPage() {
     [activities],
   );
 
+  const totalUsedGb = useMemo(
+    () => activities.reduce((sum, node) => sum + node.storage.totalUsedGb, 0),
+    [activities],
+  );
+  const totalCapacityGb = useMemo(
+    () => activities.reduce((sum, node) => sum + node.storage.totalCapacityGb, 0),
+    [activities],
+  );
+  const usedCapacity = formatCapacityGb(totalUsedGb);
+  const usageRatio = totalCapacityGb > 0 ? (totalUsedGb / totalCapacityGb) * 100 : 0;
+  const nodesDown = activities.length - nodesOnline;
+
   return (
-      <div className="space-y-10">
-        <PageHeader
-          icon={LayoutDashboard}
-          title={<AnimatedGradientText speed={0.6}>Vue d&apos;ensemble</AnimatedGradientText>}
-          description="État en direct de votre flotte de nœuds : capacité, charge, alertes et travaux en cours."
-        />
+    <div className="space-y-8">
+      <PageHeader
+        title="Vue d&apos;ensemble"
+        description="État en direct de votre flotte de nœuds : capacité, charge, alertes et travaux en cours."
+        meta={
+          activities.length > 0 && (
+            <StatusPill tone={nodesDown > 0 ? 'warn' : 'ok'}>
+              {nodesDown > 0 ? `${nodesDown} nœud${nodesDown > 1 ? 's' : ''} à vérifier` : 'Flotte nominale'}
+            </StatusPill>
+          )
+        }
+      />
 
-        <section className="space-y-4">
-          <SectionLabel>Aperçu</SectionLabel>
-          {overviewLoading ? (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              {Array.from({ length: 4 }).map((_, index) => (
-                <StatCardSkeleton key={index} />
-              ))}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4 animate-fade-in">
-              <StatCard
-                label="Nœuds en ligne"
-                value={activities.length > 0 ? `${nodesOnline}/${activities.length}` : '-'}
-                icon={<Server className="h-8 w-8" />}
-                changeType="up"
-              />
-              <StatCard
-                label="Stockage total utilisé"
-                value={`${activities.reduce((acc, node) => acc + node.storage.totalUsedGb, 0)} GB`}
-                icon={<HardDrive className="h-8 w-8" />}
-                change={`${activities.reduce((acc, node) => acc + node.storage.totalCapacityGb, 0)} GB total`}
-                changeType="neutral"
-              />
-              <StatCard
-                label="Alertes actives"
-                value={activeAlerts.length}
-                icon={<Bell className="h-8 w-8" />}
-                change={alertsCritical > 0 ? `${alertsCritical} critiques` : `${alertsWarning} avertissements`}
-                changeType={alertsCritical > 0 ? 'down' : alertsWarning > 0 ? 'neutral' : 'up'}
-              />
-              <StatCard
-                label="Migrations en cours"
-                value={migrationsActive}
-                icon={<ArrowRightLeft className="h-8 w-8" />}
-                changeType="neutral"
-              />
-            </div>
-          )}
-        </section>
+      {overviewLoading ? (
+        <StatRow>
+          {Array.from({ length: 4 }).map((_, index) => (
+            <StatCardSkeleton key={index} />
+          ))}
+        </StatRow>
+      ) : (
+        <StatRow className="animate-fade-in">
+          <Stat
+            label="Nœuds en ligne"
+            value={activities.length > 0 ? nodesOnline : '—'}
+            unit={activities.length > 0 ? `/ ${activities.length}` : undefined}
+            icon={Server}
+            tone={nodesDown > 0 ? 'warn' : 'ok'}
+            hint={nodesDown > 0 ? `${nodesDown} hors ligne ou dégradé${nodesDown > 1 ? 's' : ''}` : 'Tous les agents répondent'}
+          />
+          <Stat
+            label="Stockage utilisé"
+            value={usedCapacity.value}
+            unit={usedCapacity.unit}
+            icon={HardDrive}
+            tone={usageRatio >= 85 ? 'danger' : usageRatio >= 70 ? 'warn' : 'neutral'}
+            hint={`${Math.round(usageRatio)} % de ${formatInt(totalCapacityGb)} GB`}
+          />
+          <Stat
+            label="Alertes actives"
+            value={activeAlerts.length}
+            icon={Bell}
+            tone={alertsCritical > 0 ? 'danger' : activeAlerts.length > 0 ? 'warn' : 'ok'}
+            hint={
+              alertsCritical > 0
+                ? `${alertsCritical} critique${alertsCritical > 1 ? 's' : ''}`
+                : alertsWarning > 0
+                  ? `${alertsWarning} élevée${alertsWarning > 1 ? 's' : ''}`
+                  : 'Rien à traiter'
+            }
+          />
+          <Stat
+            label="Migrations en cours"
+            value={migrationsActive}
+            icon={ArrowRightLeft}
+            tone={migrationsActive > 0 ? 'info' : 'neutral'}
+            hint={migrationsActive > 0 ? 'Transferts actifs' : 'Aucun transfert'}
+          />
+        </StatRow>
+      )}
 
-        <section className="space-y-4">
-          <SectionLabel>Performance</SectionLabel>
-          {performanceLoading ? (
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-              <ChartCardSkeleton />
-              <ChartCardSkeleton />
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 animate-fade-in">
-              <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
-                <CardHeader>
-                  <div className="flex items-center gap-2">
-                    <Cpu className="h-5 w-5 text-violet-400" />
-                    <CardTitle className="text-base">CPU &amp; RAM de la flotte</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <FleetPerformanceChart data={performanceSeries} />
-                </CardContent>
-              </Card>
-              <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
-                <CardHeader>
-                  <div className="flex items-center gap-2">
-                    <Network className="h-5 w-5 text-violet-400" />
-                    <CardTitle className="text-base">Débit réseau</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <NetworkThroughputChart data={networkSeries} />
-                </CardContent>
-              </Card>
-            </div>
-          )}
-        </section>
-
-        <section className="space-y-4">
-          <SectionLabel>Stockage &amp; alertes</SectionLabel>
-          {storageAndAlertsLoading ? (
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-              <ChartCardSkeleton />
-              <ChartCardSkeleton height="h-48" />
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 animate-fade-in">
-              <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
-                <CardHeader>
-                  <div className="flex items-center gap-2">
-                    <Gauge className="h-5 w-5 text-violet-400" />
-                    <CardTitle className="text-base">Répartition du stockage par nœud</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <StorageBreakdownChart data={storageSlices} />
-                </CardContent>
-              </Card>
-
-              <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
-                <CardHeader>
-                  <div className="flex items-center gap-2">
-                    <Bell className="h-5 w-5 text-violet-400" />
-                    <CardTitle className="text-base">Alertes récentes</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {activeAlerts.slice(0, 5).map((alert) => (
-                    <div
-                      key={alert.id}
-                      className="flex items-start gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3"
-                    >
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-foreground">{alert.message}</p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">{alert.status}</p>
-                      </div>
-                      <Badge
-                        label={alert.severity}
-                        type={alert.severity === 'critical' ? 'error' : alert.severity === 'high' ? 'warning' : 'info'}
-                      />
-                    </div>
-                  ))}
-                  {activeAlerts.length === 0 && (
-                    <div className="flex items-center justify-center gap-2 py-4 text-sm text-emerald-400">
-                      <CheckCircle2 className="h-4 w-4" />
-                      Aucune alerte active
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          )}
-        </section>
-
-        <section className="space-y-4">
-          <SectionLabel>Serveurs actifs</SectionLabel>
-          {spotlightLoading ? (
-            <CardListSkeleton cards={4} />
-          ) : (
-            <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14] animate-fade-in">
-              <CardContent className="pt-6">
-                <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                  <AnimatePresence initial={false}>
-                    {spotlightNodes.map((node) => (
-                      <motion.div
-                        key={node.id}
-                        layout
-                        initial={{ opacity: 0, scale: 0.96 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.96 }}
-                        transition={{ duration: 0.25, ease: 'easeOut' }}
-                      >
-                        <ServerTrendCard
-                          node={node}
-                          samples={samplesByNode[node.id] ?? []}
-                          labels={nodeLabels[node.id] ?? []}
-                        />
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
-                  {spotlightNodes.length === 0 && (
-                    <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
-                      Aucun serveur n’a encore remonté d’activité.
-                    </p>
-                  )}
-                </div>
+      <section className="space-y-3">
+        <SectionLabel>Performance · 6 dernières heures</SectionLabel>
+        {performanceLoading ? (
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <ChartCardSkeleton />
+            <ChartCardSkeleton />
+          </div>
+        ) : (
+          <div className="grid animate-fade-in grid-cols-1 gap-4 xl:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Charge CPU &amp; RAM</CardTitle>
+                <CardDescription>Moyenne sur les nœuds les plus sollicités</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <FleetPerformanceChart data={performanceSeries} />
               </CardContent>
             </Card>
-          )}
-        </section>
+            <Card>
+              <CardHeader>
+                <CardTitle>Débit réseau</CardTitle>
+                <CardDescription>Mégabits par seconde, lissé sur 5 points</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <NetworkThroughputChart data={networkSeries} />
+              </CardContent>
+            </Card>
+          </div>
+        )}
+      </section>
 
-        <section className="space-y-4">
-          <SectionLabel>Activité</SectionLabel>
-          {activityFeedLoading ? (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
-                <CardHeader>
-                  <div className="flex items-center gap-2">
-                    <RefreshCcw className="h-5 w-5 text-violet-400" />
-                    <CardTitle className="text-base">Travaux de synchronisation</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <ListSkeleton rows={3} />
-                </CardContent>
-              </Card>
-              <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
-                <CardHeader>
-                  <div className="flex items-center gap-2">
-                    <ArrowRightLeft className="h-5 w-5 text-violet-400" />
-                    <CardTitle className="text-base">Migrations en cours</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <ListSkeleton rows={3} />
-                </CardContent>
-              </Card>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 animate-fade-in">
-              <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
-                <CardHeader>
-                  <div className="flex items-center gap-2">
-                    <RefreshCcw className="h-5 w-5 text-violet-400" />
-                    <CardTitle className="text-base">Travaux de synchronisation</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {syncJobs.slice(0, 5).map((job) => (
-                    <div
-                      key={job.id}
-                      className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3"
-                    >
-                      <div>
-                        <p className="text-sm font-medium text-foreground">{job.name}</p>
-                        <p className="text-xs text-muted-foreground">{job.sourcePath}</p>
-                      </div>
-                      <Badge label={job.status} type="info" />
-                    </div>
-                  ))}
-                  {syncJobs.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">Aucun travail</p>}
-                </CardContent>
-              </Card>
+      <section className="space-y-3">
+        <SectionLabel>Stockage &amp; alertes</SectionLabel>
+        {storageAndAlertsLoading ? (
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <ChartCardSkeleton />
+            <ChartCardSkeleton height="h-48" />
+          </div>
+        ) : (
+          <div className="grid animate-fade-in grid-cols-1 gap-4 xl:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Répartition du stockage</CardTitle>
+                <CardDescription>Volume occupé par nœud</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <StorageBreakdownChart data={storageSlices} />
+              </CardContent>
+            </Card>
 
-              <Card className="border-white/[0.08] bg-panel-glow transition-colors hover:border-white/[0.14]">
-                <CardHeader>
-                  <div className="flex items-center gap-2">
-                    <ArrowRightLeft className="h-5 w-5 text-violet-400" />
-                    <CardTitle className="text-base">Migrations en cours</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-3">
+            <Card>
+              <CardHeader>
+                <CardTitle>Alertes récentes</CardTitle>
+                {activeAlerts.length > 5 && (
+                  <span className="text-2xs text-muted-foreground">5 sur {activeAlerts.length}</span>
+                )}
+              </CardHeader>
+              <CardContent className="p-0">
+                {activeAlerts.length === 0 ? (
+                  <p className="flex items-center justify-center gap-2 py-10 text-sm text-[hsl(var(--ok))]">
+                    <CheckCircle2 className="h-4 w-4" />
+                    Aucune alerte active
+                  </p>
+                ) : (
+                  <ul className="divide-y divide-border">
+                    {activeAlerts.slice(0, 5).map((alert) => {
+                      const severity = describe(SEVERITY, alert.severity);
+                      const status = describe(ALERT_STATUS, alert.status);
+                      return (
+                        <li key={alert.id} className="flex items-start gap-3 px-4 py-3 lg:px-5">
+                          <StatusPill tone={severity.tone} dot={false} className="mt-0.5 shrink-0">
+                            {severity.label}
+                          </StatusPill>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm leading-snug text-foreground">{alert.message}</p>
+                            <p className="mt-1 text-2xs text-muted-foreground">
+                              {status.label} · {formatRelative(alert.triggeredAt)}
+                            </p>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <SectionLabel>Nœuds les plus sollicités</SectionLabel>
+        {spotlightLoading ? (
+          <CardListSkeleton cards={4} />
+        ) : spotlightNodes.length === 0 ? (
+          <Card>
+            <CardContent className="py-10 text-center text-sm text-muted-foreground">
+              Aucun serveur n’a encore remonté d’activité.
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid animate-fade-in grid-cols-1 gap-4 xl:grid-cols-2">
+            <AnimatePresence initial={false}>
+              {spotlightNodes.map((node) => (
+                <motion.div
+                  key={node.id}
+                  layout
+                  initial={{ opacity: 0, scale: 0.98 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.98 }}
+                  transition={{ duration: 0.2, ease: 'easeOut' }}
+                >
+                  <ServerTrendCard
+                    node={node}
+                    samples={samplesByNode[node.id] ?? []}
+                    labels={nodeLabels[node.id] ?? []}
+                  />
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <SectionLabel>Travaux en cours</SectionLabel>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>
+                <RefreshCcw className="h-4 w-4 text-muted-foreground" />
+                Synchronisations
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {activityFeedLoading ? (
+                <div className="p-4 lg:p-5">
+                  <ListSkeleton rows={3} />
+                </div>
+              ) : syncJobs.length === 0 ? (
+                <p className="py-10 text-center text-sm text-muted-foreground">Aucun travail configuré</p>
+              ) : (
+                <ul className="divide-y divide-border">
+                  {syncJobs.slice(0, 5).map((job) => {
+                    const status = describe(RESOURCE_STATUS, job.status);
+                    return (
+                      <li key={job.id} className="flex items-center gap-3 px-4 py-3 lg:px-5">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-foreground">{job.name}</p>
+                          <p className="truncate font-mono text-2xs text-muted-foreground">{job.sourcePath}</p>
+                        </div>
+                        <span className="shrink-0 text-2xs text-muted-foreground">{formatRelative(job.lastRunAt)}</span>
+                        <StatusPill tone={status.tone} className="shrink-0">
+                          {status.label}
+                        </StatusPill>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>
+                <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
+                Migrations
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {activityFeedLoading ? (
+                <div className="p-4 lg:p-5">
+                  <ListSkeleton rows={3} />
+                </div>
+              ) : activeMigrations.length === 0 ? (
+                <p className="py-10 text-center text-sm text-muted-foreground">Aucune migration en cours</p>
+              ) : (
+                <ul className="divide-y divide-border">
                   {activeMigrations.slice(0, 5).map((migration) => (
-                    <div key={migration.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
-                      <div className="mb-2 flex items-center justify-between">
-                        <p className="text-sm font-medium text-foreground">{migration.name}</p>
-                        <span className="text-xs text-muted-foreground">{migration.progress}%</span>
+                    <li key={migration.id} className="px-4 py-3 lg:px-5">
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <p className="truncate text-sm font-medium text-foreground">{migration.name}</p>
+                        <span className="tabular shrink-0 text-xs text-muted-foreground">{migration.progress} %</span>
                       </div>
-                      <Progress
-                        value={migration.progress}
-                        className="h-1.5 bg-emerald-500/20 [&>div]:from-emerald-500 [&>div]:to-emerald-300"
-                      />
-                    </div>
+                      <Progress value={migration.progress} className="h-1" />
+                    </li>
                   ))}
-                  {activeMigrations.length === 0 && (
-                    <p className="py-4 text-center text-sm text-muted-foreground">Aucune migration</p>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          )}
-        </section>
-      </div>
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+    </div>
   );
 }

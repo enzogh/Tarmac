@@ -15,7 +15,7 @@ export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivEl
 
 export function StatCardSkeleton() {
   return (
-    <div className="rounded-2xl border border-white/[0.08] bg-zinc-900/80 p-6 shadow-panel backdrop-blur-xl">
+    <div className="rounded-2xl border border-border bg-surface-1 p-6 shadow-panel backdrop-blur-xl">
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-3">
           <Skeleton className="h-3.5 w-24" />
@@ -30,7 +30,7 @@ export function StatCardSkeleton() {
 
 export function ChartCardSkeleton({ height = 'h-64' }: { height?: string }) {
   return (
-    <div className="rounded-2xl border border-white/[0.08] bg-zinc-900/65 p-6">
+    <div className="rounded-2xl border border-border bg-surface-1 p-6">
       <div className="mb-4 flex items-center gap-2">
         <Skeleton className="h-5 w-5 rounded" />
         <Skeleton className="h-4 w-40" />
@@ -42,7 +42,7 @@ export function ChartCardSkeleton({ height = 'h-64' }: { height?: string }) {
 
 export function ListRowSkeleton() {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-4 py-3">
       <div className="min-w-0 flex-1 space-y-2">
         <Skeleton className="h-3.5 w-2/3" />
         <Skeleton className="h-3 w-1/3" />
@@ -64,7 +64,7 @@ export function ListSkeleton({ rows = 4 }: { rows?: number }) {
 
 export function TableRowSkeleton({ columns = 4 }: { columns?: number }) {
   return (
-    <tr className="border-b border-white/[0.06]">
+    <tr className="border-b border-border">
       {Array.from({ length: columns }).map((_, index) => (
         <td key={index} className="px-4 py-3">
           <Skeleton className="h-3.5 w-full max-w-[10rem]" />
@@ -78,7 +78,7 @@ export function CardListSkeleton({ cards = 4 }: { cards?: number }) {
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
       {Array.from({ length: cards }).map((_, index) => (
-        <div key={index} className="rounded-2xl border border-white/[0.08] bg-zinc-900/65 p-5 space-y-4">
+        <div key={index} className="rounded-2xl border border-border bg-surface-1 p-5 space-y-4">
           <div className="flex items-center justify-between">
             <Skeleton className="h-4 w-32" />
             <Skeleton className="h-5 w-14 rounded-full" />

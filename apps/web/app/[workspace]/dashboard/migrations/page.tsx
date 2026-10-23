@@ -135,21 +135,21 @@ function RemoteEndpointFields({
   return (
     <div className="grid gap-3 md:grid-cols-2">
       <div>
-        <Label className="mb-2 block text-sm font-medium text-zinc-200">
+        <Label className="mb-2 block text-sm font-medium text-foreground/90">
           {isStoragebox ? `Host Storage Box ${role}` : `Host seedbox ${role}`}
         </Label>
         <Input value={host} onChange={(e) => onHostChange(e.target.value)} placeholder={hostPlaceholder} />
       </div>
       <div>
-        <Label className="mb-2 block text-sm font-medium text-zinc-200">Utilisateur {role}</Label>
+        <Label className="mb-2 block text-sm font-medium text-foreground/90">Utilisateur {role}</Label>
         <Input value={user} onChange={(e) => onUserChange(e.target.value)} placeholder="username" />
       </div>
       <div>
-        <Label className="mb-2 block text-sm font-medium text-zinc-200">Mot de passe {role}</Label>
+        <Label className="mb-2 block text-sm font-medium text-foreground/90">Mot de passe {role}</Label>
         <Input type="password" value={password} onChange={(e) => onPasswordChange(e.target.value)} placeholder="••••••••" />
       </div>
       <div>
-        <Label className="mb-2 block text-sm font-medium text-zinc-200">Port SSH {role}</Label>
+        <Label className="mb-2 block text-sm font-medium text-foreground/90">Port SSH {role}</Label>
         <Input value={port} onChange={(e) => onPortChange(e.target.value)} placeholder={isStoragebox ? '23' : '22'} />
       </div>
     </div>
@@ -569,7 +569,7 @@ export default function MigrationsPage() {
       content: (
         <div className="space-y-4">
           <div>
-            <Label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-foreground/90">
               Nom de la migration
               <HelpText text="Exemple: Migration stockage principal vers stockage secours" />
             </Label>
@@ -582,7 +582,7 @@ export default function MigrationsPage() {
           </div>
 
           <div>
-            <Label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-foreground/90">
               Type de source
               <HelpText text="Serveur Tarmac, seedbox SSH ou Storage Box Hetzner (SSH port 23)." />
             </Label>
@@ -615,7 +615,7 @@ export default function MigrationsPage() {
 
           {formData.sourceKind === 'node' ? (
             <div>
-              <Label className="mb-2 block text-sm font-medium text-zinc-200">
+              <Label className="mb-2 block text-sm font-medium text-foreground/90">
               Serveur source
               <HelpText text="Le serveur qui contient les données actuellement" />
             </Label>
@@ -662,7 +662,7 @@ export default function MigrationsPage() {
           )}
 
           <div>
-            <Label className="mb-2 block text-sm font-medium text-zinc-200">
+            <Label className="mb-2 block text-sm font-medium text-foreground/90">
               Type de destination
               <HelpText text="Serveur Tarmac, seedbox SSH distante, ou Storage Box Hetzner." />
             </Label>
@@ -695,7 +695,7 @@ export default function MigrationsPage() {
 
           {formData.targetKind === 'node' ? (
             <div>
-              <Label className="mb-2 block text-sm font-medium text-zinc-200">
+              <Label className="mb-2 block text-sm font-medium text-foreground/90">
               Serveur destination
               <HelpText text="Le serveur qui recevra les données" />
             </Label>
@@ -741,7 +741,7 @@ export default function MigrationsPage() {
             <ArrowRightLeft className="h-4 w-4" />
             <AlertDescription>Flux prévu: source → destination. Vous pourrez modifier tant que ce n’est pas lancé.</AlertDescription>
           </Alert>
-          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+          <div className="rounded-xl border border-border bg-surface-2 p-3">
             <p className="text-xs text-muted-foreground">Résultat attendu</p>
             <div className="mt-2 flex items-center gap-2 text-sm font-medium">
               <span>
@@ -751,7 +751,7 @@ export default function MigrationsPage() {
                     ? (nodesById[formData.sourceNodeId] ?? 'Source')
                     : 'Source'}
               </span>
-              <ArrowRight className="h-4 w-4 text-violet-300" />
+              <ArrowRight className="h-4 w-4 text-primary" />
               <span>
                 {isRemoteKind(formData.targetKind)
                   ? `${formData.targetSeedboxUser || 'user'}@${formData.targetSeedboxHost || 'seedbox'}`
@@ -834,7 +834,7 @@ export default function MigrationsPage() {
             ]}
           />
 
-          <div className="space-y-3 rounded-xl border border-white/[0.08] bg-zinc-900/65 p-4 text-sm">
+          <div className="space-y-3 rounded-xl border border-border bg-surface-1 p-4 text-sm">
             <div className="flex justify-between border-b pb-2">
               <span className="text-muted-foreground">Migration:</span>
               <span className="font-mono font-semibold">{formData.name || '—'}</span>
@@ -888,8 +888,7 @@ export default function MigrationsPage() {
         )}
 
         <PageHeader
-          icon={ArrowRightLeft}
-          title={<AnimatedGradientText speed={0.6}>Migrations</AnimatedGradientText>}
+          title="Migrations"
           description="Déplacez des volumes de stockage entre nœuds, seedboxes ou Storage Boxes, avec suivi en direct."
           actions={
             <RainbowButton onClick={() => setWizardOpen(true)} className="gap-2">
@@ -927,7 +926,7 @@ export default function MigrationsPage() {
           {migrationsLoading ? (
             <CardListSkeleton cards={2} />
           ) : activeMigrations.length === 0 ? (
-            <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+            <Card className="border-border bg-surface-1 backdrop-blur">
               <CardContent className="py-12 text-center">
                 <p className="font-medium text-muted-foreground">Aucune migration active</p>
                 <p className="mt-2 text-sm text-muted-foreground">Les migrations terminées sont archivées plus bas.</p>
@@ -936,7 +935,7 @@ export default function MigrationsPage() {
           ) : (
             <div className="grid gap-4 animate-fade-in">
               {activeMigrations.map((migration) => (
-                <Card key={migration.id} className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+                <Card key={migration.id} className="border-border bg-surface-1 backdrop-blur">
                   <CardHeader className="pb-2">
                     <div className="flex items-center justify-between gap-4">
                       <div>
@@ -949,14 +948,14 @@ export default function MigrationsPage() {
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    <div className="grid gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 md:grid-cols-2">
+                    <div className="grid gap-3 rounded-xl border border-border bg-surface-2 p-3 md:grid-cols-2">
                       <div className="space-y-1 text-sm">
                         <div className="flex items-center gap-2">
-                          <Server className="h-4 w-4 text-violet-300" />
+                          <Server className="h-4 w-4 text-primary" />
                           <span className="text-muted-foreground">Source:</span>
                           <span className="font-medium">{formatMigrationEndpoint(migration, 'source')}</span>
                         </div>
-                        <p className="pl-6 font-mono text-[11px] text-muted-foreground break-all">
+                        <p className="pl-6 font-mono text-2xs text-muted-foreground break-all">
                           {migration.sourcePath ?? '—'}
                         </p>
                       </div>
@@ -966,7 +965,7 @@ export default function MigrationsPage() {
                           <span className="text-muted-foreground">Destination:</span>
                           <span className="font-medium">{formatMigrationEndpoint(migration, 'target')}</span>
                         </div>
-                        <p className="pl-6 font-mono text-[11px] text-muted-foreground break-all">
+                        <p className="pl-6 font-mono text-2xs text-muted-foreground break-all">
                           {migration.targetPath ?? '—'}
                         </p>
                       </div>
@@ -1060,7 +1059,7 @@ export default function MigrationsPage() {
         </div>
 
         <SectionLabel>Archives</SectionLabel>
-        <Card className="border-white/[0.08] bg-zinc-900/65 backdrop-blur">
+        <Card className="border-border bg-surface-1 backdrop-blur">
           <CardContent className="pt-6">
             {migrationsLoading ? (
               <Table>

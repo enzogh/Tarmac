@@ -43,6 +43,18 @@ const config: Config = {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
+        // Three raised surfaces: page < card < inset panel inside a card.
+        // Depth in this UI comes from these steps, not from shadows.
+        surface: {
+          1: 'hsl(var(--surface-1))',
+          2: 'hsl(var(--surface-2))',
+          3: 'hsl(var(--surface-3))',
+        },
+        // Semantic status, one hue per meaning everywhere in the app.
+        ok: 'hsl(var(--ok))',
+        warn: 'hsl(var(--warn))',
+        danger: 'hsl(var(--danger))',
+        info: 'hsl(var(--info))',
         brand: {
           50: '#eef5ff',
           100: '#d9e8ff',
@@ -61,19 +73,29 @@ const config: Config = {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
-        '2xl': '1rem',
-        '3xl': '1.5rem',
+        xl: 'calc(var(--radius) + 2px)',
+        '2xl': 'calc(var(--radius) + 4px)',
+        '3xl': 'calc(var(--radius) + 8px)',
       },
       boxShadow: {
-        glow: '0 0 0 1px rgba(109, 40, 217, 0.2), 0 18px 50px rgba(2, 6, 23, 0.45)',
-        panel: '0 10px 35px rgba(2, 6, 23, 0.35)',
+        // Shadows only ever lift something that genuinely floats above the
+        // page (menus, dialogs, the mobile drawer). Cards use a border.
+        glow: '0 0 0 1px hsl(var(--primary) / 0.25)',
+        panel: '0 1px 2px rgba(0, 0, 0, 0.4)',
+        overlay: '0 16px 48px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.06)',
         insetSoft: 'inset 0 1px 0 rgba(255, 255, 255, 0.04)',
+      },
+      fontSize: {
+        // One step below Tailwind's xs, for table meta and chart axes -
+        // previously written as ad-hoc text-[11px] in ~80 places.
+        '2xs': ['0.6875rem', { lineHeight: '1rem' }],
       },
       backgroundImage: {
         'radial-premium':
           'radial-gradient(circle at top, rgba(37, 99, 235, 0.22), transparent 35%), radial-gradient(circle at right, rgba(168, 85, 247, 0.16), transparent 28%), linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(2, 6, 23, 1))',
-        'panel-glow':
-          'linear-gradient(135deg, rgba(109, 40, 217, 0.05), rgba(79, 70, 229, 0.03), transparent)',
+        // Kept as a no-op gradient so the ~20 existing `bg-panel-glow`
+        // call sites stay valid while cards move to a flat surface.
+        'panel-glow': 'none',
       },
       keyframes: {
         'accordion-down': {

@@ -37,8 +37,8 @@ export default function DocsLayout({ children }: { children: ReactNode }) {
                   className={cn(
                     'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
                     isActive
-                      ? 'bg-violet-600/15 text-violet-300'
-                      : 'text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-100'
+                      ? 'bg-violet-600/15 text-primary'
+                      : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground'
                   )}
                 >
                   <Icon className="h-4 w-4 shrink-0" />

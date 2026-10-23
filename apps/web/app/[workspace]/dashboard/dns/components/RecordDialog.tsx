@@ -142,7 +142,7 @@ export function RecordDialog({
           <div className="space-y-2">
             <Label>Valeurs {recordForm.isGeo && '(candidats géo-routés)'}</Label>
             {recordValues.map((value, index) => (
-              <div key={index} className="flex flex-wrap items-center gap-2 rounded-lg border border-white/[0.08] bg-zinc-950/50 p-2">
+              <div key={index} className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-2 p-2">
                 <Input
                   value={value.content}
                   onChange={(e) =>

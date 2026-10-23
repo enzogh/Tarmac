@@ -38,9 +38,9 @@ export function WizardDialog({
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/70 p-4 backdrop-blur-sm sm:p-6">
-      <div className="mx-auto flex w-full max-w-2xl flex-col rounded-2xl border border-white/[0.08] bg-zinc-950/95 shadow-2xl max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-3rem)]">
+      <div className="mx-auto flex w-full max-w-2xl flex-col rounded-2xl border border-border bg-zinc-950/95 shadow-2xl max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-3rem)]">
         {/* Header */}
-        <div className="shrink-0 border-b border-white/[0.08] px-6 py-4">
+        <div className="shrink-0 border-b border-border px-6 py-4">
           <h2 className="text-xl font-bold text-foreground">{title}</h2>
           {description && <p className="text-sm text-muted-foreground mt-1">{description}</p>}
           
@@ -70,7 +70,7 @@ export function WizardDialog({
         </div>
 
         {/* Footer */}
-        <div className="shrink-0 flex justify-between gap-3 border-t border-white/[0.08] px-6 py-4">
+        <div className="shrink-0 flex justify-between gap-3 border-t border-border px-6 py-4">
           <Button variant="outline" onClick={onCancel}>
             Annuler
           </Button>
@@ -146,7 +146,7 @@ export function PresetSelector({
               className={`rounded-xl border p-4 text-left transition-all ${
                 isSelected
                   ? 'border-violet-500/60 bg-violet-500/[0.1] ring-1 ring-violet-500/20'
-                  : 'border-white/[0.08] bg-zinc-900/70 hover:border-violet-400/40 hover:bg-zinc-900'
+                  : 'border-border bg-surface-1 hover:border-violet-400/40 hover:bg-zinc-900'
               }`}
             >
               <div className="flex items-start gap-3">
@@ -154,7 +154,7 @@ export function PresetSelector({
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
                     <h4 className="font-semibold text-foreground">{preset.name}</h4>
-                    {isSelected && <CheckCircle2 className="h-4 w-4 shrink-0 text-violet-400" />}
+                    {isSelected && <CheckCircle2 className="h-4 w-4 shrink-0 text-muted-foreground" />}
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">{preset.description}</p>
                 </div>
@@ -177,7 +177,7 @@ export function AdvancedOptions({
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <div className="mt-6 border-t border-white/[0.08] pt-6">
+    <div className="mt-6 border-t border-border pt-6">
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
@@ -202,7 +202,7 @@ export interface OperationStep {
 export function OperationPreview({ steps }: { steps: OperationStep[] }) {
   return (
     <div className="rounded-xl border border-violet-500/30 bg-violet-500/[0.08] p-4">
-      <h4 className="mb-3 font-semibold text-violet-300">Aperçu de l'opération</h4>
+      <h4 className="mb-3 font-semibold text-primary">Aperçu de l'opération</h4>
       <div className="space-y-3">
         {steps.map((step, idx) => (
           <div key={step.id} className="flex gap-3">
@@ -227,7 +227,7 @@ export function HelpText({ text }: { text: string }) {
     <Tooltip>
       <TooltipTrigger asChild>
         <button type="button" className="ml-1 inline-flex">
-          <HelpCircle className="h-4 w-4 text-zinc-500 hover:text-zinc-300" />
+          <HelpCircle className="h-4 w-4 text-muted-foreground hover:text-zinc-300" />
         </button>
       </TooltipTrigger>
       <TooltipContent className="max-w-xs">{text}</TooltipContent>

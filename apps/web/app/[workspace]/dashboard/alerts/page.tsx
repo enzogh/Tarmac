@@ -135,8 +135,7 @@ export default function AlertsPage() {
   return (
       <div className="space-y-8">
         <PageHeader
-          icon={Bell}
-          title={<AnimatedGradientText speed={0.6}>Alertes</AnimatedGradientText>}
+          title="Alertes"
           description="Notifications déclenchées par vos règles de seuil (CPU, RAM, espace disque…)."
         />
 
@@ -164,7 +163,7 @@ export default function AlertsPage() {
           <CardHeader>
             <div className="flex items-center justify-between gap-4 flex-wrap">
               <div className="flex items-center gap-2">
-                <Bell className="h-5 w-5 text-violet-400" />
+                <Bell className="h-5 w-5 text-muted-foreground" />
                 <CardTitle>Liste des alertes</CardTitle>
               </div>
               <div className="flex flex-wrap items-end gap-4">
@@ -230,7 +229,7 @@ export default function AlertsPage() {
             {!isLoading && filtered.map((alert) => (
               <div
                 key={alert.id}
-                className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 transition-colors hover:bg-white/[0.04]"
+                className="rounded-xl border border-border bg-surface-2 p-4 transition-colors hover:bg-surface-2"
               >
                 <div className="flex items-start gap-4">
                   <input
