@@ -53,7 +53,7 @@ export default function WorkspaceSettingsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-3xl space-y-6">
       <PageHeader title="Paramètres" description={`Gère « ${workspace.name} »`} />
       <RenameCard workspace={workspace} onSaved={() => void refreshWorkspaces()} />
       <MembersCard
@@ -103,18 +103,26 @@ function RenameCard({ workspace, onSaved }: { workspace: WorkspaceListItem; onSa
         <CardTitle>Général</CardTitle>
       </CardHeader>
       <CardContent>
-        <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
-          <div className="min-w-0 flex-1 space-y-2">
-            <Label htmlFor="workspace-name">Nom</Label>
-            <Input id="workspace-name" value={name} onChange={(e) => setName(e.target.value)} required minLength={2} />
-            <p className="text-xs text-muted-foreground">
-              URL : /{workspace.slug}/dashboard — le slug n&apos;est pas modifiable après création.
-            </p>
+        <form onSubmit={submit} className="space-y-2">
+          <Label htmlFor="workspace-name">Nom</Label>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              id="workspace-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              minLength={2}
+              className="min-w-0 flex-1"
+            />
+            <Button type="submit" disabled={saving || name.trim() === workspace.name} className="shrink-0 gap-2">
+              <Save className="h-4 w-4" />
+              {saving ? 'Enregistrement…' : 'Enregistrer'}
+            </Button>
           </div>
-          <Button type="submit" disabled={saving || name.trim() === workspace.name} className="gap-2">
-            <Save className="h-4 w-4" />
-            {saving ? 'Enregistrement…' : 'Enregistrer'}
-          </Button>
+          <p className="text-xs text-muted-foreground">
+            URL : <span className="font-mono">/{workspace.slug}/dashboard</span> — le slug n&apos;est pas modifiable
+            après création.
+          </p>
         </form>
         {notice && (
           <Alert variant={notice.type === 'error' ? 'destructive' : 'success'} className="mt-4">
@@ -235,7 +243,7 @@ function MembersCard({
         )}
         {members === null && !membersError && <p className="text-sm text-muted-foreground">Chargement…</p>}
 
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           {members?.map((member) => {
             const isSelf = member.userId === currentUserId;
             const isOwner = member.role === 'owner';
@@ -244,7 +252,7 @@ function MembersCard({
             return (
               <div
                 key={member.id}
-                className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2.5"
+                className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2"
               >
                 <div className="min-w-0">
                   <p className="truncate text-sm text-foreground">

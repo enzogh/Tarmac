@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowRight,
   Plus,
   Copy,
   Check,
@@ -34,6 +35,9 @@ import { Alert, AlertDescription } from '../../../../components/ui/alert';
 import { Badge, StatCard } from '../../../../components/ui';
 import { CardListSkeleton, StatCardSkeleton } from '../../../../components/ui/skeleton';
 import { SectionLabel } from '../../../../components/SectionLabel';
+import { RESOURCE_STATUS, StatusDot, StatusPill, describe } from '../../../../components/ui/status';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
+import { formatBytes, formatDateTime, formatRelative, shortHostname } from '../../../../lib/format';
 import { HelpText, InfoBox, StepConfig, WizardDialog } from '../../../../components/ui/wizard';
 import {
   Dialog,
@@ -460,141 +464,197 @@ export default function ReplicationPage() {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid gap-4 animate-fade-in">
-            {jobs.map((job) => {
-              const statusBadge = STATUS_BADGE[job.status] ?? STATUS_BADGE.pending;
-              const runs = runsByJob[job.id] ?? [];
-              return (
-                <Card key={job.id} className="border-border bg-surface-1 backdrop-blur">
-                  <CardHeader>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <CardTitle className="flex items-center gap-2">
-                        <Copy className="w-5 h-5 text-muted-foreground" />
-                        {job.name}
-                      </CardTitle>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge label={statusBadge.label} type={statusBadge.type} />
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          disabled={busyJobId === job.id}
-                          onClick={() => runJob(job)}
-                        >
-                          <Play className="h-3.5 w-3.5" />
-                          Lancer maintenant
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => toggleHistory(job)}>
-                          <History className="h-3.5 w-3.5" />
-                          Historique
-                        </Button>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" disabled={busyJobId === job.id} aria-label="Plus d'actions">
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => openGeneralEdit(job)}>
-                              <Pencil className="h-4 w-4" />
-                              Modifier
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => openSshEdit(job)}>
-                              <Settings2 className="h-4 w-4" />
-                              Source SSH
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => rotateTriggerToken(job)}>
-                              <RotateCw className="h-4 w-4" />
-                              Lien externe
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => deleteJob(job)} className="text-rose-300 focus:text-rose-200">
-                              <Trash2 className="h-4 w-4" />
-                              Supprimer
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-3 text-sm text-muted-foreground">
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                      <div>
-                        <p className="text-xs text-muted-foreground">Nœud</p>
-                        <p className="font-mono text-foreground/90">{nodeName(job.nodeId)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">Source</p>
-                        <p className="font-mono text-foreground/90">{job.sourcePath}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">Destination</p>
-                        <p className="font-mono text-foreground/90">{job.targetPath}</p>
-                      </div>
-                    </div>
-                    {job.lastRunAt && (
-                      <p className="flex items-center gap-1.5 text-xs">
-                        <Clock className="h-3.5 w-3.5" />
-                        Dernier lancement : {new Date(job.lastRunAt).toLocaleString('fr-FR')}
-                      </p>
-                    )}
+          /* Rows, not cards. Each job used to open with a header carrying
+             two labelled buttons and a menu, then spend three more lines on
+             a Nœud/Source/Destination grid - so four jobs filled a screen
+             and none of them could be compared to the next. Everything a
+             job is identified by now sits on one line, and the parts only
+             some jobs have (a remote SSH source, the run history) unfold
+             under the row that owns them. */
+          <Card className="animate-fade-in">
+            <CardContent className="p-0">
+              <ul className="divide-y divide-border">
+                {jobs.map((job) => {
+                  const status = describe(RESOURCE_STATUS, job.status);
+                  const runs = runsByJob[job.id] ?? [];
+                  const isExpanded = expandedJobId === job.id;
+                  return (
+                    <li key={job.id} className="group/row">
+                      <div className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-surface-2 lg:px-5">
+                        <StatusDot tone={status.tone} className="shrink-0" />
 
-                    {job.sourceHost && (
-                      <div className="space-y-2 rounded-lg border border-border bg-surface-2 p-3">
-                        <p className="flex items-center gap-1.5 text-xs text-foreground/90">
-                          <Link2 className="h-3.5 w-3.5" />
-                          Source SSH distante : <span className="font-mono">{job.sourceUser || 'root'}@{job.sourceHost}:{job.sourceSshPort || 22}</span>
-                        </p>
-                        {job.node?.overlaySshPublicKey ? (
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="flex items-center gap-1.5 text-xs">
-                                <KeyRound className="h-3.5 w-3.5" />
-                                Clé publique de l&apos;agent (à ajouter à <code>~/.ssh/authorized_keys</code> sur l&apos;hôte distant)
-                              </p>
+                        <span className="w-44 shrink-0 truncate text-sm font-medium text-foreground" title={job.name}>
+                          {job.name}
+                        </span>
+
+                        <span className="flex min-w-0 flex-1 items-center gap-2 font-mono text-2xs text-muted-foreground">
+                          <span className="truncate" title={job.sourcePath}>
+                            {job.sourceHost ? `${job.sourceHost}:${job.sourcePath}` : job.sourcePath}
+                          </span>
+                          <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+                          <span className="truncate text-foreground/80" title={job.targetPath}>
+                            {job.targetPath}
+                          </span>
+                        </span>
+
+                        <span className="w-28 shrink-0 truncate text-2xs text-muted-foreground" title={nodeName(job.nodeId)}>
+                          {shortHostname(nodeName(job.nodeId))}
+                        </span>
+
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="tabular w-24 shrink-0 cursor-default text-right text-2xs text-muted-foreground">
+                              {job.lastRunAt ? formatRelative(job.lastRunAt) : 'jamais'}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {job.lastRunAt
+                              ? `Dernier lancement : ${formatDateTime(job.lastRunAt)}`
+                              : 'Jamais exécutée'}
+                            <br />
+                            Planification : <span className="font-mono">{job.schedule}</span>
+                          </TooltipContent>
+                        </Tooltip>
+
+                        <StatusPill tone={status.tone} className="w-24 shrink-0 justify-center">
+                          {status.label}
+                        </StatusPill>
+
+                        <div className="flex shrink-0 items-center gap-0.5">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
                               <Button
-                                variant="secondary"
-                                size="sm"
-                                onClick={() => copyToClipboard(job.node!.overlaySshPublicKey!, `sshkey-${job.id}`)}
+                                variant="ghost"
+                                size="icon"
+                                disabled={busyJobId === job.id}
+                                onClick={() => runJob(job)}
                               >
-                                {copiedKey === `sshkey-${job.id}` ? (
-                                  <Check className="h-3.5 w-3.5" />
-                                ) : (
-                                  <Copy className="h-3.5 w-3.5" />
-                                )}
+                                <Play className="h-3.5 w-3.5" />
                               </Button>
-                            </div>
-                            <p className="truncate rounded border border-border bg-zinc-950/70 px-2 py-1.5 font-mono text-2xs text-foreground/80">
-                              {job.node.overlaySshPublicKey}
-                            </p>
-                          </div>
-                        ) : (
-                          <p className="text-xs text-amber-300/90">
-                            Clé SSH de l&apos;agent pas encore reçue — attends que le nœud exécutant envoie un
-                            heartbeat.
-                          </p>
-                        )}
+                            </TooltipTrigger>
+                            <TooltipContent>Lancer maintenant</TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => toggleHistory(job)}
+                                className={isExpanded ? 'text-foreground' : undefined}
+                              >
+                                <History className="h-3.5 w-3.5" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>{isExpanded ? 'Masquer' : 'Historique et détails'}</TooltipContent>
+                          </Tooltip>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" disabled={busyJobId === job.id} aria-label="Plus d'actions">
+                                <MoreVertical className="h-3.5 w-3.5" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => openGeneralEdit(job)}>
+                                <Pencil className="h-4 w-4" />
+                                Modifier
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openSshEdit(job)}>
+                                <Settings2 className="h-4 w-4" />
+                                Source SSH
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => rotateTriggerToken(job)}>
+                                <RotateCw className="h-4 w-4" />
+                                Lien externe
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => deleteJob(job)}
+                                className="text-[hsl(var(--danger))] focus:text-[hsl(var(--danger))]"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                Supprimer
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
                       </div>
-                    )}
 
-                    {expandedJobId === job.id && (
-                      <div className="space-y-1.5 rounded-lg border border-border bg-surface-2 p-3">
-                        {runs.length === 0 && <p className="text-xs">Aucune exécution pour le moment.</p>}
-                        {runs.map((run) => {
-                          const runBadge = STATUS_BADGE[run.status] ?? STATUS_BADGE.pending;
-                          return (
-                            <div key={run.id} className="flex items-center justify-between text-xs">
-                              <span>{new Date(run.startedAt).toLocaleString('fr-FR')}</span>
-                              <span>{(run.bytesTransferred / 1_000_000).toFixed(1)} MB</span>
-                              <Badge label={runBadge.label} type={runBadge.type} />
+                      {isExpanded && (
+                        <div className="space-y-3 border-t border-border bg-surface-2/40 px-4 py-3 lg:px-5">
+                          {job.sourceHost && (
+                            <div className="space-y-1.5">
+                              <p className="flex items-center gap-1.5 text-2xs text-muted-foreground">
+                                <Link2 className="h-3.5 w-3.5" />
+                                Source SSH distante :{' '}
+                                <span className="font-mono text-foreground/80">
+                                  {job.sourceUser || 'root'}@{job.sourceHost}:{job.sourceSshPort || 22}
+                                </span>
+                              </p>
+                              {job.node?.overlaySshPublicKey ? (
+                                <div className="flex items-center gap-2">
+                                  <p className="min-w-0 flex-1 truncate rounded border border-border bg-background px-2 py-1 font-mono text-2xs text-foreground/80">
+                                    {job.node.overlaySshPublicKey}
+                                  </p>
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    className="shrink-0 gap-1.5"
+                                    onClick={() => copyToClipboard(job.node!.overlaySshPublicKey!, `sshkey-${job.id}`)}
+                                  >
+                                    {copiedKey === `sshkey-${job.id}` ? (
+                                      <Check className="h-3.5 w-3.5" />
+                                    ) : (
+                                      <KeyRound className="h-3.5 w-3.5" />
+                                    )}
+                                    Clé de l&apos;agent
+                                  </Button>
+                                </div>
+                              ) : (
+                                <p className="text-2xs text-[hsl(var(--warn))]">
+                                  Clé SSH de l&apos;agent pas encore reçue — attends que le nœud exécutant envoie un
+                                  heartbeat.
+                                </p>
+                              )}
                             </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+                          )}
+
+                          <div>
+                            <p className="mb-1.5 text-2xs uppercase tracking-wider text-muted-foreground">
+                              Dernières exécutions
+                            </p>
+                            {runs.length === 0 ? (
+                              <p className="text-2xs text-muted-foreground">Aucune exécution pour le moment.</p>
+                            ) : (
+                              <ul className="space-y-1">
+                                {runs.map((run) => {
+                                  const runStatus = describe(RESOURCE_STATUS, run.status);
+                                  return (
+                                    <li key={run.id} className="flex items-center gap-3 text-2xs text-muted-foreground">
+                                      <span className="tabular w-32 shrink-0">{formatDateTime(run.startedAt)}</span>
+                                      <span className="tabular w-20 shrink-0 text-right">
+                                        {formatBytes(run.bytesTransferred)}
+                                      </span>
+                                      <StatusPill tone={runStatus.tone} dot={false}>
+                                        {runStatus.label}
+                                      </StatusPill>
+                                      {run.log && (
+                                        <span className="min-w-0 flex-1 truncate font-mono" title={run.log}>
+                                          {run.log}
+                                        </span>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </CardContent>
+          </Card>
         )}
       </div>
 

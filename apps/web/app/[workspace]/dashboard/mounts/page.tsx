@@ -58,6 +58,9 @@ import { DirectoryBrowser } from '../../../../components/ui/directory-browser';
 import { NodeLabelBadges, StatCard } from '../../../../components/ui';
 import { CardListSkeleton, StatCardSkeleton } from '../../../../components/ui/skeleton';
 import { SectionLabel } from '../../../../components/SectionLabel';
+import { RESOURCE_STATUS, StatusDot, StatusPill, describe } from '../../../../components/ui/status';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
+import { shortHostname } from '../../../../lib/format';
 import { readNodeLabels } from '../../../../lib/node-labels';
 
 // ─── Presets ────────────────────────────────────────────────────────────────
@@ -1163,46 +1166,116 @@ export default function MountsPage() {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid gap-3 animate-fade-in">
-            {mounts.map((mount) => {
-              const sc = statusConfig[mount.status as keyof typeof statusConfig] ?? { label: mount.status, variant: 'secondary' as const };
-              return (
-                <Card key={mount.id} className="border-border bg-surface-1 backdrop-blur">
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-3">
-                          <h3 className="truncate text-base font-semibold text-foreground">{mount.name}</h3>
-                          <Badge variant={sc.variant}>{sc.label}</Badge>
+          /* One row per mount instead of a card each. The card repeated the
+             words "Source" and "Point de montage" on every entry, spent four
+             lines on two paths, and still never said which node the mount
+             runs on - the one thing you need to go fix it. The row carries
+             name, path pair, node and status on a single line; the SSH and
+             error details, which only some mounts have, unfold underneath
+             the rows that actually have them. */
+          <Card className="animate-fade-in">
+            <CardContent className="p-0">
+              <ul className="divide-y divide-border">
+                {mounts.map((mount) => {
+                  const status = describe(RESOURCE_STATUS, mount.status);
+                  const isRemote = Boolean(mount.remoteHost);
+                  const hasDetail = isRemote || (mount.status === 'error' && mount.lastError);
+                  return (
+                    <li key={mount.id} className="group/row">
+                      <div className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-surface-2 lg:px-5">
+                        <StatusDot tone={status.tone} className="shrink-0" />
+
+                        <span className="w-44 shrink-0 truncate text-sm font-medium text-foreground" title={mount.name}>
+                          {mount.name}
+                        </span>
+
+                        <span className="flex min-w-0 flex-1 items-center gap-2 font-mono text-2xs text-muted-foreground">
+                          <span className="truncate" title={mount.sourcePath}>
+                            {mount.sourcePath}
+                          </span>
+                          <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+                          <span className="truncate text-foreground/80" title={mount.targetPath}>
+                            {mount.targetPath}
+                          </span>
+                        </span>
+
+                        <span className="w-28 shrink-0 truncate text-2xs text-muted-foreground" title={mount.node?.name ?? undefined}>
+                          {mount.node?.name ? shortHostname(mount.node.name) : '—'}
+                        </span>
+
+                        <StatusPill tone={status.tone} className="w-28 shrink-0 justify-center">
+                          {status.label}
+                        </StatusPill>
+
+                        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/row:opacity-100">
+                          {mount.status === 'error' && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => retryMount(mount.id)}
+                                  disabled={busyId === mount.id}
+                                >
+                                  {busyId === mount.id ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <Play className="h-3.5 w-3.5" />
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Réessayer le montage</TooltipContent>
+                            </Tooltip>
+                          )}
+                          {isRemote && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => openSshEdit(mount)}
+                                  disabled={busyId === mount.id}
+                                >
+                                  <Settings2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Modifier la source SSH</TooltipContent>
+                            </Tooltip>
+                          )}
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => deleteMount(mount.id)}
+                                disabled={busyId === mount.id}
+                                className="text-muted-foreground hover:text-[hsl(var(--danger))]"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Supprimer le montage</TooltipContent>
+                          </Tooltip>
                         </div>
-                        <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-                          <div>
-                            <p className="mb-0.5 font-medium text-muted-foreground">Source</p>
-                            <p className="font-mono text-zinc-300 break-all">{mount.sourcePath}</p>
-                          </div>
-                          <div>
-                            <p className="mb-0.5 font-medium text-muted-foreground">Point de montage</p>
-                            <p className="font-mono text-zinc-300">{mount.targetPath}</p>
-                          </div>
-                        </div>
-                        {mount.remoteHost && (
-                          <div className="mt-3 space-y-2 rounded-lg border border-border bg-surface-2 p-3">
-                            <p className="flex items-center gap-1.5 text-xs text-foreground/90">
-                              Source SSH distante :{' '}
-                              <span className="font-mono">
-                                {mount.remoteUser || 'root'}@{mount.remoteHost}:{mount.remoteSshPort || 22}
-                              </span>
-                            </p>
-                            {mount.node?.overlaySshPublicKey ? (
-                              <div className="flex items-center justify-between gap-2">
-                                <p className="flex items-center gap-1.5 text-xs">
-                                  <KeyRound className="h-3.5 w-3.5" />
-                                  Clé publique de l&apos;agent (pour <code>~/.ssh/authorized_keys</code>)
-                                </p>
+                      </div>
+
+                      {hasDetail && (
+                        <div className="space-y-2 border-t border-border bg-surface-2/40 px-4 py-2.5 lg:px-5">
+                          {isRemote && (
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="flex items-center gap-1.5 text-2xs text-muted-foreground">
+                                <KeyRound className="h-3.5 w-3.5" />
+                                Source SSH :{' '}
+                                <span className="font-mono text-foreground/80">
+                                  {mount.remoteUser || 'root'}@{mount.remoteHost}:{mount.remoteSshPort || 22}
+                                </span>
+                              </p>
+                              {mount.node?.overlaySshPublicKey ? (
                                 <Button
                                   type="button"
                                   variant="secondary"
                                   size="sm"
+                                  className="gap-1.5"
                                   onClick={() => copyToClipboard(mount.node!.overlaySshPublicKey!, `mount-key-${mount.id}`)}
                                 >
                                   {copiedKey === `mount-key-${mount.id}` ? (
@@ -1210,60 +1283,26 @@ export default function MountsPage() {
                                   ) : (
                                     <Copy className="h-3.5 w-3.5" />
                                   )}
+                                  Clé publique de l&apos;agent
                                 </Button>
-                              </div>
-                            ) : (
-                              <p className="text-xs text-amber-300/90">Clé SSH de l&apos;agent pas encore reçue.</p>
-                            )}
-                          </div>
-                        )}
-                        {mount.status === 'error' && mount.lastError && (
-                          <div className="mt-3 rounded-lg border border-rose-500/20 bg-rose-500/[0.06] px-3 py-2">
-                            <p className="mb-0.5 text-xs font-medium text-rose-400">Erreur</p>
-                            <p className="font-mono text-xs text-rose-300/90 break-all">{mount.lastError}</p>
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1">
-                        {mount.status === 'error' && (
-                          <button
-                            onClick={() => retryMount(mount.id)}
-                            disabled={busyId === mount.id}
-                            className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-violet-500/10 hover:text-muted-foreground disabled:opacity-40"
-                            title="Réessayer"
-                          >
-                            {busyId === mount.id ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Play className="h-4 w-4" />
-                            )}
-                          </button>
-                        )}
-                        {mount.remoteHost && (
-                          <button
-                            onClick={() => openSshEdit(mount)}
-                            disabled={busyId === mount.id}
-                            className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-violet-500/10 hover:text-muted-foreground disabled:opacity-40"
-                            title="Modifier la source SSH"
-                          >
-                            <Settings2 className="h-4 w-4" />
-                          </button>
-                        )}
-                        <button
-                          onClick={() => deleteMount(mount.id)}
-                          disabled={busyId === mount.id}
-                          className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-400 disabled:opacity-40"
-                          title="Supprimer"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+                              ) : (
+                                <span className="text-2xs text-[hsl(var(--warn))]">
+                                  Clé SSH de l&apos;agent pas encore reçue.
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          {mount.status === 'error' && mount.lastError && (
+                            <p className="break-all font-mono text-2xs text-[hsl(var(--danger))]">{mount.lastError}</p>
+                          )}
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </CardContent>
+          </Card>
         )}
       </div>
 
