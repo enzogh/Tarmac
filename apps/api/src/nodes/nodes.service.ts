@@ -247,6 +247,13 @@ export class NodesService implements OnModuleInit {
 
     const workspaceId = scope.workspaceId as string;
 
+    // Timestamps are `timestamp without time zone` columns holding UTC (the
+    // Prisma convention). A JS Date handed to $queryRaw is serialised by the
+    // driver in the server's local zone, so comparing against one silently
+    // shifts the window by the host's UTC offset - on a CEST host that made
+    // this filter exclude every recent sample and every node reported 0 %
+    // CPU. Passing an explicit ISO instant and converting it to UTC is
+    // unambiguous wherever the API runs.
     // The two "latest row per group" lookups below are raw DISTINCT ON
     // queries rather than Prisma's `distinct`, because Prisma applies
     // `distinct` IN MEMORY: it fetches every matching row, ships it all to
@@ -266,7 +273,7 @@ export class NodesService implements OnModuleInit {
         FROM "MetricSample" s
         JOIN "Node" n ON n."id" = s."nodeId"
         WHERE n."workspaceId" = ${workspaceId}
-          AND s."createdAt" >= ${new Date(now - ms)}
+          AND s."createdAt" >= ${new Date(now - ms).toISOString()}::timestamptz AT TIME ZONE 'UTC'
         ORDER BY s."nodeId", s."createdAt" DESC
       `,
       this.prisma.disk.findMany({
@@ -515,7 +522,7 @@ export class NodesService implements OnModuleInit {
         DELETE FROM "SmartReport"
         WHERE "id" IN (
           SELECT "id" FROM "SmartReport"
-          WHERE "collectedAt" < ${cutoff}
+          WHERE "collectedAt" < ${cutoff.toISOString()}::timestamptz AT TIME ZONE 'UTC'
           LIMIT ${NodesService.PRUNE_BATCH_SIZE}
         )
       `;
