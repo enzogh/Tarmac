@@ -10,6 +10,7 @@ import {
   MoreVertical,
   Pencil,
   PauseCircle,
+  Archive,
   PlayCircle,
   Plus,
   RefreshCcw,
@@ -18,6 +19,7 @@ import {
 } from 'lucide-react';
 import { api, MigrationItem, NodeItem } from '../../../../lib/api';
 import { usePolling } from '../../../../lib/hooks/usePolling';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../../components/ui/tabs';
 import { PageHeader } from '../../../../components/PageHeader';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../../../components/ui/dropdown-menu';
 import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
@@ -160,6 +162,7 @@ export default function MigrationsPage() {
   const { data: migrations = [], mutate: refreshMigrations, isLoading: migrationsLoading } = usePolling('migrations', api.migrations.list, { intervalMs: 20000 });
   const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
   const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
+  const [migrationsTab, setMigrationsTab] = useState('active');
   const [wizardOpen, setWizardOpen] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState<PresetOption | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
@@ -921,193 +924,209 @@ export default function MigrationsPage() {
           )}
         </section>
 
-        <div className="space-y-4">
-          <SectionLabel>Migrations actives</SectionLabel>
-          {migrationsLoading ? (
-            <CardListSkeleton cards={2} />
-          ) : activeMigrations.length === 0 ? (
-            <Card className="border-border bg-surface-1 backdrop-blur">
-              <CardContent className="py-12 text-center">
-                <p className="font-medium text-muted-foreground">Aucune migration active</p>
-                <p className="mt-2 text-sm text-muted-foreground">Les migrations terminées sont archivées plus bas.</p>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="grid gap-4 animate-fade-in">
-              {activeMigrations.map((migration) => (
-                <Card key={migration.id} className="border-border bg-surface-1 backdrop-blur">
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between gap-4">
+        {/* Running transfers and finished ones answer different questions
+           and were stacked on one scroll, so the archive table pushed the
+           thing you actually came to watch off the screen. */}
+        <Tabs value={migrationsTab} onValueChange={setMigrationsTab} className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="active" className="gap-1.5">
+              <PlayCircle className="h-3.5 w-3.5" />
+              En cours ({activeMigrations.length})
+            </TabsTrigger>
+            <TabsTrigger value="archive" className="gap-1.5">
+              <Archive className="h-3.5 w-3.5" />
+              Archives
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="active" className="space-y-4">
+            {migrationsLoading ? (
+              <CardListSkeleton cards={2} />
+            ) : activeMigrations.length === 0 ? (
+              <Card className="border-border bg-surface-1 backdrop-blur">
+                <CardContent className="py-12 text-center">
+                  <p className="font-medium text-muted-foreground">Aucune migration active</p>
+                  <p className="mt-2 text-sm text-muted-foreground">Les migrations terminées sont archivées plus bas.</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="grid gap-4 animate-fade-in">
+                {activeMigrations.map((migration) => (
+                  <Card key={migration.id} className="border-border bg-surface-1 backdrop-blur">
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center justify-between gap-4">
+                        <div>
+                          <CardTitle className="text-base">{migration.name}</CardTitle>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Créée le {new Date(migration.createdAt).toLocaleDateString('fr-FR')}
+                          </p>
+                        </div>
+                        <Badge label={statusLabel[migration.status]} type={statusBadgeVariant[migration.status]} />
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="grid gap-3 rounded-xl border border-border bg-surface-2 p-3 md:grid-cols-2">
+                        <div className="space-y-1 text-sm">
+                          <div className="flex items-center gap-2">
+                            <Server className="h-4 w-4 text-primary" />
+                            <span className="text-muted-foreground">Source:</span>
+                            <span className="font-medium">{formatMigrationEndpoint(migration, 'source')}</span>
+                          </div>
+                          <p className="pl-6 font-mono text-2xs text-muted-foreground break-all">
+                            {migration.sourcePath ?? '—'}
+                          </p>
+                        </div>
+                        <div className="space-y-1 text-sm">
+                          <div className="flex items-center gap-2">
+                            <Server className="h-4 w-4 text-sky-300" />
+                            <span className="text-muted-foreground">Destination:</span>
+                            <span className="font-medium">{formatMigrationEndpoint(migration, 'target')}</span>
+                          </div>
+                          <p className="pl-6 font-mono text-2xs text-muted-foreground break-all">
+                            {migration.targetPath ?? '—'}
+                          </p>
+                        </div>
+                      </div>
+
                       <div>
-                        <CardTitle className="text-base">{migration.name}</CardTitle>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Créée le {new Date(migration.createdAt).toLocaleDateString('fr-FR')}
-                        </p>
-                      </div>
-                      <Badge label={statusLabel[migration.status]} type={statusBadgeVariant[migration.status]} />
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="grid gap-3 rounded-xl border border-border bg-surface-2 p-3 md:grid-cols-2">
-                      <div className="space-y-1 text-sm">
-                        <div className="flex items-center gap-2">
-                          <Server className="h-4 w-4 text-primary" />
-                          <span className="text-muted-foreground">Source:</span>
-                          <span className="font-medium">{formatMigrationEndpoint(migration, 'source')}</span>
+                        <div className="mb-2 flex items-center justify-between">
+                          <span className="text-sm font-medium">Progression</span>
+                          <span className="text-sm font-semibold">{migration.progress}%</span>
                         </div>
-                        <p className="pl-6 font-mono text-2xs text-muted-foreground break-all">
-                          {migration.sourcePath ?? '—'}
-                        </p>
+                        <Progress value={migration.progress} />
                       </div>
-                      <div className="space-y-1 text-sm">
-                        <div className="flex items-center gap-2">
-                          <Server className="h-4 w-4 text-sky-300" />
-                          <span className="text-muted-foreground">Destination:</span>
-                          <span className="font-medium">{formatMigrationEndpoint(migration, 'target')}</span>
-                        </div>
-                        <p className="pl-6 font-mono text-2xs text-muted-foreground break-all">
-                          {migration.targetPath ?? '—'}
-                        </p>
-                      </div>
-                    </div>
 
-                    <div>
-                      <div className="mb-2 flex items-center justify-between">
-                        <span className="text-sm font-medium">Progression</span>
-                        <span className="text-sm font-semibold">{migration.progress}%</span>
-                      </div>
-                      <Progress value={migration.progress} />
-                    </div>
-
-                    {migration.status === 'running' && (
-                      <Alert variant="info">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        <AlertDescription>Migration en cours. Vous pouvez quitter la page.</AlertDescription>
-                      </Alert>
-                    )}
-
-                    {migration.status === 'failed' && (
-                      <Alert variant="destructive">
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertDescription>Migration échouée. Corrigez la config puis relancez.</AlertDescription>
-                      </Alert>
-                    )}
-
-                    <div className="flex flex-wrap gap-2">
-                      {migration.status === 'pending' && (
-                        <Button
-                          onClick={() => startMigration(migration.id)}
-                          disabled={busyId === migration.id}
-                          className="gap-2 bg-violet-600 text-white hover:bg-violet-500"
-                        >
-                          {busyId === migration.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
-                          Lancer
-                        </Button>
+                      {migration.status === 'running' && (
+                        <Alert variant="info">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <AlertDescription>Migration en cours. Vous pouvez quitter la page.</AlertDescription>
+                        </Alert>
                       )}
 
                       {migration.status === 'failed' && (
-                        <Button variant="secondary" onClick={() => retryMigration(migration.id)} disabled={busyId === migration.id} className="gap-2">
-                          {busyId === migration.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
-                          Relancer
-                        </Button>
+                        <Alert variant="destructive">
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertDescription>Migration échouée. Corrigez la config puis relancez.</AlertDescription>
+                        </Alert>
                       )}
 
-                      {migration.status === 'running' && (
-                        <Button
-                          variant="ghost"
-                          onClick={() => stopMigration(migration.id)}
-                          disabled={busyId === migration.id}
-                          className="gap-2 text-rose-300 hover:text-rose-200"
-                        >
-                          {busyId === migration.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <PauseCircle className="h-4 w-4" />}
-                          Arrêter
-                        </Button>
-                      )}
+                      <div className="flex flex-wrap gap-2">
+                        {migration.status === 'pending' && (
+                          <Button
+                            onClick={() => startMigration(migration.id)}
+                            disabled={busyId === migration.id}
+                            className="gap-2 bg-violet-600 text-white hover:bg-violet-500"
+                          >
+                            {busyId === migration.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
+                            Lancer
+                          </Button>
+                        )}
 
-                      {(canEditMigration(migration) || canDeleteMigration(migration)) && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" disabled={busyId === migration.id} aria-label="Plus d'actions">
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            {canEditMigration(migration) && (
-                              <DropdownMenuItem onClick={() => openEditDialog(migration)}>
-                                <Pencil className="h-4 w-4" />
-                                Éditer
-                              </DropdownMenuItem>
-                            )}
-                            {canDeleteMigration(migration) && (
-                              <DropdownMenuItem
-                                onClick={() => setDeleteMigration(migration)}
-                                className="text-rose-300 focus:text-rose-200"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                                Supprimer
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
-        </div>
+                        {migration.status === 'failed' && (
+                          <Button variant="secondary" onClick={() => retryMigration(migration.id)} disabled={busyId === migration.id} className="gap-2">
+                            {busyId === migration.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+                            Relancer
+                          </Button>
+                        )}
 
-        <SectionLabel>Archives</SectionLabel>
-        <Card className="border-border bg-surface-1 backdrop-blur">
-          <CardContent className="pt-6">
-            {migrationsLoading ? (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Nom</TableHead>
-                    <TableHead>Source</TableHead>
-                    <TableHead>Destination</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead className="text-right">Statut</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {Array.from({ length: 3 }).map((_, index) => (
-                    <TableRowSkeleton key={index} columns={5} />
-                  ))}
-                </TableBody>
-              </Table>
-            ) : archivedMigrations.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Aucune migration archivée pour le moment.</p>
-            ) : (
-              <Table className="animate-fade-in">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Nom</TableHead>
-                    <TableHead>Source</TableHead>
-                    <TableHead>Destination</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead className="text-right">Statut</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {archivedMigrations.map((migration) => (
-                    <TableRow key={migration.id}>
-                      <TableCell className="font-medium">{migration.name}</TableCell>
-                      <TableCell>{formatMigrationEndpoint(migration, 'source')}</TableCell>
-                      <TableCell>{formatMigrationEndpoint(migration, 'target')}</TableCell>
-                      <TableCell>{new Date(migration.createdAt).toLocaleDateString('fr-FR')}</TableCell>
-                      <TableCell className="text-right">
-                        <Badge label="Terminée" type="success" />
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                        {migration.status === 'running' && (
+                          <Button
+                            variant="ghost"
+                            onClick={() => stopMigration(migration.id)}
+                            disabled={busyId === migration.id}
+                            className="gap-2 text-rose-300 hover:text-rose-200"
+                          >
+                            {busyId === migration.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <PauseCircle className="h-4 w-4" />}
+                            Arrêter
+                          </Button>
+                        )}
+
+                        {(canEditMigration(migration) || canDeleteMigration(migration)) && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" disabled={busyId === migration.id} aria-label="Plus d'actions">
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              {canEditMigration(migration) && (
+                                <DropdownMenuItem onClick={() => openEditDialog(migration)}>
+                                  <Pencil className="h-4 w-4" />
+                                  Éditer
+                                </DropdownMenuItem>
+                              )}
+                              {canDeleteMigration(migration) && (
+                                <DropdownMenuItem
+                                  onClick={() => setDeleteMigration(migration)}
+                                  className="text-rose-300 focus:text-rose-200"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  Supprimer
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
             )}
-          </CardContent>
-        </Card>
+          </TabsContent>
+
+          <TabsContent value="archive" className="space-y-4">
+          <Card className="border-border bg-surface-1 backdrop-blur">
+            <CardContent className="pt-6">
+              {migrationsLoading ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nom</TableHead>
+                      <TableHead>Source</TableHead>
+                      <TableHead>Destination</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead className="text-right">Statut</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {Array.from({ length: 3 }).map((_, index) => (
+                      <TableRowSkeleton key={index} columns={5} />
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : archivedMigrations.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Aucune migration archivée pour le moment.</p>
+              ) : (
+                <Table className="animate-fade-in">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nom</TableHead>
+                      <TableHead>Source</TableHead>
+                      <TableHead>Destination</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead className="text-right">Statut</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {archivedMigrations.map((migration) => (
+                      <TableRow key={migration.id}>
+                        <TableCell className="font-medium">{migration.name}</TableCell>
+                        <TableCell>{formatMigrationEndpoint(migration, 'source')}</TableCell>
+                        <TableCell>{formatMigrationEndpoint(migration, 'target')}</TableCell>
+                        <TableCell>{new Date(migration.createdAt).toLocaleDateString('fr-FR')}</TableCell>
+                        <TableCell className="text-right">
+                          <Badge label="Terminée" type="success" />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+          </TabsContent>
+        </Tabs>
       </div>
 
       {wizardOpen && (

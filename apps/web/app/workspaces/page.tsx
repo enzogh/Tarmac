@@ -6,7 +6,7 @@ import { ArrowRight, Layers, LogOut, Plus, Search, ShieldCheck, Users } from 'lu
 import { api, setCurrentWorkspaceId, WorkspaceListItem } from '../../lib/api';
 import { usePolling } from '../../lib/hooks/usePolling';
 import { Button } from '../../components/ui/button';
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '../../components/ui/card';
+import { Card, CardContent } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
@@ -19,28 +19,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../components/ui/dialog';
-
-// A handful of curated gradient pairs (kept in the app's existing
-// violet/indigo family, plus a few complementary hues) so a grid of many
-// workspace cards stays visually distinguishable at a glance instead of
-// every tile being identically violet. Deterministic per workspace id, not
-// random, so a given workspace always gets the same tile between renders.
-const TILE_GRADIENTS = [
-  'from-violet-600/90 to-indigo-600/90',
-  'from-sky-600/90 to-cyan-600/90',
-  'from-emerald-600/90 to-teal-600/90',
-  'from-amber-600/90 to-orange-600/90',
-  'from-rose-600/90 to-pink-600/90',
-  'from-fuchsia-600/90 to-purple-600/90',
-];
-
-function hashString(value: string): number {
-  let hash = 0;
-  for (let i = 0; i < value.length; i++) {
-    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
-  }
-  return hash;
-}
 
 // Two letters, always - a single stray capital in a tile reads as a broken
 // image placeholder rather than a deliberate monogram. Multi-word names use
@@ -57,17 +35,6 @@ function initials(name: string): string {
     return word.length >= 2 ? word.slice(0, 2).toUpperCase() : (word[0] + word[0]).toUpperCase();
   }
   return '??';
-}
-
-function WorkspaceTile({ id, name }: { id: string; name: string }) {
-  const gradient = TILE_GRADIENTS[hashString(id) % TILE_GRADIENTS.length];
-  return (
-    <span
-      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-sm font-semibold text-white shadow-glow ${gradient}`}
-    >
-      {initials(name)}
-    </span>
-  );
 }
 
 export default function WorkspacesHomePage() {
@@ -105,49 +72,37 @@ export default function WorkspacesHomePage() {
     }
   };
 
+  const count = workspaces?.length ?? 0;
+
+  // A three-column card grid with per-workspace gradient tiles was built for
+  // a page that in practice holds one or two entries: it left a single small
+  // card marooned in an empty grid, and six rotating gradients put more
+  // colour on this screen than on any dashboard behind it. A single column
+  // of rows reads the same at one workspace as at twenty.
   return (
-    <div className="min-h-screen bg-zinc-950">
-      <header className="border-b border-border bg-gradient-to-b from-violet-600/[0.07] to-transparent">
-        <div className="mx-auto max-w-6xl px-6 pb-8 pt-10 sm:px-8">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <div className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                <Layers className="h-3.5 w-3.5" />
-                Tarmac
-              </div>
-              <h1 className="text-3xl font-semibold tracking-tight text-foreground">Mes workspaces</h1>
-              <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-                Choisis un workspace pour ouvrir son tableau de bord, ou crée-en un nouveau pour regrouper de nouvelles
-                nodes.
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={() => void handleLogout()} className="gap-2">
-                <LogOut className="h-4 w-4" />
-                Déconnexion
-              </Button>
-            </div>
-          </div>
+    <div className="flex min-h-screen flex-col bg-background">
+      <header className="border-b border-border">
+        <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-4 px-6 py-4">
+          <span className="flex items-center gap-2">
+            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-primary">
+              <Layers className="h-3.5 w-3.5 text-white" />
+            </span>
+            <span className="text-sm font-semibold tracking-tight text-foreground">Tarmac</span>
+          </span>
+          <Button variant="ghost" size="sm" onClick={() => void handleLogout()} className="gap-2">
+            <LogOut className="h-4 w-4" />
+            Déconnexion
+          </Button>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-6 py-8 sm:px-8">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-1 items-center gap-3">
-            <p className="shrink-0 text-sm text-muted-foreground">
-              {workspaces?.length ?? 0} workspace{(workspaces?.length ?? 0) > 1 ? 's' : ''}
+      <main className="mx-auto w-full max-w-3xl flex-1 px-6 py-10">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">Mes workspaces</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Chaque workspace regroupe sa propre flotte de nœuds, ses partages et ses alertes.
             </p>
-            {(workspaces?.length ?? 0) > 5 && (
-              <div className="relative w-full max-w-xs">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Rechercher un workspace…"
-                  className="h-8 pl-8 text-xs"
-                />
-              </div>
-            )}
           </div>
           {isSuperuser && (
             <Button onClick={() => setCreateOpen(true)} className="gap-2">
@@ -157,67 +112,82 @@ export default function WorkspacesHomePage() {
           )}
         </div>
 
-        {isLoading && <CardListSkeleton cards={3} />}
-
-        {!isLoading && workspaces && workspaces.length === 0 && (
-          <Card>
-            <CardContent className="flex flex-col items-center gap-2 py-16 text-center">
-              <Layers className="h-8 w-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">
-                Aucun workspace accessible. Contacte un administrateur pour qu&apos;il t&apos;y ajoute.
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
-        {!isLoading && workspaces && workspaces.length > 0 && filtered.length === 0 && (
-          <p className="py-16 text-center text-sm text-muted-foreground">Aucun workspace ne correspond à « {query} ».</p>
-        )}
-
-        {!isLoading && filtered.length > 0 && (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 animate-fade-in">
-            {filtered.map((workspace) => {
-              return (
-                <Card key={workspace.id} className="flex flex-col transition-colors hover:border-border">
-                  <CardHeader className="flex-row items-start justify-between gap-3 space-y-0">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <WorkspaceTile id={workspace.id} name={workspace.name} />
-                      <div className="min-w-0">
-                        <CardTitle className="truncate text-base">{workspace.name}</CardTitle>
-                        <p className="truncate text-xs text-muted-foreground">{workspace.slug}</p>
-                      </div>
-                    </div>
-                    {workspace.isDefault && (
-                      <Badge variant="outline" className="shrink-0">
-                        Par défaut
-                      </Badge>
-                    )}
-                  </CardHeader>
-                  <CardContent className="flex flex-1 flex-col gap-2 pt-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
-                        <Users className="h-3.5 w-3.5" />
-                        {workspace.memberCount} membre{workspace.memberCount > 1 ? 's' : ''}
-                      </span>
-                      {workspace.myRole === 'owner' && (
-                        <Badge variant="info" className="gap-1">
-                          <ShieldCheck className="h-3 w-3" />
-                          Propriétaire
-                        </Badge>
-                      )}
-                    </div>
-                  </CardContent>
-                  <CardFooter className="gap-2 pt-0">
-                    <Button className="flex-1 gap-2" onClick={() => enterWorkspace(workspace)}>
-                      Entrer
-                      <ArrowRight className="h-4 w-4" />
-                    </Button>
-                  </CardFooter>
-                </Card>
-              );
-            })}
+        {count > 5 && (
+          <div className="relative mt-6">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Rechercher un workspace…"
+              className="pl-9"
+            />
           </div>
         )}
+
+        <div className="mt-6">
+          {isLoading && <CardListSkeleton cards={3} />}
+
+          {!isLoading && count === 0 && (
+            <Card>
+              <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
+                <Layers className="h-7 w-7 text-muted-foreground" />
+                <p className="max-w-sm text-sm text-muted-foreground">
+                  Aucun workspace accessible. Contacte un administrateur pour qu&apos;il t&apos;y ajoute.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {!isLoading && count > 0 && filtered.length === 0 && (
+            <p className="py-16 text-center text-sm text-muted-foreground">
+              Aucun workspace ne correspond à «&nbsp;{query}&nbsp;».
+            </p>
+          )}
+
+          {!isLoading && filtered.length > 0 && (
+            <ul className="animate-fade-in divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface-1">
+              {filtered.map((workspace) => (
+                <li key={workspace.id}>
+                  {/* The whole row is the control: a card whose only action
+                      is "Entrer" doesn't need a separate button for it. */}
+                  <button
+                    type="button"
+                    onClick={() => enterWorkspace(workspace)}
+                    className="group flex w-full items-center gap-4 px-4 py-3.5 text-left transition-colors hover:bg-surface-2"
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-2 text-xs font-semibold text-foreground">
+                      {initials(workspace.name)}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="truncate text-sm font-medium text-foreground">{workspace.name}</span>
+                        {workspace.isDefault && (
+                          <Badge variant="outline" className="shrink-0">
+                            Par défaut
+                          </Badge>
+                        )}
+                        {workspace.myRole === 'owner' && (
+                          <Badge variant="info" className="shrink-0">
+                            <ShieldCheck className="h-3 w-3" />
+                            Propriétaire
+                          </Badge>
+                        )}
+                      </span>
+                      <span className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
+                        <span className="truncate font-mono">/{workspace.slug}</span>
+                        <span className="flex shrink-0 items-center gap-1">
+                          <Users className="h-3 w-3" />
+                          {workspace.memberCount} membre{workspace.memberCount > 1 ? 's' : ''}
+                        </span>
+                      </span>
+                    </span>
+                    <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </main>
 
       <CreateWorkspaceDialog

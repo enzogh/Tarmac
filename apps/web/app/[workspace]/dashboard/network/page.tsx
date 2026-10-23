@@ -14,6 +14,7 @@ import {
   Play,
   RadioTower,
   RefreshCw,
+  Share2,
   Waves,
   Zap,
 } from 'lucide-react';
@@ -237,6 +238,9 @@ export default function NetworkPage() {
   }>({});
   const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
   const [historyRange, setHistoryRange] = useState<'1h' | '24h' | '7d'>('1h');
+  // Opens on the topology, which is what the page is for; the connectivity
+  // test form now waits in its own tab instead of greeting every visit.
+  const [networkTab, setNetworkTab] = useState('topology');
   const [historyForward, setHistoryForward] = useState<VlanConnectionHistory | null>(null);
   const [historyReverse, setHistoryReverse] = useState<VlanConnectionHistory | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -1250,757 +1254,785 @@ export default function NetworkPage() {
         </div>
       </section>
 
-      <SectionLabel>Diagnostics</SectionLabel>
-      <Card className="border-border backdrop-blur transition-colors hover:border-border">
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <Waves className="h-5 w-5 text-muted-foreground" />
-            <CardTitle className="text-base">Tests de connectivité</CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div>
-              <p className="mb-1 text-xs text-muted-foreground">Depuis</p>
-              <Select
-                value={selectedTest.from}
-                onValueChange={(value) => setSelectedTest((prev) => ({ ...prev, from: value }))}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Sélectionner" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(vlanStatus.vlan.members || []).map((m) => (
-                    <SelectItem key={m.id} value={m.nodeId}>
-                      {(m.node?.name || m.nodeId) +
-                        ` (${m.vlanIp})` +
-                        ((nodeLabels[m.nodeId]?.length ?? 0) > 0 ? ` — ${nodeLabels[m.nodeId].join(', ')}` : '')}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
 
-            <div>
-              <p className="mb-1 text-xs text-muted-foreground">Vers</p>
-              <Select
-                value={selectedTest.to}
-                onValueChange={(value) => setSelectedTest((prev) => ({ ...prev, to: value }))}
+      {/* Four stacked bands (overview, diagnostics, topology, history) meant
+          the page opened on a form nobody had asked for and buried the map
+          two screens down. The bands are the same, but they are now reached
+          by name instead of by scrolling, and the tiles above stay visible
+          whichever one is open. */}
+      <Tabs value={networkTab} onValueChange={setNetworkTab} className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="topology" className="gap-1.5">
+            <Share2 className="h-3.5 w-3.5" />
+            Topologie
+          </TabsTrigger>
+          <TabsTrigger value="history" className="gap-1.5">
+            <Activity className="h-3.5 w-3.5" />
+            Historique
+          </TabsTrigger>
+          <TabsTrigger value="diagnostics" className="gap-1.5">
+            <Waves className="h-3.5 w-3.5" />
+            Diagnostics
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="topology" className="space-y-4">
+
+        {knownRegionSummaries.length > 1 && (
+          <Callout>
+            <div className="space-y-1.5">
+              {segmentedRegionPairs.map(([a, b]) => (
+                <p key={`${a.region}-${b.region}`} className="flex flex-wrap items-center gap-1.5">
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                  Segmentation active : {REGION_LABELS[a.region] ?? a.region} ↔ {REGION_LABELS[b.region] ?? b.region} via{' '}
+                  <span className="font-medium text-foreground">{a.gateway?.node?.name ?? a.gateway?.nodeId}</span>
+                  <span>↔</span>
+                  <span className="font-medium text-foreground">{b.gateway?.node?.name ?? b.gateway?.nodeId}</span>
+                </p>
+              ))}
+              {meshedRegionSummaries.map((summary) => (
+                <p key={summary.region} className="flex flex-wrap items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+                  {REGION_LABELS[summary.region] ?? summary.region} : aucune passerelle désignée — maillage complet par
+                  défaut avec les autres régions.
+                </p>
+              ))}
+            </div>
+          </Callout>
+        )}
+
+        <Card className="border-border transition-colors hover:border-border">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Globe2 className="h-5 w-5 text-muted-foreground" />
+              <CardTitle className="text-base">Régions &amp; passerelles</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {regionSummaries.map(({ region, members, gateway }) => (
+              <div key={region} className="rounded-xl border border-border bg-surface-2 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium text-foreground">
+                    {region === 'unknown' ? 'Région inconnue' : REGION_LABELS[region] ?? region}
+                  </p>
+                  <span className="text-xs text-muted-foreground">
+                    {members.length} nœud{members.length > 1 ? 's' : ''}
+                  </span>
+                </div>
+                {region === 'unknown' ? (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Localisation manquante — définissez un pays dans le panneau ci-dessous pour activer la segmentation
+                    sur ces nœuds.
+                  </p>
+                ) : (
+                  <>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {members.map((member) => {
+                        const isGateway = Boolean(member.node?.overlayIsGateway);
+                        return (
+                          <Button
+                            key={member.nodeId}
+                            size="sm"
+                            variant={isGateway ? 'default' : 'outline'}
+                            disabled={gatewaySavingByNodeId[member.nodeId]}
+                            onClick={() => void handleSetGateway(member.nodeId, !isGateway)}
+                          >
+                            {gatewaySavingByNodeId[member.nodeId]
+                              ? 'Enregistrement…'
+                              : `${member.node?.name ?? member.nodeId}${isGateway ? ' · Passerelle ✓' : ''}`}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                    {!gateway && (
+                      <p className="mt-2 text-2xs text-muted-foreground">
+                        Aucune passerelle désignée dans cette région — clique un nœud ci-dessus pour l’activer.
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <div className="grid gap-4 xl:grid-cols-[1.6fr_minmax(0,1fr)]">
+          <Card className="border-border transition-colors hover:border-border">
+            <CardHeader className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Tabs value={mapView} onValueChange={(value) => setMapView(value === 'graph' ? 'graph' : 'map')}>
+                  <TabsList>
+                    <TabsTrigger value="map" className="gap-1.5">
+                      <Globe2 className="h-3.5 w-3.5" />
+                      Carte
+                    </TabsTrigger>
+                    <TabsTrigger value="graph" className="gap-1.5">
+                      <Network className="h-3.5 w-3.5" />
+                      Graphe
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+                {mapView === 'graph' && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => zoomFrom(1.16)}
+                    >
+                      Zoom +
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => zoomFrom(1 / 1.16)}
+                    >
+                      Zoom -
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setViewTransform({ scale: 1, tx: 0, ty: 0 })}
+                    >
+                      Recentrer
+                    </Button>
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {mapView === 'map'
+                  ? 'Molette pour zoomer, glisser le fond pour déplacer la vue, glisser un point pour corriger sa position exacte. Les nœuds à la même localisation sont regroupés en badge tant que vous n’avez pas zoomé assez près.'
+                  : 'Molette pour zoomer, glisser le fond pour déplacer la vue, glisser un nœud pour le repositionner.'}
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {mapView === 'map' ? (
+                <WorldMap
+                  nodes={worldMapNodes}
+                  links={worldMapLinks}
+                  onNodeDrag={handleMapNodeDrag}
+                  onSelectNode={setSelectedMapNodeId}
+                  className="h-[560px] w-full"
+                />
+              ) : (
+              <div className="rounded-xl border border-border bg-surface-2 p-4">
+                <svg
+                  ref={svgRef}
+                  viewBox={`0 0 ${MIND_MAP_WIDTH} ${MIND_MAP_HEIGHT}`}
+                  className="h-[560px] w-full touch-none"
+                  onWheel={handleMapWheel}
+                  onPointerDown={handleMapPointerDown}
+                  onPointerMove={handleMapPointerMove}
+                  onPointerUp={endPointerInteraction}
+                  onPointerCancel={endPointerInteraction}
+                >
+                  <g transform={`translate(${viewTransform.tx} ${viewTransform.ty}) scale(${viewTransform.scale})`}>
+                    {countryBubbles.map((bubble) => (
+                      <g key={bubble.id}>
+                        <circle
+                          cx={bubble.x}
+                          cy={bubble.y}
+                          r={bubble.r}
+                          fill="rgba(59,130,246,0.04)"
+                          stroke="rgba(59,130,246,0.18)"
+                          strokeWidth={1.5}
+                        />
+                        <text
+                          x={bubble.x}
+                          y={bubble.y - bubble.r + 18}
+                          textAnchor="middle"
+                          fill="rgba(191,219,254,0.85)"
+                          fontSize={11}
+                          fontFamily="ui-sans-serif, system-ui, sans-serif"
+                        >
+                          {bubble.label}
+                        </text>
+                      </g>
+                    ))}
+                    {cityBubbles.map((bubble) => (
+                      <g key={bubble.id}>
+                        <circle
+                          cx={bubble.x}
+                          cy={bubble.y}
+                          r={bubble.r}
+                          fill="rgba(139,92,246,0.04)"
+                          stroke="rgba(139,92,246,0.2)"
+                          strokeWidth={1}
+                        />
+                        <text
+                          x={bubble.x}
+                          y={bubble.y - bubble.r + 14}
+                          textAnchor="middle"
+                          fill="rgba(221,214,254,0.75)"
+                          fontSize={10}
+                          fontFamily="ui-sans-serif, system-ui, sans-serif"
+                        >
+                          {bubble.label}
+                        </text>
+                      </g>
+                    ))}
+                    {graph.links.map((link) => {
+                      const source = nodeById.get(link.sourceNodeId);
+                      const target = nodeById.get(link.targetNodeId);
+                      if (!source || !target) return null;
+
+                      const isSelected = selectedPairKey === link.key;
+                      return (
+                        <g
+                          key={link.key}
+                          data-link-clickable="true"
+                          onClick={() => {
+                            setSelectedPairKey(link.key);
+                            const bestDirectional = directedFlows.find(
+                              (flow) => [flow.sourceNodeId, flow.targetNodeId].sort().join('__') === link.key,
+                            );
+                            setSelectedFlowKey(bestDirectional?.key ?? null);
+                          }}
+                          className="cursor-pointer"
+                        >
+                          <line
+                            x1={source.x}
+                            y1={source.y}
+                            x2={target.x}
+                            y2={target.y}
+                            stroke={linkStroke(link.status)}
+                            strokeWidth={isSelected ? 4 : link.status === 'offline' ? 2 : 3}
+                            strokeDasharray={link.status === 'offline' ? '6 6' : undefined}
+                            style={{ filter: linkGlow(link.status) }}
+                          />
+                          {link.status !== 'offline' && (
+                            <circle r={isSelected ? 5 : 4} fill={linkStroke(link.status)}>
+                              <animateMotion dur={linkPulseDuration(link.latencyMs)} repeatCount="indefinite" rotate="auto">
+                                <mpath href={`#path-${link.key}`} />
+                              </animateMotion>
+                            </circle>
+                          )}
+                          <path
+                            id={`path-${link.key}`}
+                            d={`M ${source.x} ${source.y} L ${target.x} ${target.y}`}
+                            fill="none"
+                            stroke="none"
+                          />
+                          <title>
+                            {source.label} ↔ {target.label} · {getConnectionLabel(link.status)} ·{' '}
+                            {source.vlanIp} ↔ {target.vlanIp} ·{' '}
+                            {formatLatency(link.latencyMs)} · {formatLoss(link.packetLoss)} ·{' '}
+                            {formatBandwidth(link.bandwidth)}
+                          </title>
+                        </g>
+                      );
+                    })}
+
+                    {displayedNodes.map((node) => {
+                      const nameLine = `${flagFromCountryCode(node.countryCode)} ${getNodeDisplayName(node.id)}`;
+                      const detailLine = `${node.city} · ${node.vlanIp}`;
+                      // Rough char-width estimate (no canvas measurement available in SVG) so the
+                      // backing plate covers whichever line is wider, keeping neighbouring node
+                      // labels from visually merging when nodes sit close together.
+                      const labelWidth = Math.max(nameLine.length * 7.2, detailLine.length * 6.2) + 16;
+                      return (
+                        <g
+                          key={node.id}
+                          data-node-draggable="true"
+                          onPointerDown={(event) => handleNodePointerDown(event, node.id)}
+                          className="cursor-grab active:cursor-grabbing"
+                        >
+                          <circle cx={node.x} cy={node.y} r={26} fill="rgba(9,9,11,0.95)" stroke={nodeFill(node.status)} strokeWidth={2.5} />
+                          <circle cx={node.x} cy={node.y} r={10} fill={nodeFill(node.status)} />
+                          <rect
+                            x={node.x - labelWidth / 2}
+                            y={node.y + 40}
+                            width={labelWidth}
+                            height={42}
+                            rx={8}
+                            fill="rgba(9,9,11,0.85)"
+                          />
+                          <text
+                            x={node.x}
+                            y={node.y + 54}
+                            textAnchor="middle"
+                            fill="rgba(244,244,245,0.94)"
+                            fontSize={13}
+                            fontFamily="ui-sans-serif, system-ui, sans-serif"
+                          >
+                            {nameLine}
+                          </text>
+                          <text
+                            x={node.x}
+                            y={node.y + 74}
+                            textAnchor="middle"
+                            fill="rgba(161,161,170,0.95)"
+                            fontSize={11}
+                            fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+                          >
+                            {detailLine}
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </g>
+                </svg>
+              </div>
+              )}
+              <div className="rounded-xl border border-border bg-surface-2 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-xs font-medium text-foreground/90">Localisation manuelle des nœuds</p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setNodePositionOverrides({});
+                      for (const nodeId of persistedGraphPositions.keys()) {
+                        void api.nodes.update(nodeId, { graphX: null, graphY: null }).catch(() => {});
+                      }
+                    }}
+                  >
+                    Réinitialiser les positions
+                  </Button>
+                </div>
+                <p className="mb-3 text-xs text-muted-foreground">
+                  Corrigez la ville/pays si la détection automatique par IP est incorrecte. Les changements sont enregistrés côté serveur et partagés entre clients.
+                </p>
+                <div className="max-h-56 space-y-2 overflow-auto pr-1">
+                  {orderedNodes.map((node) => {
+                    const override = geoOverrides[node.id] ?? {};
+                    const detected = detectedGeoByNodeId.get(node.id);
+                    const member = memberByNodeId.get(node.id);
+                    const region = member?.region ?? null;
+                    const isGateway = Boolean(member?.node?.overlayIsGateway);
+                    return (
+                      <div key={`override-${node.id}`} className="rounded-lg border border-border bg-surface-2 p-2">
+                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs font-medium text-foreground">{node.label}</p>
+                          <p className="text-[10px] font-mono text-muted-foreground">{node.vlanIp}</p>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-[1fr_1fr_88px_auto]">
+                          <Input
+                            value={override.city ?? ''}
+                            onChange={(event) => updateNodeGeoOverride(node.id, { city: event.target.value })}
+                            onBlur={() => void saveNodeGeoOverride(node.id)}
+                            placeholder={detected?.city ?? 'Ville inconnue'}
+                          />
+                          <Input
+                            value={override.country ?? ''}
+                            onChange={(event) => updateNodeGeoOverride(node.id, { country: event.target.value })}
+                            onBlur={() => void saveNodeGeoOverride(node.id)}
+                            placeholder={detected?.country ?? 'Pays inconnu'}
+                          />
+                          <Input
+                            value={override.countryCode ?? ''}
+                            onChange={(event) => updateNodeGeoOverride(node.id, { countryCode: event.target.value })}
+                            onBlur={() => void saveNodeGeoOverride(node.id)}
+                            placeholder={detected?.countryCode ?? '--'}
+                            maxLength={2}
+                            className="uppercase"
+                          />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              updateNodeGeoOverride(node.id, { city: '', country: '', countryCode: '' });
+                              void saveNodeGeoOverride(node.id, true);
+                            }}
+                            disabled={geoSavingByNodeId[node.id]}
+                          >
+                            {geoSavingByNodeId[node.id] ? 'Enregistrement…' : 'Auto'}
+                          </Button>
+                        </div>
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <Badge
+                            label={region ? REGION_LABELS[region] ?? region : 'Région inconnue'}
+                            type={region ? 'info' : 'warning'}
+                          />
+                          {isGateway && <Badge label="Passerelle régionale" type="warning" />}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-border backdrop-blur transition-colors hover:border-border">
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Activity className="h-5 w-5 text-muted-foreground" />
+                <CardTitle className="text-base">Flux actifs</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {(selectedFlow ? [selectedFlow] : topTrafficFlows).map((flow) => {
+                const source = nodeById.get(flow.sourceNodeId);
+                const target = nodeById.get(flow.targetNodeId);
+                if (!source || !target) return null;
+                return (
+                  <div
+                    key={`${flow.key}-card`}
+                    className="rounded-xl border border-border bg-surface-2 p-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-medium text-foreground">
+                        {source.label} → {target.label}
+                      </p>
+                      <Badge label={getConnectionLabel(flow.status)} type={getConnectionBadgeVariant(flow.status)} />
+                    </div>
+                    <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+                      <div className="rounded-lg border border-border bg-black/25 px-2 py-1.5">
+                        <p className="text-[10px] text-muted-foreground">Latence</p>
+                        <p className="font-mono">{formatLatency(flow.latencyMs)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/25 px-2 py-1.5">
+                        <p className="text-[10px] text-muted-foreground">Perte</p>
+                        <p className="font-mono">{formatLoss(flow.packetLoss)}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-black/25 px-2 py-1.5">
+                        <p className="text-[10px] text-muted-foreground">Débit</p>
+                        <p className="font-mono">{formatBandwidth(flow.bandwidth)}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {!selectedFlow && topTrafficFlows.length === 0 && (
+                <p className="text-xs text-muted-foreground">Aucun flux détecté.</p>
+              )}
+              {selectedFlow && (
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => {
+                    setSelectedFlowKey(null);
+                    setSelectedPairKey(null);
+                  }}
+                >
+                  Revenir au top flux
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        </TabsContent>
+
+        <TabsContent value="history" className="space-y-4">
+        <Card className="border-border backdrop-blur transition-colors hover:border-border">
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Waves className="h-5 w-5 text-muted-foreground" />
+                <CardTitle className="text-base">Historique du lien</CardTitle>
+              </div>
+              <Tabs value={historyRange} onValueChange={(value) => setHistoryRange(value as '1h' | '24h' | '7d')}>
+                <TabsList>
+                  <TabsTrigger value="1h">1 h</TabsTrigger>
+                  <TabsTrigger value="24h">24 h</TabsTrigger>
+                  <TabsTrigger value="7d">7 j</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {historyPair ? (
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <Select
+                    value={historyPair.key}
+                    onValueChange={(value) => {
+                      const pair = pairFlows.find((candidate) => candidate.key === value);
+                      if (!pair) return;
+                      setSelectedPairKey(pair.key);
+                      setSelectedFlowKey(pair.forward?.key ?? pair.reverse?.key ?? null);
+                    }}
+                  >
+                    <SelectTrigger className="w-auto min-w-[220px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {pairFlows.map((pair) => (
+                        <SelectItem key={pair.key} value={pair.key}>
+                          {getNodeDisplayName(pair.nodeAId)} ↔ {getNodeDisplayName(pair.nodeBId)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {!selectedPairKey && (
+                    <p className="text-2xs text-muted-foreground">
+                      Lien le plus actif — choisissez-en un autre ci-dessus ou dans la topologie.
+                    </p>
+                  )}
+                </div>
+
+                {(
+                  [
+                    { flow: historyPair.forward, history: historyForward, chartData: historyForwardChartData },
+                    { flow: historyPair.reverse, history: historyReverse, chartData: historyReverseChartData },
+                  ] as const
+                ).map(({ flow, history, chartData }, index) =>
+                  flow ? (
+                    <div key={index} className="space-y-2">
+                      <p className="font-mono text-xs text-zinc-300">
+                        {getNodeDisplayName(flow.sourceNodeId)} → {getNodeDisplayName(flow.targetNodeId)}
+                      </p>
+                      <div className="grid gap-4 sm:grid-cols-[auto_1fr] sm:items-stretch">
+                        <div className="flex flex-col items-center justify-center gap-1 rounded-xl border border-border bg-black/20 px-8 py-4 sm:min-w-[150px]">
+                          <p className="text-2xs uppercase tracking-wide text-muted-foreground">Uptime</p>
+                          <p className={`text-3xl font-semibold tabular-nums ${history ? uptimeToneClass(history.uptimePercent) : 'text-muted-foreground'}`}>
+                            {history ? `${history.uptimePercent}%` : '—'}
+                          </p>
+                          <p className="text-2xs text-muted-foreground">sur {HISTORY_RANGE_LABELS[historyRange]}</p>
+                        </div>
+                        <div className="rounded-xl border border-border bg-black/10 p-3">
+                          <ConnectionHistoryChart data={chartData} />
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <p key={index} className="text-xs text-muted-foreground">
+                      Aucune mesure enregistrée dans ce sens pour l’instant.
+                    </p>
+                  ),
+                )}
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">Aucun lien détecté pour l’instant.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="border-border backdrop-blur transition-colors hover:border-border">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Zap className="h-4 w-4 text-primary" />
+              Matrice de connexion (vue grille)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-auto rounded-xl border border-border bg-surface-2 p-3">
+              <div
+                className="grid min-w-[760px] gap-2"
+                style={{ gridTemplateColumns: `220px repeat(${graph.nodes.length}, minmax(128px, 1fr))` }}
               >
-                <SelectTrigger>
-                  <SelectValue placeholder="Sélectionner" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(vlanStatus.vlan.members || [])
-                    .filter((m) => m.nodeId !== selectedTest.from)
-                    .map((m) => (
+                <div className="sticky left-0 z-10 rounded-lg border border-border bg-zinc-900/95 px-3 py-2 text-xs font-medium text-muted-foreground">
+                  Source \ Cible
+                </div>
+                {graph.nodes.map((col) => (
+                  <div
+                    key={`col-${col.id}`}
+                    className="rounded-lg border border-border bg-zinc-900/85 px-3 py-2 text-xs"
+                  >
+                    <p className="truncate font-medium text-foreground">{col.label}</p>
+                    <p className="truncate font-mono text-[10px] text-muted-foreground">{col.vlanIp}</p>
+                  </div>
+                ))}
+
+                {graph.nodes.map((row) => (
+                  <div key={`row-${row.id}`} className="contents">
+                    <div className="sticky left-0 z-10 rounded-lg border border-border bg-zinc-900/95 px-3 py-2 text-xs">
+                      <p className="truncate font-medium text-foreground">{row.label}</p>
+                      <p className="truncate font-mono text-[10px] text-muted-foreground">{row.vlanIp}</p>
+                    </div>
+                    {graph.nodes.map((col) => {
+                      if (row.id === col.id) {
+                        return (
+                          <div
+                            key={`cell-${row.id}-${col.id}`}
+                            className="rounded-lg border border-dashed border-border bg-zinc-900/40 px-3 py-2 text-center text-[10px] text-muted-foreground"
+                          >
+                            même nœud
+                          </div>
+                        );
+                      }
+
+                      if (!isPhysicalLink(row.id, col.id)) {
+                        return (
+                          <div
+                            key={`cell-${row.id}-${col.id}`}
+                            className="rounded-lg border border-dashed border-border bg-zinc-900/40 px-3 py-2 text-center text-[10px] text-muted-foreground"
+                          >
+                            Relayé via passerelle
+                          </div>
+                        );
+                      }
+
+                      const direct = connectionByDirection.get(`${row.id}__${col.id}`);
+
+                      return (
+                        <button
+                          key={`cell-${row.id}-${col.id}`}
+                          type="button"
+                          onClick={() => {
+                            setSelectedPairKey([row.id, col.id].sort().join('__'));
+                            setSelectedFlowKey(`${row.id}__${col.id}`);
+                          }}
+                          className={`rounded-lg border px-2 py-2 text-left transition hover:border-violet-400/40 ${matrixCellTone(
+                            direct?.status,
+                          )}`}
+                        >
+                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                            {direct ? getConnectionLabel(direct.status) : 'Aucune route'}
+                          </p>
+                          <p className="font-mono text-2xs">{formatLatency(direct?.latencyMs)}</p>
+                          <p className="font-mono text-[10px] text-muted-foreground">
+                            {formatLoss(direct?.packetLoss)} · {formatBandwidth(direct?.bandwidth)}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        </TabsContent>
+
+        <TabsContent value="diagnostics" className="space-y-4">
+        <Card className="border-border backdrop-blur transition-colors hover:border-border">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Waves className="h-5 w-5 text-muted-foreground" />
+              <CardTitle className="text-base">Tests de connectivité</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div>
+                <p className="mb-1 text-xs text-muted-foreground">Depuis</p>
+                <Select
+                  value={selectedTest.from}
+                  onValueChange={(value) => setSelectedTest((prev) => ({ ...prev, from: value }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Sélectionner" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(vlanStatus.vlan.members || []).map((m) => (
                       <SelectItem key={m.id} value={m.nodeId}>
                         {(m.node?.name || m.nodeId) +
                           ` (${m.vlanIp})` +
                           ((nodeLabels[m.nodeId]?.length ?? 0) > 0 ? ` — ${nodeLabels[m.nodeId].join(', ')}` : '')}
                       </SelectItem>
                     ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <p className="mb-1 text-xs text-muted-foreground">Type</p>
-              <Select
-                value={selectedTest.type}
-                onValueChange={(value) => {
-                  if (isTestType(value)) {
-                    setSelectedTest((prev) => ({ ...prev, type: value }));
-                  }
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Sélectionner" />
-                </SelectTrigger>
-                <SelectContent>
-                  {TEST_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <Button onClick={handleRunTest} disabled={testRunning} className="w-full">
-            <Play className="h-4 w-4" />
-            {testRunning ? 'Test en cours...' : 'Exécuter le test'}
-          </Button>
-
-          {tests.length > 0 && (
-            <div className="space-y-2">
-              {tests.slice(0, 5).map((test) => (
-                <div
-                  key={test.id}
-                  className="rounded-xl border border-border bg-surface-2 px-4 py-3"
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="space-y-1">
-                      <p className="font-mono text-xs text-foreground">
-                        {(memberByNodeId.get(test.initiatorNodeId)?.vlanIp || test.initiatorNodeId.slice(0, 8))} →{' '}
-                        {(memberByNodeId.get(test.targetNodeId)?.vlanIp || test.targetNodeId.slice(0, 8))}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {test.testType === 'traceroute'
-                          ? `${test.hops?.length ?? 0} saut(s)`
-                          : `${formatLatency(test.latencyMs)} · ${formatLoss(test.packetLoss)}`}
-                      </p>
-                      {test.status !== 'success' && test.status !== 'pending' && test.resultMessage && (
-                        <p className="text-xs text-rose-400">{test.resultMessage}</p>
-                      )}
-                    </div>
-                    <Badge
-                      label={testStatusLabel[test.status]}
-                      type={test.status === 'success' ? 'success' : test.status === 'pending' ? 'info' : 'error'}
-                      icon={<Waves className="h-3 w-3" />}
-                    />
-                  </div>
-                  {test.testType === 'traceroute' && test.hops && test.hops.length > 0 && (
-                    <ol className="mt-3 space-y-1.5 border-t border-border pt-3">
-                      {test.hops.map((hop) => {
-                        const hopMember = hop.ip ? memberByVlanIp.get(hop.ip) : undefined;
-                        return (
-                          <li key={hop.hop} className="flex flex-wrap items-center gap-2 text-xs">
-                            <span className="w-5 shrink-0 text-right font-mono text-2xs text-muted-foreground">
-                              {hop.hop}
-                            </span>
-                            <span className="font-mono text-zinc-300">{hop.ip ?? '* (aucune réponse)'}</span>
-                            {hopMember && (
-                              <span className="text-foreground">
-                                {hopMember.node?.name ?? hopMember.nodeId}
-                              </span>
-                            )}
-                            {hopMember?.region && (
-                              <Badge label={REGION_LABELS[hopMember.region] ?? hopMember.region} type="info" />
-                            )}
-                            {hopMember?.node?.overlayIsGateway && <Badge label="Passerelle" type="warning" />}
-                            <span className="ml-auto font-mono text-2xs text-muted-foreground">
-                              {formatLatency(hop.latencyMs)}
-                            </span>
-                          </li>
-                        );
-                      })}
-                    </ol>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <SectionLabel>Topologie</SectionLabel>
-
-      {knownRegionSummaries.length > 1 && (
-        <Callout>
-          <div className="space-y-1.5">
-            {segmentedRegionPairs.map(([a, b]) => (
-              <p key={`${a.region}-${b.region}`} className="flex flex-wrap items-center gap-1.5">
-                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                Segmentation active : {REGION_LABELS[a.region] ?? a.region} ↔ {REGION_LABELS[b.region] ?? b.region} via{' '}
-                <span className="font-medium text-foreground">{a.gateway?.node?.name ?? a.gateway?.nodeId}</span>
-                <span>↔</span>
-                <span className="font-medium text-foreground">{b.gateway?.node?.name ?? b.gateway?.nodeId}</span>
-              </p>
-            ))}
-            {meshedRegionSummaries.map((summary) => (
-              <p key={summary.region} className="flex flex-wrap items-center gap-1.5">
-                <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-400" />
-                {REGION_LABELS[summary.region] ?? summary.region} : aucune passerelle désignée — maillage complet par
-                défaut avec les autres régions.
-              </p>
-            ))}
-          </div>
-        </Callout>
-      )}
-
-      <Card className="border-border transition-colors hover:border-border">
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <Globe2 className="h-5 w-5 text-muted-foreground" />
-            <CardTitle className="text-base">Régions &amp; passerelles</CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {regionSummaries.map(({ region, members, gateway }) => (
-            <div key={region} className="rounded-xl border border-border bg-surface-2 p-3">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-medium text-foreground">
-                  {region === 'unknown' ? 'Région inconnue' : REGION_LABELS[region] ?? region}
-                </p>
-                <span className="text-xs text-muted-foreground">
-                  {members.length} nœud{members.length > 1 ? 's' : ''}
-                </span>
+                  </SelectContent>
+                </Select>
               </div>
-              {region === 'unknown' ? (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Localisation manquante — définissez un pays dans le panneau ci-dessous pour activer la segmentation
-                  sur ces nœuds.
-                </p>
-              ) : (
-                <>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {members.map((member) => {
-                      const isGateway = Boolean(member.node?.overlayIsGateway);
-                      return (
-                        <Button
-                          key={member.nodeId}
-                          size="sm"
-                          variant={isGateway ? 'default' : 'outline'}
-                          disabled={gatewaySavingByNodeId[member.nodeId]}
-                          onClick={() => void handleSetGateway(member.nodeId, !isGateway)}
-                        >
-                          {gatewaySavingByNodeId[member.nodeId]
-                            ? 'Enregistrement…'
-                            : `${member.node?.name ?? member.nodeId}${isGateway ? ' · Passerelle ✓' : ''}`}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                  {!gateway && (
-                    <p className="mt-2 text-2xs text-muted-foreground">
-                      Aucune passerelle désignée dans cette région — clique un nœud ci-dessus pour l’activer.
-                    </p>
-                  )}
-                </>
-              )}
-            </div>
-          ))}
-        </CardContent>
-      </Card>
 
-      <div className="grid gap-4 xl:grid-cols-[1.6fr_minmax(0,1fr)]">
-        <Card className="border-border transition-colors hover:border-border">
-          <CardHeader className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <Tabs value={mapView} onValueChange={(value) => setMapView(value === 'graph' ? 'graph' : 'map')}>
-                <TabsList>
-                  <TabsTrigger value="map" className="gap-1.5">
-                    <Globe2 className="h-3.5 w-3.5" />
-                    Carte
-                  </TabsTrigger>
-                  <TabsTrigger value="graph" className="gap-1.5">
-                    <Network className="h-3.5 w-3.5" />
-                    Graphe
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
-              {mapView === 'graph' && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => zoomFrom(1.16)}
-                  >
-                    Zoom +
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => zoomFrom(1 / 1.16)}
-                  >
-                    Zoom -
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setViewTransform({ scale: 1, tx: 0, ty: 0 })}
-                  >
-                    Recentrer
-                  </Button>
-                </div>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {mapView === 'map'
-                ? 'Molette pour zoomer, glisser le fond pour déplacer la vue, glisser un point pour corriger sa position exacte. Les nœuds à la même localisation sont regroupés en badge tant que vous n’avez pas zoomé assez près.'
-                : 'Molette pour zoomer, glisser le fond pour déplacer la vue, glisser un nœud pour le repositionner.'}
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {mapView === 'map' ? (
-              <WorldMap
-                nodes={worldMapNodes}
-                links={worldMapLinks}
-                onNodeDrag={handleMapNodeDrag}
-                onSelectNode={setSelectedMapNodeId}
-                className="h-[560px] w-full"
-              />
-            ) : (
-            <div className="rounded-xl border border-border bg-surface-2 p-4">
-              <svg
-                ref={svgRef}
-                viewBox={`0 0 ${MIND_MAP_WIDTH} ${MIND_MAP_HEIGHT}`}
-                className="h-[560px] w-full touch-none"
-                onWheel={handleMapWheel}
-                onPointerDown={handleMapPointerDown}
-                onPointerMove={handleMapPointerMove}
-                onPointerUp={endPointerInteraction}
-                onPointerCancel={endPointerInteraction}
-              >
-                <g transform={`translate(${viewTransform.tx} ${viewTransform.ty}) scale(${viewTransform.scale})`}>
-                  {countryBubbles.map((bubble) => (
-                    <g key={bubble.id}>
-                      <circle
-                        cx={bubble.x}
-                        cy={bubble.y}
-                        r={bubble.r}
-                        fill="rgba(59,130,246,0.04)"
-                        stroke="rgba(59,130,246,0.18)"
-                        strokeWidth={1.5}
-                      />
-                      <text
-                        x={bubble.x}
-                        y={bubble.y - bubble.r + 18}
-                        textAnchor="middle"
-                        fill="rgba(191,219,254,0.85)"
-                        fontSize={11}
-                        fontFamily="ui-sans-serif, system-ui, sans-serif"
-                      >
-                        {bubble.label}
-                      </text>
-                    </g>
-                  ))}
-                  {cityBubbles.map((bubble) => (
-                    <g key={bubble.id}>
-                      <circle
-                        cx={bubble.x}
-                        cy={bubble.y}
-                        r={bubble.r}
-                        fill="rgba(139,92,246,0.04)"
-                        stroke="rgba(139,92,246,0.2)"
-                        strokeWidth={1}
-                      />
-                      <text
-                        x={bubble.x}
-                        y={bubble.y - bubble.r + 14}
-                        textAnchor="middle"
-                        fill="rgba(221,214,254,0.75)"
-                        fontSize={10}
-                        fontFamily="ui-sans-serif, system-ui, sans-serif"
-                      >
-                        {bubble.label}
-                      </text>
-                    </g>
-                  ))}
-                  {graph.links.map((link) => {
-                    const source = nodeById.get(link.sourceNodeId);
-                    const target = nodeById.get(link.targetNodeId);
-                    if (!source || !target) return null;
+              <div>
+                <p className="mb-1 text-xs text-muted-foreground">Vers</p>
+                <Select
+                  value={selectedTest.to}
+                  onValueChange={(value) => setSelectedTest((prev) => ({ ...prev, to: value }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Sélectionner" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(vlanStatus.vlan.members || [])
+                      .filter((m) => m.nodeId !== selectedTest.from)
+                      .map((m) => (
+                        <SelectItem key={m.id} value={m.nodeId}>
+                          {(m.node?.name || m.nodeId) +
+                            ` (${m.vlanIp})` +
+                            ((nodeLabels[m.nodeId]?.length ?? 0) > 0 ? ` — ${nodeLabels[m.nodeId].join(', ')}` : '')}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
-                    const isSelected = selectedPairKey === link.key;
-                    return (
-                      <g
-                        key={link.key}
-                        data-link-clickable="true"
-                        onClick={() => {
-                          setSelectedPairKey(link.key);
-                          const bestDirectional = directedFlows.find(
-                            (flow) => [flow.sourceNodeId, flow.targetNodeId].sort().join('__') === link.key,
-                          );
-                          setSelectedFlowKey(bestDirectional?.key ?? null);
-                        }}
-                        className="cursor-pointer"
-                      >
-                        <line
-                          x1={source.x}
-                          y1={source.y}
-                          x2={target.x}
-                          y2={target.y}
-                          stroke={linkStroke(link.status)}
-                          strokeWidth={isSelected ? 4 : link.status === 'offline' ? 2 : 3}
-                          strokeDasharray={link.status === 'offline' ? '6 6' : undefined}
-                          style={{ filter: linkGlow(link.status) }}
-                        />
-                        {link.status !== 'offline' && (
-                          <circle r={isSelected ? 5 : 4} fill={linkStroke(link.status)}>
-                            <animateMotion dur={linkPulseDuration(link.latencyMs)} repeatCount="indefinite" rotate="auto">
-                              <mpath href={`#path-${link.key}`} />
-                            </animateMotion>
-                          </circle>
-                        )}
-                        <path
-                          id={`path-${link.key}`}
-                          d={`M ${source.x} ${source.y} L ${target.x} ${target.y}`}
-                          fill="none"
-                          stroke="none"
-                        />
-                        <title>
-                          {source.label} ↔ {target.label} · {getConnectionLabel(link.status)} ·{' '}
-                          {source.vlanIp} ↔ {target.vlanIp} ·{' '}
-                          {formatLatency(link.latencyMs)} · {formatLoss(link.packetLoss)} ·{' '}
-                          {formatBandwidth(link.bandwidth)}
-                        </title>
-                      </g>
-                    );
-                  })}
-
-                  {displayedNodes.map((node) => {
-                    const nameLine = `${flagFromCountryCode(node.countryCode)} ${getNodeDisplayName(node.id)}`;
-                    const detailLine = `${node.city} · ${node.vlanIp}`;
-                    // Rough char-width estimate (no canvas measurement available in SVG) so the
-                    // backing plate covers whichever line is wider, keeping neighbouring node
-                    // labels from visually merging when nodes sit close together.
-                    const labelWidth = Math.max(nameLine.length * 7.2, detailLine.length * 6.2) + 16;
-                    return (
-                      <g
-                        key={node.id}
-                        data-node-draggable="true"
-                        onPointerDown={(event) => handleNodePointerDown(event, node.id)}
-                        className="cursor-grab active:cursor-grabbing"
-                      >
-                        <circle cx={node.x} cy={node.y} r={26} fill="rgba(9,9,11,0.95)" stroke={nodeFill(node.status)} strokeWidth={2.5} />
-                        <circle cx={node.x} cy={node.y} r={10} fill={nodeFill(node.status)} />
-                        <rect
-                          x={node.x - labelWidth / 2}
-                          y={node.y + 40}
-                          width={labelWidth}
-                          height={42}
-                          rx={8}
-                          fill="rgba(9,9,11,0.85)"
-                        />
-                        <text
-                          x={node.x}
-                          y={node.y + 54}
-                          textAnchor="middle"
-                          fill="rgba(244,244,245,0.94)"
-                          fontSize={13}
-                          fontFamily="ui-sans-serif, system-ui, sans-serif"
-                        >
-                          {nameLine}
-                        </text>
-                        <text
-                          x={node.x}
-                          y={node.y + 74}
-                          textAnchor="middle"
-                          fill="rgba(161,161,170,0.95)"
-                          fontSize={11}
-                          fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-                        >
-                          {detailLine}
-                        </text>
-                      </g>
-                    );
-                  })}
-                </g>
-              </svg>
-            </div>
-            )}
-            <div className="rounded-xl border border-border bg-surface-2 p-3">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <p className="text-xs font-medium text-foreground/90">Localisation manuelle des nœuds</p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setNodePositionOverrides({});
-                    for (const nodeId of persistedGraphPositions.keys()) {
-                      void api.nodes.update(nodeId, { graphX: null, graphY: null }).catch(() => {});
+              <div>
+                <p className="mb-1 text-xs text-muted-foreground">Type</p>
+                <Select
+                  value={selectedTest.type}
+                  onValueChange={(value) => {
+                    if (isTestType(value)) {
+                      setSelectedTest((prev) => ({ ...prev, type: value }));
                     }
                   }}
                 >
-                  Réinitialiser les positions
-                </Button>
-              </div>
-              <p className="mb-3 text-xs text-muted-foreground">
-                Corrigez la ville/pays si la détection automatique par IP est incorrecte. Les changements sont enregistrés côté serveur et partagés entre clients.
-              </p>
-              <div className="max-h-56 space-y-2 overflow-auto pr-1">
-                {orderedNodes.map((node) => {
-                  const override = geoOverrides[node.id] ?? {};
-                  const detected = detectedGeoByNodeId.get(node.id);
-                  const member = memberByNodeId.get(node.id);
-                  const region = member?.region ?? null;
-                  const isGateway = Boolean(member?.node?.overlayIsGateway);
-                  return (
-                    <div key={`override-${node.id}`} className="rounded-lg border border-border bg-surface-2 p-2">
-                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-xs font-medium text-foreground">{node.label}</p>
-                        <p className="text-[10px] font-mono text-muted-foreground">{node.vlanIp}</p>
-                      </div>
-                      <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-[1fr_1fr_88px_auto]">
-                        <Input
-                          value={override.city ?? ''}
-                          onChange={(event) => updateNodeGeoOverride(node.id, { city: event.target.value })}
-                          onBlur={() => void saveNodeGeoOverride(node.id)}
-                          placeholder={detected?.city ?? 'Ville inconnue'}
-                        />
-                        <Input
-                          value={override.country ?? ''}
-                          onChange={(event) => updateNodeGeoOverride(node.id, { country: event.target.value })}
-                          onBlur={() => void saveNodeGeoOverride(node.id)}
-                          placeholder={detected?.country ?? 'Pays inconnu'}
-                        />
-                        <Input
-                          value={override.countryCode ?? ''}
-                          onChange={(event) => updateNodeGeoOverride(node.id, { countryCode: event.target.value })}
-                          onBlur={() => void saveNodeGeoOverride(node.id)}
-                          placeholder={detected?.countryCode ?? '--'}
-                          maxLength={2}
-                          className="uppercase"
-                        />
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            updateNodeGeoOverride(node.id, { city: '', country: '', countryCode: '' });
-                            void saveNodeGeoOverride(node.id, true);
-                          }}
-                          disabled={geoSavingByNodeId[node.id]}
-                        >
-                          {geoSavingByNodeId[node.id] ? 'Enregistrement…' : 'Auto'}
-                        </Button>
-                      </div>
-                      <div className="mt-2 flex items-center justify-between gap-2">
-                        <Badge
-                          label={region ? REGION_LABELS[region] ?? region : 'Région inconnue'}
-                          type={region ? 'info' : 'warning'}
-                        />
-                        {isGateway && <Badge label="Passerelle régionale" type="warning" />}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border backdrop-blur transition-colors hover:border-border">
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <Activity className="h-5 w-5 text-muted-foreground" />
-              <CardTitle className="text-base">Flux actifs</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {(selectedFlow ? [selectedFlow] : topTrafficFlows).map((flow) => {
-              const source = nodeById.get(flow.sourceNodeId);
-              const target = nodeById.get(flow.targetNodeId);
-              if (!source || !target) return null;
-              return (
-                <div
-                  key={`${flow.key}-card`}
-                  className="rounded-xl border border-border bg-surface-2 p-3"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-medium text-foreground">
-                      {source.label} → {target.label}
-                    </p>
-                    <Badge label={getConnectionLabel(flow.status)} type={getConnectionBadgeVariant(flow.status)} />
-                  </div>
-                  <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
-                    <div className="rounded-lg border border-border bg-black/25 px-2 py-1.5">
-                      <p className="text-[10px] text-muted-foreground">Latence</p>
-                      <p className="font-mono">{formatLatency(flow.latencyMs)}</p>
-                    </div>
-                    <div className="rounded-lg border border-border bg-black/25 px-2 py-1.5">
-                      <p className="text-[10px] text-muted-foreground">Perte</p>
-                      <p className="font-mono">{formatLoss(flow.packetLoss)}</p>
-                    </div>
-                    <div className="rounded-lg border border-border bg-black/25 px-2 py-1.5">
-                      <p className="text-[10px] text-muted-foreground">Débit</p>
-                      <p className="font-mono">{formatBandwidth(flow.bandwidth)}</p>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-            {!selectedFlow && topTrafficFlows.length === 0 && (
-              <p className="text-xs text-muted-foreground">Aucun flux détecté.</p>
-            )}
-            {selectedFlow && (
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={() => {
-                  setSelectedFlowKey(null);
-                  setSelectedPairKey(null);
-                }}
-              >
-                Revenir au top flux
-              </Button>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <SectionLabel>Historique</SectionLabel>
-      <Card className="border-border backdrop-blur transition-colors hover:border-border">
-        <CardHeader>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <Waves className="h-5 w-5 text-muted-foreground" />
-              <CardTitle className="text-base">Historique du lien</CardTitle>
-            </div>
-            <Tabs value={historyRange} onValueChange={(value) => setHistoryRange(value as '1h' | '24h' | '7d')}>
-              <TabsList>
-                <TabsTrigger value="1h">1 h</TabsTrigger>
-                <TabsTrigger value="24h">24 h</TabsTrigger>
-                <TabsTrigger value="7d">7 j</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {historyPair ? (
-            <>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <Select
-                  value={historyPair.key}
-                  onValueChange={(value) => {
-                    const pair = pairFlows.find((candidate) => candidate.key === value);
-                    if (!pair) return;
-                    setSelectedPairKey(pair.key);
-                    setSelectedFlowKey(pair.forward?.key ?? pair.reverse?.key ?? null);
-                  }}
-                >
-                  <SelectTrigger className="w-auto min-w-[220px]">
-                    <SelectValue />
+                  <SelectTrigger>
+                    <SelectValue placeholder="Sélectionner" />
                   </SelectTrigger>
                   <SelectContent>
-                    {pairFlows.map((pair) => (
-                      <SelectItem key={pair.key} value={pair.key}>
-                        {getNodeDisplayName(pair.nodeAId)} ↔ {getNodeDisplayName(pair.nodeBId)}
+                    {TEST_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {!selectedPairKey && (
-                  <p className="text-2xs text-muted-foreground">
-                    Lien le plus actif — choisissez-en un autre ci-dessus ou dans la topologie.
-                  </p>
-                )}
               </div>
-
-              {(
-                [
-                  { flow: historyPair.forward, history: historyForward, chartData: historyForwardChartData },
-                  { flow: historyPair.reverse, history: historyReverse, chartData: historyReverseChartData },
-                ] as const
-              ).map(({ flow, history, chartData }, index) =>
-                flow ? (
-                  <div key={index} className="space-y-2">
-                    <p className="font-mono text-xs text-zinc-300">
-                      {getNodeDisplayName(flow.sourceNodeId)} → {getNodeDisplayName(flow.targetNodeId)}
-                    </p>
-                    <div className="grid gap-4 sm:grid-cols-[auto_1fr] sm:items-stretch">
-                      <div className="flex flex-col items-center justify-center gap-1 rounded-xl border border-border bg-black/20 px-8 py-4 sm:min-w-[150px]">
-                        <p className="text-2xs uppercase tracking-wide text-muted-foreground">Uptime</p>
-                        <p className={`text-3xl font-semibold tabular-nums ${history ? uptimeToneClass(history.uptimePercent) : 'text-muted-foreground'}`}>
-                          {history ? `${history.uptimePercent}%` : '—'}
-                        </p>
-                        <p className="text-2xs text-muted-foreground">sur {HISTORY_RANGE_LABELS[historyRange]}</p>
-                      </div>
-                      <div className="rounded-xl border border-border bg-black/10 p-3">
-                        <ConnectionHistoryChart data={chartData} />
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <p key={index} className="text-xs text-muted-foreground">
-                    Aucune mesure enregistrée dans ce sens pour l’instant.
-                  </p>
-                ),
-              )}
-            </>
-          ) : (
-            <p className="text-xs text-muted-foreground">Aucun lien détecté pour l’instant.</p>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card className="border-border backdrop-blur transition-colors hover:border-border">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Zap className="h-4 w-4 text-primary" />
-            Matrice de connexion (vue grille)
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-auto rounded-xl border border-border bg-surface-2 p-3">
-            <div
-              className="grid min-w-[760px] gap-2"
-              style={{ gridTemplateColumns: `220px repeat(${graph.nodes.length}, minmax(128px, 1fr))` }}
-            >
-              <div className="sticky left-0 z-10 rounded-lg border border-border bg-zinc-900/95 px-3 py-2 text-xs font-medium text-muted-foreground">
-                Source \ Cible
-              </div>
-              {graph.nodes.map((col) => (
-                <div
-                  key={`col-${col.id}`}
-                  className="rounded-lg border border-border bg-zinc-900/85 px-3 py-2 text-xs"
-                >
-                  <p className="truncate font-medium text-foreground">{col.label}</p>
-                  <p className="truncate font-mono text-[10px] text-muted-foreground">{col.vlanIp}</p>
-                </div>
-              ))}
-
-              {graph.nodes.map((row) => (
-                <div key={`row-${row.id}`} className="contents">
-                  <div className="sticky left-0 z-10 rounded-lg border border-border bg-zinc-900/95 px-3 py-2 text-xs">
-                    <p className="truncate font-medium text-foreground">{row.label}</p>
-                    <p className="truncate font-mono text-[10px] text-muted-foreground">{row.vlanIp}</p>
-                  </div>
-                  {graph.nodes.map((col) => {
-                    if (row.id === col.id) {
-                      return (
-                        <div
-                          key={`cell-${row.id}-${col.id}`}
-                          className="rounded-lg border border-dashed border-border bg-zinc-900/40 px-3 py-2 text-center text-[10px] text-muted-foreground"
-                        >
-                          même nœud
-                        </div>
-                      );
-                    }
-
-                    if (!isPhysicalLink(row.id, col.id)) {
-                      return (
-                        <div
-                          key={`cell-${row.id}-${col.id}`}
-                          className="rounded-lg border border-dashed border-border bg-zinc-900/40 px-3 py-2 text-center text-[10px] text-muted-foreground"
-                        >
-                          Relayé via passerelle
-                        </div>
-                      );
-                    }
-
-                    const direct = connectionByDirection.get(`${row.id}__${col.id}`);
-
-                    return (
-                      <button
-                        key={`cell-${row.id}-${col.id}`}
-                        type="button"
-                        onClick={() => {
-                          setSelectedPairKey([row.id, col.id].sort().join('__'));
-                          setSelectedFlowKey(`${row.id}__${col.id}`);
-                        }}
-                        className={`rounded-lg border px-2 py-2 text-left transition hover:border-violet-400/40 ${matrixCellTone(
-                          direct?.status,
-                        )}`}
-                      >
-                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                          {direct ? getConnectionLabel(direct.status) : 'Aucune route'}
-                        </p>
-                        <p className="font-mono text-2xs">{formatLatency(direct?.latencyMs)}</p>
-                        <p className="font-mono text-[10px] text-muted-foreground">
-                          {formatLoss(direct?.packetLoss)} · {formatBandwidth(direct?.bandwidth)}
-                        </p>
-                      </button>
-                    );
-                  })}
-                </div>
-              ))}
             </div>
-          </div>
-        </CardContent>
-      </Card>
+
+            <Button onClick={handleRunTest} disabled={testRunning} className="w-full">
+              <Play className="h-4 w-4" />
+              {testRunning ? 'Test en cours...' : 'Exécuter le test'}
+            </Button>
+
+            {tests.length > 0 && (
+              <div className="space-y-2">
+                {tests.slice(0, 5).map((test) => (
+                  <div
+                    key={test.id}
+                    className="rounded-xl border border-border bg-surface-2 px-4 py-3"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="space-y-1">
+                        <p className="font-mono text-xs text-foreground">
+                          {(memberByNodeId.get(test.initiatorNodeId)?.vlanIp || test.initiatorNodeId.slice(0, 8))} →{' '}
+                          {(memberByNodeId.get(test.targetNodeId)?.vlanIp || test.targetNodeId.slice(0, 8))}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {test.testType === 'traceroute'
+                            ? `${test.hops?.length ?? 0} saut(s)`
+                            : `${formatLatency(test.latencyMs)} · ${formatLoss(test.packetLoss)}`}
+                        </p>
+                        {test.status !== 'success' && test.status !== 'pending' && test.resultMessage && (
+                          <p className="text-xs text-rose-400">{test.resultMessage}</p>
+                        )}
+                      </div>
+                      <Badge
+                        label={testStatusLabel[test.status]}
+                        type={test.status === 'success' ? 'success' : test.status === 'pending' ? 'info' : 'error'}
+                        icon={<Waves className="h-3 w-3" />}
+                      />
+                    </div>
+                    {test.testType === 'traceroute' && test.hops && test.hops.length > 0 && (
+                      <ol className="mt-3 space-y-1.5 border-t border-border pt-3">
+                        {test.hops.map((hop) => {
+                          const hopMember = hop.ip ? memberByVlanIp.get(hop.ip) : undefined;
+                          return (
+                            <li key={hop.hop} className="flex flex-wrap items-center gap-2 text-xs">
+                              <span className="w-5 shrink-0 text-right font-mono text-2xs text-muted-foreground">
+                                {hop.hop}
+                              </span>
+                              <span className="font-mono text-zinc-300">{hop.ip ?? '* (aucune réponse)'}</span>
+                              {hopMember && (
+                                <span className="text-foreground">
+                                  {hopMember.node?.name ?? hopMember.nodeId}
+                                </span>
+                              )}
+                              {hopMember?.region && (
+                                <Badge label={REGION_LABELS[hopMember.region] ?? hopMember.region} type="info" />
+                              )}
+                              {hopMember?.node?.overlayIsGateway && <Badge label="Passerelle" type="warning" />}
+                              <span className="ml-auto font-mono text-2xs text-muted-foreground">
+                                {formatLatency(hop.latencyMs)}
+                              </span>
+                            </li>
+                          );
+                        })}
+                      </ol>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        </TabsContent>
+      </Tabs>
     </div>
   );
 

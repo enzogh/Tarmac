@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
-import { MapContainer, Marker, Polyline, Popup, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
+import { MapContainer, Marker, Polyline, Popup, Tooltip, useMap, useMapEvents } from 'react-leaflet';
+import { VectorBasemap } from './map/VectorBasemap';
 import 'leaflet/dist/leaflet.css';
 import { flagFromCountryCode } from '../lib/geo';
 import { cn } from '../lib/utils';
@@ -42,7 +43,11 @@ type WorldMapProps = {
 // a single cluster badge instead of overlapping pins — see spreadPosition
 // for why a fixed degree-radius ring naturally grows on screen as you zoom
 // past this threshold, without needing per-frame pixel recomputation.
-const CLUSTER_ZOOM_THRESHOLD = 9;
+// Below this, co-located nodes collapse into one badge. It has to stay
+// clear of the map's own maxZoom (9): at the previous value of 9 a cluster
+// could only ever be opened at the very last zoom step, and the fly-to on
+// click aimed two levels past the ceiling and so went nowhere.
+const CLUSTER_ZOOM_THRESHOLD = 6;
 const RING_RADIUS_DEG = 0.05;
 
 // Shown only before the first fleet position is known (empty VLAN, still
@@ -266,7 +271,7 @@ function ClusterMarker({
       position={[lat, lng]}
       icon={clusterDivIcon(count, worst)}
       eventHandlers={{
-        click: () => map.flyTo([lat, lng], CLUSTER_ZOOM_THRESHOLD + 2, { duration: 0.6 }),
+        click: () => map.flyTo([lat, lng], CLUSTER_ZOOM_THRESHOLD + 1, { duration: 0.6 }),
       }}
     >
       <Tooltip direction="top" offset={[0, -10]} opacity={1}>
@@ -361,16 +366,12 @@ export function WorldMap({ nodes, links = [], onNodeDrag, onSelectNode, classNam
         center={DEFAULT_CENTER}
         zoom={DEFAULT_ZOOM}
         minZoom={2}
-        maxZoom={17}
+        maxZoom={9}
         scrollWheelZoom
         worldCopyJump
         className="h-full w-full"
       >
-        <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-          subdomains="abcd"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
-        />
+        <VectorBasemap />
         <ZoomTracker onZoom={setZoom} />
         <BoundsFitter nodes={nodes} />
         {resolvedLinks.map((link) => (

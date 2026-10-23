@@ -97,7 +97,13 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
   return (
     <TooltipProvider delayDuration={300}>
       <CommandPalette />
-      <div className="relative flex min-h-screen overflow-hidden">
+      {/* The shell is locked to the viewport and only <main> scrolls. It
+          used to be `min-h-screen` with the document itself scrolling, and
+          the sidebar's `lg:sticky` never engaged because an ancestor
+          carried `overflow-hidden` - so on any page taller than the window
+          (network, infrastructure, the DNS console) the navigation simply
+          scrolled away off the top. */}
+      <div className="relative flex h-screen overflow-hidden">
         {/* Mobile backdrop */}
         {mobileNavOpen && (
           <div
@@ -109,7 +115,7 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
         {/* Sidebar */}
         <aside
           className={cn(
-            'fixed inset-y-0 left-0 z-30 flex w-60 flex-col border-r border-border bg-surface-1 transition-transform duration-200 lg:sticky lg:top-0 lg:z-10 lg:h-screen lg:translate-x-0 lg:self-start',
+            'fixed inset-y-0 left-0 z-30 flex w-60 shrink-0 flex-col border-r border-border bg-surface-1 transition-transform duration-200 lg:static lg:z-10 lg:h-full lg:translate-x-0',
             mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
           )}
         >
@@ -214,9 +220,9 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
         </aside>
 
         {/* Main Content */}
-        <div className="relative z-10 flex flex-1 flex-col overflow-hidden">
+        <div className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden">
           {/* Top Bar */}
-          <header className="sticky top-0 z-10 flex h-12 items-center justify-between gap-2 border-b border-border bg-surface-1/90 px-4 backdrop-blur sm:px-6">
+          <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border bg-surface-1 px-4 sm:px-6">
             <div className="flex min-w-0 items-center gap-2">
               <button
                 type="button"
@@ -253,8 +259,8 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
           </header>
 
           {/* Content */}
-          <main className="flex-1 overflow-auto">
-            <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+          <main className="flex-1 overflow-y-auto">
+            <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
               <NoWorkspaceAccessGate>{children}</NoWorkspaceAccessGate>
             </div>
           </main>
