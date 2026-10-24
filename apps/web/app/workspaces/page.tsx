@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, Layers, LogOut, Plus, Search, ShieldCheck, Users } from 'lucide-react';
 import { api, setCurrentWorkspaceId, WorkspaceListItem } from '../../lib/api';
+import { BrandMark } from '../../components/BrandMark';
 import { usePolling } from '../../lib/hooks/usePolling';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
@@ -84,9 +85,7 @@ export default function WorkspacesHomePage() {
       <header className="border-b border-border">
         <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-4 px-6 py-4">
           <span className="flex items-center gap-2">
-            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-primary">
-              <Layers className="h-3.5 w-3.5 text-white" />
-            </span>
+            <BrandMark />
             <span className="text-sm font-semibold tracking-tight text-foreground">Tarmac</span>
           </span>
           <Button variant="ghost" size="sm" onClick={() => void handleLogout()} className="gap-2">

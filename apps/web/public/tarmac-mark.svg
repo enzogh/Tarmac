@@ -1,12 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <!-- Same mark as the sidebar: the Layers glyph on the app's primary
-       violet. Drawn at 32px with a heavier stroke than the 24px lucide
-       original, because at a 16px tab favicon the stock 2px stroke
-       disappears into the background. -->
-  <rect width="32" height="32" rx="8" fill="#7c5cff"/>
-  <g fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M16 6.5 6.5 11 16 15.5 25.5 11 16 6.5Z"/>
-    <path d="M6.5 16 16 20.5 25.5 16"/>
-    <path d="M6.5 21 16 25.5 25.5 21"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- The mark as a servable asset, for places outside the app that need a
+       URL rather than the BrandMark component - the Authentik SSO console
+       among them, whose application icon field accepts a URL only.
+       #8455f1 is the primary token (hsl 258 85% 64%) written out, since an SVG file
+       can't read the design token; keep it in step with app/icon.svg.
+       Drawn at 512 rather than the favicon's 32 on purpose: a consumer that
+       sizes an icon by its intrinsic dimensions renders a 32px file as a
+       32px stamp in a 96px tile instead of scaling it up. -->
+  <rect width="512" height="512" rx="128" fill="#8455f1"/>
+  <g fill="none" stroke="#ffffff" stroke-width="41.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M256 104 104 176l152 72 152-72-152-72Z"/>
+    <path d="M104 256l152 72 152-72"/>
+    <path d="M104 336l152 72 152-72"/>
   </g>
 </svg>

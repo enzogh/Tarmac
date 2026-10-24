@@ -4,8 +4,9 @@ import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { AnimatePresence, motion } from 'framer-motion';
-import { AlertCircle, ArrowRight, Layers, ShieldCheck, ShieldX } from 'lucide-react';
+import { AlertCircle, ArrowRight, ShieldCheck, ShieldX } from 'lucide-react';
 import { AdminProfile, api } from '../../lib/api';
+import { BrandMark } from '../../components/BrandMark';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
 
@@ -104,9 +105,7 @@ function LoginPageContent() {
           transition={{ duration: 0.4, ease: 'easeOut' }}
           className="flex flex-col items-center gap-3 text-center"
         >
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-600 to-indigo-600 shadow-glow">
-            <Layers className="h-7 w-7 text-white" />
-          </div>
+          <BrandMark size="lg" />
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-400">Tarmac</p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">

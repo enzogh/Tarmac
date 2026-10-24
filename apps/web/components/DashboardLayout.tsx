@@ -3,9 +3,10 @@
 import Link from 'next/link';
 import { usePathname, useParams, useRouter } from 'next/navigation';
 import { ReactNode, useEffect, useMemo, useState } from 'react';
-import { LogOut, Layers, BookOpen, ChevronDown, Search, Menu, ShieldAlert, X } from 'lucide-react';
+import { LogOut, BookOpen, ChevronDown, Search, Menu, ShieldAlert, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { buildNavGroups, buildNavItems, NavItem } from '../lib/nav-items';
+import { BrandMark } from './BrandMark';
 import { CommandPalette } from './CommandPalette';
 import { Button } from './ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
@@ -125,9 +126,7 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
           <div className="border-b border-border px-3 py-3">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
-                <div className="flex h-6 w-6 items-center justify-center rounded-md bg-primary">
-                  <Layers className="h-3.5 w-3.5 text-white" />
-                </div>
+                <BrandMark />
                 <h1 className="text-sm font-semibold tracking-tight text-foreground">Tarmac</h1>
               </div>
               <button

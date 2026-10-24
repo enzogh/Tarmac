@@ -1,9 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <!-- Same mark as the sidebar: the Layers glyph on the app's primary
-       violet. Drawn at 32px with a heavier stroke than the 24px lucide
-       original, because at a 16px tab favicon the stock 2px stroke
-       disappears into the background. -->
-  <rect width="32" height="32" rx="8" fill="#7c5cff"/>
+  <!-- Same mark as BrandMark: the Layers glyph on the app's primary violet.
+       An SVG file can't read the design token, so #8455f1 is the primary token
+       (258 85% 64%) written out - keep the two in step. Drawn at 32px with a
+       heavier stroke than the 24px lucide original, because at a 16px tab
+       favicon the stock 2px stroke disappears into the background. -->
+  <rect width="32" height="32" rx="8" fill="#8455f1"/>
   <g fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
     <path d="M16 6.5 6.5 11 16 15.5 25.5 11 16 6.5Z"/>
     <path d="M6.5 16 16 20.5 25.5 16"/>
