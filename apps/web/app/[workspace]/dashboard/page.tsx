@@ -199,7 +199,12 @@ export default function OverviewPage() {
     () =>
       activities
         .filter((node) => node.storage.totalUsedGb > 0)
-        .map((node) => ({ name: node.name, value: node.storage.totalUsedGb })),
+        .map((node) => ({
+          name: node.name,
+          value: node.storage.totalUsedGb,
+          capacityGb: node.storage.totalCapacityGb,
+          usageRatio: node.storage.usageRatio,
+        })),
     [activities],
   );
 
@@ -319,7 +324,7 @@ export default function OverviewPage() {
             <Card>
               <CardHeader>
                 <CardTitle>Répartition du stockage</CardTitle>
-                <CardDescription>Volume occupé par nœud</CardDescription>
+                <CardDescription>Volume occupé par nœud, et son taux de remplissage</CardDescription>
               </CardHeader>
               <CardContent>
                 <StorageBreakdownChart data={storageSlices} />

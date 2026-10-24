@@ -4,6 +4,7 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, Pie, PieChar
 import { ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from './ui/chart';
 import { seriesColor } from '../lib/chart-colors';
 import { formatCapacity, shortHostname } from '../lib/format';
+import { cn } from '../lib/utils';
 
 // Shared axis setup. The previous charts each passed `margin={{ left: -16 }}`
 // to claw back the gutter Recharts reserves for the Y axis, which pulled the
@@ -122,12 +123,27 @@ export function NetworkThroughputChart({ data }: { data: NetworkPoint[] }) {
   );
 }
 
-export type StorageSlice = { name: string; value: number };
+export type StorageSlice = { name: string; value: number; capacityGb: number; usageRatio: number };
+
+// Same thresholds the node cards use for their storage meter, so a node that
+// reads amber on the infrastructure page reads amber here too.
+function fillTone(percent: number) {
+  if (percent >= 85) return 'text-[hsl(var(--danger))]';
+  if (percent >= 70) return 'text-[hsl(var(--warn))]';
+  return 'text-muted-foreground';
+}
 
 /**
- * A donut plus a read-off list. The list carries the real information (each
- * node's capacity, in order), so it is right-aligned with tabular figures
- * and shares the slice's colour; the donut only conveys proportion.
+ * A donut plus a read-off list.
+ *
+ * The two figures on each row answer different questions and the list used to
+ * conflate them: it showed the node's used volume next to a percentage that
+ * was its *share of the fleet's used space*, so a node reading "12,3 TB / 50 %"
+ * here read "12,3 TB sur 15,4 TB / 80 %" on its own card. Same node, two
+ * percentages, neither labelled. The percentage column is now the node's own
+ * fill level - the number that means something operationally and the one the
+ * rest of the console already shows - and the proportion the donut encodes is
+ * spelled out by the capacity next to it rather than duplicated as a figure.
  */
 export function StorageBreakdownChart({ data }: { data: StorageSlice[] }) {
   if (data.length === 0 || data.every((slice) => slice.value === 0)) {
@@ -142,16 +158,24 @@ export function StorageBreakdownChart({ data }: { data: StorageSlice[] }) {
 
   return (
     <div className="flex flex-col items-center gap-5 sm:flex-row">
-      <ChartContainer config={config} className="h-44 w-44 shrink-0">
-        <PieChart>
-          <ChartTooltip content={<ChartTooltipContent valueFormatter={(v) => formatCapacity(v)} />} />
-          <Pie data={ordered} dataKey="value" nameKey="name" innerRadius={48} outerRadius={70} paddingAngle={1.5}>
-            {ordered.map((slice, index) => (
-              <Cell key={slice.name} fill={seriesColor(index)} stroke="none" />
-            ))}
-          </Pie>
-        </PieChart>
-      </ChartContainer>
+      <div className="relative h-44 w-44 shrink-0">
+        <ChartContainer config={config} className="h-full w-full">
+          <PieChart>
+            <ChartTooltip content={<ChartTooltipContent valueFormatter={(v) => formatCapacity(v)} />} />
+            <Pie data={ordered} dataKey="value" nameKey="name" innerRadius={48} outerRadius={70} paddingAngle={1.5}>
+              {ordered.map((slice, index) => (
+                <Cell key={slice.name} fill={seriesColor(index)} stroke="none" />
+              ))}
+            </Pie>
+          </PieChart>
+        </ChartContainer>
+        {/* The hole was carrying nothing while the one figure that ties the
+            slices together - what they add up to - was nowhere on the card. */}
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+          <span className="tabular text-sm font-semibold text-foreground">{formatCapacity(total)}</span>
+          <span className="text-2xs text-muted-foreground">occupés</span>
+        </div>
+      </div>
       <ul className="min-w-0 flex-1 space-y-1">
         {ordered.map((slice, index) => (
           <li key={slice.name} className="flex items-center gap-3 text-xs">
@@ -159,9 +183,17 @@ export function StorageBreakdownChart({ data }: { data: StorageSlice[] }) {
             <span className="min-w-0 flex-1 truncate text-muted-foreground" title={slice.name}>
               {shortHostname(slice.name)}
             </span>
-            <span className="tabular shrink-0 text-foreground/90">{formatCapacity(slice.value)}</span>
-            <span className="tabular w-10 shrink-0 text-right text-muted-foreground">
-              {total > 0 ? `${Math.round((slice.value / total) * 100)} %` : '—'}
+            <span className="tabular shrink-0 text-foreground/90">
+              {formatCapacity(slice.value)}
+              {slice.capacityGb > 0 && (
+                <span className="text-muted-foreground"> / {formatCapacity(slice.capacityGb)}</span>
+              )}
+            </span>
+            <span
+              className={cn('tabular w-10 shrink-0 text-right', fillTone(slice.usageRatio * 100))}
+              title="Taux de remplissage du nœud"
+            >
+              {slice.capacityGb > 0 ? `${Math.round(slice.usageRatio * 100)} %` : '—'}
             </span>
           </li>
         ))}

@@ -232,7 +232,7 @@ export default function AlertsPage() {
             tab rather than one more dropdown among the filters. */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3 lg:px-5">
           <Tabs value={statusTab} onValueChange={(value) => setStatusTab(value as StatusTab)}>
-            <TabsList>
+            <TabsList variant="segmented">
               <TabsTrigger value="todo">À traiter ({todoCount})</TabsTrigger>
               <TabsTrigger value="resolved">Résolues</TabsTrigger>
               <TabsTrigger value="all">Toutes</TabsTrigger>

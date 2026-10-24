@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { api, MigrationItem, NodeItem } from '../../../../lib/api';
 import { usePolling } from '../../../../lib/hooks/usePolling';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../../components/ui/tabs';
+import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger } from '../../../../components/ui/tabs';
 import { PageHeader } from '../../../../components/PageHeader';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../../../components/ui/dropdown-menu';
 import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
@@ -931,7 +931,8 @@ export default function MigrationsPage() {
           <TabsList>
             <TabsTrigger value="active" className="gap-1.5">
               <PlayCircle className="h-3.5 w-3.5" />
-              En cours ({activeMigrations.length})
+              En cours
+              <TabsCount>{activeMigrations.length}</TabsCount>
             </TabsTrigger>
             <TabsTrigger value="archive" className="gap-1.5">
               <Archive className="h-3.5 w-3.5" />

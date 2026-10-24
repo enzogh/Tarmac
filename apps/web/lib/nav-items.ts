@@ -1,6 +1,5 @@
 import {
   LayoutDashboard,
-  LayoutGrid,
   Server,
   Database,
   RefreshCw,
@@ -30,7 +29,6 @@ export function buildNavGroups(slug: string): NavGroup[] {
     {
       label: null,
       items: [
-        { href: '/workspaces', label: 'Mes workspaces', icon: LayoutGrid },
         { href: base, label: "Vue d'ensemble", icon: LayoutDashboard, exact: true },
         { href: `${base}/settings`, label: 'Paramètres', icon: Settings },
       ],

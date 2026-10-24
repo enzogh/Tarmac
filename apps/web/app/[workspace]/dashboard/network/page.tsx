@@ -1361,7 +1361,7 @@ export default function NetworkPage() {
             <CardHeader className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <Tabs value={mapView} onValueChange={(value) => setMapView(value === 'graph' ? 'graph' : 'map')}>
-                  <TabsList>
+                  <TabsList variant="segmented">
                     <TabsTrigger value="map" className="gap-1.5">
                       <Globe2 className="h-3.5 w-3.5" />
                       Carte
@@ -1723,7 +1723,7 @@ export default function NetworkPage() {
                 <CardTitle className="text-base">Historique du lien</CardTitle>
               </div>
               <Tabs value={historyRange} onValueChange={(value) => setHistoryRange(value as '1h' | '24h' | '7d')}>
-                <TabsList>
+                <TabsList variant="segmented">
                   <TabsTrigger value="1h">1 h</TabsTrigger>
                   <TabsTrigger value="24h">24 h</TabsTrigger>
                   <TabsTrigger value="7d">7 j</TabsTrigger>

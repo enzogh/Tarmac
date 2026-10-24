@@ -164,6 +164,37 @@ function clusterDivIcon(count: number, worst: WorldMapNode['status']) {
   });
 }
 
+// Leaflet caches the pixel size of its container at init and only ever
+// re-reads it on a window resize. Both maps live inside panels that change
+// size without the window doing anything - the DNS console mounts its map
+// in a tab, the network card swaps between map and graph, and the shell's
+// own scroll container settles a scrollbar in after first paint. When that
+// happens the SVG renderer keeps projecting into the stale viewport, so the
+// countries come out drawn as a band across the middle of the panel with
+// the rest of the world clipped away. A ResizeObserver on the container
+// gives Leaflet the measurement it never asks for.
+function ResizeSync() {
+  const map = useMap();
+
+  useEffect(() => {
+    const container = map.getContainer();
+    const resync = () => map.invalidateSize({ animate: false });
+
+    const observer = new ResizeObserver(resync);
+    observer.observe(container);
+    // The first frame after mount is the one that most often lands on a
+    // container that has not been laid out yet (tab panels, dynamic import).
+    const frame = requestAnimationFrame(resync);
+
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [map]);
+
+  return null;
+}
+
 function ZoomTracker({ onZoom }: { onZoom: (zoom: number) => void }) {
   const map = useMapEvents({
     zoomend: () => onZoom(map.getZoom()),
@@ -369,9 +400,20 @@ export function WorldMap({ nodes, links = [], onNodeDrag, onSelectNode, classNam
         maxZoom={9}
         scrollWheelZoom
         worldCopyJump
+        // Country outlines are a single huge path set: with the renderer's
+        // default 0.1 padding, anything just outside the viewport is clipped
+        // away and only reappears on the next redraw, which is the other half
+        // of the "map drawn as a band" glitch. A full viewport of padding
+        // costs one extra screen of geometry and removes the seam entirely.
+        renderer={L.svg({ padding: 1 })}
+        // Nothing on this map is third-party any more - the country outlines
+        // ship in the bundle (see VectorBasemap) - so the floating credit
+        // was attributing the page to a library rather than to a data source.
+        attributionControl={false}
         className="h-full w-full"
       >
         <VectorBasemap />
+        <ResizeSync />
         <ZoomTracker onZoom={setZoom} />
         <BoundsFitter nodes={nodes} />
         {resolvedLinks.map((link) => (

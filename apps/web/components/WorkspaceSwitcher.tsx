@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { LayoutGrid } from 'lucide-react';
 import { useWorkspace } from '../lib/workspace-context';
 import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/select';
 
@@ -73,6 +74,19 @@ export function WorkspaceSwitcher() {
               {workspace.name}
             </SelectItem>
           ))}
+          {/* The sidebar no longer carries a "Mes workspaces" nav item - the
+              workspace card is the way back, so the picker it opens has to
+              offer the full list page too, not just a swap between the ones
+              already loaded. */}
+          <div className="mt-1 border-t border-border pt-1">
+            <Link
+              href="/workspaces"
+              className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-surface-3 hover:text-foreground"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+              Mes workspaces
+            </Link>
+          </div>
         </SelectContent>
       </Select>
     </div>
