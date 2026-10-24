@@ -63,6 +63,10 @@ export class MailService implements OnModuleInit {
       subject: mail.subject,
       html: mail.html,
       text: mail.text,
+      // Points receivers at the tarmac._bimi DNS record for the logo shown
+      // next to the message. It is only honored when covered by the DKIM
+      // signature, which the relay adds.
+      headers: { 'BIMI-Selector': 'v=BIMI1; s=tarmac;' },
       attachments: [
         {
           filename: 'tarmac.png',
