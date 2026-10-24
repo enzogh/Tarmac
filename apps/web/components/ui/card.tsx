@@ -60,11 +60,23 @@ const CardDescription = React.forwardRef<HTMLParagraphElement, React.HTMLAttribu
 );
 CardDescription.displayName = 'CardDescription';
 
-const CardContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...props }, ref) => (
-    <div ref={ref} className={cn('px-4 py-4 lg:px-5', className)} {...props} />
-  ),
-);
+/**
+ * `flush` is how a card hands its gutter to its content - a full-bleed list,
+ * a table, a map - rather than `className="p-0"`.
+ *
+ * That override silently did not work: tailwind-merge scopes conflicts per
+ * breakpoint, so an unprefixed `p-0` drops `px-4 py-4` and leaves `lg:px-5`
+ * standing. Every flush list in the app therefore kept 20px of side padding
+ * from `lg` up, on top of the padding its own rows already carry - which is
+ * why their `divide-y` separators stopped short of the card's border on both
+ * sides while the border itself did not. A prop sidesteps the merge entirely.
+ */
+const CardContent = React.forwardRef<
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement> & { flush?: boolean }
+>(({ className, flush = false, ...props }, ref) => (
+  <div ref={ref} className={cn(!flush && 'px-4 py-4 lg:px-5', className)} {...props} />
+));
 CardContent.displayName = 'CardContent';
 
 const CardFooter = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(

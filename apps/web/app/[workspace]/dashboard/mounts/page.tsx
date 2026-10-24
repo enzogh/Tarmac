@@ -1174,7 +1174,7 @@ export default function MountsPage() {
              error details, which only some mounts have, unfold underneath
              the rows that actually have them. */
           <Card className="animate-fade-in">
-            <CardContent className="p-0">
+            <CardContent flush>
               <ul className="divide-y divide-border">
                 {mounts.map((mount) => {
                   const status = describe(RESOURCE_STATUS, mount.status);
@@ -1207,7 +1207,11 @@ export default function MountsPage() {
                           {status.label}
                         </StatusPill>
 
-                        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/row:opacity-100">
+                        {/* A fixed gutter, so every column before it lines up from
+                            row to row: which buttons a row gets depends on its
+                            state, and even hidden ones take their width out of
+                            the row. Three icon buttons is the widest case. */}
+                        <div className="flex w-[100px] shrink-0 items-center justify-end gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/row:opacity-100">
                           {mount.status === 'error' && (
                             <Tooltip>
                               <TooltipTrigger asChild>

@@ -338,7 +338,7 @@ export default function OverviewPage() {
                   <span className="text-2xs text-muted-foreground">5 sur {activeAlerts.length}</span>
                 )}
               </CardHeader>
-              <CardContent className="p-0">
+              <CardContent flush>
                 {activeAlerts.length === 0 ? (
                   <p className="flex items-center justify-center gap-2 py-10 text-sm text-[hsl(var(--ok))]">
                     <CheckCircle2 className="h-4 w-4" />
@@ -415,7 +415,7 @@ export default function OverviewPage() {
                 Synchronisations
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-0">
+            <CardContent flush>
               {activityFeedLoading ? (
                 <div className="p-4 lg:p-5">
                   <ListSkeleton rows={3} />
@@ -451,7 +451,7 @@ export default function OverviewPage() {
                 Migrations
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-0">
+            <CardContent flush>
               {activityFeedLoading ? (
                 <div className="p-4 lg:p-5">
                   <ListSkeleton rows={3} />

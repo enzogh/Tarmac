@@ -472,7 +472,7 @@ export default function ReplicationPage() {
              some jobs have (a remote SSH source, the run history) unfold
              under the row that owns them. */
           <Card className="animate-fade-in">
-            <CardContent className="p-0">
+            <CardContent flush>
               <ul className="divide-y divide-border">
                 {jobs.map((job) => {
                   const status = describe(RESOURCE_STATUS, job.status);
@@ -520,7 +520,10 @@ export default function ReplicationPage() {
                           {status.label}
                         </StatusPill>
 
-                        <div className="flex shrink-0 items-center gap-0.5">
+                        {/* A fixed gutter, matching the mount and alert rows, so a
+                            row that loses an action keeps its columns aligned
+                            with its neighbours'. */}
+                        <div className="flex w-[100px] shrink-0 items-center justify-end gap-0.5">
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button

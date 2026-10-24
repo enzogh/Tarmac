@@ -237,7 +237,7 @@ function ActionsTab() {
         </div>
       </div>
 
-      <CardContent className="p-0">
+      <CardContent flush>
         {loading ? (
           <div className="p-4 lg:p-5">
             <ListSkeleton rows={6} />

@@ -296,7 +296,7 @@ export default function AlertsPage() {
           </div>
         )}
 
-        <CardContent className="p-0">
+        <CardContent flush>
           {isLoading ? (
             <div className="p-4 lg:p-5">
               <ListSkeleton rows={5} />
@@ -398,8 +398,10 @@ export default function AlertsPage() {
 
                         {/* Revealed on hover and focus: three labelled buttons
                             on every row turned the list into a wall of
-                            controls instead of a list of problems. */}
-                        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/row:opacity-100">
+                            controls instead of a list of problems. The gutter
+                            keeps its width whichever actions a row gets, so
+                            every column before it lines up from row to row. */}
+                        <div className="flex w-[100px] shrink-0 items-center justify-end gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/row:opacity-100">
                           {group.status === 'open' && (
                             <Tooltip>
                               <TooltipTrigger asChild>

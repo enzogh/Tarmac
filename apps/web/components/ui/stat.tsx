@@ -41,9 +41,9 @@ export type StatProps = {
  * The single KPI tile used across every page. The previous one gave the
  * label and the value near-equal weight and let the value wrap mid-number
  * ("32693" / "GB" on two lines), so a row of four tiles came out ragged and
- * hard to scan. Here the label is small and fixed-height, the figure is the
- * only large thing, and its unit is a separate muted span that can't break
- * the number across lines.
+ * hard to scan. Here the label is small, the figure is the only large thing,
+ * and its unit is a separate muted span that can't break the number across
+ * lines.
  */
 export function Stat({ label, value, unit, hint, icon: Icon, iconNode, tone = 'neutral', className }: StatProps) {
   return (
@@ -55,7 +55,13 @@ export function Stat({ label, value, unit, hint, icon: Icon, iconNode, tone = 'n
     >
       <span className={cn('absolute inset-y-0 left-0 w-px', TONE_RAIL[tone])} aria-hidden />
       <div className="flex items-start justify-between gap-3">
-        <p className="min-h-[2rem] text-2xs font-medium uppercase leading-4 tracking-wider text-muted-foreground">
+        {/* No reserved second line here: the tiles sit in a grid, so they
+            already stretch to a common height, and `justify-between` already
+            drops every value to the bottom of that height - the figures line
+            up across the row whether or not one label wraps. The reserved
+            line only ever added 16px of dead air between a one-line label and
+            its figure, which is the usual case. */}
+        <p className="text-2xs font-medium uppercase leading-4 tracking-wider text-muted-foreground">
           {label}
         </p>
         {Icon ? (
