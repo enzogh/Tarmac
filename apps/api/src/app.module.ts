@@ -10,6 +10,7 @@ import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { AuthModule } from './auth/auth.module';
 import { DnsModule } from './dns/dns.module';
 import { LiveModule } from './live/live.module';
+import { MailModule } from './mail/mail.module';
 import { MigrationsModule } from './migrations/migrations.module';
 import { MountsModule } from './mounts/mounts.module';
 import { NodesModule } from './nodes/nodes.module';
@@ -37,6 +38,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
       throttlers: [{ ttl: 60_000, limit: 1200 }],
     }),
     PrismaModule,
+    MailModule,
     AuthModule,
     LiveModule,
     NodesModule,

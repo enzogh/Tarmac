@@ -43,4 +43,13 @@ export class AuthController {
   ) {
     return this.authService.updateProfile(req.user?.userId, dto);
   }
+
+  // Sends to the caller's own alert address only, hence the tight throttle
+  // rather than any target parameter.
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @UseGuards(JwtAuthGuard)
+  @Post('profile/test-email')
+  sendTestEmail(@Req() req: { user?: { userId?: string } }) {
+    return this.authService.sendTestEmail(req.user?.userId);
+  }
 }

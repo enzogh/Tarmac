@@ -2,8 +2,8 @@
 
 import { FormEvent, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { AlertTriangle, Mail, Save, Settings, ShieldCheck, Trash2, Users } from 'lucide-react';
-import { api, WorkspaceListItem, WorkspaceMember } from '../../../../lib/api';
+import { AlertTriangle, BellRing, Mail, Save, Send, Settings, ShieldCheck, Trash2, Users } from 'lucide-react';
+import { AdminProfile, api, WorkspaceListItem, WorkspaceMember } from '../../../../lib/api';
 import { usePolling } from '../../../../lib/hooks/usePolling';
 import { PageHeader } from '../../../../components/PageHeader';
 import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
@@ -18,7 +18,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 export default function WorkspaceSettingsPage() {
   const params = useParams<{ workspace: string }>();
   const router = useRouter();
-  const { data: profile } = usePolling('profile', api.profile.get, { intervalMs: 60000 });
+  const { data: profile, mutate: refreshProfile } = usePolling('profile', api.profile.get, { intervalMs: 60000 });
   const { data: workspaces, mutate: refreshWorkspaces } = usePolling('workspaces', api.workspaces.list, {
     intervalMs: 15000,
   });
@@ -39,6 +39,7 @@ export default function WorkspaceSettingsPage() {
     return (
       <div className="space-y-6">
         <PageHeader title="Paramètres" description={workspace.name} />
+        <EmailNotificationsCard profile={profile} onSaved={() => void refreshProfile()} />
         <Card>
           <CardContent className="flex flex-col items-center gap-2 py-16 text-center">
             <ShieldCheck className="h-8 w-8 text-muted-foreground" />
@@ -55,6 +56,7 @@ export default function WorkspaceSettingsPage() {
   return (
     <div className="max-w-3xl space-y-6">
       <PageHeader title="Paramètres" description={`Gère « ${workspace.name} »`} />
+      <EmailNotificationsCard profile={profile} onSaved={() => void refreshProfile()} />
       <RenameCard workspace={workspace} onSaved={() => void refreshWorkspaces()} />
       <MembersCard
         workspace={workspace}
@@ -69,6 +71,123 @@ export default function WorkspaceSettingsPage() {
         }}
       />
     </div>
+  );
+}
+
+// Personal, not per-workspace: the same address and on/off switch apply to
+// every workspace the user belongs to, so it's shown to plain members too.
+function EmailNotificationsCard({ profile, onSaved }: { profile: AdminProfile; onSaved: () => void }) {
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const { address, source, internalDomain, mailConfigured } = profile.alertEmail;
+  const enabled = profile.alertEmailsEnabled;
+
+  const toggle = async () => {
+    setSaving(true);
+    setNotice(null);
+    try {
+      await api.profile.update({ alertEmailsEnabled: !enabled });
+      onSaved();
+    } catch (error) {
+      setNotice({ type: 'error', message: error instanceof Error ? error.message : 'Impossible de modifier ce réglage.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const sendTest = async () => {
+    setTesting(true);
+    setNotice(null);
+    try {
+      const result = await api.profile.sendTestEmail();
+      setNotice({ type: 'success', message: `Email de test envoyé à ${result.sentTo}.` });
+    } catch (error) {
+      setNotice({ type: 'error', message: error instanceof Error ? error.message : "Impossible d'envoyer l'email de test." });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <BellRing className="h-4 w-4" />
+          Alertes par email
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 space-y-1">
+            <p className="text-sm text-foreground">Recevoir les alertes de mes workspaces</p>
+            <p className="text-xs text-muted-foreground">
+              Les alertes qui se déclenchent en même temps sont regroupées dans un seul email.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={enabled}
+            aria-label="Recevoir les alertes par email"
+            onClick={() => void toggle()}
+            disabled={saving}
+            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${
+              enabled ? 'border-primary bg-primary' : 'border-border bg-surface-3'
+            }`}
+          >
+            <span
+              className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+                enabled ? 'translate-x-[18px]' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2.5">
+          <div className="min-w-0">
+            <p className="text-2xs uppercase tracking-wider text-muted-foreground">Adresse de réception</p>
+            <p className="truncate font-mono text-sm text-foreground">{address ?? 'Aucune adresse valide'}</p>
+          </div>
+          {address &&
+            (source === 'internal' ? (
+              <Badge variant="success">Interne @{internalDomain}</Badge>
+            ) : (
+              <Badge variant="warning">Adresse du compte</Badge>
+            ))}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {source === 'internal'
+            ? `Adresse @${internalDomain} trouvée sur ton compte à la dernière connexion.`
+            : `Aucune adresse @${internalDomain} trouvée sur ton compte : l'adresse d'inscription est utilisée. Elle est relue à chaque connexion.`}
+        </p>
+
+        {!mailConfigured && (
+          <Alert variant="warning">
+            <AlertDescription>
+              Le relais SMTP n&apos;est pas configuré sur ce serveur (SMTP_HOST / SMTP_PASSWORD) : aucun email ne part pour l&apos;instant.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <Button
+          type="button"
+          variant="outline"
+          className="gap-2"
+          onClick={() => void sendTest()}
+          disabled={testing || !mailConfigured || !address}
+        >
+          <Send className="h-4 w-4" />
+          {testing ? 'Envoi…' : 'Envoyer un email de test'}
+        </Button>
+
+        {notice && (
+          <Alert variant={notice.type === 'error' ? 'destructive' : 'success'}>
+            <AlertDescription>{notice.message}</AlertDescription>
+          </Alert>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

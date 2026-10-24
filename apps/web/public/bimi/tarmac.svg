@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg version="1.2" baseProfile="tiny-ps" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Tarmac</title>
+  <rect width="512" height="512" fill="#8455f1"/>
+  <g transform="translate(51.2 51.2) scale(0.8)" fill="none" stroke="#ffffff" stroke-width="41.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M256 104 104 176l152 72 152-72-152-72Z"/>
+    <path d="M104 256l152 72 152-72"/>
+    <path d="M104 336l152 72 152-72"/>
+  </g>
+</svg>

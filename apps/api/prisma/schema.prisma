@@ -162,6 +162,12 @@ model User {
   avatarUrl            String?
   isSuperuser          Boolean               @default(false)
   ssoSubject           String?               @unique
+  // Address on the internal mail domain (ALERT_EMAIL_INTERNAL_DOMAIN,
+  // intraced.fr by default) found in the Authentik claims at the last SSO
+  // login. Alert emails go here when set, otherwise to `email` - see
+  // alertEmailAddress() in mail/alert-recipients.ts.
+  internalEmail        String?
+  alertEmailsEnabled   Boolean               @default(true)
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
   workspaceMemberships WorkspaceMembership[]
@@ -622,6 +628,9 @@ model Alert {
   triggeredAt    DateTime      @default(now())
   acknowledgedAt DateTime?
   resolvedAt     DateTime?
+  // Set once the alert has gone out in an email digest (or was deliberately
+  // skipped) - null means AlertDigestService still has to pick it up.
+  emailNotifiedAt DateTime?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   rule           AlertRule?    @relation(fields: [ruleId], references: [id], onDelete: SetNull)
@@ -631,6 +640,7 @@ model Alert {
   @@index([status])
   @@index([nodeId])
   @@index([workspaceId])
+  @@index([emailNotifiedAt])
 }
 
 model SyncJob {

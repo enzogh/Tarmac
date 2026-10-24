@@ -2,6 +2,8 @@ import { Controller, Get, Logger, Query, Req, Res } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import type { Request, Response } from 'express';
+import type { Client, TokenSet } from 'openid-client';
+import { findInternalEmail } from '../mail/alert-recipients';
 import { AUTH_COOKIE_MAX_AGE_MS, AUTH_COOKIE_NAME, authCookieOptions } from './auth-cookie';
 import { AuthentikService } from './authentik.service';
 import { AuthService } from './auth.service';
@@ -103,9 +105,12 @@ export class SsoController {
         ? claims.groups.filter((g): g is string => typeof g === 'string')
         : [];
 
-      const user = await this.authService.findOrCreateSsoUser({
+      const internalEmail = await this.resolveInternalEmail(client, tokenSet, claims);
+
+      const { user, alertAddressChanged } = await this.authService.findOrCreateSsoUser({
         sub: claims.sub,
         email,
+        internalEmail,
         name: typeof claims.name === 'string' ? claims.name : null,
         avatarUrl: typeof claims.picture === 'string' ? claims.picture : null,
         isSuperuser: claims.is_superuser === true,
@@ -120,6 +125,10 @@ export class SsoController {
         return res.redirect(this.loginRedirect({ sso: 'forbidden' }));
       }
 
+      if (alertAddressChanged) {
+        this.authService.sendAlertAddressConfirmation(user);
+      }
+
       const { access_token } = await this.authService.issueSession(user);
       res.cookie(AUTH_COOKIE_NAME, access_token, {
         ...authCookieOptions(),
@@ -132,6 +141,36 @@ export class SsoController {
     } catch (error) {
       this.logger.warn(`Authentik SSO callback failed: ${error instanceof Error ? error.message : error}`);
       return res.redirect(this.loginRedirect({ sso: 'error', reason: 'callback_failed' }));
+    }
+  }
+
+  // The internal (@intraced.fr) address is looked for in the ID token
+  // first; userinfo is only asked when that comes up empty, since some
+  // Authentik property mappings are configured not to go into the ID token.
+  // Any failure there just means "no internal address", never a failed login.
+  private async resolveInternalEmail(
+    client: Client,
+    tokenSet: TokenSet,
+    claims: Record<string, unknown>,
+  ): Promise<string | null> {
+    const fromIdToken = findInternalEmail(claims);
+    if (fromIdToken || !tokenSet.access_token) return fromIdToken;
+    try {
+      const userinfo = await client.userinfo(tokenSet.access_token);
+      const fromUserinfo = findInternalEmail(userinfo as Record<string, unknown>);
+      if (!fromUserinfo) {
+        // Claim names only, never values: enough to tell "the Authentik
+        // scope mapping doesn't send intranet_mail" apart from "it sends it
+        // under another name or with has_intranet_mail=false".
+        this.logger.log(
+          `No internal email in SSO claims for ${claims.sub} - id_token keys: [${Object.keys(claims).join(', ')}], ` +
+            `userinfo keys: [${Object.keys(userinfo).join(', ')}], has_intranet_mail=${String(userinfo.has_intranet_mail ?? claims.has_intranet_mail)}`,
+        );
+      }
+      return fromUserinfo;
+    } catch (error) {
+      this.logger.debug(`Authentik userinfo lookup failed: ${error instanceof Error ? error.message : error}`);
+      return null;
     }
   }
 

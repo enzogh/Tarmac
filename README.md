@@ -111,6 +111,8 @@ Le script installe automatiquement les dépendances nécessaires (`golang-go`, `
 ## API V1 (préfixe `/api/v1`)
 Auth:
 - `POST /auth/login`
+- `GET/PATCH /auth/profile` (`alertEmailsEnabled` pour activer/couper les emails d'alerte)
+- `POST /auth/profile/test-email`
 
 Core:
 - `GET/POST/PATCH/DELETE /nodes`
@@ -133,7 +135,7 @@ V1 storage/orchestration:
 - `POST /alerts/:id/ack`
 - `POST /alerts/:id/resolve`
 - `GET/POST/PATCH/DELETE /notification-channels`
-- `POST /notification-channels/:id/test`
+- `POST /notification-channels/:id/test` (envoie un vrai email pour un canal `email`)
 - `GET /topology`
 - `GET /storage/forecast`
 - `GET /storage/overview` (`?nodeId=<id>` optionnel pour filtrer un nœud)
@@ -162,6 +164,8 @@ Réseau (VLAN) :
 La boucle de reconciliation inclut désormais shares, mounts et pool_members en `pending` et reste safe si un agent est offline.
 
 ## Nouveautés récentes
+
+- **Alertes par email** : Tarmac envoie les alertes de chaque workspace à ses membres via le relais SMTP interne (`SMTP_*`, voir `docker/.env.example`). L'adresse utilisée est relue à chaque connexion SSO : une adresse `@intraced.fr` trouvée dans les claims Authentik passe en priorité, sinon l'adresse d'inscription. Les alertes qui arrivent ensemble sont regroupées dans **un seul email** (fenêtre `ALERT_EMAIL_QUIET_SECONDS`, plafonnée par `ALERT_EMAIL_MAX_WAIT_SECONDS`) pour ne pas inonder la boîte. Chacun peut couper les emails ou s'envoyer un test depuis Paramètres → Alertes par email ; les canaux de notification de type `email` reçoivent aussi le résumé.
 
 - **Carte du monde** : vue géographique de la flotte (`/dashboard/network`, onglet Carte), en complément du graphe topologique. Positions de nœuds déplaçables à la souris et mémorisées côté serveur (`graphX`/`graphY` sur le graphe, `locationLat`/`locationLng` sur la carte).
 - **Segmentation régionale du VLAN** : au-delà de deux régions géographiques, un maillage WireGuard complet devient coûteux. Un nœud par région peut être désigné « passerelle » (`POST /vlan/:vlanId/members/:nodeId/gateway`) ; seules les passerelles se relient entre régions, le reste du mesh est inchangé (maillage complet intra-région, comme avant).

@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   OnModuleInit,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -12,6 +13,9 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import * as jwt from 'jsonwebtoken';
+import { alertEmailAddress, alertEmailSource, internalMailDomain } from '../mail/alert-recipients';
+import { MailService } from '../mail/mail.service';
+import { renderNotificationAddress } from '../mail/templates/notification-address';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -30,6 +34,7 @@ export class AuthService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly mailService: MailService,
   ) {}
 
   async onModuleInit() {
@@ -99,50 +104,120 @@ export class AuthService implements OnModuleInit {
   // deliberately NOT applied here even when the claim says false - treat
   // that as a possibly-transient IdP/claim-mapping issue and require a
   // manual platform-admin action to actually revoke platform-admin status.
+  //
+  // internalEmail is refreshed on every login, null included: an address
+  // removed from the account in Authentik must stop receiving alerts, which
+  // then fall back to `email`. alertAddressChanged tells the caller the
+  // resolved alert address differs from before this login, so it can send
+  // the "your alerts go here now" confirmation once the login is allowed.
   async findOrCreateSsoUser(claims: {
     sub: string;
     email: string;
+    internalEmail: string | null;
     name?: string | null;
     avatarUrl?: string | null;
     isSuperuser: boolean;
-  }): Promise<User> {
+  }): Promise<{ user: User; alertAddressChanged: boolean }> {
     const email = claims.email.trim().toLowerCase();
+    const internalEmail = claims.internalEmail?.trim().toLowerCase() || null;
+    const withChange = (user: User, before: User | null) => ({
+      user,
+      alertAddressChanged: alertEmailAddress(user) !== (before ? alertEmailAddress(before) : null),
+    });
 
     const existingBySubject = await this.prisma.user.findUnique({ where: { ssoSubject: claims.sub } });
     if (existingBySubject) {
-      return this.prisma.user.update({
+      const updated = await this.prisma.user.update({
         where: { id: existingBySubject.id },
         data: {
           email,
+          internalEmail,
           name: claims.name ?? existingBySubject.name,
           avatarUrl: claims.avatarUrl ?? existingBySubject.avatarUrl,
           isSuperuser: existingBySubject.isSuperuser || claims.isSuperuser,
         },
       });
+      return withChange(updated, existingBySubject);
     }
 
     const existingByEmail = await this.prisma.user.findUnique({ where: { email } });
     if (existingByEmail) {
-      return this.prisma.user.update({
+      const updated = await this.prisma.user.update({
         where: { id: existingByEmail.id },
         data: {
           ssoSubject: claims.sub,
+          internalEmail,
           name: claims.name ?? existingByEmail.name,
           avatarUrl: claims.avatarUrl ?? existingByEmail.avatarUrl,
           isSuperuser: existingByEmail.isSuperuser || claims.isSuperuser,
         },
       });
+      return withChange(updated, existingByEmail);
     }
 
-    return this.prisma.user.create({
+    const created = await this.prisma.user.create({
       data: {
         email,
+        internalEmail,
         ssoSubject: claims.sub,
         name: claims.name,
         avatarUrl: claims.avatarUrl,
         isSuperuser: claims.isSuperuser,
       },
     });
+    return withChange(created, null);
+  }
+
+  // Fire-and-forget from the SSO callback: a slow or unreachable relay must
+  // never hold up a login.
+  sendAlertAddressConfirmation(user: User): void {
+    const recipient = alertEmailAddress(user);
+    if (!recipient || !this.mailService.isConfigured || !user.alertEmailsEnabled) return;
+    const mail = renderNotificationAddress({
+      kind: 'enabled',
+      recipient,
+      recipientName: user.name,
+      source: alertEmailSource(user),
+      internalDomain: internalMailDomain(),
+      frontendUrl: this.mailService.frontendUrl,
+    });
+    this.mailService.send(recipient, mail).catch((error) => {
+      this.logger.warn(`Alert address confirmation to ${recipient} failed: ${error instanceof Error ? error.message : error}`);
+    });
+  }
+
+  async sendTestEmail(userId: string | undefined) {
+    if (!userId) {
+      throw new UnauthorizedException('Session invalide');
+    }
+    if (!this.mailService.isConfigured) {
+      throw new ServiceUnavailableException("L'envoi d'emails n'est pas configuré (SMTP_HOST ou SMTP_PASSWORD manquant)");
+    }
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new UnauthorizedException('Utilisateur introuvable');
+    }
+    const recipient = alertEmailAddress(user);
+    if (!recipient) {
+      throw new BadRequestException("Aucune adresse email valide n'est associée à ce compte");
+    }
+    try {
+      await this.mailService.send(
+        recipient,
+        renderNotificationAddress({
+          kind: 'test',
+          recipient,
+          recipientName: user.name,
+          source: alertEmailSource(user),
+          internalDomain: internalMailDomain(),
+          frontendUrl: this.mailService.frontendUrl,
+        }),
+      );
+    } catch (error) {
+      this.logger.warn(`Test email to ${recipient} failed: ${error instanceof Error ? error.message : error}`);
+      throw new ServiceUnavailableException("Le relais SMTP a refusé l'envoi, réessaie dans un instant");
+    }
+    return { sentTo: recipient, sentAt: new Date().toISOString() };
   }
 
   // Grants workspace membership from Authentik group claims on every SSO
@@ -195,6 +270,8 @@ export class AuthService implements OnModuleInit {
         name: true,
         avatarUrl: true,
         isSuperuser: true,
+        internalEmail: true,
+        alertEmailsEnabled: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -218,7 +295,16 @@ export class AuthService implements OnModuleInit {
             orderBy: { createdAt: 'asc' },
           });
 
-    return { ...user, workspaces };
+    return { ...user, workspaces, alertEmail: this.alertEmailSettings(user) };
+  }
+
+  private alertEmailSettings(user: { email: string; internalEmail: string | null }) {
+    return {
+      address: alertEmailAddress(user),
+      source: alertEmailSource(user),
+      internalDomain: internalMailDomain(),
+      mailConfigured: this.mailService.isConfigured,
+    };
   }
 
   async updateProfile(userId: string | undefined, dto: UpdateProfileDto) {
@@ -234,8 +320,10 @@ export class AuthService implements OnModuleInit {
     const nextEmail = dto.email?.trim().toLowerCase();
     const wantsEmailChange = typeof nextEmail === 'string' && nextEmail.length > 0 && nextEmail !== user.email;
     const wantsPasswordChange = typeof dto.newPassword === 'string' && dto.newPassword.length > 0;
+    const wantsAlertToggle =
+      typeof dto.alertEmailsEnabled === 'boolean' && dto.alertEmailsEnabled !== user.alertEmailsEnabled;
 
-    if (!wantsEmailChange && !wantsPasswordChange) {
+    if (!wantsEmailChange && !wantsPasswordChange && !wantsAlertToggle) {
       throw new BadRequestException('Aucune modification détectée');
     }
 
@@ -249,7 +337,10 @@ export class AuthService implements OnModuleInit {
       }
     }
 
-    const data: { email?: string; passwordHash?: string } = {};
+    const data: { email?: string; passwordHash?: string; alertEmailsEnabled?: boolean } = {};
+    if (wantsAlertToggle) {
+      data.alertEmailsEnabled = dto.alertEmailsEnabled;
+    }
     if (wantsEmailChange && nextEmail) {
       data.email = nextEmail;
     }
@@ -267,11 +358,13 @@ export class AuthService implements OnModuleInit {
           name: true,
           avatarUrl: true,
           isSuperuser: true,
+          internalEmail: true,
+          alertEmailsEnabled: true,
           createdAt: true,
           updatedAt: true,
         },
       });
-      return updated;
+      return { ...updated, alertEmail: this.alertEmailSettings(updated) };
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&

@@ -529,6 +529,16 @@ export type AdminProfile = {
   name?: string | null;
   avatarUrl?: string | null;
   isSuperuser: boolean;
+  internalEmail?: string | null;
+  alertEmailsEnabled: boolean;
+  // Where alert emails actually go: the internal address found at the last
+  // SSO login, or the sign-up address when there is none.
+  alertEmail: {
+    address: string | null;
+    source: 'internal' | 'account';
+    internalDomain: string;
+    mailConfigured: boolean;
+  };
   createdAt: string;
   updatedAt: string;
   workspaces: WorkspaceSummary[];
@@ -613,12 +623,15 @@ export const api = {
         email?: string;
         currentPassword?: string;
         newPassword?: string;
+        alertEmailsEnabled?: boolean;
       },
     ) =>
       request<AdminProfile>('/api/v1/auth/profile', {
         method: 'PATCH',
         body: JSON.stringify(payload),
       }),
+    sendTestEmail: () =>
+      request<{ sentTo: string; sentAt: string }>('/api/v1/auth/profile/test-email', { method: 'POST' }),
   },
 
   nodes: {
