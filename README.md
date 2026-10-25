@@ -1,34 +1,135 @@
-# Tarmac MVP+V1
+<div align="center">
 
-Monorepo Tarmac:
-- `apps/api` (NestJS + Prisma + PostgreSQL)
-- `apps/web` (Next.js App Router)
-- `apps/agent` (Go)
-- `packages/shared` (types + Zod)
+<img src="apps/web/public/tarmac-mark.svg" alt="Tarmac" width="104" height="104">
 
-## Prérequis
-- Node.js 20+
-- npm 10+
-- Go 1.22+
-- Docker + Docker Compose
+# Tarmac
 
-## Variables d'environnement
-### API (`apps/api/.env`)
-- `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tarmac`
-- `JWT_SECRET=change-me`
-- `AGENT_SHARED_TOKEN=agent-secret`
-- `PORT=3001`
+**Control plane pour flottes de serveurs Linux.**
 
-### Web (`apps/web/.env.local`)
-- `NEXT_PUBLIC_API_URL=http://localhost:3001`
-- `NEXT_PUBLIC_APP_VERSION=dev-local`
+Stockage, réseau overlay WireGuard, DNS autoritaire, réplication et supervision —
+pilotés depuis une seule interface, appliqués sur les nœuds par un agent Go.
 
-### Agent
-- `CONTROL_PLANE_WS=ws://localhost:3001/agents-ws`
-- `AGENT_TOKEN=agent-secret`
-- `NODE_ID=<id-node>`
+<img src="https://img.shields.io/badge/Next.js-14-000000?style=flat-square&logo=nextdotjs&logoColor=white" alt="Next.js 14">
+<img src="https://img.shields.io/badge/NestJS-10-E0234E?style=flat-square&logo=nestjs&logoColor=white" alt="NestJS 10">
+<img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.22+">
+<img src="https://img.shields.io/badge/PostgreSQL-Prisma-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL + Prisma">
 
-## Démarrage
+</div>
+
+---
+
+## Sommaire
+
+- [Ce que fait Tarmac](#ce-que-fait-tarmac)
+- [Fonctionnalités](#fonctionnalités)
+- [Architecture](#architecture)
+- [Structure du dépôt](#structure-du-dépôt)
+- [Démarrage rapide](#démarrage-rapide)
+- [Variables d'environnement](#variables-denvironnement)
+- [L'agent](#lagent)
+- [API](#api)
+- [Déploiement Docker](#déploiement-docker)
+- [Développement](#développement)
+
+## Ce que fait Tarmac
+
+Tarmac gère une flotte de serveurs Linux comme un ensemble cohérent plutôt que
+machine par machine. On déclare l'état voulu depuis l'interface — ce partage NFS,
+ce montage, ce lien overlay, cette zone DNS, ce job de réplication — et un agent
+Go installé sur chaque nœud l'applique réellement : `exportfs`, `mount`,
+`wg set`, PowerDNS, `rsync`. Une boucle de réconciliation rattrape les ressources
+restées en `pending`, y compris celles d'un nœud qui était hors ligne au moment
+de la demande.
+
+Dans l'autre sens, chaque agent remonte en continu ses métriques (CPU, RAM,
+disque, réseau, I/O), l'état réel de ses volumes, la santé SMART de ses disques
+et la qualité de ses liens overlay, ce qui alimente la supervision, les alertes
+et les vues topologiques.
+
+## Fonctionnalités
+
+**Stockage**
+- Partages NFS et clients autorisés par CIDR, appliqués via `exportfs` et `/etc/exports`
+- Montages NFS / CIFS / rclone-SFTP avec sources de secours, persistés dans `/etc/fstab`
+- Pools regroupant plusieurs nœuds, avec rôles de membres
+- Inventaire des volumes réels (capacité, occupation), typage des disques (NVMe / SSD / HDD) et résolution des membres d'un RAID logiciel
+- Prévision de remplissage (`/storage/forecast`) et vue d'ensemble par nœud
+
+**Réseau overlay**
+- Maillage WireGuard entre nœuds, clés et endpoints gérés par l'agent
+- Segmentation régionale : au-delà de deux régions, un nœud « passerelle » par région relie les régions entre elles, le maillage complet restant intra-région
+- Métriques par lien : débit, âge du dernier handshake, latence, perte de paquets
+- Tests à la demande, `ping` comme `traceroute`, exécutés en direct sur l'agent
+- Historique des liens sur 1 h / 24 h / 7 j avec pourcentage de disponibilité, purgé après 30 jours
+- Graphe topologique et carte du monde, positions de nœuds déplaçables et mémorisées
+
+**DNS**
+- Zones autoritaires servies par PowerDNS, maîtres comme esclaves (AXFR, TSIG)
+- DNSSEC, enregistrements géolocalisés via une base GeoIP mmdb construite et rafraîchie par l'agent
+- Résolution interne `*.tarmac.local` avec repli sur `/etc/hosts`
+- Détection et résolution assistée des conflits sur le port 53 (systemd-resolved, dnsmasq…)
+
+**Réplication**
+- Jobs de synchronisation `rsync` avec remontée de progression en pourcentage et arrêt à la demande
+- Tâches de migration de données, avec listing des dossiers d'un nœud en direct
+- Sources distantes SSH / SFTP, y compris Storage Box
+
+**Supervision et alertes**
+- Règles d'alerte par métrique et par seuil, acquittement et résolution
+- Alertes par email via le relais SMTP interne, regroupées en un seul message quand elles arrivent ensemble
+- Canaux de notification configurables et testables
+- Santé SMART par disque, avec les disques virtualisés sans données exploitables classés « inconnu » plutôt que « critique »
+- Journaux d'agent et journal d'audit
+
+**Organisation**
+- Workspaces multiples avec appartenances et rôles
+- SSO OIDC (Authentik) : les groupes portés par les claims décident de l'accès aux workspaces
+- JWT avec rotation de secret sans couper les sessions en cours
+
+## Architecture
+
+```mermaid
+flowchart LR
+    U(["Navigateur"]) --> W["apps/web<br/>Next.js 14"]
+    W -- REST /api/v1 --> A["apps/api<br/>NestJS 10"]
+    A --> P[("PostgreSQL<br/>Prisma")]
+    A --> R[("Redis")]
+    A <-- "WebSocket /agents-ws" --> N1["apps/agent<br/>nœud 1"]
+    A <-- "WebSocket /agents-ws" --> N2["apps/agent<br/>nœud 2"]
+    A <-- "WebSocket /agents-ws" --> N3["apps/agent<br/>nœud N"]
+    N1 <-- WireGuard --> N2
+    N2 <-- WireGuard --> N3
+    N1 <-- WireGuard --> N3
+```
+
+L'agent est le seul à écrire sur les nœuds. Il ouvre lui-même la connexion
+WebSocket vers le control plane — aucun port entrant à exposer sur les nœuds —
+et la maintient avec reconnexion et backoff. Le control plane y pousse des
+commandes (`command.apply_mount`, `command.apply_overlay`,
+`command.apply_dns_zone`, `command.run_rsync`…) et reçoit en retour
+heartbeats, rapports d'état, progression des commandes et journaux.
+
+## Structure du dépôt
+
+```
+apps/
+  api/        NestJS + Prisma + PostgreSQL — API /api/v1, WebSocket agents, réconciliation
+  web/        Next.js App Router — interface, dashboard par workspace, docs intégrées
+  agent/      Go — agent installé sur chaque nœud (systemd)
+packages/
+  shared/     Types partagés + schémas Zod
+docker/       docker-compose, entrypoint PostgreSQL, script de déploiement
+docs/         Documentation d'exploitation
+```
+
+## Démarrage rapide
+
+### Prérequis
+
+Node.js 20+, npm 10+, Go 1.22+, Docker et Docker Compose.
+
+### Installation
+
 ```bash
 npm install
 docker compose -f docker/docker-compose.yml up -d postgres redis
@@ -37,67 +138,79 @@ npm run seed
 npm run dev
 ```
 
-## Version affichée (toutes les pages)
-- Le web affiche `Version <valeur>` en bas à droite sur toutes les pages.
-- En Docker Compose, la version est alimentée par `GITHUB_SHA` (commit du build). Sans lui, elle retombe sur `dev-local`.
-- `.git` n'est pas envoyé au build Docker (voir `.dockerignore`), donc `GITHUB_SHA` doit être fourni de l'extérieur : soit par la CI (`GITHUB_SHA` du push), soit en déploiement manuel via `docker/deploy.sh`, qui le calcule depuis le checkout local avant de lancer `docker compose up -d --build`.
+`npm run dev` lance l'API sur `:3001` et le web sur `:3000`.
 
-Déploiement manuel (recommandé, au lieu d'appeler `docker compose` directement) :
-```bash
-./docker/deploy.sh
-```
+### Compte de démonstration
 
-Équivalent explicite :
-```bash
-GITHUB_SHA=$(git rev-parse --short HEAD) docker compose -f docker/docker-compose.yml up -d --build
-```
+Après `npm run seed` :
 
-## Persistance locale Docker
-- Données PostgreSQL persistées dans `docker/data/postgres`
-- Données Redis persistées dans `docker/data/redis`
-- PostgreSQL est publié en local uniquement par défaut (`POSTGRES_BIND=127.0.0.1`) pour éviter une exposition Internet directe.
-- Un `docker compose up --build` ou redémarrage conserve les données existantes.
-- Si vous changez `POSTGRES_PASSWORD` après la première initialisation, le volume existant garde l'ancien mot de passe.  
-  Le wrapper `docker/postgres-entrypoint-tarmac.sh` réapplique désormais le mot de passe configuré au redémarrage pour éviter les erreurs Prisma (`password authentication failed for user "postgres"`).
-- Placez vos variables Docker dans `docker/.env` (exemple: `docker/.env.example`), notamment `NEXT_PUBLIC_API_URL`.
+| Email | Mot de passe |
+| --- | --- |
+| `admin@tarmac.local` | `admin123` |
 
-## Build / lint
-```bash
-npm run lint
-npm run build
-cd apps/agent && go build ./...
-```
+## Variables d'environnement
 
-## Seed admin
-- email: `admin@tarmac.local`
-- mot de passe: `admin123`
+**API** — `apps/api/.env`
 
-## Agent Go
+| Variable | Exemple |
+| --- | --- |
+| `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/tarmac` |
+| `JWT_SECRET` | `change-me` |
+| `AGENT_SHARED_TOKEN` | `agent-secret` |
+| `PORT` | `3001` |
+
+**Web** — `apps/web/.env.local`
+
+| Variable | Exemple |
+| --- | --- |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:3001` |
+| `NEXT_PUBLIC_APP_VERSION` | `dev-local` |
+
+**Agent** — environnement du service
+
+| Variable | Exemple |
+| --- | --- |
+| `CONTROL_PLANE_WS` | `ws://localhost:3001/agents-ws` |
+| `AGENT_TOKEN` | `agent-secret` |
+| `NODE_ID` | identifiant du nœud côté Tarmac |
+
+En déploiement Docker, tout passe par `docker/.env` :
+[`docker/.env.example`](docker/.env.example) documente chaque variable, dont le
+SSO Authentik (`AUTHENTIK_*`), le relais SMTP et le regroupement des emails
+d'alerte (`SMTP_*`, `ALERT_EMAIL_*`), et les adresses d'écoute.
+
+## L'agent
+
+### En local
+
 ```bash
 cd apps/agent
 go mod tidy
 go run .
 ```
-L'agent envoie:
-- `agent.heartbeat` en temps réel (cpu/ram/disk/network/io)
-- `agent.state_report` avec volumes réels (capacité totale + occupation actuelle)
-- support `command.apply_mount` avec:
-  - source principale + sources fallback (multi NFS)
-  - `targetPath` unique (ex: `/data/movies`)
-  - `fsType` et `mountOptions` personnalisables
-- support `command.list_directories` pour remonter en direct les dossiers d'un nœud
-- support `command.run_rsync` réel avec remontée de progression en pourcentage
+
+### Ce qu'il remonte
+
+- `agent.heartbeat` toutes les 5 s : CPU, RAM, disque, réseau, I/O, métriques de liens overlay
+- `agent.state_report` toutes les 20 s : volumes réels (capacité et occupation) et rapports SMART
+- `agent.log` : ses propres journaux, visibles dans l'interface sans ouvrir de SSH
+- `command_progress` / `command_result` pour chaque commande reçue
+
+Les collectes coûteuses sont découplées du rythme de remontée : la présence des
+binaires, la topologie des disques, les données SMART et les sondes de latence
+overlay sont mises en cache et rafraîchies en arrière-plan, et les sondes des
+pairs injoignables ralentissent d'elles-mêmes.
 
 ### Installer l'agent comme service systemd (Ubuntu 22.04)
-Sur OVH (image Ubuntu cloud), connectez-vous d'abord en `ubuntu`, puis passez root:
+
+Sur une image Ubuntu cloud (OVH par exemple), connectez-vous en `ubuntu` puis
+passez root — sur un VPS avec SSH root activé, la connexion root directe suffit :
+
 ```bash
 ssh ubuntu@<SERVER_IP>
 sudo -i
 ```
 
-Sur d'autres VPS avec SSH root activé, la connexion root directe fonctionne.
-
-Commande d'installation:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/enzogh/Tarmac/main/apps/agent/scripts/install-agent-service.sh | sudo bash -s -- \
   --node-id "<NODE_ID>" \
@@ -105,71 +218,65 @@ curl -fsSL https://raw.githubusercontent.com/enzogh/Tarmac/main/apps/agent/scrip
   --agent-token "<AGENT_SHARED_TOKEN>" \
   --ssh-user "ubuntu"
 ```
-`--ssh-user` est optionnel. Si omis, l'install choisit automatiquement `ubuntu` (si l'utilisateur existe), sinon `root`.
-Le script installe automatiquement les dépendances nécessaires (`golang-go`, `nfs-common`, `cifs-utils`, `util-linux`), clone le repo (avec fallback HTTPS si un clone SSH échoue), compile l'agent, puis active `tarmac-agent.service` avec auto-restart.
 
-## API V1 (préfixe `/api/v1`)
-Auth:
-- `POST /auth/login`
-- `GET/PATCH /auth/profile` (`alertEmailsEnabled` pour activer/couper les emails d'alerte)
-- `POST /auth/profile/test-email`
+Le script installe les dépendances (`golang-go`, `nfs-common`, `cifs-utils`,
+`util-linux`), clone le dépôt (avec repli HTTPS si le clone SSH échoue),
+compile l'agent et active `tarmac-agent.service` avec redémarrage automatique.
+`--ssh-user` est optionnel : à défaut, `ubuntu` s'il existe, sinon `root`.
 
-Core:
-- `GET/POST/PATCH/DELETE /nodes`
-- `GET /nodes/:id/metrics`
-- `GET/POST/PATCH/DELETE /shares`
-- `GET /shares/:id/clients`
-- `POST /shares/:id/clients`
-- `PATCH /shares/:id/clients/:clientId`
-- `DELETE /shares/:id/clients/:clientId`
-- `GET/POST/PATCH/DELETE /mounts`
-- `POST /mounts/:id/remount`
+Détails et désinstallation : [`docs/installation-service-agent.md`](docs/installation-service-agent.md).
 
-V1 storage/orchestration:
-- `GET/POST/PATCH/DELETE /pools`
-- `POST /pools/:id/members`
-- `PATCH /pools/:id/members/:nodeId`
-- `DELETE /pools/:id/members/:nodeId`
-- `GET/POST/PATCH/DELETE /alert-rules`
-- `GET/POST /alerts`
-- `POST /alerts/:id/ack`
-- `POST /alerts/:id/resolve`
-- `GET/POST/PATCH/DELETE /notification-channels`
-- `POST /notification-channels/:id/test` (envoie un vrai email pour un canal `email`)
-- `GET /topology`
-- `GET /storage/forecast`
-- `GET /storage/overview` (`?nodeId=<id>` optionnel pour filtrer un nœud)
-- `GET/POST/PATCH /migrations`
-- `GET /migrations/directories` (`?nodeId=<id>&basePath=/chemin`) pour lister les dossiers live d'un serveur
-- `POST /migrations/:id/start`
-- `POST /migrations/:id/complete`
-- `GET/POST/PATCH/DELETE /sync-jobs`
-- `GET /sync-jobs/runs`
-- `GET /sync-jobs/:id/runs`
-- `POST /sync-jobs/:id/runs`
-- `GET /audit-logs`
+## API
 
-Réseau (VLAN) :
-- `GET /vlan` (récupère/crée le VLAN par défaut)
-- `POST /vlan/join`
-- `GET /vlan/:vlanId/members` (chaque membre est enrichi de sa région géographique)
-- `GET /vlan/:vlanId/connections`
-- `GET /vlan/:vlanId/status`
-- `GET /vlan/:vlanId/history` (`?source=&target=&range=1h|24h|7d`) — historique de latence/perte de paquets + uptime %
-- `GET /vlan/:vlanId/tests`
-- `POST /vlan/:vlanId/test` (`testType: ping | traceroute`)
-- `POST /vlan/:vlanId/members/:nodeId/gateway` — désigne/retire un nœud comme passerelle régionale
-- `POST /vlan/heartbeat`
+Préfixe `/api/v1`. La référence complète, endpoint par endpoint, est servie par
+l'application elle-même sur `/docs/api`.
 
-La boucle de reconciliation inclut désormais shares, mounts et pool_members en `pending` et reste safe si un agent est offline.
+| Domaine | Endpoints |
+| --- | --- |
+| Auth | `/auth/login`, `/auth/profile`, `/auth/profile/test-email`, `/auth/sso/callback` |
+| Nœuds | `/nodes`, `/nodes/:id/metrics` |
+| Stockage | `/shares`, `/shares/:id/clients`, `/mounts`, `/mounts/:id/remount`, `/pools`, `/storage/overview`, `/storage/forecast` |
+| Réseau | `/vlan`, `/vlan/join`, `/vlan/:id/members`, `/vlan/:id/connections`, `/vlan/:id/status`, `/vlan/:id/history`, `/vlan/:id/test`, `/topology` |
+| DNS | `/dns/groups`, `/dns/groups/:id/members`, `/dns/zones`, `/dns/zones/:id/records`, `/dns/zones/:id/dnssec`, `/dns/internal` |
+| Réplication | `/sync-jobs`, `/sync-jobs/:id/runs`, `/migrations`, `/migrations/directories` |
+| Alertes | `/alert-rules`, `/alerts`, `/alerts/:id/ack`, `/alerts/:id/resolve`, `/notification-channels` |
+| Exploitation | `/audit-logs`, `/agent-logs`, `/workspaces` |
 
-## Nouveautés récentes
+## Déploiement Docker
 
-- **Alertes par email** : Tarmac envoie les alertes de chaque workspace à ses membres via le relais SMTP interne (`SMTP_*`, voir `docker/.env.example`). L'adresse utilisée est relue à chaque connexion SSO : une adresse `@intraced.fr` trouvée dans les claims Authentik passe en priorité, sinon l'adresse d'inscription. Les alertes qui arrivent ensemble sont regroupées dans **un seul email** (fenêtre `ALERT_EMAIL_QUIET_SECONDS`, plafonnée par `ALERT_EMAIL_MAX_WAIT_SECONDS`) pour ne pas inonder la boîte. Chacun peut couper les emails ou s'envoyer un test depuis Paramètres → Alertes par email ; les canaux de notification de type `email` reçoivent aussi le résumé.
+```bash
+./docker/deploy.sh
+```
 
-- **Carte du monde** : vue géographique de la flotte (`/dashboard/network`, onglet Carte), en complément du graphe topologique. Positions de nœuds déplaçables à la souris et mémorisées côté serveur (`graphX`/`graphY` sur le graphe, `locationLat`/`locationLng` sur la carte).
-- **Segmentation régionale du VLAN** : au-delà de deux régions géographiques, un maillage WireGuard complet devient coûteux. Un nœud par région peut être désigné « passerelle » (`POST /vlan/:vlanId/members/:nodeId/gateway`) ; seules les passerelles se relient entre régions, le reste du mesh est inchangé (maillage complet intra-région, comme avant).
-- **Traceroute** : en plus du test ping existant, `POST /vlan/:vlanId/test` avec `testType: "traceroute"` interroge l'agent en temps réel et remonte le détail saut par saut.
-- **Historique des liens VLAN** : `GET /vlan/:vlanId/history` renvoie jusqu'à 500 échantillons de latence/perte de paquets sur 1h/24h/7j, ainsi qu'un pourcentage de disponibilité (uptime), purgés automatiquement après 30 jours.
-- **Fiabilisation SMART** : un disque virtualisé (VPS) sans données SMART exploitables est désormais classé « inconnu » plutôt que « critique », pour éviter les faux positifs sur les disques virtio.
-- **Alertes actives** : le tableau de bord ne compte plus les alertes déjà résolues dans le total « alertes actives ».
+Le script calcule `GITHUB_SHA` depuis le checkout local avant de lancer
+`docker compose up -d --build`, ce qui alimente la version affichée en bas à
+droite de chaque page. `.git` n'est pas envoyé au contexte de build (voir
+[`.dockerignore`](.dockerignore)), donc cette valeur doit venir de l'extérieur :
+de la CI, ou de `deploy.sh`. Sans elle, la version retombe sur `dev-local`.
+
+Équivalent explicite :
+
+```bash
+GITHUB_SHA=$(git rev-parse --short HEAD) docker compose -f docker/docker-compose.yml up -d --build
+```
+
+**Persistance.** PostgreSQL dans `docker/data/postgres`, Redis dans
+`docker/data/redis` ; un `up --build` ou un redémarrage conserve les données.
+PostgreSQL n'est publié qu'en local par défaut (`POSTGRES_BIND=127.0.0.1`) pour
+éviter une exposition directe sur Internet. Si `POSTGRES_PASSWORD` change après
+la première initialisation, le volume garde l'ancien mot de passe : le wrapper
+`docker/postgres-entrypoint-tarmac.sh` réapplique celui configuré au
+redémarrage, ce qui évite les `password authentication failed for user
+"postgres"` côté Prisma.
+
+## Développement
+
+```bash
+npm run lint                      # tsc --noEmit sur api et web
+npm run build                     # build des workspaces
+cd apps/agent && go build ./...   # compilation de l'agent
+cd apps/agent && go test ./...    # tests de l'agent
+```
+
+La boucle de réconciliation reprend les shares, mounts et pool_members restés
+en `pending` et reste sans effet de bord si l'agent visé est hors ligne.
