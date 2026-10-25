@@ -11,24 +11,24 @@ import { Diagram, DBox, DFrame, DLink, DNote } from '../../../components/docs/Di
 
 const STEPS = [
   {
-    title: 'Créer un groupe DNS',
-    text: "DNS → « Nouveau groupe DNS ». Un groupe est l'ensemble des serveurs qui feront autorité pour vos zones.",
+    title: 'Créer un groupe de serveurs',
+    text: "DNS → onglet « Serveurs DNS » → « Nouveau groupe de serveurs ». Un groupe est l'ensemble des serveurs qui feront autorité pour vos domaines.",
   },
   {
     title: 'Y placer des serveurs',
     text: "Ajoutez un nœud en primaire, puis jusqu'à trois secondaires. Tarmac installe et configure PowerDNS sur chacun ; le statut passe en vert une fois le serveur opérationnel.",
   },
   {
-    title: 'Créer une zone',
-    text: "« Nouvelle zone », avec le domaine à héberger. DNSSEC est activé par défaut. La zone est créée sur le primaire puis transférée aux secondaires.",
+    title: 'Ajouter un domaine',
+    text: "« Ajouter un domaine », avec le domaine à héberger. DNSSEC est activé par défaut. La zone est créée sur le primaire puis transférée aux secondaires ; Tarmac ouvre ensuite directement l'onglet Nameservers du domaine.",
   },
   {
     title: 'Ajouter des enregistrements',
-    text: "A, AAAA, CNAME, MX, TXT… Une valeur peut viser un nœud de la flotte plutôt qu'une IP saisie à la main : elle suit alors le nœud si son adresse change.",
+    text: "Onglet « Enregistrements » du domaine : ajout et modification directement dans le tableau, avec une aide par type. Pour un A/AAAA, une valeur peut être choisie parmi les nœuds de la flotte plutôt que saisie à la main.",
   },
   {
     title: 'Déléguer chez le registrar',
-    text: "Déclarez ns1/ns2 comme serveurs de noms du domaine (et leurs glue records). Tarmac vérifie ensuite tout seul que la délégation est effective côté Internet.",
+    text: "L'onglet « Nameservers » du domaine liste, prêtes à copier, les valeurs à déclarer chez le registrar (ou dans la zone parente pour un sous-domaine), puis vérifie tout seul que la délégation est effective côté Internet.",
   },
 ];
 

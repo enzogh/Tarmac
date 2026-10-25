@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import useSWR from 'swr';
-import { Ban, Check, Copy, KeyRound, LoaderCircle, Plus, ShieldAlert, Terminal, Trash2 } from 'lucide-react';
+import { Ban, KeyRound, LoaderCircle, Plus, ShieldAlert, Terminal, Trash2 } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { Callout } from '@/components/Callout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { CopyButton } from '@/components/ui/copy-button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -45,25 +46,6 @@ function keyState(key: ApiKeyItem): { tone: 'ok' | 'neutral' | 'danger'; label: 
   if (key.revokedAt) return { tone: 'danger', label: 'Révoquée' };
   if (key.expiresAt && new Date(key.expiresAt).getTime() <= Date.now()) return { tone: 'neutral', label: 'Expirée' };
   return { tone: 'ok', label: 'Active' };
-}
-
-function CopyButton({ value, label = 'Copier' }: { value: string; label?: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <Button
-      variant="secondary"
-      size="sm"
-      className="gap-1.5"
-      onClick={async () => {
-        await navigator.clipboard.writeText(value);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      }}
-    >
-      {copied ? <Check className="h-3.5 w-3.5 text-[hsl(var(--ok))]" /> : <Copy className="h-3.5 w-3.5" />}
-      {copied ? 'Copié' : label}
-    </Button>
-  );
 }
 
 function CodeBlock({ title, code }: { title: string; code: string }) {

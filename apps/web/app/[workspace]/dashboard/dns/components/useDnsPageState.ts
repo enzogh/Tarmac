@@ -57,7 +57,7 @@ export function useDnsPageState() {
     setExpandedLogNodeId(nodeId);
     setLogsLoadingNodeId(nodeId);
     try {
-      const { items } = await api.agentLogs.list({ nodeId, limit: 30 });
+      const { items } = await api.agentLogs.list({ nodeId, limit: 100 });
       setLogsByNode((prev) => ({ ...prev, [nodeId]: items.filter((entry) => /dns/i.test(entry.message)) }));
     } catch {
       setLogsByNode((prev) => ({ ...prev, [nodeId]: [] }));

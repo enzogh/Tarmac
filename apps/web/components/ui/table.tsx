@@ -5,7 +5,10 @@ const Table = React.forwardRef<
   HTMLTableElement,
   React.HTMLAttributes<HTMLTableElement>
 >(({ className, ...props }, ref) => (
-  <div className="relative w-full overflow-auto">
+  // Horizontal scroll only: `overflow: auto` on both axes let a sub-pixel
+  // rounding of the rows' height park a useless vertical scrollbar on the
+  // wrapper, which never has a height limit of its own.
+  <div className="scroll-thin relative w-full overflow-x-auto overflow-y-hidden">
     <table
       ref={ref}
       className={cn('w-full caption-bottom text-sm', className)}

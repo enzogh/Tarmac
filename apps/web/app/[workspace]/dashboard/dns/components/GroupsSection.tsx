@@ -210,7 +210,7 @@ export function GroupsSection({
           <CardContent className="pt-12 pb-12 text-center">
             <Server className="mx-auto mb-4 h-12 w-12 text-muted-foreground/50" />
             <p className="font-medium text-muted-foreground">Aucun groupe DNS créé</p>
-            <p className="mt-2 text-sm text-muted-foreground">Cliquez sur « Nouveau groupe DNS » pour désigner vos serveurs.</p>
+            <p className="mt-2 text-sm text-muted-foreground">Cliquez sur « Nouveau groupe de serveurs » pour désigner les nœuds qui répondront pour vos domaines.</p>
           </CardContent>
         </Card>
       ) : (
@@ -276,7 +276,7 @@ export function GroupsSection({
                                 <Copy className="h-3.5 w-3.5 text-sky-400" />
                               )}
                               {nodeName(member.nodeId)}
-                              <span className="text-xs text-muted-foreground">({member.role})</span>
+                              <span className="text-xs text-muted-foreground">{member.role === 'primary' ? 'primaire' : 'secondaire'}</span>
                             </span>
                             <div className="flex items-center gap-2">
                               <StatusIndicator status={member.status} compact />

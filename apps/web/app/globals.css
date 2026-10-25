@@ -123,6 +123,31 @@
 }
 
 @layer components {
+  /* Thin, theme-coloured scrollbar for scroll areas nested inside cards
+     (log streams, long lists). The global thumb above is bordered with the
+     page background, which shows up as a light frame on any darker inset
+     panel; this one clips to its own padding instead, and also covers
+     Firefox, which ignores the ::-webkit-* rules. overscroll-contain stops
+     the wheel from scrolling the whole page once the area hits its end. */
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--surface-3)) transparent;
+    overscroll-behavior: contain;
+  }
+  .scroll-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    background: hsl(var(--surface-3));
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb:hover {
+    background: hsl(240 5% 24%);
+    background-clip: padding-box;
+  }
+
   .panel {
     @apply relative rounded-xl border border-border bg-[hsl(var(--surface-1))];
   }

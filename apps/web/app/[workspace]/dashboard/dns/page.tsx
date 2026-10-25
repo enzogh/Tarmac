@@ -1,164 +1,224 @@
 'use client';
 
-import { useState } from 'react';
-import { AlertCircle, CheckCircle2, Globe, Layers, List, MapPin, Plus, Server, ShieldCheck } from 'lucide-react';
-import { api, DnsRecordItem, DnsZoneItem } from '../../../../lib/api';
-import { PageHeader } from '../../../../components/PageHeader';
-import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
-import { RainbowButton } from '../../../../components/ui/rainbow-button';
-import { SectionLabel } from '../../../../components/SectionLabel';
-import { Alert, AlertDescription } from '../../../../components/ui/alert';
-import { Button } from '../../../../components/ui/button';
-import { StatCard } from '../../../../components/ui';
-import { StatCardSkeleton } from '../../../../components/ui/skeleton';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../../components/ui/tabs';
-import { DelegationDnssecDialog, DnsInfoPanelState } from './components/DelegationDnssecDialog';
+import { Suspense, useEffect, useRef, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { Globe, MapPin, Plus, Server } from 'lucide-react';
+import { PageHeader } from '@/components/PageHeader';
+import { Callout } from '@/components/Callout';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { CardListSkeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsCount, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { GeoMapSection } from './components/GeoMapSection';
 import { GroupDialog } from './components/GroupDialog';
 import { GroupsSection } from './components/GroupsSection';
-import { RecordDialog, RecordDialogTarget } from './components/RecordDialog';
-import { useDnsPageState } from './components/useDnsPageState';
+import { DnsNotice, useDnsPageState } from './components/useDnsPageState';
+import { ZoneDetail, ZoneView } from './components/ZoneDetail';
 import { ZoneDialog } from './components/ZoneDialog';
-import { ZonesSection } from './components/ZonesSection';
+import { ZoneList } from './components/ZoneList';
 
-export default function DnsPage() {
-  const {
-    nodes,
-    groups,
-    zones,
-    vlanId,
-    groupsLoading,
-    zonesLoading,
-    refreshGroups,
-    refreshZones,
-    notice,
-    setNotice,
-    busyKey,
-    setBusyKey,
-    journal,
-  } = useDnsPageState();
+type PageTab = 'domains' | 'servers' | 'map';
+const ZONE_VIEWS: ZoneView[] = ['records', 'nameservers', 'dnssec', 'journal'];
 
-  // Cross-cutting "which dialog/target is open" state - doesn't belong to
-  // any single section below.
+function GettingStarted({ hasGroups, onCreateGroup, onAddDomain }: { hasGroups: boolean; onCreateGroup: () => void; onAddDomain: () => void }) {
+  const steps = [
+    {
+      title: 'Choisissez vos serveurs DNS',
+      text: 'Un groupe = un serveur primaire et jusqu’à 3 secondaires de votre flotte, qui répondent pour vos domaines.',
+      done: hasGroups,
+      action: !hasGroups ? { label: 'Créer un groupe', onClick: onCreateGroup } : null,
+    },
+    {
+      title: 'Ajoutez un domaine',
+      text: 'Ses enregistrements se gèrent ici, et sont appliqués sur tous les serveurs du groupe.',
+      done: false,
+      action: hasGroups ? { label: 'Ajouter un domaine', onClick: onAddDomain } : null,
+    },
+    {
+      title: 'Déléguez-le chez votre registrar',
+      text: 'Tarmac vous indique les nameservers à renseigner et vérifie la délégation automatiquement.',
+      done: false,
+      action: null,
+    },
+  ];
+  return (
+    <Card>
+      <CardContent className="space-y-6 py-10">
+        <div className="mx-auto max-w-xl text-center">
+          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+            <Globe className="h-6 w-6 text-primary" />
+          </div>
+          <h2 className="text-base font-semibold text-foreground">Hébergez le DNS de vos domaines sur votre flotte</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Trois étapes, sans quitter cette page.</p>
+        </div>
+        <ol className="mx-auto grid max-w-4xl gap-3 md:grid-cols-3">
+          {steps.map((step, index) => (
+            <li key={step.title} className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2 p-4">
+              <span
+                className={
+                  step.done
+                    ? 'flex h-6 w-6 items-center justify-center rounded-full bg-[hsl(var(--ok))]/15 text-xs font-semibold text-[hsl(var(--ok))]'
+                    : 'flex h-6 w-6 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary'
+                }
+              >
+                {step.done ? '✓' : index + 1}
+              </span>
+              <p className="text-sm font-medium text-foreground">{step.title}</p>
+              <p className="flex-1 text-xs text-muted-foreground">{step.text}</p>
+              {step.action && (
+                <Button size="sm" onClick={step.action.onClick} className="mt-1 w-fit gap-1.5">
+                  <Plus className="h-3.5 w-3.5" />
+                  {step.action.label}
+                </Button>
+              )}
+            </li>
+          ))}
+        </ol>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DnsPageContent() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const { nodes, groups, zones, vlanId, groupsLoading, zonesLoading, refreshGroups, refreshZones, notice, setNotice, busyKey, setBusyKey, journal } =
+    useDnsPageState();
+
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [zoneDialogOpen, setZoneDialogOpen] = useState(false);
-  const [recordDialogTarget, setRecordDialogTarget] = useState<RecordDialogTarget | null>(null);
-  const [infoPanel, setInfoPanel] = useState<DnsInfoPanelState | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout>>();
 
-  const openRecordDialog = (zoneId: string, record?: DnsRecordItem) => setRecordDialogTarget({ zoneId, record });
+  // Navigation lives in the URL (?tab=, ?zone=, ?view=) so a domain can be
+  // linked to, reloaded, and left with the browser's back button.
+  const tab = (searchParams.get('tab') as PageTab) ?? 'domains';
+  const zoneId = searchParams.get('zone');
+  const viewParam = searchParams.get('view') as ZoneView | null;
+  const view: ZoneView = viewParam && ZONE_VIEWS.includes(viewParam) ? viewParam : 'records';
+  const zone = zoneId ? zones.find((candidate) => candidate.id === zoneId) : undefined;
 
-  const openDelegation = async (zone: DnsZoneItem) => {
-    setInfoPanel({ zone, tab: 'delegation', loading: true });
-    try {
-      const delegation = await api.dns.zones.getDelegation(zone.id);
-      setInfoPanel({ zone, tab: 'delegation', delegation, loading: false });
-    } catch {
-      setInfoPanel(null);
-      setNotice({ type: 'error', message: 'Erreur lors de la récupération de la délégation.' });
+  const navigate = (params: Record<string, string | null>, push = false) => {
+    const next = new URLSearchParams(searchParams.toString());
+    for (const [key, value] of Object.entries(params)) {
+      if (value === null) next.delete(key);
+      else next.set(key, value);
     }
+    const url = next.toString() ? `${pathname}?${next.toString()}` : pathname;
+    if (push) router.push(url, { scroll: false });
+    else router.replace(url, { scroll: false });
   };
 
-  const recheckDelegation = async () => {
-    if (!infoPanel || infoPanel.tab !== 'delegation') return;
-    try {
-      const result = await api.dns.zones.recheckDelegation(infoPanel.zone.id);
-      setInfoPanel((prev) =>
-        prev && prev.tab === 'delegation' && prev.delegation
-          ? { ...prev, delegation: { ...prev.delegation, ...result } }
-          : prev,
-      );
-    } catch {
-      setNotice({ type: 'error', message: 'Erreur lors de la vérification de la délégation.' });
-    }
+  const showNotice = (next: DnsNotice) => {
+    setNotice(next);
+    clearTimeout(noticeTimer.current);
+    if (next?.type === 'success') noticeTimer.current = setTimeout(() => setNotice(null), 5000);
   };
 
-  const openDnssec = async (zone: DnsZoneItem) => {
-    setInfoPanel({ zone, tab: 'dnssec', loading: true });
-    try {
-      const dnssec = await api.dns.zones.getDnssecKeys(zone.id);
-      setInfoPanel({ zone, tab: 'dnssec', dnssec, loading: false });
-    } catch {
-      setInfoPanel(null);
-      setNotice({ type: 'error', message: 'Erreur lors de la récupération des clés DNSSEC (nœud primaire hors-ligne ?).' });
+  // A deleted (or unknown) zone in the URL falls back to the list.
+  useEffect(() => {
+    if (zoneId && !zonesLoading && !zone) {
+      const timer = setTimeout(() => navigate({ zone: null, view: null }), 0);
+      return () => clearTimeout(timer);
     }
-  };
+    return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoneId, zone, zonesLoading]);
 
-  const activeGroups = groups.filter((g) => g.status === 'active').length;
-  const totalRecords = zones.reduce((sum, zone) => sum + zone.records.length, 0);
+  const loading = groupsLoading || zonesLoading;
+  const addDomainButton =
+    groups.length === 0 ? (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span>
+            <Button disabled className="gap-1.5">
+              <Plus className="h-4 w-4" />
+              Ajouter un domaine
+            </Button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>Créez d&apos;abord un groupe de serveurs DNS.</TooltipContent>
+      </Tooltip>
+    ) : (
+      <Button onClick={() => setZoneDialogOpen(true)} className="gap-1.5">
+        <Plus className="h-4 w-4" />
+        Ajouter un domaine
+      </Button>
+    );
 
   return (
-    <>
-      <div className="space-y-8">
-        {notice && (
-          <Alert variant={notice.type === 'error' ? 'destructive' : 'success'}>
-            {notice.type === 'error' ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
-            <AlertDescription>{notice.message}</AlertDescription>
-          </Alert>
-        )}
-
+    <div className="space-y-6">
+      {!zone && (
         <PageHeader
           title="DNS"
-          description="Désignez des serveurs DNS primaire/secondaire dans votre flotte, gérez vos zones et le géo-routage."
+          description="Vos domaines, servis par vos propres serveurs : enregistrements, délégation, DNSSEC et géo-routage."
           actions={
-            <div className="flex gap-2">
-              <Button
-                variant="secondary"
-                onClick={() => setZoneDialogOpen(true)}
-                disabled={groups.length === 0}
-                className="gap-2"
-              >
-                <Plus className="w-4 h-4" />
-                Nouvelle zone
+            tab === 'servers' ? (
+              <Button onClick={() => setGroupDialogOpen(true)} className="gap-1.5">
+                <Plus className="h-4 w-4" />
+                Nouveau groupe de serveurs
               </Button>
-              <RainbowButton onClick={() => setGroupDialogOpen(true)} className="gap-2">
-                <Plus className="w-4 h-4" />
-                Nouveau groupe DNS
-              </RainbowButton>
-            </div>
+            ) : (
+              addDomainButton
+            )
           }
         />
+      )}
 
-        <section className="space-y-4">
-          <SectionLabel>Aperçu</SectionLabel>
-          {groupsLoading ? (
-            <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-              <StatCardSkeleton />
-              <StatCardSkeleton />
-              <StatCardSkeleton />
-              <StatCardSkeleton />
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-3 xl:grid-cols-4 animate-fade-in">
-              <StatCard label="Groupes DNS" value={groups.length} icon={<Layers className="h-8 w-8" />} changeType="neutral" />
-              <StatCard
-                label="Groupes actifs"
-                value={activeGroups}
-                icon={<ShieldCheck className="h-8 w-8" />}
-                changeType={activeGroups === groups.length && groups.length > 0 ? 'up' : 'neutral'}
+      {notice && <Callout variant={notice.type === 'error' ? 'danger' : 'success'}>{notice.message}</Callout>}
+
+      {zone ? (
+        <ZoneDetail
+          zone={zone}
+          group={groups.find((group) => group.id === zone.groupId)}
+          nodes={nodes}
+          journal={journal}
+          view={view}
+          onViewChange={(next) => navigate({ view: next === 'records' ? null : next })}
+          onBack={() => navigate({ zone: null, view: null }, true)}
+          onChanged={refreshZones}
+          onDeleted={(message) => {
+            showNotice({ type: 'success', message });
+            navigate({ zone: null, view: null });
+            void refreshZones();
+            void refreshGroups();
+          }}
+          onNotice={showNotice}
+        />
+      ) : (
+        <>
+          <Tabs value={tab} onValueChange={(next) => navigate({ tab: next === 'domains' ? null : next })}>
+            <TabsList>
+              <TabsTrigger value="domains" className="gap-1.5">
+                <Globe className="h-3.5 w-3.5" />
+                Domaines <TabsCount>{zones.length}</TabsCount>
+              </TabsTrigger>
+              <TabsTrigger value="servers" className="gap-1.5">
+                <Server className="h-3.5 w-3.5" />
+                Serveurs DNS <TabsCount>{groups.length}</TabsCount>
+              </TabsTrigger>
+              <TabsTrigger value="map" className="gap-1.5">
+                <MapPin className="h-3.5 w-3.5" />
+                Carte
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          {tab === 'domains' &&
+            (loading ? (
+              <CardListSkeleton cards={3} />
+            ) : zones.length === 0 ? (
+              <GettingStarted
+                hasGroups={groups.length > 0}
+                onCreateGroup={() => setGroupDialogOpen(true)}
+                onAddDomain={() => setZoneDialogOpen(true)}
               />
-              <StatCard label="Zones" value={zones.length} icon={<Globe className="h-8 w-8" />} changeType="neutral" />
-              <StatCard label="Records" value={totalRecords} icon={<List className="h-8 w-8" />} changeType="neutral" />
-            </div>
-          )}
-        </section>
+            ) : (
+              <ZoneList zones={zones} groups={groups} onOpen={(id) => navigate({ zone: id, view: null }, true)} />
+            ))}
 
-        <Tabs defaultValue="groups" className="space-y-4">
-          <TabsList>
-            <TabsTrigger value="groups" className="gap-1.5">
-              <Server className="h-3.5 w-3.5" />
-              Groupes
-            </TabsTrigger>
-            <TabsTrigger value="zones" className="gap-1.5">
-              <Globe className="h-3.5 w-3.5" />
-              Zones
-            </TabsTrigger>
-            <TabsTrigger value="map" className="gap-1.5">
-              <MapPin className="h-3.5 w-3.5" />
-              Carte
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="groups">
+          {tab === 'servers' && (
             <GroupsSection
               groups={groups}
               groupsLoading={groupsLoading}
@@ -166,34 +226,15 @@ export default function DnsPage() {
               vlanId={vlanId}
               busyKey={busyKey}
               setBusyKey={setBusyKey}
-              setNotice={setNotice}
+              setNotice={showNotice}
               refreshGroups={refreshGroups}
               journal={journal}
             />
-          </TabsContent>
+          )}
 
-          <TabsContent value="zones">
-            <ZonesSection
-              zones={zones}
-              zonesLoading={zonesLoading}
-              groups={groups}
-              nodes={nodes}
-              busyKey={busyKey}
-              setBusyKey={setBusyKey}
-              setNotice={setNotice}
-              refreshZones={refreshZones}
-              journal={journal}
-              onOpenRecordDialog={openRecordDialog}
-              onOpenDelegation={openDelegation}
-              onOpenDnssec={openDnssec}
-            />
-          </TabsContent>
-
-          <TabsContent value="map">
-            <GeoMapSection nodes={nodes} groups={groups} zones={zones} />
-          </TabsContent>
-        </Tabs>
-      </div>
+          {tab === 'map' && <GeoMapSection nodes={nodes} groups={groups} zones={zones} />}
+        </>
+      )}
 
       <GroupDialog
         open={groupDialogOpen}
@@ -203,32 +244,28 @@ export default function DnsPage() {
         onCreated={async () => {
           await refreshGroups();
         }}
-        onNotice={setNotice}
+        onNotice={showNotice}
       />
-
       <ZoneDialog
         open={zoneDialogOpen}
         onOpenChange={setZoneDialogOpen}
         groups={groups}
-        onCreated={async () => {
-          await refreshZones();
+        onCreated={async (created) => {
+          showNotice({ type: 'success', message: `${created.name} ajouté. Dernière étape : le déléguer à vos serveurs.` });
+          // Refetch first: opening a zone the list doesn't know yet would
+          // bounce straight back to the list.
+          await Promise.all([refreshZones(), refreshGroups()]);
+          navigate({ zone: created.id, view: 'nameservers', tab: null }, true);
         }}
-        onNotice={setNotice}
       />
+    </div>
+  );
+}
 
-      {recordDialogTarget && (
-        <RecordDialog
-          key={`${recordDialogTarget.zoneId}:${recordDialogTarget.record?.id ?? 'new'}`}
-          target={recordDialogTarget}
-          onClose={() => setRecordDialogTarget(null)}
-          onSaved={async () => {
-            await refreshZones();
-          }}
-          onNotice={setNotice}
-        />
-      )}
-
-      <DelegationDnssecDialog infoPanel={infoPanel} onClose={() => setInfoPanel(null)} onRecheck={recheckDelegation} />
-    </>
+export default function DnsPage() {
+  return (
+    <Suspense fallback={<CardListSkeleton cards={3} />}>
+      <DnsPageContent />
+    </Suspense>
   );
 }

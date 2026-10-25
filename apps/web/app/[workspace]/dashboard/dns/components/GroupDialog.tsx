@@ -80,7 +80,7 @@ export function GroupDialog({
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Nouveau groupe DNS</DialogTitle>
+          <DialogTitle>Nouveau groupe de serveurs DNS</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
