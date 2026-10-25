@@ -422,6 +422,9 @@ func readRAMUsage() (float64, error) {
 		return 0, err
 	}
 	var total, available float64
+	// MemTotal and MemAvailable are the first lines of /proc/meminfo, so
+	// breaking out as soon as both are parsed skips ~50 irrelevant lines.
+	seen := 0
 	scanner := bufio.NewScanner(bytes.NewReader(content))
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
@@ -433,12 +436,17 @@ func readRAMUsage() (float64, error) {
 			v, parseErr := strconv.ParseFloat(fields[1], 64)
 			if parseErr == nil {
 				total = v
+				seen++
 			}
 		case "MemAvailable:":
 			v, parseErr := strconv.ParseFloat(fields[1], 64)
 			if parseErr == nil {
 				available = v
+				seen++
 			}
+		}
+		if seen == 2 {
+			break
 		}
 	}
 	if total <= 0 {
@@ -987,14 +995,18 @@ func (c *collector) collectOverlayLinkMetrics(iface string) []overlayLinkMetric 
 	return metrics
 }
 
+// virtualFsTypes is built once at init instead of per call: isVirtualFs is
+// called for every line of /proc/mounts on every collectDisks, i.e. dozens of
+// times per heartbeat tick on a host with many mounts.
+var virtualFsTypes = map[string]struct{}{
+	"proc": {}, "sysfs": {}, "tmpfs": {}, "devtmpfs": {}, "devpts": {}, "overlay": {},
+	"squashfs": {}, "cgroup": {}, "cgroup2": {}, "pstore": {}, "securityfs": {}, "debugfs": {},
+	"tracefs": {}, "fusectl": {}, "autofs": {}, "mqueue": {}, "hugetlbfs": {}, "rpc_pipefs": {},
+	"binfmt_misc": {}, "configfs": {},
+}
+
 func isVirtualFs(fsType string) bool {
-	virtual := map[string]struct{}{
-		"proc": {}, "sysfs": {}, "tmpfs": {}, "devtmpfs": {}, "devpts": {}, "overlay": {},
-		"squashfs": {}, "cgroup": {}, "cgroup2": {}, "pstore": {}, "securityfs": {}, "debugfs": {},
-		"tracefs": {}, "fusectl": {}, "autofs": {}, "mqueue": {}, "hugetlbfs": {}, "rpc_pipefs": {},
-		"binfmt_misc": {}, "configfs": {},
-	}
-	_, ok := virtual[fsType]
+	_, ok := virtualFsTypes[fsType]
 	return ok
 }
 
@@ -1162,10 +1174,13 @@ func collectDisks() []diskState {
 	return disks
 }
 
-func buildStateReport(nodeID string) stateReport {
+// buildStateReport takes the disks the caller already collected for the
+// heartbeat in the same cycle instead of walking /proc/mounts and re-running
+// statfs on every mount a second time.
+func buildStateReport(nodeID string, disks []diskState) stateReport {
 	return stateReport{
 		NodeID:       nodeID,
-		Disks:        collectDisks(),
+		Disks:        disks,
 		SmartReports: collectSmartReports(),
 	}
 }
@@ -1325,16 +1340,33 @@ var smartCache = struct {
 	mu          sync.Mutex
 	reports     []smartState
 	collectedAt time.Time
+	collected   bool
+	refreshing  bool
 }{}
 
+// collectSmartReports never blocks its caller on smartctl. gatherSmartReports
+// runs `smartctl -a` once per physical disk, each with a 10s timeout, so on a
+// multi-disk host a refresh can take tens of seconds - long enough to stall
+// the reporting cycle that calls it and, on the very first report, to delay
+// the node showing up as online. The refresh therefore happens in a
+// background goroutine (one at a time) and callers get whatever is cached,
+// which is empty only until the first refresh lands.
 func collectSmartReports() []smartState {
 	smartCache.mu.Lock()
 	defer smartCache.mu.Unlock()
-	if smartCache.reports != nil && time.Since(smartCache.collectedAt) < smartRefreshInterval {
-		return smartCache.reports
+	stale := !smartCache.collected || time.Since(smartCache.collectedAt) >= smartRefreshInterval
+	if stale && !smartCache.refreshing {
+		smartCache.refreshing = true
+		go func() {
+			reports := gatherSmartReports()
+			smartCache.mu.Lock()
+			smartCache.reports = reports
+			smartCache.collectedAt = time.Now()
+			smartCache.collected = true
+			smartCache.refreshing = false
+			smartCache.mu.Unlock()
+		}()
 	}
-	smartCache.reports = gatherSmartReports()
-	smartCache.collectedAt = time.Now()
 	return smartCache.reports
 }
 
@@ -1452,6 +1484,18 @@ func commandExists(name string) bool {
 	commandExistsCache[name] = exists
 	commandExistsMu.Unlock()
 	return exists
+}
+
+// resetCommandExistsCache drops every memoized lookup. Binary presence can't
+// change on its own while the agent runs, but the agent itself installs
+// packages (ensureAgentSystemPackages, ensureRclone), and a "not found"
+// answer cached from before that install would otherwise stick for the rest
+// of the process's life - which is how a node that just had smartmontools
+// installed kept reporting no SMART data until its next restart.
+func resetCommandExistsCache() {
+	commandExistsMu.Lock()
+	commandExistsCache = make(map[string]bool)
+	commandExistsMu.Unlock()
 }
 
 func ensureOverlayIdentity() (*overlayIdentity, error) {
@@ -1999,6 +2043,10 @@ func ensureAgentSystemPackages(ctx context.Context, packages []string) ([]string
 		return nil, fmt.Errorf("cannot install required packages for agent update: %s", strings.TrimSpace(string(output)))
 	}
 
+	// The binaries these packages provide exist now, so any "missing" answer
+	// memoized before this install has to go.
+	resetCommandExistsCache()
+
 	return missing, nil
 }
 
@@ -2014,7 +2062,11 @@ func ensureRclone(ctx context.Context) error {
 	if commandExists("rclone") && rcloneVersionSupported() {
 		return nil
 	}
-	return installRcloneFromOfficialScript(ctx)
+	if err := installRcloneFromOfficialScript(ctx); err != nil {
+		return err
+	}
+	resetCommandExistsCache()
+	return nil
 }
 
 func rcloneVersionSupported() bool {
@@ -3590,12 +3642,30 @@ func runRsyncWithProgress(sessionCtx context.Context, payload map[string]interfa
 	return "rsync completed", nil
 }
 
+// agentStartupDone is closed once main's background startup housekeeping
+// (package checks, DNS/GeoIP re-verification) has finished. Commands wait for
+// it so they keep seeing the same fully-verified host they saw when that work
+// still ran before the connection was established.
+var agentStartupDone = make(chan struct{})
+
 func handleCommand(ctx context.Context, cmd commandPayload, onProgress func(progress commandProgress)) commandResult {
 	result := commandResult{Success: true, Message: "ok"}
 	if err := ctx.Err(); err != nil {
 		result.Success = false
 		result.Message = "command not run: session ended before it could start"
 		return result
+	}
+	select {
+	case <-agentStartupDone:
+	default:
+		log.Printf("command %s waiting for agent startup checks to finish", cmd.Type)
+		select {
+		case <-agentStartupDone:
+		case <-ctx.Done():
+			result.Success = false
+			result.Message = "command not run: session ended while agent startup checks were still running"
+			return result
+		}
 	}
 	switch cmd.Type {
 	case "command.apply_export":
@@ -3887,29 +3957,6 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 		log.SetOutput(os.Stderr)
 		logForwarder.stop()
 	}()
-	c := &collector{}
-	var overlay *overlayState
-	hasOverlayState := false
-	overlayStatePayload := &overlayState{}
-	if identity, err := ensureOverlayIdentity(); err == nil {
-		overlayStatePayload.PublicKey = identity.publicKey
-		overlayStatePayload.Endpoint = identity.endpoint
-		overlayStatePayload.ListenPort = identity.listenPort
-		hasOverlayState = true
-	} else {
-		log.Printf("overlay identity unavailable: %v", err)
-	}
-	if identity, err := ensureSSHIdentity(); err == nil {
-		overlayStatePayload.SSHPublicKey = identity.publicKey
-		overlayStatePayload.SSHUser = identity.user
-		hasOverlayState = true
-	} else {
-		log.Printf("ssh identity unavailable: %v", err)
-	}
-	if hasOverlayState {
-		overlay = overlayStatePayload
-	}
-
 	readDone := make(chan error, 1)
 	go func() {
 		for {
@@ -3953,53 +4000,58 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 		}
 	}()
 
-	sendReport := func() error {
-		report := buildStateReport(nodeID)
-		metrics := c.collectMetrics(report.Disks)
-		linkMetrics := c.collectOverlayLinkMetrics("tarmacwg0")
-		if err := client.send(envelope{
-			Type: "agent.heartbeat",
-			Payload: heartbeat{
-				NodeID:      nodeID,
-				Version:     agentVersion,
-				Metrics:     metrics,
-				Overlay:     overlay,
-				LinkMetrics: linkMetrics,
-			},
-		}); err != nil {
-			return err
+	// Telemetry runs on its own goroutine rather than inline in the select
+	// loop below. Gathering a heartbeat is not cheap or bounded by the 5s
+	// tick: collectOverlayLinkMetrics shells out to `wg show` and, when a
+	// peer's cached RTT has expired, to `ping` (seconds per unreachable
+	// peer). Inline, a single slow cycle also delayed the WebSocket ping
+	// frames and the reading of command results queued in this same loop,
+	// which is exactly how a busy node ended up looking dead to the control
+	// plane. Keeping it separate means a slow cycle only skips its own
+	// ticks - time.Ticker drops ticks nobody is receiving - instead of
+	// piling up work and starving the connection's liveness.
+	reportDone := make(chan error, 1)
+	go func() {
+		c := &collector{}
+
+		// Overlay/SSH identity generation also shells out (wg, ssh-keygen)
+		// and only has to happen once per session, so it runs here rather
+		// than before the loop starts.
+		var overlay *overlayState
+		hasOverlayState := false
+		overlayStatePayload := &overlayState{}
+		if identity, err := ensureOverlayIdentity(); err == nil {
+			overlayStatePayload.PublicKey = identity.publicKey
+			overlayStatePayload.Endpoint = identity.endpoint
+			overlayStatePayload.ListenPort = identity.listenPort
+			hasOverlayState = true
+		} else {
+			log.Printf("overlay identity unavailable: %v", err)
 		}
-		return client.send(envelope{
-			Type:    "agent.state_report",
-			Payload: report,
-		})
-	}
+		if identity, err := ensureSSHIdentity(); err == nil {
+			overlayStatePayload.SSHPublicKey = identity.publicKey
+			overlayStatePayload.SSHUser = identity.user
+			hasOverlayState = true
+		} else {
+			log.Printf("ssh identity unavailable: %v", err)
+		}
+		if hasOverlayState {
+			overlay = overlayStatePayload
+		}
 
-	heartbeatTicker := time.NewTicker(5 * time.Second)
-	stateTicker := time.NewTicker(20 * time.Second)
-	pingTicker := time.NewTicker(wsPingInterval)
-	defer heartbeatTicker.Stop()
-	defer stateTicker.Stop()
-	defer pingTicker.Stop()
-
-	if err := sendReport(); err != nil {
-		return err
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			client.mu.Lock()
-			_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "shutdown"))
-			client.mu.Unlock()
-			return nil
-		case err := <-readDone:
-			return err
-		case <-pingTicker.C:
-			if err := client.ping(); err != nil {
-				return err
+		fail := func(err error) {
+			select {
+			case reportDone <- err:
+			default:
 			}
-		case <-heartbeatTicker.C:
+		}
+
+		// One ticker for both reports: the state report rides on every
+		// stateReportEveryTicks-th heartbeat cycle and reuses that cycle's
+		// disks, so /proc/mounts and statfs are walked once per cycle
+		// instead of once per report type.
+		const stateReportEveryTicks = 4
+		sendCycle := func(withState bool) error {
 			disks := collectDisks()
 			metrics := c.collectMetrics(disks)
 			linkMetrics := c.collectOverlayLinkMetrics("tarmacwg0")
@@ -4015,11 +4067,53 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 			}); err != nil {
 				return err
 			}
-		case <-stateTicker.C:
-			if err := client.send(envelope{
+			if !withState {
+				return nil
+			}
+			return client.send(envelope{
 				Type:    "agent.state_report",
-				Payload: buildStateReport(nodeID),
-			}); err != nil {
+				Payload: buildStateReport(nodeID, disks),
+			})
+		}
+
+		if err := sendCycle(true); err != nil {
+			fail(err)
+			return
+		}
+
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		tick := 0
+		for {
+			select {
+			case <-sessionCtx.Done():
+				return
+			case <-ticker.C:
+				tick++
+				if err := sendCycle(tick%stateReportEveryTicks == 0); err != nil {
+					fail(err)
+					return
+				}
+			}
+		}
+	}()
+
+	pingTicker := time.NewTicker(wsPingInterval)
+	defer pingTicker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			client.mu.Lock()
+			_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "shutdown"))
+			client.mu.Unlock()
+			return nil
+		case err := <-readDone:
+			return err
+		case err := <-reportDone:
+			return err
+		case <-pingTicker.C:
+			if err := client.ping(); err != nil {
 				return err
 			}
 		}
@@ -4040,19 +4134,32 @@ func main() {
 	q.Set("nodeId", nodeID)
 	u.RawQuery = q.Encode()
 
-	if !commandExists("smartctl") {
-		installCtx, installCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		if _, err := ensureAgentSystemPackages(installCtx, []string{"smartmontools"}); err != nil {
-			log.Printf("smartmontools unavailable, SMART disk health monitoring disabled: %v", err)
-		}
-		installCancel()
-	}
+	// Startup housekeeping runs in the background so it can't hold the
+	// control-plane connection hostage. It shells out to apt-get and, on a
+	// DNS node, to a backend migration and a GeoIP build: together up to
+	// ~13 minutes of timeouts during which the node used to be invisible to
+	// the control plane (offline in the UI, no agent logs, no metrics,
+	// every command queued). Connecting first means the work is now
+	// observable while it happens. Commands still wait for it to finish
+	// (see agentStartupDone in handleCommand), so nothing races with it.
+	go func() {
+		defer close(agentStartupDone)
 
-	// This node was previously configured as a DNS server - re-verify
-	// PowerDNS/geoip prerequisites and pdns.conf on every restart (including
-	// the one triggered by "update agent") so they can't silently go missing
-	// after an update. See runDnsStartupRecheck in dns.go.
-	runDnsStartupRecheck()
+		if !commandExists("smartctl") {
+			installCtx, installCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			if _, err := ensureAgentSystemPackages(installCtx, []string{"smartmontools"}); err != nil {
+				log.Printf("smartmontools unavailable, SMART disk health monitoring disabled: %v", err)
+			}
+			installCancel()
+		}
+
+		// This node was previously configured as a DNS server - re-verify
+		// PowerDNS/geoip prerequisites and pdns.conf on every restart
+		// (including the one triggered by "update agent") so they can't
+		// silently go missing after an update. See runDnsStartupRecheck in
+		// dns.go.
+		runDnsStartupRecheck()
+	}()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
