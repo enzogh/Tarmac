@@ -6,6 +6,7 @@ import { AgentLogsModule } from './agent-logs/agent-logs.module';
 import { AgentsModule } from './agents/agents.module';
 import { AlertRulesModule } from './alert-rules/alert-rules.module';
 import { AlertsModule } from './alerts/alerts.module';
+import { ApiKeysModule } from './api-keys/api-keys.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { AuthModule } from './auth/auth.module';
 import { DnsModule } from './dns/dns.module';
@@ -24,6 +25,7 @@ import { SyncJobsModule } from './sync-jobs/sync-jobs.module';
 import { SystemModule } from './system/system.module';
 import { TopologyModule } from './topology/topology.module';
 import { VlanModule } from './vlan/vlan.module';
+import { VpnModule } from './vpn/vpn.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 
 @Module({
@@ -58,6 +60,8 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     AgentLogsModule,
     ReconciliationModule,
     VlanModule,
+    VpnModule,
+    ApiKeysModule,
     WorkspacesModule,
     SystemModule,
   ],

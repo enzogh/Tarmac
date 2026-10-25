@@ -1,0 +1,181 @@
+'use client';
+
+import Link from 'next/link';
+import { useParams } from 'next/navigation';
+import { ArrowLeft, DoorOpen, Globe2, RadioTower, Users } from 'lucide-react';
+import { PageHeader } from '@/components/PageHeader';
+import { Callout } from '@/components/Callout';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Stat, StatRow } from '@/components/ui/stat';
+import { StatusPill } from '@/components/ui/status';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { StatCardSkeleton, TableRowSkeleton } from '@/components/ui/skeleton';
+import { api, VpnGateway } from '@/lib/api';
+import { formatRelative } from '@/lib/format';
+import { usePolling } from '@/lib/hooks/usePolling';
+import { NodeLabel, nodeLocation, useVpnLive } from '../components/vpn-ui';
+
+function SyncState({ gateway }: { gateway: VpnGateway }) {
+  const carriesVpn = gateway.entryProfiles > 0 || gateway.exitProfiles > 0;
+  if (gateway.apply.status === 'error') {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span>
+            <StatusPill tone="danger">Erreur</StatusPill>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-sm font-mono text-2xs">{gateway.apply.error}</TooltipContent>
+      </Tooltip>
+    );
+  }
+  if (!carriesVpn) return <span className="text-xs text-muted-foreground">Non utilisé</span>;
+  if (gateway.status === 'offline') return <StatusPill tone="warn">Hors ligne</StatusPill>;
+  if (gateway.apply.status === 'active') {
+    return (
+      <span title={gateway.apply.revision ?? undefined}>
+        <StatusPill tone="ok">Synchronisé</StatusPill>
+        {gateway.apply.revision && (
+          <span className="ml-2 text-2xs text-muted-foreground">{formatRelative(gateway.apply.revision)}</span>
+        )}
+      </span>
+    );
+  }
+  return <StatusPill tone="warn">En attente</StatusPill>;
+}
+
+export default function VpnGatewaysPage() {
+  const params = useParams<{ workspace: string }>();
+  const { data: gateways = [], mutate, isLoading } = usePolling('vpn-gateways', api.vpn.gateways, { intervalMs: 10000 });
+  useVpnLive(() => void mutate());
+
+  const entries = gateways.filter((gateway) => gateway.entryProfiles > 0);
+  const exits = gateways.filter((gateway) => gateway.exitProfiles > 0);
+  const connected = gateways.reduce((sum, gateway) => sum + gateway.connectedClients, 0);
+  const errors = gateways.filter((gateway) => gateway.apply.status === 'error');
+  const listenPort = gateways[0]?.listenPort ?? 51821;
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Passerelles VPN"
+        description="Les nœuds qui servent de point d'entrée aux appareils ou de sortie vers Internet, et l'état de leur configuration."
+        actions={
+          <Button variant="secondary" asChild>
+            <Link href={`/${params.workspace}/dashboard/vpn`} className="gap-1.5">
+              <ArrowLeft className="h-4 w-4" />
+              Profils VPN
+            </Link>
+          </Button>
+        }
+      />
+
+      {errors.length > 0 && (
+        <Callout variant="danger">
+          {errors.length} nœud{errors.length > 1 ? 's n’ont' : ' n’a'} pas pu appliquer la configuration VPN (
+          {errors.map((gateway) => gateway.name).join(', ')}). Survolez le statut pour voir l&apos;erreur.
+        </Callout>
+      )}
+
+      {isLoading ? (
+        <StatRow>
+          {Array.from({ length: 4 }).map((_, index) => (
+            <StatCardSkeleton key={index} />
+          ))}
+        </StatRow>
+      ) : (
+        <StatRow className="animate-fade-in">
+          <Stat label="Points d'entrée actifs" value={entries.length} icon={DoorOpen} hint={`${gateways.filter((g) => g.entryEligibility === null).length} éligible(s)`} />
+          <Stat label="Nœuds de sortie actifs" value={exits.length} icon={Globe2} />
+          <Stat label="Appareils connectés" value={connected} icon={Users} tone={connected > 0 ? 'ok' : 'neutral'} />
+          <Stat
+            label="Synchronisation"
+            value={errors.length > 0 ? `${errors.length} erreur(s)` : 'OK'}
+            icon={RadioTower}
+            tone={errors.length > 0 ? 'danger' : 'ok'}
+          />
+        </StatRow>
+      )}
+
+      <Callout variant="info">
+        Les appareils se connectent en UDP sur le port <span className="font-mono">{listenPort}</span> du point
+        d&apos;entrée. Si votre hébergeur filtre le trafic en amont (pare-feu réseau OVH, Security Groups…), autorisez ce
+        port. Le pare-feu local du nœud est configuré automatiquement par l&apos;agent.
+      </Callout>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Nœuds du workspace</CardTitle>
+          <CardDescription>
+            Un même nœud peut être à la fois point d&apos;entrée et sortie. Le trafic entre l&apos;entrée et la sortie
+            transite par le réseau privé chiffré.
+          </CardDescription>
+        </CardHeader>
+        <CardContent flush>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Nœud</TableHead>
+                <TableHead>Localisation</TableHead>
+                <TableHead>Entrée</TableHead>
+                <TableHead>Sortie</TableHead>
+                <TableHead>Connectés</TableHead>
+                <TableHead>Sous-réseau clients</TableHead>
+                <TableHead>Configuration</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isLoading
+                ? Array.from({ length: 3 }).map((_, index) => <TableRowSkeleton key={index} columns={7} />)
+                : gateways.map((gateway) => (
+                    <TableRow key={gateway.id}>
+                      <TableCell>
+                        <NodeLabel node={gateway} showIp />
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{nodeLocation(gateway) ?? '—'}</TableCell>
+                      <TableCell>
+                        {gateway.entryEligibility ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>
+                                <StatusPill tone="neutral">Indisponible</StatusPill>
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs">{gateway.entryEligibility}</TooltipContent>
+                          </Tooltip>
+                        ) : gateway.entryProfiles > 0 ? (
+                          <span className="text-sm text-foreground">
+                            {gateway.entryProfiles} profil{gateway.entryProfiles > 1 ? 's' : ''}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">Disponible</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {gateway.exitProfiles > 0 ? (
+                          <span className="text-sm text-foreground">
+                            {gateway.exitProfiles} profil{gateway.exitProfiles > 1 ? 's' : ''}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">{gateway.exitEligibility ? 'Indisponible' : 'Disponible'}</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="tabular-nums">{gateway.connectedClients}</TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{gateway.clientSubnet ?? '—'}</TableCell>
+                      <TableCell>
+                        <SyncState gateway={gateway} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+            </TableBody>
+          </Table>
+          {!isLoading && gateways.length === 0 && (
+            <p className="py-10 text-center text-sm text-muted-foreground">Aucun nœud dans ce workspace.</p>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

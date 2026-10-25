@@ -292,7 +292,12 @@ export class MigrationsService {
         sourceKind: 'node',
         targetKind: 'node',
       },
-      { isPlatformAdmin: false, workspaceId: sourceNode.workspaceId, allowedWorkspaceIds: [sourceNode.workspaceId] },
+      {
+        isPlatformAdmin: false,
+        workspaceId: sourceNode.workspaceId,
+        allowedWorkspaceIds: [sourceNode.workspaceId],
+        isManager: false,
+      },
     );
   }
 

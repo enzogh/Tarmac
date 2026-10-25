@@ -11,6 +11,10 @@ import {
   Activity,
   Settings,
   Globe,
+  ShieldCheck,
+  KeyRound,
+  RadioTower,
+  SlidersHorizontal,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -23,23 +27,35 @@ export type NavGroup = { label: string | null; icon?: LucideIcon; items: NavItem
 // Every dashboard page now lives under /<workspace-slug>/dashboard/... - the
 // nav is built per-render from the active workspace's slug so links always
 // point at the workspace currently open, instead of a fixed global path.
+//
+// Grouped by what the operator is trying to do rather than by resource
+// type: run the fleet (Infrastructure), give people access to it (Accès
+// distant), store and move data (Stockage / Transferts), watch it
+// (Supervision), and configure the workspace itself (Administration, at the
+// bottom where settings conventionally live).
 export function buildNavGroups(slug: string): NavGroup[] {
   const base = `/${slug}/dashboard`;
   return [
     {
       label: null,
-      items: [
-        { href: base, label: "Vue d'ensemble", icon: LayoutDashboard, exact: true },
-        { href: `${base}/settings`, label: 'Paramètres', icon: Settings },
-      ],
+      items: [{ href: base, label: "Vue d'ensemble", icon: LayoutDashboard, exact: true }],
     },
     {
       label: 'Infrastructure',
       icon: Server,
       items: [
         { href: `${base}/infrastructure`, label: 'Nœuds', icon: Server },
-        { href: `${base}/network`, label: 'Réseau', icon: Network },
+        { href: `${base}/network`, label: 'Réseau privé', icon: Network },
         { href: `${base}/dns`, label: 'DNS', icon: Globe },
+      ],
+    },
+    {
+      label: 'Accès distant',
+      icon: ShieldCheck,
+      items: [
+        // exact: /vpn/gateways is its own nav entry, not a sub-page of this one.
+        { href: `${base}/vpn`, label: 'Profils VPN', icon: ShieldCheck, exact: true },
+        { href: `${base}/vpn/gateways`, label: 'Passerelles', icon: RadioTower },
       ],
     },
     {
@@ -48,6 +64,12 @@ export function buildNavGroups(slug: string): NavGroup[] {
       items: [
         { href: `${base}/storage`, label: 'Stockage', icon: Database },
         { href: `${base}/mounts`, label: 'Montages', icon: HardDrive },
+      ],
+    },
+    {
+      label: 'Transferts',
+      icon: ArrowRightLeft,
+      items: [
         { href: `${base}/replication`, label: 'Réplication', icon: RefreshCw },
         { href: `${base}/migrations`, label: 'Migrations', icon: ArrowRightLeft },
       ],
@@ -58,6 +80,14 @@ export function buildNavGroups(slug: string): NavGroup[] {
       items: [
         { href: `${base}/alerts`, label: 'Alertes', icon: Bell },
         { href: `${base}/logs`, label: 'Journal', icon: ScrollText },
+      ],
+    },
+    {
+      label: 'Administration',
+      icon: SlidersHorizontal,
+      items: [
+        { href: `${base}/settings`, label: 'Paramètres', icon: Settings },
+        { href: `${base}/api-keys`, label: 'Clés API', icon: KeyRound },
       ],
     },
   ];

@@ -121,6 +121,13 @@ const config: Config = {
           '0%': { 'background-position': '0%' },
           '100%': { 'background-position': '200%' },
         },
+        // Dashed link moving along a VPN route diagram (8px dash period).
+        'flow-x': {
+          to: { backgroundPosition: '8px 0' },
+        },
+        'flow-y': {
+          to: { backgroundPosition: '0 8px' },
+        },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
@@ -129,6 +136,8 @@ const config: Config = {
         shimmer: 'shimmer 1.8s linear infinite',
         gradient: 'gradient 8s linear infinite',
         rainbow: 'rainbow var(--speed, 2s) infinite linear',
+        'flow-x': 'flow-x 0.8s linear infinite',
+        'flow-y': 'flow-y 0.8s linear infinite',
       },
     },
   },

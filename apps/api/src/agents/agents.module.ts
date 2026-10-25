@@ -8,6 +8,7 @@ import { MountsModule } from '../mounts/mounts.module';
 import { PoolsModule } from '../pools/pools.module';
 import { SharesModule } from '../shares/shares.module';
 import { VlanModule } from '../vlan/vlan.module';
+import { VpnModule } from '../vpn/vpn.module';
 import { AgentTokenService } from './agent-token.service';
 import { AgentsController } from './agents.controller';
 import { AgentsGateway } from './agents.gateway';
@@ -25,6 +26,7 @@ import { AgentsWsServer } from './agents.ws';
     PoolsModule,
     forwardRef(() => VlanModule),
     forwardRef(() => DnsModule),
+    forwardRef(() => VpnModule),
   ],
   controllers: [AgentsController],
   providers: [AgentsGateway, AgentsService, AgentsWsServer, AgentTokenService],

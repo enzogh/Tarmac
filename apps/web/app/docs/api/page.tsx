@@ -16,6 +16,8 @@ import {
   LayoutGrid,
   ScrollText,
   Info,
+  ShieldCheck,
+  KeyRound,
   type LucideIcon,
 } from 'lucide-react';
 import { PageHeader } from '../../../components/PageHeader';
@@ -32,6 +34,8 @@ type Endpoint = {
   method: Method;
   path: string;
   auth?: 'public' | 'token';
+  // Also reachable with a workspace API key holding this scope.
+  apiScope?: 'vpn:read' | 'vpn:write';
   body?: string;
   description: string;
   isNew?: boolean;
@@ -417,6 +421,94 @@ const MODULES: Module[] = [
     ],
   },
   {
+    name: 'VPN',
+    base: '/vpn',
+    icon: ShieldCheck,
+    isNew: true,
+    description:
+      "Profils WireGuard : un appareil se connecte par un nœud d'entrée et sort sur Internet par le nœud de sortie choisi, modifiable à chaud. Accessible aussi avec une clé API.",
+    endpoints: [
+      {
+        method: 'GET',
+        path: '/vpn/gateways',
+        apiScope: 'vpn:read',
+        description:
+          "Nœuds du workspace avec leur éligibilité comme entrée/sortie (raison si indisponible), profils portés, clients connectés et état de synchronisation.",
+      },
+      {
+        method: 'GET',
+        path: '/vpn/profiles',
+        apiScope: 'vpn:read',
+        description:
+          'Profils avec route effective (entryNode, exitNode), état de déploiement (deployment.status) et session (connected, lastHandshakeAt, rxBytes, txBytes). Jamais de clé privée.',
+      },
+      { method: 'GET', path: '/vpn/profiles/:id', apiScope: 'vpn:read', description: "Détail d'un profil." },
+      {
+        method: 'POST',
+        path: '/vpn/profiles',
+        apiScope: 'vpn:write',
+        body: 'name, entryNodeId, mode? (full | private), exitNodeId?, description?, dns?, expiresAt?, publicKey?',
+        description:
+          "Crée un profil et renvoie sa configuration WireGuard (config). Sans exitNodeId, la sortie se fait par le nœud d'entrée. Avec publicKey, la clé privée n'est jamais connue de Tarmac.",
+      },
+      {
+        method: 'PATCH',
+        path: '/vpn/profiles/:id',
+        apiScope: 'vpn:write',
+        body: 'name?, description?, mode?, entryNodeId?, exitNodeId?, dns?, enabled?, expiresAt?',
+        description: "Modifie un profil. Changer entryNodeId attribue une nouvelle adresse : la configuration doit être réimportée.",
+      },
+      {
+        method: 'POST',
+        path: '/vpn/profiles/:id/exit',
+        apiScope: 'vpn:write',
+        body: 'exitNodeId (null = sortie directe par le nœud d’entrée)',
+        description:
+          "Bascule la sortie Internet à chaud : seul le routage des nœuds change, l'appareil reste connecté et sort avec la nouvelle IP en moins d'une seconde.",
+      },
+      {
+        method: 'POST',
+        path: '/vpn/profiles/:id/rotate-keys',
+        apiScope: 'vpn:write',
+        body: 'publicKey?',
+        description: "Régénère les clés (appareil perdu, fichier diffusé) : l'ancienne configuration cesse immédiatement de fonctionner.",
+      },
+      { method: 'DELETE', path: '/vpn/profiles/:id', apiScope: 'vpn:write', description: "Supprime le profil et déconnecte l'appareil." },
+      {
+        method: 'GET',
+        path: '/vpn/profiles/:id/config',
+        apiScope: 'vpn:write',
+        description: 'Configuration WireGuard en JSON ({ filename, config, complete }).',
+      },
+      {
+        method: 'GET',
+        path: '/vpn/profiles/:id/config.conf',
+        apiScope: 'vpn:write',
+        description: 'La même configuration en fichier .conf prêt à importer (curl -OJ).',
+      },
+    ],
+  },
+  {
+    name: 'Clés API',
+    base: '/api-keys',
+    icon: KeyRound,
+    isNew: true,
+    description:
+      "Clés d'accès programmatique d'un workspace, gérées par ses gérants (propriétaires ou administrateurs de plateforme) avec une session uniquement.",
+    endpoints: [
+      { method: 'GET', path: '/api-keys', description: 'Clés du workspace (préfixe, permissions, dernière utilisation) — jamais le secret.' },
+      { method: 'GET', path: '/api-keys/scopes', description: 'Permissions disponibles (vpn:read, vpn:write).' },
+      {
+        method: 'POST',
+        path: '/api-keys',
+        body: 'name, scopes[], expiresAt?',
+        description: 'Crée une clé ; le jeton complet (tmk_…) est renvoyé une seule fois.',
+      },
+      { method: 'POST', path: '/api-keys/:id/revoke', description: 'Révoque la clé immédiatement.' },
+      { method: 'DELETE', path: '/api-keys/:id', description: 'Supprime la clé.' },
+    ],
+  },
+  {
     name: 'Stockage',
     base: '/storage',
     icon: Database,
@@ -551,6 +643,21 @@ export default function ApiReferencePage() {
         </Card>
         <Card className="">
           <CardContent className="pt-6 text-sm">
+            <p className="flex items-center gap-2 font-medium text-foreground">
+              Clés API
+              <span className="rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-300">
+                Nouveau
+              </span>
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Pour l'automatisation : <code>Authorization: Bearer tmk_…</code>. Une clé est liée à un seul workspace
+              (pas besoin de <code>X-Workspace-Id</code>) et n'ouvre que les routes marquées « Clé API » de sa
+              permission. Créées par les gérants du workspace depuis Administration → Clés API.
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="">
+          <CardContent className="pt-6 text-sm">
             <p className="font-medium text-foreground">Validation</p>
             <p className="mt-1 text-xs text-muted-foreground">
               Les corps de requête sont validés et transformés automatiquement ; tout champ inconnu est rejeté (400).
@@ -635,6 +742,11 @@ export default function ApiReferencePage() {
                       {endpoint.auth === 'token' && (
                         <Badge variant="outline" className="px-1.5 py-0 text-[10px] uppercase tracking-wide text-muted-foreground">
                           Jeton dédié
+                        </Badge>
+                      )}
+                      {endpoint.apiScope && (
+                        <Badge variant="info" className="px-1.5 py-0 font-mono text-[10px]">
+                          Clé API · {endpoint.apiScope}
                         </Badge>
                       )}
                     </div>

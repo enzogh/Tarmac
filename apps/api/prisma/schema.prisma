@@ -154,6 +154,15 @@ enum MigrationStatus {
   failed
 }
 
+// full: every client packet (0.0.0.0/0) goes through the tunnel and leaves
+// the internet through the profile's exit node. private: only the
+// workspace's private mesh is routed through the tunnel, the client keeps
+// its own internet access.
+enum VpnProfileMode {
+  full
+  private
+}
+
 model User {
   id                   String                @id @default(cuid())
   email                String                @unique
@@ -219,6 +228,8 @@ model Workspace {
   dnsZones             DnsZone[]
   notificationChannels NotificationChannel[]
   auditLogs            AuditLog[]
+  vpnProfiles          VpnProfile[]
+  apiKeys              ApiKey[]
 }
 
 model WorkspaceMembership {
@@ -291,6 +302,18 @@ model Node {
   // { port, protocol, pid, processName } when status is "conflict" - same
   // shape as DnsServerGroupMember.conflictDetail, surfaced the same way.
   internalDnsForwarderConflict Json?
+  // Index of the /24 handed to WireGuard clients connecting through this
+  // node (10.x.(100+n).0/24 inside the workspace mesh range) - allocated the
+  // first time a VPN profile uses this node as its entry point, then kept
+  // so clients' addresses never move. See VpnService.ensureEntrySubnet.
+  vpnSubnetIndex         Int?
+  // Revision (ISO timestamp sent by the API) of the last command.apply_vpn
+  // this node acknowledged, and whether that apply succeeded - a profile is
+  // only reported as deployed once both its entry and exit nodes have
+  // applied a revision at least as recent as its own configChangedAt.
+  vpnAppliedRevision     DateTime?
+  vpnApplyStatus         String?
+  vpnApplyError          String?
   createdAt              DateTime               @default(now())
   updatedAt              DateTime               @updatedAt
   metrics                MetricSample[]
@@ -311,7 +334,10 @@ model Node {
   incomingConnections    VlanConnection[]       @relation("TargetNode")
   connectionTests        VlanConnectionTest[]   @relation("InitiatorNode")
   internalDnsForWorkspace Workspace[]           @relation("InternalDnsNode")
+  vpnEntryProfiles       VpnProfile[]           @relation("VpnEntryNode")
+  vpnExitProfiles        VpnProfile[]           @relation("VpnExitNode")
 
+  @@unique([workspaceId, vpnSubnetIndex])
   @@index([workspaceId])
 }
 
@@ -848,4 +874,76 @@ model VlanConnectionSample {
 
   @@index([vlanId, sourceNodeId, targetNodeId, createdAt])
   @@index([createdAt])
+}
+
+// A WireGuard client profile: one device/person connecting to the fleet.
+// The client always connects to `entryNode`; in `full` mode its internet
+// traffic then leaves through `exitNode` (relayed over the private mesh), or
+// through the entry node itself when exitNodeId is null. Switching the exit
+// is a routing change on the nodes only - the client's own config (keys,
+// endpoint, address) never changes, so it stays connected while its public
+// IP moves.
+model VpnProfile {
+  id                String         @id @default(cuid())
+  workspaceId       String
+  workspace         Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  name              String
+  description       String?
+  mode              VpnProfileMode @default(full)
+  entryNodeId       String
+  entryNode         Node           @relation("VpnEntryNode", fields: [entryNodeId], references: [id], onDelete: Cascade)
+  exitNodeId        String?
+  exitNode          Node?          @relation("VpnExitNode", fields: [exitNodeId], references: [id], onDelete: SetNull)
+  // Address inside the entry node's client /24.
+  clientIp          String
+  clientPublicKey   String         @unique
+  // Null when the caller brought its own key pair (only the public half was
+  // sent): the downloadable config then carries a placeholder instead.
+  // Plaintext at rest like DnsServerGroup.tsigKeySecret - it has to be
+  // handed back verbatim to re-download the config.
+  clientPrivateKey  String?
+  presharedKey      String
+  dns               String[]       @default([])
+  enabled           Boolean        @default(true)
+  expiresAt         DateTime?
+  // Bumped on every change that alters what the nodes must apply (entry,
+  // exit, mode, keys, enabled) - see Node.vpnAppliedRevision.
+  configChangedAt   DateTime       @default(now())
+  exitSwitchedAt    DateTime?
+  // Live session state, reported by the entry node's agent (wg show dump).
+  lastHandshakeAt   DateTime?
+  clientEndpoint    String?
+  rxBytes           Float          @default(0)
+  txBytes           Float          @default(0)
+  createdByUserId   String?
+  createdByApiKeyId String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  @@unique([entryNodeId, clientIp])
+  @@index([workspaceId])
+  @@index([exitNodeId])
+}
+
+// Workspace-scoped API key for programmatic access (e.g. provisioning VPN
+// profiles from another system). Format: tmk_<prefix>_<secret>; only
+// sha256(secret) is stored, the full token is shown once at creation - same
+// pattern as Node.agentTokenHash / SyncJob.triggerTokenHash.
+model ApiKey {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name            String
+  prefix          String    @unique
+  secretHash      String
+  scopes          String[]  @default([])
+  createdByUserId String?
+  lastUsedAt      DateTime?
+  lastUsedIp      String?
+  expiresAt       DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([workspaceId])
 }

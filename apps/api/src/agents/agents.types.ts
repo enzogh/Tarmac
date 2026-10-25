@@ -26,6 +26,14 @@ export interface HeartbeatPayload {
     latencyMs?: number;
     packetLoss?: number;
   }>;
+  // Clients of this node's VPN interface (tarmacvpn0), from `wg show dump`.
+  vpnPeers?: Array<{
+    publicKey: string;
+    endpoint?: string;
+    latestHandshake?: number;
+    rxBytes?: number;
+    txBytes?: number;
+  }>;
 }
 
 export interface StateReportPayload {
@@ -76,7 +84,8 @@ export interface CommandPayload {
     | 'command.setup_internal_dns'
     | 'command.remove_internal_dns'
     | 'command.ensure_internal_dns_route'
-    | 'command.resolve_internal_dns_forwarder_conflict';
+    | 'command.resolve_internal_dns_forwarder_conflict'
+    | 'command.apply_vpn';
   payload: Record<string, unknown>;
 }
 
@@ -107,7 +116,8 @@ export interface CommandResultPayload {
     | 'setup_internal_dns'
     | 'remove_internal_dns'
     | 'ensure_internal_dns_route'
-    | 'resolve_internal_dns_forwarder_conflict';
+    | 'resolve_internal_dns_forwarder_conflict'
+    | 'apply_vpn';
   resourceType:
     | 'share'
     | 'mount'
@@ -126,7 +136,8 @@ export interface CommandResultPayload {
     | 'dns_zone_keys'
     | 'dns_node'
     | 'internal_dns'
-    | 'internal_dns_route';
+    | 'internal_dns_route'
+    | 'vpn';
   resourceId: string;
   success: boolean;
   message?: string;
@@ -159,6 +170,9 @@ export interface CommandResultPayload {
     dnsTsigKeySecret?: string;
     // Set by `dns_get_zone_keys`.
     dns?: { dsRecords?: string[]; dnskeyRecords?: string[] };
+    // Set by `apply_vpn`: false once the node carries no VPN state at all
+    // (everything torn down), so it can stop receiving applies.
+    vpnActive?: boolean;
   };
 }
 

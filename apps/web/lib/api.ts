@@ -460,6 +460,101 @@ export type VlanStatus = {
   recentFailures: VlanConnectionTest[];
 };
 
+export type VpnNodeRef = {
+  id: string;
+  name: string;
+  status: 'offline' | 'online' | 'degraded';
+  publicIp: string | null;
+  locationCity?: string | null;
+  locationCountry?: string | null;
+  locationCountryCode?: string | null;
+};
+
+export type VpnProfileMode = 'full' | 'private';
+export type VpnDeploymentStatus = 'active' | 'pending' | 'error' | 'disabled' | 'expired';
+
+export type VpnProfile = {
+  id: string;
+  name: string;
+  description: string | null;
+  mode: VpnProfileMode;
+  enabled: boolean;
+  expiresAt: string | null;
+  dns: string[];
+  clientIp: string;
+  clientPublicKey: string;
+  // False when the profile was created with the caller's own public key:
+  // its config then carries a placeholder instead of the private key.
+  hasPrivateKey: boolean;
+  entryNode: VpnNodeRef;
+  // Raw setting (null = leave directly through the entry node)...
+  exitNodeId: string | null;
+  // ...and the node traffic actually leaves through (null in private mode).
+  exitNode: VpnNodeRef | null;
+  deployment: { status: VpnDeploymentStatus; message: string | null };
+  session: {
+    connected: boolean;
+    lastHandshakeAt: string | null;
+    endpoint: string | null;
+    rxBytes: number;
+    txBytes: number;
+  };
+  exitSwitchedAt: string | null;
+  configChangedAt: string;
+  createdByUserId: string | null;
+  createdByApiKeyId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type VpnProfileWithConfig = VpnProfile & { config: string };
+
+export type VpnProfilePayload = {
+  name: string;
+  description?: string | null;
+  mode?: VpnProfileMode;
+  entryNodeId: string;
+  exitNodeId?: string | null;
+  dns?: string[];
+  expiresAt?: string | null;
+  publicKey?: string;
+};
+
+export type VpnGateway = VpnNodeRef & {
+  vlanIp: string | null;
+  // null = eligible, otherwise the reason (in French) it can't be used.
+  entryEligibility: string | null;
+  exitEligibility: string | null;
+  clientSubnet: string | null;
+  listenPort: number;
+  entryProfiles: number;
+  exitProfiles: number;
+  connectedClients: number;
+  apply: { status: 'active' | 'error' | null; error: string | null; revision: string | null };
+};
+
+// Pushed on the live socket by the entry node's heartbeat (every ~5s).
+export type VpnStatsLiveEvent = {
+  nodeId: string;
+  peers: Array<{ profileId: string; lastHandshakeAt: string | null; endpoint: string | null; rxBytes: number; txBytes: number }>;
+};
+
+export type ApiKeyScope = 'vpn:read' | 'vpn:write';
+
+export type ApiKeyItem = {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: ApiKeyScope[];
+  createdByUserId: string | null;
+  createdBy: { id: string; email: string; name?: string | null } | null;
+  lastUsedAt: string | null;
+  lastUsedIp: string | null;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+};
+
 export type AuditLogItem = {
   id: string;
   actorUserId?: string | null;
@@ -1007,6 +1102,31 @@ export const api = {
       if (params.nodeId) query.set('nodeId', params.nodeId);
       return `${API_BASE}/api/v1/agent-logs/export?${query.toString()}`;
     },
+  },
+
+  vpn: {
+    gateways: () => request<VpnGateway[]>('/api/v1/vpn/gateways'),
+    list: () => request<VpnProfile[]>('/api/v1/vpn/profiles'),
+    get: (id: string) => request<VpnProfile>(`/api/v1/vpn/profiles/${id}`),
+    create: (payload: VpnProfilePayload) =>
+      request<VpnProfileWithConfig>('/api/v1/vpn/profiles', { method: 'POST', body: JSON.stringify(payload) }),
+    update: (id: string, payload: Partial<VpnProfilePayload> & { enabled?: boolean }) =>
+      request<VpnProfile>(`/api/v1/vpn/profiles/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+    switchExit: (id: string, exitNodeId: string | null) =>
+      request<VpnProfile>(`/api/v1/vpn/profiles/${id}/exit`, { method: 'POST', body: JSON.stringify({ exitNodeId }) }),
+    rotateKeys: (id: string) =>
+      request<VpnProfileWithConfig>(`/api/v1/vpn/profiles/${id}/rotate-keys`, { method: 'POST', body: '{}' }),
+    remove: (id: string) => request<{ success: boolean }>(`/api/v1/vpn/profiles/${id}`, { method: 'DELETE' }),
+    config: (id: string) =>
+      request<{ filename: string; config: string; complete: boolean }>(`/api/v1/vpn/profiles/${id}/config`),
+  },
+
+  apiKeys: {
+    list: () => request<ApiKeyItem[]>('/api/v1/api-keys'),
+    create: (payload: { name: string; scopes: ApiKeyScope[]; expiresAt?: string }) =>
+      request<ApiKeyItem & { token: string }>('/api/v1/api-keys', { method: 'POST', body: JSON.stringify(payload) }),
+    revoke: (id: string) => request<ApiKeyItem>(`/api/v1/api-keys/${id}/revoke`, { method: 'POST' }),
+    remove: (id: string) => request<{ success: boolean }>(`/api/v1/api-keys/${id}`, { method: 'DELETE' }),
   },
 
   workspaces: {

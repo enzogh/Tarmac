@@ -134,7 +134,8 @@ apt-get install -y --no-install-recommends \
   traceroute \
   wireguard-tools \
   iproute2 \
-  util-linux
+  util-linux \
+  conntrack
 
 rm -rf "$INSTALL_DIR"
 if ! clone_repo "$REPO_URL"; then

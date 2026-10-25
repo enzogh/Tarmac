@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
+import type { AuthenticatedApiKey } from './api-key.guard';
 
 const WORKSPACE_HEADER = 'x-workspace-id';
 
@@ -25,10 +26,17 @@ export interface WorkspaceScope {
   // All workspace ids the caller may switch into (platform admins get every
   // workspace; members get only their own memberships).
   allowedWorkspaceIds: string[];
+  // Workspace "gérant": a platform admin or an 'owner' membership of the
+  // selected workspace. Gates workspace administration (API keys, members).
+  isManager: boolean;
+  // Set when the request authenticated with a workspace API key instead of
+  // a user session (see ApiKeyOrJwtGuard) - there is no user behind it.
+  apiKey?: { id: string; name: string; scopes: string[] };
 }
 
 interface RequestWithWorkspaceScope extends Request {
   user?: { userId?: string };
+  apiKey?: AuthenticatedApiKey;
   workspaceScope?: WorkspaceScope;
 }
 
@@ -41,6 +49,24 @@ export class WorkspaceGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<RequestWithWorkspaceScope>();
+
+    // An API key is bound to exactly one workspace: that's the only one it
+    // may act on, whatever X-Workspace-Id says.
+    if (request.apiKey) {
+      const requested = firstHeaderValue(request.headers[WORKSPACE_HEADER]);
+      if (requested && requested !== request.apiKey.workspaceId) {
+        throw new ForbiddenException('This API key belongs to another workspace');
+      }
+      request.workspaceScope = {
+        isPlatformAdmin: false,
+        workspaceId: request.apiKey.workspaceId,
+        allowedWorkspaceIds: [request.apiKey.workspaceId],
+        isManager: false,
+        apiKey: { id: request.apiKey.id, name: request.apiKey.name, scopes: request.apiKey.scopes },
+      };
+      return true;
+    }
+
     const userId = request.user?.userId;
     if (!userId) {
       throw new UnauthorizedException();
@@ -73,13 +99,14 @@ export class WorkspaceGuard implements CanActivate {
         isPlatformAdmin: true,
         workspaceId: requestedWorkspaceId ?? fallbackWorkspaceId,
         allowedWorkspaceIds: allWorkspaceIds,
+        isManager: true,
       };
       return true;
     }
 
     const memberships = await this.prisma.workspaceMembership.findMany({
       where: { userId },
-      select: { workspaceId: true },
+      select: { workspaceId: true, role: true },
     });
     const allowedWorkspaceIds = memberships.map((m) => m.workspaceId);
     if (allowedWorkspaceIds.length === 0) {
@@ -90,10 +117,12 @@ export class WorkspaceGuard implements CanActivate {
       throw new ForbiddenException('Not a member of this workspace');
     }
 
+    const workspaceId = requestedWorkspaceId ?? allowedWorkspaceIds[0];
     request.workspaceScope = {
       isPlatformAdmin: false,
-      workspaceId: requestedWorkspaceId ?? allowedWorkspaceIds[0],
+      workspaceId,
       allowedWorkspaceIds,
+      isManager: memberships.some((m) => m.workspaceId === workspaceId && m.role === 'owner'),
     };
     return true;
   }

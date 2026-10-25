@@ -11,6 +11,7 @@ import { MountsService } from '../mounts/mounts.service';
 import { PoolsService } from '../pools/pools.service';
 import { SharesService } from '../shares/shares.service';
 import { VlanService } from '../vlan/vlan.service';
+import { VpnService } from '../vpn/vpn.service';
 import { Region, resolveRegion } from '../vlan/region';
 import { AgentLogsService } from '../agent-logs/agent-logs.service';
 import { LiveWsServer } from '../live/live.ws';
@@ -314,6 +315,8 @@ export class AgentsService implements OnModuleInit {
     private readonly vlanService: VlanService,
     private readonly agentLogsService: AgentLogsService,
     private readonly live: LiveWsServer,
+    @Inject(forwardRef(() => VpnService))
+    private readonly vpnService: VpnService,
   ) {}
 
   onModuleInit() {
@@ -323,6 +326,7 @@ export class AgentsService implements OnModuleInit {
 
   register(nodeId: string, send: SendFn) {
     this.senders.set(nodeId, send);
+    void this.vpnService.onAgentConnected(nodeId);
   }
 
   unregister(nodeId: string) {
@@ -427,7 +431,7 @@ export class AgentsService implements OnModuleInit {
   }
 
   async onHeartbeat(nodeId: string, payload: HeartbeatPayload) {
-    const { metrics, overlay, linkMetrics, version } = payload;
+    const { metrics, overlay, linkMetrics, vpnPeers, version } = payload;
     const now = new Date();
     const versionFields = version ? { agentVersion: version, agentVersionAt: now } : {};
 
@@ -546,6 +550,15 @@ export class AgentsService implements OnModuleInit {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.warn(`Failed to ingest link metrics for node ${nodeId}: ${message}`, error);
+      }
+    }
+
+    if (vpnPeers && vpnPeers.length > 0) {
+      try {
+        await this.vpnService.ingestPeerStats(nodeId, node.workspaceId, vpnPeers);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(`Failed to ingest VPN peer stats for node ${nodeId}: ${message}`);
       }
     }
 
@@ -1105,6 +1118,31 @@ export class AgentsService implements OnModuleInit {
 
     if (result.resourceType === 'agent') {
       this.logger.log(`Agent ${result.command} on node ${result.resourceId}: ${result.message ?? '(no message)'}`);
+      return;
+    }
+
+    // Agents built before the VPN feature answer apply_vpn with a bare
+    // "unknown command" (no resourceType, no revision): surface it as an
+    // apply error telling the operator what to do, instead of leaving the
+    // node's profiles "pending" forever. The update reconnects the agent,
+    // which re-triggers a full VPN apply (VpnService.onAgentConnected).
+    if (!result.success && result.message?.includes('unknown command command.apply_vpn')) {
+      await this.vpnService.onApplyResult(nodeId, callingWorkspaceId, {
+        revision: new Date().toISOString(),
+        success: false,
+        message: "Agent trop ancien pour le VPN : mettez à jour l'agent de ce nœud depuis la page Nœuds.",
+      });
+      return;
+    }
+
+    // resourceId is the apply's revision - see VpnService.reconcileWorkspace.
+    if (result.resourceType === 'vpn') {
+      await this.vpnService.onApplyResult(nodeId, callingWorkspaceId, {
+        revision: result.resourceId,
+        success: result.success,
+        message: result.message,
+        active: result.data?.vpnActive,
+      });
       return;
     }
   }

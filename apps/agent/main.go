@@ -41,6 +41,7 @@ type heartbeat struct {
 	Metrics     metricState         `json:"metrics"`
 	Overlay     *overlayState       `json:"overlay,omitempty"`
 	LinkMetrics []overlayLinkMetric `json:"linkMetrics,omitempty"`
+	VpnPeers    []vpnPeerStat       `json:"vpnPeers,omitempty"`
 }
 
 type overlayState struct {
@@ -1732,6 +1733,7 @@ func updateAgent(payload map[string]interface{}) (string, error) {
 		"wireguard-tools",
 		"iproute2",
 		"util-linux",
+		"conntrack",
 	}
 	var dependencyErr error
 	installedPackages, dependencyErr = ensureAgentSystemPackages(ctx, dependencyPackages)
@@ -1891,6 +1893,8 @@ func uninstallAgent(payload map[string]interface{}) (string, error) {
 		log.Printf("failed to clean authorized_keys during uninstall: %v", err)
 	}
 
+	teardownVpn()
+
 	const wgIface = "tarmacwg0"
 	if exec.Command("ip", "link", "show", wgIface).Run() == nil {
 		_ = exec.Command("ip", "link", "set", wgIface, "down").Run()
@@ -1994,6 +1998,7 @@ func ensureAgentSystemPackages(ctx context.Context, packages []string) ([]string
 		"wireguard-tools":      func() bool { return commandExists("wg") },
 		"iproute2":             func() bool { return commandExists("ip") },
 		"util-linux":           func() bool { return commandExists("mount") },
+		"conntrack":            func() bool { return commandExists("conntrack") },
 		"smartmontools":        func() bool { return commandExists("smartctl") },
 		"pdns-server":          func() bool { return commandExists("pdns_server") },
 		"pdns-backend-sqlite3": func() bool { return pdnsSqliteBackendInstalled() },
@@ -3768,6 +3773,19 @@ func handleCommand(ctx context.Context, cmd commandPayload, onProgress func(prog
 		} else {
 			result.Message = message
 		}
+	case "command.apply_vpn":
+		result.Command = "apply_vpn"
+		result.ResourceType = "vpn"
+		// The revision is what the API matches results against.
+		result.ResourceID = readString(cmd.Payload, "revision")
+		message, active, err := applyVpn(cmd.Payload)
+		result.Data = map[string]bool{"vpnActive": active}
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Message = message
+		}
 	case "command.list_directories":
 		result.Command = "list_directories"
 		result.ResourceType = "directory_list"
@@ -4063,6 +4081,7 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 					Metrics:     metrics,
 					Overlay:     overlay,
 					LinkMetrics: linkMetrics,
+					VpnPeers:    collectVpnPeerStats(),
 				},
 			}); err != nil {
 				return err

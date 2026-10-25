@@ -81,6 +81,14 @@ et les vues topologiques.
 - Santé SMART par disque, avec les disques virtualisés sans données exploitables classés « inconnu » plutôt que « critique »
 - Journaux d'agent et journal d'audit
 
+**Accès distant (VPN WireGuard)**
+- Profils par appareil : connexion à un nœud d'entrée (UDP `51821`, `VPN_LISTEN_PORT` côté API), configuration en fichier ou QR code
+- Mode « tout le trafic » avec sortie Internet par n'importe quel nœud, basculable en un clic sans reconnexion de l'appareil ; mode « réseau privé uniquement »
+- Entrée → sortie relayée en IPIP au-dessus du maillage, une règle de routage par client et NAT sur la sortie, réappliqués de façon idempotente par l'agent (`conntrack` coupe les flux ouverts lors d'une bascule)
+- Sessions et débit en temps réel, expiration automatique, régénération des clés, clé publique fournie par l'appareil en option
+- Création et bascule aussi par API, avec des clés API par workspace (`vpn:read` / `vpn:write`)
+- L'agent des nœuds d'entrée et de sortie doit être à jour ; si l'hébergeur filtre en amont, ouvrir UDP `51821` sur les nœuds d'entrée
+
 **Organisation**
 - Workspaces multiples avec appartenances et rôles
 - SSO OIDC (Authentik) : les groupes portés par les claims décident de l'accès aux workspaces
@@ -160,6 +168,7 @@ Après `npm run seed` :
 | `JWT_SECRET` | `change-me` |
 | `AGENT_SHARED_TOKEN` | `agent-secret` |
 | `PORT` | `3001` |
+| `VPN_LISTEN_PORT` | `51821` (optionnel, port UDP des nœuds d'entrée VPN) |
 
 **Web** — `apps/web/.env.local`
 
@@ -242,7 +251,13 @@ l'application elle-même sur `/docs/api`.
 | DNS | `/dns/groups`, `/dns/groups/:id/members`, `/dns/zones`, `/dns/zones/:id/records`, `/dns/zones/:id/dnssec`, `/dns/internal` |
 | Réplication | `/sync-jobs`, `/sync-jobs/:id/runs`, `/migrations`, `/migrations/directories` |
 | Alertes | `/alert-rules`, `/alerts`, `/alerts/:id/ack`, `/alerts/:id/resolve`, `/notification-channels` |
-| Exploitation | `/audit-logs`, `/agent-logs`, `/workspaces` |
+| Accès distant | `/vpn/gateways`, `/vpn/profiles`, `/vpn/profiles/:id/exit`, `/vpn/profiles/:id/rotate-keys`, `/vpn/profiles/:id/config(.conf)` |
+| Exploitation | `/audit-logs`, `/agent-logs`, `/workspaces`, `/api-keys` |
+
+Les routes `/vpn/*` acceptent aussi une **clé API** de workspace
+(`Authorization: Bearer tmk_…`) portant la permission `vpn:read` ou `vpn:write` ;
+une clé n'ouvre aucune autre route. Les clés se gèrent dans Administration →
+Clés API, par les gérants du workspace (rôle `owner` ou admin plateforme).
 
 ## Déploiement Docker
 
