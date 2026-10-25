@@ -198,8 +198,14 @@ export default function WorkspacesDocsPage() {
         </Card>
 
         <Callout variant="warning">
-          Un propriétaire ne peut pas se retirer lui-même de son workspace : cela le laisserait sans personne pour en
-          gérer les membres. Transférez d&apos;abord la propriété, ou faites intervenir un administrateur de plateforme.
+          Celui qui gère un workspace — propriétaire, ou administrateur de plateforme — ne peut pas s&apos;en retirer
+          lui-même, et personne ne peut retirer son dernier propriétaire : il resterait sans personne pour en gérer les
+          membres. Pour le quitter, supprimez le workspace ou demandez à un autre propriétaire de vous retirer.
+        </Callout>
+        <Callout>
+          Le nom et l&apos;identifiant d&apos;URL (slug) se changent dans Paramètres → Général, y compris pour le
+          workspace par défaut. Les agents ne dépendent pas du slug, et l&apos;ancien reste une redirection : favoris et
+          liens des e-mails d&apos;alerte continuent de fonctionner.
         </Callout>
       </section>
 

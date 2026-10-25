@@ -94,7 +94,8 @@ et les vues topologiques.
 - L'agent des nœuds d'entrée et de sortie doit être à jour ; si l'hébergeur filtre en amont, ouvrir UDP `51821` sur les nœuds d'entrée
 
 **Organisation**
-- Workspaces multiples avec appartenances et rôles
+- Workspaces multiples avec appartenances et rôles ; nom et slug modifiables (y compris pour le workspace par défaut), l'ancien slug restant une redirection, sans impact sur les agents
+- Celui qui gère un workspace (propriétaire ou admin plateforme) ne peut pas s'en retirer lui-même, et le dernier propriétaire ne peut pas être retiré
 - SSO OIDC (Authentik) : les groupes portés par les claims décident de l'accès aux workspaces
 - JWT avec rotation de secret sans couper les sessions en cours
 - Clés API par workspace couvrant toute l'API documentée, avec permissions par module (aucun / lecture / écriture), raccourcis « accès complet » et « lecture seule », et modification du nom, des permissions et de l'expiration sans changer le secret

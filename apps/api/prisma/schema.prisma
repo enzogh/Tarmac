@@ -191,6 +191,10 @@ model Workspace {
   id            String   @id @default(cuid())
   name          String
   slug          String   @unique
+  // Slugs this workspace had before a rename: old /<slug>/dashboard links
+  // and alert e-mails keep resolving (the web app redirects to `slug`). No
+  // other workspace may take one of them, see WorkspacesService.update.
+  previousSlugs String[] @default([])
   // Authentik group name that auto-grants membership on SSO login (Phase 3).
   // Null means membership is only ever granted manually by a platform admin.
   ssoGroupClaim String?  @unique

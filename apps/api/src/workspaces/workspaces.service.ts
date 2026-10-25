@@ -144,42 +144,84 @@ export class WorkspacesService {
     );
   }
 
-  // name/ssoGroupClaim only - renaming a workspace or (re)pointing it at an
-  // Authentik group is safe post-creation; subnetIndex/slug are not editable
-  // here since changing them after nodes/agents already depend on them would
-  // require the same careful rollout as initial provisioning. Owners can
-  // rename/reconfigure their own workspace, same authority tier as member
+  // Name, slug and Authentik group. subnetIndex stays fixed: nodes' private
+  // IPs are carved out of it. The slug is only the URL segment - agents,
+  // guards and every query go by workspace id, and the Default workspace is
+  // recognised by isDefault/DEFAULT_WORKSPACE_ID, never by its slug - so it
+  // can change, Default included. The old slug is kept in previousSlugs so
+  // bookmarks and alert e-mails still land on the workspace. Owners can
+  // reconfigure their own workspace, same authority tier as member
   // management - only workspace *creation* stays platform-admin-only.
   async update(workspaceId: string, dto: UpdateWorkspaceDto, scope: WorkspaceScope, actorUserId?: string) {
-    await this.assertExists(workspaceId);
+    const workspace = await this.assertExists(workspaceId);
     await this.assertCanManageMembers(workspaceId, scope, actorUserId);
-    if (dto.name === undefined && dto.ssoGroupClaim === undefined) {
+    if (dto.name === undefined && dto.ssoGroupClaim === undefined && dto.slug === undefined) {
       throw new BadRequestException('Nothing to update');
     }
 
+    const slugChanged = dto.slug !== undefined && dto.slug !== workspace.slug;
+    if (slugChanged) await this.assertSlugAvailable(dto.slug as string, workspaceId);
+    const previousSlugs = slugChanged
+      ? [...new Set([...workspace.previousSlugs, workspace.slug])].filter((value) => value !== dto.slug)
+      : undefined;
+
     try {
-      const updated = await this.prisma.workspace.update({
-        where: { id: workspaceId },
-        data: {
-          ...(dto.name !== undefined ? { name: dto.name } : {}),
-          ...(dto.ssoGroupClaim !== undefined ? { ssoGroupClaim: dto.ssoGroupClaim || null } : {}),
-        },
-      });
+      const [updated] = await this.prisma.$transaction([
+        this.prisma.workspace.update({
+          where: { id: workspaceId },
+          data: {
+            ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+            ...(dto.ssoGroupClaim !== undefined ? { ssoGroupClaim: dto.ssoGroupClaim || null } : {}),
+            ...(slugChanged ? { slug: dto.slug, previousSlugs } : {}),
+          },
+        }),
+        // The Vlan was named after the slug when it was provisioned; keep the
+        // two in step (its name is only a display/lookup alias, never sent
+        // to agents).
+        ...(slugChanged
+          ? [this.prisma.vlan.updateMany({ where: { workspaceId, name: workspace.slug }, data: { name: dto.slug } })]
+          : []),
+      ]);
       await this.auditLogsService.log({
         workspaceId,
         actorUserId,
         action: 'workspace.update',
         resourceType: 'workspace',
         resourceId: workspaceId,
-        details: dto as unknown as Prisma.InputJsonValue,
+        details: {
+          ...(dto as unknown as Prisma.InputJsonObject),
+          ...(slugChanged ? { previousSlug: workspace.slug } : {}),
+          ...(dto.name !== undefined && dto.name.trim() !== workspace.name ? { previousName: workspace.name } : {}),
+        },
       });
       return updated;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ConflictException('Another workspace is already mapped to this Authentik group');
+        const target = String((error.meta as { target?: unknown } | undefined)?.target ?? '');
+        if (target.includes('slug') || target.includes('name')) {
+          throw new ConflictException('Ce slug est déjà utilisé.');
+        }
+        throw new ConflictException('Un autre workspace est déjà associé à ce groupe Authentik.');
       }
       throw error;
     }
+  }
+
+  // A slug must not shadow a frontend route, nor collide with another
+  // workspace's current slug, old slugs (still redirecting there) or Vlan.
+  private async assertSlugAvailable(slug: string, workspaceId: string) {
+    if (RESERVED_WORKSPACE_SLUGS.has(slug)) {
+      throw new ConflictException(`« ${slug} » est réservé par l'application et ne peut pas servir de slug.`);
+    }
+    const [taken, vlan] = await Promise.all([
+      this.prisma.workspace.findFirst({
+        where: { id: { not: workspaceId }, OR: [{ slug }, { previousSlugs: { has: slug } }] },
+        select: { name: true },
+      }),
+      this.prisma.vlan.findFirst({ where: { name: slug, workspaceId: { not: workspaceId } }, select: { id: true } }),
+    ]);
+    if (taken) throw new ConflictException(`Ce slug est déjà utilisé (ou l'a été) par « ${taken.name} ».`);
+    if (vlan) throw new ConflictException('Ce slug est déjà utilisé par le réseau privé d’un autre workspace.');
   }
 
   // There's no dedicated users module/list endpoint anywhere in the API yet -
@@ -280,19 +322,27 @@ export class WorkspacesService {
     await this.assertExists(workspaceId);
     await this.assertCanManageMembers(workspaceId, scope, actorUserId);
 
-    // An owner can't remove themselves - doing so would either orphan the
-    // workspace (no one left who can manage it without platform-admin
-    // intervention) or silently lock the owner out of something they still
-    // administer. Deleting the whole workspace (see deleteWorkspace below)
-    // is the deliberate, explicit way to walk away from it entirely.
-    if (userId === actorUserId) {
-      const actorMembership = await this.prisma.workspaceMembership.findUnique({
-        where: { workspaceId_userId: { workspaceId, userId: actorUserId } },
-      });
-      if (actorMembership?.role === 'owner') {
-        throw new ForbiddenException(
-          "Un propriétaire ne peut pas se retirer lui-même. Supprimez le workspace ou transférez d'abord la propriété.",
-        );
+    // Whoever manages the workspace can't remove themselves - an owner
+    // membership, but also a platform admin, whom the UI presents as owner
+    // whatever their membership row says. Doing so would either orphan the
+    // workspace or silently lock them out of something they administer.
+    // Deleting the whole workspace (see deleteWorkspace below) is the
+    // deliberate, explicit way to walk away from it entirely.
+    const target = await this.prisma.workspaceMembership.findUnique({
+      where: { workspaceId_userId: { workspaceId, userId } },
+      select: { role: true },
+    });
+    if (userId === actorUserId && (target?.role === 'owner' || scope.isPlatformAdmin)) {
+      throw new ForbiddenException(
+        "Vous gérez ce workspace : vous ne pouvez pas vous en retirer vous-même. Supprimez le workspace, ou demandez à un autre propriétaire de le faire.",
+      );
+    }
+    // Nor can anyone remove its last owner, which would leave it without
+    // anyone able to manage it short of a platform admin.
+    if (target?.role === 'owner') {
+      const owners = await this.prisma.workspaceMembership.count({ where: { workspaceId, role: 'owner' } });
+      if (owners <= 1) {
+        throw new ForbiddenException('Impossible de retirer le dernier propriétaire du workspace.');
       }
     }
 

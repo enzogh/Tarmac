@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { AlertTriangle, BellRing, Mail, Save, Send, Settings, ShieldCheck, Trash2, Users } from 'lucide-react';
-import { AdminProfile, api, WorkspaceListItem, WorkspaceMember } from '../../../../lib/api';
+import { AdminProfile, api, WorkspaceDetail, WorkspaceListItem, WorkspaceMember } from '../../../../lib/api';
 import { usePolling } from '../../../../lib/hooks/usePolling';
 import { PageHeader } from '../../../../components/PageHeader';
 import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
@@ -57,10 +57,18 @@ export default function WorkspaceSettingsPage() {
     <div className="max-w-3xl space-y-6">
       <PageHeader title="Paramètres" description={`Gère « ${workspace.name} »`} />
       <EmailNotificationsCard profile={profile} onSaved={() => void refreshProfile()} />
-      <RenameCard workspace={workspace} onSaved={() => void refreshWorkspaces()} />
+      <GeneralCard
+        workspace={workspace}
+        onSaved={(updated) => {
+          void refreshWorkspaces();
+          // The page lives under the slug: follow it to its new address.
+          if (updated.slug !== params.workspace) router.replace(`/${updated.slug}/dashboard/settings`);
+        }}
+      />
       <MembersCard
         workspace={workspace}
         currentUserId={profile.id}
+        isSuperuser={isSuperuser}
         onMembershipChanged={() => void refreshWorkspaces()}
       />
       <DangerZoneCard
@@ -191,26 +199,76 @@ function EmailNotificationsCard({ profile, onSaved }: { profile: AdminProfile; o
   );
 }
 
-function RenameCard({ workspace, onSaved }: { workspace: WorkspaceListItem; onSaved: () => void }) {
+// Same rules as the API (UpdateWorkspaceDto): lowercase letters, digits and
+// single hyphens. Typing is normalised as you go so the preview is what the
+// API will accept.
+function toSlug(value: string) {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+/, '');
+}
+
+// A slug change moves this page to a new URL, which remounts it: the
+// confirmation is handed over through sessionStorage to survive that.
+const NOTICE_KEY = 'tarmac.settings.notice';
+
+function GeneralCard({ workspace, onSaved }: { workspace: WorkspaceListItem; onSaved: (updated: WorkspaceDetail) => void }) {
   const [name, setName] = useState(workspace.name);
+  const [slug, setSlug] = useState(workspace.slug);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   useEffect(() => {
+    try {
+      const pending = sessionStorage.getItem(NOTICE_KEY);
+      if (pending) {
+        sessionStorage.removeItem(NOTICE_KEY);
+        setNotice({ type: 'success', message: pending });
+      }
+    } catch {
+      // Storage unavailable: the redirect itself shows the change.
+    }
+  }, []);
+
+  useEffect(() => {
     setName(workspace.name);
-  }, [workspace.name]);
+    setSlug(workspace.slug);
+  }, [workspace.name, workspace.slug]);
+
+  const finalSlug = slug.replace(/-+$/, '');
+  const nameChanged = name.trim() !== workspace.name;
+  const slugChanged = finalSlug !== workspace.slug;
+  const slugInvalid = finalSlug.length < 2 || finalSlug.length > 48;
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (name.trim() === workspace.name) return;
+    if (!nameChanged && !slugChanged) return;
     setSaving(true);
     setNotice(null);
     try {
-      await api.workspaces.update(workspace.id, { name: name.trim() });
-      setNotice({ type: 'success', message: 'Nom mis à jour.' });
-      onSaved();
+      const updated = await api.workspaces.update(workspace.id, {
+        ...(nameChanged ? { name: name.trim() } : {}),
+        ...(slugChanged ? { slug: finalSlug } : {}),
+      });
+      const message = slugChanged
+        ? `Enregistré. L'ancienne adresse /${workspace.slug} redirige désormais vers /${updated.slug}.`
+        : 'Nom mis à jour.';
+      setNotice({ type: 'success', message });
+      if (slugChanged) {
+        try {
+          sessionStorage.setItem(NOTICE_KEY, message);
+        } catch {
+          // Best effort, see NOTICE_KEY.
+        }
+      }
+      onSaved(updated);
     } catch (error) {
-      setNotice({ type: 'error', message: error instanceof Error ? error.message : 'Impossible de renommer ce workspace.' });
+      setNotice({ type: 'error', message: error instanceof Error ? error.message : 'Impossible de mettre à jour ce workspace.' });
     } finally {
       setSaving(false);
     }
@@ -222,26 +280,46 @@ function RenameCard({ workspace, onSaved }: { workspace: WorkspaceListItem; onSa
         <CardTitle>Général</CardTitle>
       </CardHeader>
       <CardContent>
-        <form onSubmit={submit} className="space-y-2">
-          <Label htmlFor="workspace-name">Nom</Label>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              id="workspace-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-              minLength={2}
-              className="min-w-0 flex-1"
-            />
-            <Button type="submit" disabled={saving || name.trim() === workspace.name} className="shrink-0 gap-2">
+        <form onSubmit={submit} className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="workspace-name">Nom</Label>
+              <Input id="workspace-name" value={name} onChange={(e) => setName(e.target.value)} required minLength={2} />
+              <p className="text-xs text-muted-foreground">Affiché dans la barre latérale, les e-mails et le journal.</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="workspace-slug">Identifiant dans l&apos;URL</Label>
+              <Input
+                id="workspace-slug"
+                value={slug}
+                onChange={(e) => setSlug(toSlug(e.target.value))}
+                maxLength={48}
+                spellCheck={false}
+                className="font-mono"
+              />
+              <p className="truncate text-xs text-muted-foreground" title={`${origin}/${finalSlug}/dashboard`}>
+                <span className="font-mono">
+                  {origin}/<span className="text-foreground">{finalSlug || '…'}</span>/dashboard
+                </span>
+              </p>
+            </div>
+          </div>
+          {slugChanged && !slugInvalid && (
+            <Alert variant="info">
+              <AlertDescription>
+                Les agents ne sont pas concernés : ils sont identifiés par leur nœud, jamais par le slug. Les anciens
+                liens en <span className="font-mono">/{workspace.slug}/…</span> (favoris, e-mails d&apos;alerte)
+                continueront de rediriger ici.
+              </AlertDescription>
+            </Alert>
+          )}
+          {slugInvalid && <p className="text-xs text-[hsl(var(--danger))]">L&apos;identifiant doit faire entre 2 et 48 caractères.</p>}
+          <div className="flex justify-end">
+            <Button type="submit" disabled={saving || (!nameChanged && !slugChanged) || slugInvalid || name.trim().length < 2} className="gap-2">
               <Save className="h-4 w-4" />
               {saving ? 'Enregistrement…' : 'Enregistrer'}
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">
-            URL : <span className="font-mono">/{workspace.slug}/dashboard</span> — le slug n&apos;est pas modifiable
-            après création.
-          </p>
         </form>
         {notice && (
           <Alert variant={notice.type === 'error' ? 'destructive' : 'success'} className="mt-4">
@@ -256,10 +334,12 @@ function RenameCard({ workspace, onSaved }: { workspace: WorkspaceListItem; onSa
 function MembersCard({
   workspace,
   currentUserId,
+  isSuperuser,
   onMembershipChanged,
 }: {
   workspace: WorkspaceListItem;
   currentUserId: string;
+  isSuperuser: boolean;
   onMembershipChanged: () => void;
 }) {
   const [members, setMembers] = useState<WorkspaceMember[] | null>(null);
@@ -366,8 +446,17 @@ function MembersCard({
           {members?.map((member) => {
             const isSelf = member.userId === currentUserId;
             const isOwner = member.role === 'owner';
-            // An owner can't remove themselves - see WorkspacesService.removeMember.
-            const canRemove = !(isSelf && isOwner);
+            const ownerCount = members.filter((candidate) => candidate.role === 'owner').length;
+            // Mirrors WorkspacesService.removeMember: whoever manages the
+            // workspace (owner, or platform admin whatever their membership)
+            // can't remove themselves, and nobody removes the last owner.
+            const blockedReason =
+              isSelf && (isOwner || isSuperuser)
+                ? 'Vous gérez ce workspace : vous ne pouvez pas vous en retirer vous-même.'
+                : isOwner && ownerCount <= 1
+                  ? 'Dernier propriétaire du workspace.'
+                  : null;
+            const canRemove = blockedReason === null;
             return (
               <div
                 key={member.id}
@@ -392,7 +481,8 @@ function MembersCard({
                     variant="ghost"
                     size="icon"
                     disabled={!canRemove}
-                    title="canRemove ? 'Retirer' : 'Un propriétaire ne peut pas se retirer lui-même'"
+                    title={blockedReason ?? `Retirer ${member.user.email}`}
+                    aria-label={blockedReason ?? `Retirer ${member.user.email}`}
                     onClick={() => setMemberToRemove(member)}
                   >
                     <Trash2 className={canRemove ? 'h-4 w-4 text-rose-400' : 'h-4 w-4 text-muted-foreground'} />

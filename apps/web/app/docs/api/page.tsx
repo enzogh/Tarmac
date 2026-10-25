@@ -155,9 +155,10 @@ const MODULES: Module[] = [
       {
         method: 'PATCH',
         path: '/workspaces/:id',
-        body: 'name?, ssoGroupClaim?',
+        body: 'name?, slug?, ssoGroupClaim?',
         description:
-"Renomme le workspace et/ou change le groupe Authentik qui accorde automatiquement l'accès. Propriétaire ou administrateur de plateforme.",
+"Renomme le workspace, change son identifiant d'URL (slug) et/ou le groupe Authentik qui accorde automatiquement l'accès. L'ancien slug reste une redirection et ne peut être repris par aucun autre workspace ; les agents ne sont pas concernés. Propriétaire ou administrateur de plateforme.",
+        isNew: true,
       },
       { method: 'GET', path: '/workspaces/users', description: 'Liste tous les comptes (administrateur de plateforme).' },
       { method: 'GET', path: '/workspaces/:id/members', description: "Liste les membres d'un workspace." },

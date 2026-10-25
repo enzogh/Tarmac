@@ -1,7 +1,7 @@
 'use client';
 
 import { ReactNode, useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, usePathname, useRouter } from 'next/navigation';
 import { ApiError, api, getCurrentWorkspaceId, setCurrentWorkspaceId, WorkspaceListItem } from '../../lib/api';
 import { DashboardLayout } from '../../components/DashboardLayout';
 import { ChartCardSkeleton, Skeleton, StatCardSkeleton } from '../../components/ui/skeleton';
@@ -16,6 +16,7 @@ import { ChartCardSkeleton, Skeleton, StatCardSkeleton } from '../../components/
 export default function WorkspaceLayout({ children }: { children: ReactNode }) {
   const params = useParams<{ workspace: string }>();
   const router = useRouter();
+  const pathname = usePathname();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -28,9 +29,19 @@ export default function WorkspaceLayout({ children }: { children: ReactNode }) {
         .list()
         .then((workspaces: WorkspaceListItem[]) => {
           if (cancelled) return;
-          const match = workspaces.find((w) => w.slug === params.workspace || w.id === params.workspace);
+          const match =
+            workspaces.find((w) => w.slug === params.workspace || w.id === params.workspace) ??
+            workspaces.find((w) => w.previousSlugs?.includes(params.workspace));
           if (!match) {
             router.replace('/workspaces');
+            return;
+          }
+          // An old slug (renamed workspace) or a raw id: same page under the
+          // current slug, so the address bar and every link built from it
+          // stay canonical.
+          if (match.slug !== params.workspace) {
+            const rest = pathname.split('/').slice(2).join('/');
+            router.replace(`/${match.slug}/${rest}${window.location.search}`);
             return;
           }
           if (getCurrentWorkspaceId() !== match.id) {

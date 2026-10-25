@@ -588,6 +588,8 @@ export type WorkspaceDetail = {
   id: string;
   name: string;
   slug: string;
+  // Slugs it had before a rename, still redirecting to `slug`.
+  previousSlugs: string[];
   ssoGroupClaim: string | null;
   isDefault: boolean;
   subnetIndex: number | null;
@@ -1140,7 +1142,7 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
-    update: (id: string, payload: { name?: string; ssoGroupClaim?: string }) =>
+    update: (id: string, payload: { name?: string; slug?: string; ssoGroupClaim?: string }) =>
       request<WorkspaceDetail>(`/api/v1/workspaces/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(payload),
