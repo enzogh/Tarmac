@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ApiKeyOrJwtGuard, ApiKeyResource } from '../auth/api-key.guard';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { UpdateSyncJobDto } from './dto/update-sync-job.dto';
 import { SyncJobsService } from './sync-jobs.service';
@@ -10,29 +10,30 @@ interface AuthenticatedRequest extends Request {
   user?: { userId?: string };
 }
 
+@ApiKeyResource('storage')
 @Controller('sync-jobs')
 export class SyncJobsController {
   constructor(private readonly syncJobsService: SyncJobsService) {}
 
-  @UseGuards(JwtAuthGuard, WorkspaceGuard)
+  @UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
   @Get('runs')
   listAllRuns(@CurrentWorkspace() scope: WorkspaceScope) {
     return this.syncJobsService.listAllRuns(scope);
   }
 
-  @UseGuards(JwtAuthGuard, WorkspaceGuard)
+  @UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
   @Get()
   list(@CurrentWorkspace() scope: WorkspaceScope) {
     return this.syncJobsService.list(scope);
   }
 
-  @UseGuards(JwtAuthGuard, WorkspaceGuard)
+  @UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
   @Post()
   create(@Body() dto: CreateSyncJobDto, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
     return this.syncJobsService.create(dto, scope, req.user?.userId);
   }
 
-  @UseGuards(JwtAuthGuard, WorkspaceGuard)
+  @UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
   @Patch(':id')
   update(
     @Param('id') id: string,
@@ -43,32 +44,32 @@ export class SyncJobsController {
     return this.syncJobsService.update(id, dto, scope, req.user?.userId);
   }
 
-  @UseGuards(JwtAuthGuard, WorkspaceGuard)
+  @UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
   @Delete(':id')
   delete(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
     return this.syncJobsService.delete(id, scope, req.user?.userId);
   }
 
-  @UseGuards(JwtAuthGuard, WorkspaceGuard)
+  @UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
   @Get(':id/runs')
   listRuns(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope) {
     return this.syncJobsService.listRuns(id, scope);
   }
 
-  @UseGuards(JwtAuthGuard, WorkspaceGuard)
+  @UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
   @Post(':id/runs')
   run(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
     return this.syncJobsService.run(id, req.user?.userId, 'manual', undefined, scope);
   }
 
-  @UseGuards(JwtAuthGuard, WorkspaceGuard)
+  @UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
   @Post(':id/trigger-token/rotate')
   rotateTriggerToken(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
     return this.syncJobsService.rotateTriggerToken(id, scope, req.user?.userId);
   }
 
   /**
-   * Unauthenticated route (no JwtAuthGuard/WorkspaceGuard) meant for
+   * Unauthenticated route (no ApiKeyOrJwtGuard/WorkspaceGuard) meant for
    * non-interactive callers such as a qBittorrent "run external program on
    * completion" script. Authenticated instead by the per-job X-Trigger-Token
    * header, same pattern as AgentsController's uninstall route - the token

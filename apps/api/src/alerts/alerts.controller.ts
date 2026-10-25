@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ApiKeyOrJwtGuard, ApiKeyResource } from '../auth/api-key.guard';
 import { AlertsService } from './alerts.service';
 import { BulkDeleteAlertsDto } from './dto/bulk-delete-alerts.dto';
 import { CreateAlertDto } from './dto/create-alert.dto';
@@ -10,7 +10,8 @@ interface AuthenticatedRequest extends Request {
   user?: { userId?: string };
 }
 
-@UseGuards(JwtAuthGuard, WorkspaceGuard)
+@UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
+@ApiKeyResource('alerts')
 @Controller('alerts')
 export class AlertsController {
   constructor(private readonly alertsService: AlertsService) {}

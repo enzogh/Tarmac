@@ -15,6 +15,12 @@ import {
   Terminal,
   Radar,
   Globe,
+  Globe2,
+  Waypoints,
+  KeyRound,
+  Eye,
+  Pencil,
+  Check,
 } from 'lucide-react';
 import { SiteHeader } from '../components/SiteHeader';
 import { Button } from '../components/ui/button';
@@ -24,6 +30,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../co
 import { Reveal } from '../components/motion/reveal';
 import { AnimatedCounter } from '../components/motion/animated-counter';
 import { WorldConnectivityVisual } from '../components/landing/hero-network-visual';
+import { API_KEY_RESOURCES, type AccessLevel } from '../lib/api-key-permissions';
 
 const FEATURES = [
   {
@@ -70,6 +77,24 @@ const FEATURES = [
     description: 'Définissez des seuils (CPU, RAM, espace disque…) et soyez notifié avant que ça ne devienne un problème.',
   },
   {
+    icon: Waypoints,
+    title: 'VPN multi-sorties',
+    description:
+      "Un profil WireGuard par appareil : il entre par le serveur le plus proche et sort sur Internet par n'importe quel autre, trouvé en deux frappes parmi toute la flotte et changé à chaud, sans reconnexion.",
+  },
+  {
+    icon: Globe2,
+    title: 'DNS faisant autorité',
+    description:
+      'Hébergez vos zones sur vos propres serveurs : enregistrements édités en place, GeoDNS, DNSSEC et délégation vérifiée depuis Internet.',
+  },
+  {
+    icon: KeyRound,
+    title: 'API & clés à permissions fines',
+    description:
+      "Tout ce que fait l'interface se pilote par API. Chaque clé reçoit un accès complet, en lecture seule, ou réglé module par module.",
+  },
+  {
     icon: Radar,
     title: 'Supervision en direct',
     description: 'Tableaux de bord temps réel : CPU, RAM, débit réseau et capacité de stockage de toute la flotte.',
@@ -111,6 +136,65 @@ const fadeUp: Variants = {
   }),
 };
 
+// Sample levels for the illustration: a typical "DNS + monitoring" key.
+const PREVIEW_LEVELS: Record<string, AccessLevel> = {
+  nodes: 'read',
+  storage: 'none',
+  network: 'read',
+  dns: 'write',
+  vpn: 'none',
+  alerts: 'write',
+  logs: 'read',
+};
+
+function ApiKeyPreview() {
+  return (
+    <div className="panel overflow-hidden" aria-hidden="true">
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <KeyRound className="h-4 w-4 text-violet-400" />
+          Clé « Automatisation DNS »
+        </span>
+        <span className="rounded-md border border-border bg-surface-2 px-2 py-0.5 text-2xs text-muted-foreground">Personnalisé</span>
+      </div>
+      <ul className="divide-y divide-border">
+        {API_KEY_RESOURCES.map((resource) => {
+          const level = PREVIEW_LEVELS[resource.id] ?? 'none';
+          return (
+            <li key={resource.id} className="flex items-center justify-between gap-3 px-4 py-2">
+              <span className="flex items-center gap-2 text-sm text-foreground">
+                <resource.icon className={level === 'none' ? 'h-4 w-4 text-muted-foreground' : 'h-4 w-4 text-violet-400'} />
+                {resource.label}
+              </span>
+              <span className="inline-flex rounded-md border border-border bg-surface-2 p-0.5 text-2xs">
+                {(['none', 'read', 'write'] as const).map((item) => (
+                  <span
+                    key={item}
+                    className={
+                      item === level
+                        ? 'inline-flex items-center gap-1 rounded bg-violet-500/15 px-2 py-0.5 font-medium text-foreground'
+                        : 'inline-flex items-center gap-1 px-2 py-0.5 text-muted-foreground'
+                    }
+                  >
+                    {item === 'read' && <Eye className="h-3 w-3" />}
+                    {item === 'write' && <Pencil className="h-3 w-3" />}
+                    {item === 'none' ? 'Aucun' : item === 'read' ? 'Lecture' : 'Écriture'}
+                  </span>
+                ))}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      <pre className="overflow-x-auto border-t border-border bg-zinc-950/60 px-4 py-3 font-mono text-2xs leading-relaxed text-zinc-300">
+{`curl -X POST https://tarmac.example/api/v1/dns/zones/<zone>/records \\
+  -H "Authorization: Bearer tmk_••••" \\
+  -d '{"name":"www","type":"A","values":[{"content":"203.0.113.10"}]}'`}
+      </pre>
+    </div>
+  );
+}
+
 export default function LandingPage() {
   return (
     <div className="flex min-h-screen flex-col">
@@ -135,7 +219,7 @@ export default function LandingPage() {
               variants={fadeUp}
             >
               <ShieldCheck className="h-3.5 w-3.5 text-violet-400" />
-              Orchestration de stockage auto-hébergé
+              Orchestration de flotte auto-hébergée
             </motion.div>
 
             <motion.h1
@@ -156,8 +240,8 @@ export default function LandingPage() {
               custom={0.16}
               variants={fadeUp}
             >
-              Tarmac réunit vos serveurs de stockage en une seule flotte : partages NFS, montages, réplication et
-              migrations pilotés depuis un tableau de bord unique — pensé pour les passionnés de self-hosting comme
+              Tarmac réunit vos serveurs en une seule flotte : stockage, réseau privé, DNS et VPN pilotés depuis un
+              tableau de bord unique — et automatisables par API — pensé pour les passionnés de self-hosting comme
               pour les équipes techniques.
             </motion.p>
 
@@ -232,7 +316,7 @@ export default function LandingPage() {
             <Reveal className="mx-auto max-w-2xl text-center">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-400">Fonctionnalités</p>
               <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-                Tout ce qu'il faut pour gérer une flotte de stockage
+                Tout ce qu'il faut pour gérer une flotte de serveurs
               </h2>
             </Reveal>
             <div className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -244,7 +328,7 @@ export default function LandingPage() {
                     transition={{ type: 'spring', stiffness: 300, damping: 22 }}
                   >
                     <Card className="h-full transition-colors hover:border-violet-500/30 hover:shadow-glow">
-                      <CardHeader>
+                      <CardHeader className="flex-col items-start justify-start gap-y-1 border-b-0">
                         <feature.icon className="h-5 w-5 text-violet-400" />
                         <CardTitle className="pt-3 text-base">{feature.title}</CardTitle>
                         <CardDescription>{feature.description}</CardDescription>
@@ -254,6 +338,43 @@ export default function LandingPage() {
                 </Reveal>
               ))}
             </div>
+          </div>
+        </section>
+
+        {/* API */}
+        <section className="border-t border-white/[0.06] py-20">
+          <div className="mx-auto grid max-w-6xl items-center gap-10 px-6 lg:grid-cols-2">
+            <Reveal>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-400">API & automatisation</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+                Automatisez tout, sans donner plus que nécessaire
+              </h2>
+              <p className="mt-3 text-sm text-muted-foreground sm:text-base">
+                Nœuds, stockage, réseau, DNS, VPN, alertes et journal : chaque module de l&apos;interface a son API. Les
+                clés se règlent comme un jeton GitHub, et se modifient sans casser vos intégrations.
+              </p>
+              <ul className="mt-6 space-y-2.5 text-sm text-muted-foreground">
+                {[
+                  'Accès complet, lecture seule, ou permissions module par module',
+                  'Permissions et expiration modifiables à tout moment, sans changer le secret',
+                  'Chaque action faite avec une clé est tracée dans le journal',
+                ].map((item) => (
+                  <li key={item} className="flex items-start gap-2">
+                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-violet-400" />
+                    {item}
+                  </li>
+                ))}
+              </ul>
+              <Button variant="outline" className="mt-7" asChild>
+                <Link href="/docs/api-keys">
+                  Découvrir les clés API
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </Button>
+            </Reveal>
+            <Reveal index={1}>
+              <ApiKeyPreview />
+            </Reveal>
           </div>
         </section>
 

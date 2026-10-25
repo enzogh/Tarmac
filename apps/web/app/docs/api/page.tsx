@@ -27,6 +27,9 @@ import { AnimatedGradientText } from '../../../components/ui/animated-gradient-t
 import { Badge } from '../../../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../../components/ui/card';
 import { cn } from '../../../lib/utils';
+import type { ApiKeyResource, ApiKeyScope } from '../../../lib/api';
+import { API_KEY_RESOURCES, RESOURCE_BY_ID } from '../../../lib/api-key-permissions';
+import { ApiPermissionsTable, moduleAnchor } from '../../../components/docs/ApiPermissionsTable';
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
@@ -34,8 +37,9 @@ type Endpoint = {
   method: Method;
   path: string;
   auth?: 'public' | 'token';
-  // Also reachable with a workspace API key holding this scope.
-  apiScope?: 'vpn:read' | 'vpn:write';
+  // Scope an API key needs, when it differs from the module's default
+  // (GET = read, anything else = write) - e.g. a POST that only reads.
+  apiScope?: ApiKeyScope;
   body?: string;
   description: string;
   isNew?: boolean;
@@ -52,15 +56,19 @@ type Module = {
   endpoints: Endpoint[];
 };
 
-// Anchor id for the summary links above — accent-insensitive so "Nœuds"
-// doesn't end up as a percent-encoded href.
-function moduleAnchor(name: string) {
-  return name
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
+// Which key permission opens each module, straight from the catalogue the
+// key editor uses - the two can't drift apart.
+const MODULE_RESOURCE: Record<string, ApiKeyResource> = Object.fromEntries(
+  API_KEY_RESOURCES.flatMap((resource) => resource.modules.map((module) => [module, resource.id])),
+);
+
+// null = session only (or its own dedicated auth): no API key reaches it.
+function endpointScope(module: Module, endpoint: Endpoint): ApiKeyScope | null {
+  if (endpoint.auth) return null;
+  if (endpoint.apiScope) return endpoint.apiScope;
+  const resource = MODULE_RESOURCE[module.name];
+  if (!resource) return null;
+  return `${resource}:${endpoint.method === 'GET' ? 'read' : 'write'}`;
 }
 
 const METHOD_VARIANT: Record<Method, 'info' | 'success' | 'warning' | 'destructive'> = {
@@ -221,7 +229,7 @@ const MODULES: Module[] = [
         method: 'POST',
         path: '/agents/:nodeId/update',
         body: 'ref?, repoUrl?, serviceName?',
-        description: "Recompile l'agent depuis le dépôt et redémarre le service sur le nœud (utilisé aussi par « Mettre à jour tous les agents », qui appelle cette route en parallèle sur chaque nœud en ligne).",
+        description: "Recompile l'agent depuis le dépôt et redémarre le service sur le nœud (utilisé aussi par « Mettre à jour tous les agents », qui appelle cette route en parallèle sur chaque nœud en ligne). Avec une clé API, seul ref est accepté : le dépôt configuré ne peut pas être remplacé.",
       },
       {
         method: 'POST',
@@ -286,7 +294,7 @@ const MODULES: Module[] = [
       { method: 'GET', path: '/migrations', description: 'Liste les migrations, y compris celles suggérées automatiquement (préfixe [Auto]) suite à un disque SMART critique.' },
       { method: 'GET', path: '/migrations/directories?nodeId=&basePath=', description: "Liste les dossiers d'un nœud (via l'agent)." },
       { method: 'GET', path: '/migrations/directories/scan?nodeId=&basePath=&maxEntries=', description: 'Scanne les dossiers avec une limite de résultats.' },
-      { method: 'POST', path: '/migrations/directories/remote', body: 'nodeId, host, username, password?, basePath?, port?, endpointType?', description: 'Liste les dossiers sur un endpoint distant (seedbox / Storage Box) via un nœud relais.' },
+      { method: 'POST', path: '/migrations/directories/remote', apiScope: 'storage:read', body: 'nodeId, host, username, password?, basePath?, port?, endpointType?', description: 'Liste les dossiers sur un endpoint distant (seedbox / Storage Box) via un nœud relais.' },
       { method: 'POST', path: '/migrations', body: 'name, source*, target*, sourceKind?, targetKind?, ...', description: 'Crée une migration.' },
       { method: 'PATCH', path: '/migrations/:id', body: 'name?, notes?, status?, progress?', description: 'Met à jour une migration.' },
       { method: 'POST', path: '/migrations/:id/start', description: 'Démarre le transfert. Les migrations suggérées automatiquement restent en attente tant que ce n’est pas appelé — rien ne se lance tout seul.' },
@@ -396,7 +404,7 @@ const MODULES: Module[] = [
         path: '/dns/zones/:id/delegation',
         description: "Serveurs de noms à déclarer (ns1/ns2…), leurs glue records, et le dernier résultat de vérification de la délégation.",
       },
-      { method: 'POST', path: '/dns/zones/:id/delegation/check', description: 'Relance immédiatement la vérification de la délégation depuis Internet.' },
+      { method: 'POST', path: '/dns/zones/:id/delegation/check', apiScope: 'dns:read', description: 'Relance immédiatement la vérification de la délégation depuis Internet.' },
       {
         method: 'POST',
         path: '/dns/zones/:id/records',
@@ -426,7 +434,7 @@ const MODULES: Module[] = [
     icon: ShieldCheck,
     isNew: true,
     description:
-      "Profils WireGuard : un appareil se connecte par un nœud d'entrée et sort sur Internet par le nœud de sortie choisi, modifiable à chaud. Accessible aussi avec une clé API.",
+      "Profils WireGuard : un appareil se connecte par un nœud d'entrée et sort sur Internet par le nœud de sortie choisi, modifiable à chaud.",
     endpoints: [
       {
         method: 'GET',
@@ -494,15 +502,28 @@ const MODULES: Module[] = [
     icon: KeyRound,
     isNew: true,
     description:
-      "Clés d'accès programmatique d'un workspace, gérées par ses gérants (propriétaires ou administrateurs de plateforme) avec une session uniquement.",
+      "Clés d'accès programmatique d'un workspace, gérées par ses gérants (propriétaires ou administrateurs de plateforme) avec une session uniquement : une clé ne peut jamais créer ni élargir une clé.",
     endpoints: [
       { method: 'GET', path: '/api-keys', description: 'Clés du workspace (préfixe, permissions, dernière utilisation) — jamais le secret.' },
-      { method: 'GET', path: '/api-keys/scopes', description: 'Permissions disponibles (vpn:read, vpn:write).' },
+      {
+        method: 'GET',
+        path: '/api-keys/scopes',
+        description: 'Permissions disponibles : <module>:read et <module>:write pour nodes, storage, network, dns, vpn, alerts, et logs:read.',
+        isNew: true,
+      },
       {
         method: 'POST',
         path: '/api-keys',
         body: 'name, scopes[], expiresAt?',
         description: 'Crée une clé ; le jeton complet (tmk_…) est renvoyé une seule fois.',
+      },
+      {
+        method: 'PATCH',
+        path: '/api-keys/:id',
+        body: 'name?, scopes[]?, expiresAt? (null = jamais)',
+        description:
+          "Modifie le nom, les permissions ou l'expiration sans changer le secret : les intégrations continuent de fonctionner, et une permission retirée est refusée dès l'appel suivant.",
+        isNew: true,
       },
       { method: 'POST', path: '/api-keys/:id/revoke', description: 'Révoque la clé immédiatement.' },
       { method: 'DELETE', path: '/api-keys/:id', description: 'Supprime la clé.' },
@@ -651,8 +672,9 @@ export default function ApiReferencePage() {
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
               Pour l'automatisation : <code>Authorization: Bearer tmk_…</code>. Une clé est liée à un seul workspace
-              (pas besoin de <code>X-Workspace-Id</code>) et n'ouvre que les routes marquées « Clé API » de sa
-              permission. Créées par les gérants du workspace depuis Administration → Clés API.
+              (pas besoin de <code>X-Workspace-Id</code>) et ouvre chaque route marquée « Clé API » dont elle a la
+              permission — voir le tableau des permissions ci-dessous. Créées et modifiables par les gérants du
+              workspace depuis Administration → Clés API.
             </p>
           </CardContent>
         </Card>
@@ -683,6 +705,11 @@ export default function ApiReferencePage() {
         </div>
       </section>
 
+      <section id="permissions-cles-api" className="scroll-mt-24 space-y-3">
+        <SectionLabel>Permissions des clés API</SectionLabel>
+        <ApiPermissionsTable linkModules />
+      </section>
+
       <Callout>
         Deux canaux temps réel doublent ces routes REST. Les agents installés sur chaque nœud utilisent{' '}
         <code>/agents-ws</code> (authentifié par un jeton d'agent) pour remonter l'état matériel et recevoir des
@@ -710,13 +737,27 @@ export default function ApiReferencePage() {
                       Nouveau
                     </span>
                   )}
+                  {MODULE_RESOURCE[module.name] ? (
+                    <a href="#permissions-cles-api">
+                      <Badge variant="info" className="gap-1 px-1.5 py-0 text-[10px]">
+                        <KeyRound className="h-3 w-3" />
+                        {RESOURCE_BY_ID[MODULE_RESOURCE[module.name]].label}
+                      </Badge>
+                    </a>
+                  ) : (
+                    <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-muted-foreground">
+                      Session uniquement
+                    </Badge>
+                  )}
                 </div>
                 <code className="text-xs text-muted-foreground">{module.base}</code>
               </div>
               <CardDescription className="pl-12">{module.description}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-1.5">
-              {module.endpoints.map((endpoint) => (
+              {module.endpoints.map((endpoint) => {
+                const scope = endpointScope(module, endpoint);
+                return (
                 <div
                   key={`${endpoint.method}-${endpoint.path}`}
                   className="flex flex-col gap-1.5 rounded-xl border border-border bg-surface-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-4"
@@ -744,9 +785,9 @@ export default function ApiReferencePage() {
                           Jeton dédié
                         </Badge>
                       )}
-                      {endpoint.apiScope && (
+                      {scope && (
                         <Badge variant="info" className="px-1.5 py-0 font-mono text-[10px]">
-                          Clé API · {endpoint.apiScope}
+                          Clé API · {scope}
                         </Badge>
                       )}
                     </div>
@@ -759,7 +800,8 @@ export default function ApiReferencePage() {
                     )}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </CardContent>
           </Card>
         ))}

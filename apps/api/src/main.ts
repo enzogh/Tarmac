@@ -4,6 +4,7 @@ import { NestFactory } from '@nestjs/core';
 import { PrismaClient } from '@prisma/client';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
+import { requestContext } from './common/request-context';
 import { DEFAULT_WORKSPACE_ID } from './workspaces/default-workspace';
 
 const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:3000', 'https://tarmac.casterot.com'];
@@ -41,6 +42,7 @@ async function bootstrap() {
   const allowedOrigins = (process.env.CORS_ORIGINS?.split(',').map((o) => o.trim()).filter(Boolean)) ?? DEFAULT_ALLOWED_ORIGINS;
   app.enableCors({ origin: allowedOrigins, credentials: true });
   app.use(cookieParser());
+  app.use((_req: unknown, _res: unknown, next: () => void) => requestContext.run(next));
   app.setGlobalPrefix('api/v1');
   app.useGlobalPipes(
     new ValidationPipe({

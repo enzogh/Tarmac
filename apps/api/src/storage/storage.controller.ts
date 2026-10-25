@@ -1,9 +1,10 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ApiKeyOrJwtGuard, ApiKeyResource } from '../auth/api-key.guard';
 import { StorageService } from './storage.service';
 
-@UseGuards(JwtAuthGuard, WorkspaceGuard)
+@UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
+@ApiKeyResource('storage')
 @Controller('storage')
 export class StorageController {
   constructor(private readonly storageService: StorageService) {}

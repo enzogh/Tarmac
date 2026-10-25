@@ -50,12 +50,18 @@ function resolveSubnetCidr(workspace: SubnetWorkspace): string {
 const CONNECTION_OFFLINE_TIMEOUT_MS = 60_000;
 const CONNECTION_DEGRADED_TIMEOUT_MS = 20_000;
 const CONNECTION_ALERT_COOLDOWN_MS = 10 * 60_000;
+// A link has to stay offline this long before it raises an alert: an agent
+// reconnecting (restart, update, brief network blip) comes back well within it.
+const CONNECTION_OFFLINE_ALERT_DELAY_MS = 90_000;
+// AgentsService marks every node offline when the API boots, and agents only
+// flip back online on their first heartbeat after reconnecting (with backoff).
+// Without this, every deploy alerted on each link of the slowest agents.
+const CONNECTION_ALERT_STARTUP_GRACE_MS = 3 * 60_000;
 // Heartbeats/refreshes land every 5s per pair, but the history endpoint only needs a
 // steady-ish cadence to compute uptime% and draw a trend line — sampling every heartbeat
 // makes VlanConnectionSample grow O(pairs × 1/5s), which is O(N²) in fleet size. Every real
 // status transition is still recorded immediately regardless of this throttle.
 const CONNECTION_SAMPLE_THROTTLE_MS = 30_000;
-const CONNECTION_STATUS_RANK: Record<string, number> = { healthy: 0, unknown: 0, degraded: 1, offline: 2 };
 const CONNECTION_SAMPLE_RETENTION_DAYS = 30;
 const HISTORY_RANGE_MS: Record<string, number> = {
   '1h': 60 * 60 * 1000,
@@ -68,6 +74,9 @@ export class VlanService implements OnModuleInit {
   private readonly logger = new Logger(VlanService.name);
   private readonly connectionAlertCooldownAt = new Map<string, number>();
   private readonly connectionSampleWrittenAt = new Map<string, number>();
+  // Links currently offline but not yet alerted on, keyed source:target.
+  private readonly pendingOfflineAlerts = new Map<string, { vlanId: string; sourceNodeId: string; targetNodeId: string; since: number }>();
+  private readonly bootedAt = Date.now();
 
   constructor(private prisma: PrismaService) {}
 
@@ -108,6 +117,7 @@ export class VlanService implements OnModuleInit {
         }
       }),
     );
+    await this.flushPendingOfflineAlerts();
   }
 
   // One Vlan per workspace - `workspace.slug` doubles as the Vlan's unique
@@ -326,10 +336,10 @@ export class VlanService implements OnModuleInit {
    * Single write path for both VlanConnection update sites (real link-metric
    * ingestion and the heartbeat-timeout refresh loop): records a history
    * sample (throttled to CONNECTION_SAMPLE_THROTTLE_MS per pair, except every
-   * real status transition is always recorded), and raises a panel alert only
-   * on a genuine degrading transition to offline (never on recovery — matches
-   * the failure-only convention used by the other alert producers in this
-   * codebase).
+   * real status transition is always recorded), and queues a panel alert on a
+   * transition to offline, raised only if the link stays down (never on
+   * recovery — matches the failure-only convention used by the other alert
+   * producers in this codebase).
    */
   async recordConnectionTransition(
     vlanId: string,
@@ -361,14 +371,53 @@ export class VlanService implements OnModuleInit {
       });
     }
 
+    const directionKey = `${sourceNodeId}:${targetNodeId}`;
+    if (next.status !== 'offline') {
+      this.pendingOfflineAlerts.delete(directionKey);
+      return;
+    }
     if (!previousStatus || previousStatus === next.status) return;
-    const isDegrading = (CONNECTION_STATUS_RANK[next.status] ?? 0) > (CONNECTION_STATUS_RANK[previousStatus] ?? 0);
-    if (!isDegrading) return;
     // Only alert on a link actually going down — "degraded" transitions are too noisy
     // (flappy latency/handshake blips) and are tracked in VlanConnectionSample history instead.
-    if (next.status !== 'offline') return;
+    // The alert itself waits until the link has stayed down (flushPendingOfflineAlerts).
+    if (!this.pendingOfflineAlerts.has(directionKey)) {
+      this.pendingOfflineAlerts.set(directionKey, { vlanId, sourceNodeId, targetNodeId, since: Date.now() });
+    }
+  }
 
-    const cooldownKey = `${pairKey}:${next.status}`;
+  /**
+   * Raises the alert for links that went offline and stayed offline past
+   * CONNECTION_OFFLINE_ALERT_DELAY_MS, once the startup grace is over. A link
+   * that recovers in between is dropped from the map by
+   * recordConnectionTransition and never alerts.
+   */
+  private async flushPendingOfflineAlerts(): Promise<void> {
+    const now = Date.now();
+    if (now - this.bootedAt < CONNECTION_ALERT_STARTUP_GRACE_MS) return;
+    for (const [directionKey, pending] of this.pendingOfflineAlerts) {
+      if (now - pending.since < CONNECTION_OFFLINE_ALERT_DELAY_MS) continue;
+      this.pendingOfflineAlerts.delete(directionKey);
+      try {
+        await this.raiseOfflineAlert(pending.vlanId, pending.sourceNodeId, pending.targetNodeId);
+      } catch (error) {
+        this.logger.warn(
+          `Failed to raise VLAN offline alert for ${directionKey}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+
+  private async raiseOfflineAlert(vlanId: string, sourceNodeId: string, targetNodeId: string): Promise<void> {
+    // Re-read the link: it may have recovered through a path that skipped the
+    // transition hook (e.g. the row was rewritten by a membership change).
+    const connection = await this.prisma.vlanConnection.findUnique({
+      where: { vlanId_sourceNodeId_targetNodeId: { vlanId, sourceNodeId, targetNodeId } },
+      select: { status: true },
+    });
+    if (connection?.status !== 'offline') return;
+
+    const pairKey = [sourceNodeId, targetNodeId].sort().join('__');
+    const cooldownKey = `${pairKey}:offline`;
     const lastAlertAt = this.connectionAlertCooldownAt.get(cooldownKey) ?? 0;
     if (Date.now() - lastAlertAt < CONNECTION_ALERT_COOLDOWN_MS) return;
     this.connectionAlertCooldownAt.set(cooldownKey, Date.now());
@@ -385,14 +434,13 @@ export class VlanService implements OnModuleInit {
 
     const sourceLabel = `${source?.name ?? sourceNodeId} (${source?.vlanIp ?? '?'})`;
     const targetLabel = `${target?.name ?? targetNodeId} (${target?.vlanIp ?? '?'})`;
-    const statusLabel = next.status === 'offline' ? 'hors ligne' : 'dégradé';
 
     await this.prisma.alert.create({
       data: {
         workspaceId: DEFAULT_WORKSPACE_ID,
         nodeId: sourceNodeId,
-        severity: next.status === 'offline' ? 'high' : 'medium',
-        message: `Lien VLAN ${statusLabel} : ${sourceLabel} ↔ ${targetLabel}`,
+        severity: 'high',
+        message: `Lien VLAN hors ligne : ${sourceLabel} ↔ ${targetLabel}`,
       },
     });
   }

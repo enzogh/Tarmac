@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { requestContext } from '../common/request-context';
 import { LiveWsServer } from '../live/live.ws';
 import { WorkspaceScope } from '../auth/workspace.guard';
 import { PrismaService } from '../prisma/prisma.service';
@@ -81,7 +82,22 @@ export class AuditLogsService {
     resourceId?: string;
     details?: Prisma.InputJsonValue;
   }) {
-    const entry = await this.prisma.auditLog.create({ data: input });
+    // Changes made with a workspace API key have no user behind them: the
+    // key is recorded instead, so the journal still says who did what.
+    const apiKey = requestContext.get()?.apiKey;
+    const data =
+      apiKey && !input.actorUserId
+        ? {
+            ...input,
+            details:
+              input.details && typeof input.details === 'object' && !Array.isArray(input.details)
+                ? { ...(input.details as Prisma.InputJsonObject), apiKey }
+                : input.details === undefined
+                  ? { apiKey }
+                  : { value: input.details, apiKey },
+          }
+        : input;
+    const entry = await this.prisma.auditLog.create({ data });
     this.live.broadcast('audit.new', entry, input.workspaceId);
     return entry;
   }

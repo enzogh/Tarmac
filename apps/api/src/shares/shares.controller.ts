@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { Request } from 'express';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ApiKeyOrJwtGuard, ApiKeyResource } from '../auth/api-key.guard';
 import { CreateShareDto } from './dto/create-share.dto';
 import { UpdateShareClientDto } from './dto/update-share-client.dto';
 import { UpdateShareDto } from './dto/update-share.dto';
@@ -22,7 +22,8 @@ interface AuthenticatedRequest extends Request {
   user?: { userId?: string };
 }
 
-@UseGuards(JwtAuthGuard, WorkspaceGuard)
+@UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
+@ApiKeyResource('storage')
 @Controller('shares')
 export class SharesController {
   constructor(private readonly sharesService: SharesService) {}

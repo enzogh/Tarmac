@@ -539,7 +539,9 @@ export type VpnStatsLiveEvent = {
   peers: Array<{ profileId: string; lastHandshakeAt: string | null; endpoint: string | null; rxBytes: number; txBytes: number }>;
 };
 
-export type ApiKeyScope = 'vpn:read' | 'vpn:write';
+// Mirrors API_KEY_RESOURCES in apps/api/src/api-keys/api-key-token.ts.
+export type ApiKeyResource = 'nodes' | 'storage' | 'network' | 'dns' | 'vpn' | 'alerts' | 'logs';
+export type ApiKeyScope = `${ApiKeyResource}:${'read' | 'write'}`;
 
 export type ApiKeyItem = {
   id: string;
@@ -1125,6 +1127,8 @@ export const api = {
     list: () => request<ApiKeyItem[]>('/api/v1/api-keys'),
     create: (payload: { name: string; scopes: ApiKeyScope[]; expiresAt?: string }) =>
       request<ApiKeyItem & { token: string }>('/api/v1/api-keys', { method: 'POST', body: JSON.stringify(payload) }),
+    update: (id: string, payload: { name?: string; scopes?: ApiKeyScope[]; expiresAt?: string | null }) =>
+      request<ApiKeyItem>(`/api/v1/api-keys/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
     revoke: (id: string) => request<ApiKeyItem>(`/api/v1/api-keys/${id}/revoke`, { method: 'POST' }),
     remove: (id: string) => request<{ success: boolean }>(`/api/v1/api-keys/${id}`, { method: 'DELETE' }),
   },

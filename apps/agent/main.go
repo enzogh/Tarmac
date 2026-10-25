@@ -1178,11 +1178,21 @@ func collectDisks() []diskState {
 // buildStateReport takes the disks the caller already collected for the
 // heartbeat in the same cycle instead of walking /proc/mounts and re-running
 // statfs on every mount a second time.
+//
+// Both slices are forced non-nil: encoding/json writes a nil slice as `null`,
+// which control planes before the null-tolerant onStateReport rejected.
 func buildStateReport(nodeID string, disks []diskState) stateReport {
+	if disks == nil {
+		disks = []diskState{}
+	}
+	smart := collectSmartReports()
+	if smart == nil {
+		smart = []smartState{}
+	}
 	return stateReport{
 		NodeID:       nodeID,
 		Disks:        disks,
-		SmartReports: collectSmartReports(),
+		SmartReports: smart,
 	}
 }
 

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ReactNode } from 'react';
-import { BookOpen, Boxes, Code2, Globe, LayoutGrid } from 'lucide-react';
+import { BookOpen, Boxes, Code2, Globe, KeyRound, LayoutGrid } from 'lucide-react';
 import { SiteHeader } from '../../components/SiteHeader';
 import { DiagramDefs } from '../../components/docs/Diagram';
 import { cn } from '../../lib/utils';
@@ -13,7 +13,8 @@ const DOCS_NAV: { href: string; label: string; icon: typeof BookOpen; exact?: bo
   { href: '/docs/concepts', label: 'Concepts clés', icon: Boxes },
   { href: '/docs/workspaces', label: 'Workspaces & accès', icon: LayoutGrid, badge: 'Nouveau' },
   { href: '/docs/dns', label: 'DNS', icon: Globe, badge: 'Nouveau' },
-  { href: '/docs/api', label: 'Référence API', icon: Code2 },
+  { href: '/docs/api-keys', label: 'Clés API', icon: KeyRound, badge: 'Nouveau' },
+  { href: '/docs/api', label: 'Référence API', icon: Code2, exact: true },
 ];
 
 export default function DocsLayout({ children }: { children: ReactNode }) {

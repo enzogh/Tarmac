@@ -1,11 +1,26 @@
 import * as crypto from 'crypto';
 
-// Every scope an API key can be granted. A key only ever reaches handlers
-// that explicitly declare one of these with @RequireApiScope - anything else
-// stays session-only, so adding a scope here is what opens a new surface to
-// keys, never the other way round.
-export const API_KEY_SCOPES = ['vpn:read', 'vpn:write'] as const;
-export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
+// The areas a key can be granted, each as `<resource>:read` and/or
+// `<resource>:write` (write implies read, see ApiKeyOrJwtGuard). A key only
+// ever reaches controllers tagged with @ApiKeyResource or handlers declaring
+// @RequireApiScope - everything else (accounts, workspaces, members, the keys
+// themselves) stays session-only, so a key can never widen its own access.
+export const API_KEY_RESOURCES = ['nodes', 'storage', 'network', 'dns', 'vpn', 'alerts', 'logs'] as const;
+export type ApiKeyResource = (typeof API_KEY_RESOURCES)[number];
+// Journals are history: there is nothing to write.
+const READ_ONLY_RESOURCES: ReadonlySet<ApiKeyResource> = new Set(['logs']);
+
+export const API_KEY_SCOPES = API_KEY_RESOURCES.flatMap((resource) =>
+  READ_ONLY_RESOURCES.has(resource) ? [`${resource}:read`] : [`${resource}:read`, `${resource}:write`],
+) as ApiKeyScope[];
+export type ApiKeyScope = `${ApiKeyResource}:${'read' | 'write'}`;
+
+/** Whether `granted` satisfies `required` - write access includes read. */
+export function scopeGrants(granted: readonly string[], required: ApiKeyScope): boolean {
+  if (granted.includes(required)) return true;
+  const [resource, access] = required.split(':');
+  return access === 'read' && granted.includes(`${resource}:write`);
+}
 
 // tmk_<prefix>_<secret>. The prefix is public (stored in clear, shown in the
 // UI so a key can be recognised in logs); only sha256(secret) is stored.

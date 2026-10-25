@@ -1,9 +1,10 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ApiKeyOrJwtGuard, ApiKeyResource } from '../auth/api-key.guard';
 import { TopologyService } from './topology.service';
 
-@UseGuards(JwtAuthGuard, WorkspaceGuard)
+@UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
+@ApiKeyResource('nodes')
 @Controller('topology')
 export class TopologyController {
   constructor(private readonly topologyService: TopologyService) {}

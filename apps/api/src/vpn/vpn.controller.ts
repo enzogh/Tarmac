@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { Request, Response } from 'express';
-import { ApiKeyOrJwtGuard, RequireApiScope } from '../auth/api-key.guard';
+import { ApiKeyOrJwtGuard, ApiKeyResource, RequireApiScope } from '../auth/api-key.guard';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import { CreateVpnProfileDto } from './dto/create-vpn-profile.dto';
 import { RotateVpnKeysDto } from './dto/rotate-keys.dto';
@@ -16,6 +16,7 @@ interface AuthenticatedRequest extends Request {
 // Bearer tmk_...). Config downloads carry the client's private key, so they
 // need vpn:write like every other call that hands out credentials.
 @UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
+@ApiKeyResource('vpn')
 @Controller('vpn')
 export class VpnController {
   constructor(private readonly vpnService: VpnService) {}

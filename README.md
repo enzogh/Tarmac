@@ -61,6 +61,7 @@ et les vues topologiques.
 - Métriques par lien : débit, âge du dernier handshake, latence, perte de paquets
 - Tests à la demande, `ping` comme `traceroute`, exécutés en direct sur l'agent
 - Historique des liens sur 1 h / 24 h / 7 j avec pourcentage de disponibilité, purgé après 30 jours
+- Alerte « Lien VLAN hors ligne » seulement si le lien reste coupé 90 s, avec 3 min de grâce après chaque démarrage de l'API : un redéploiement ou une reconnexion d'agent n'en déclenche plus
 - Graphe topologique et carte du monde, positions de nœuds déplaçables et mémorisées
 
 **DNS**
@@ -68,6 +69,7 @@ et les vues topologiques.
 - DNSSEC, enregistrements géolocalisés via une base GeoIP mmdb construite et rafraîchie par l'agent
 - Résolution interne `*.tarmac.local` avec repli sur `/etc/hosts`
 - Détection et résolution assistée des conflits sur le port 53 (systemd-resolved, dnsmasq…)
+- Interface par domaine : statut unique par zone, enregistrements édités en place dans le tableau avec validation par type, onglets Nameservers / DNSSEC / Journal, état porté par l'URL
 
 **Réplication**
 - Jobs de synchronisation `rsync` avec remontée de progression en pourcentage et arrêt à la demande
@@ -79,20 +81,24 @@ et les vues topologiques.
 - Alertes par email via le relais SMTP interne, regroupées en un seul message quand elles arrivent ensemble
 - Canaux de notification configurables et testables
 - Santé SMART par disque, avec les disques virtualisés sans données exploitables classés « inconnu » plutôt que « critique »
-- Journaux d'agent et journal d'audit
+- Journaux d'agent et journal d'audit, les actions faites avec une clé API y étant attribuées à la clé
+- Rapports d'agent tolérants aux listes vides (`null` côté Go) : un agent fraîchement redémarré ne lève plus d'alerte « Invalid agent WS payload », et une telle alerte est limitée à une par nœud toutes les 30 min
 
 **Accès distant (VPN WireGuard)**
 - Profils par appareil : connexion à un nœud d'entrée (UDP `51821`, `VPN_LISTEN_PORT` côté API), configuration en fichier ou QR code
 - Mode « tout le trafic » avec sortie Internet par n'importe quel nœud, basculable en un clic sans reconnexion de l'appareil ; mode « réseau privé uniquement »
 - Entrée → sortie relayée en IPIP au-dessus du maillage, une règle de routage par client et NAT sur la sortie, réappliqués de façon idempotente par l'agent (`conntrack` coupe les flux ouverts lors d'une bascule)
 - Sessions et débit en temps réel, expiration automatique, régénération des clés, clé publique fournie par l'appareil en option
-- Création et bascule aussi par API, avec des clés API par workspace (`vpn:read` / `vpn:write`)
+- Choix de l'entrée et de la sortie par recherche (nom, IP, ville) et filtre par pays, pensé pour des flottes de dizaines de serveurs
+- Création et bascule aussi par API, avec une clé API portant la permission `vpn:read` / `vpn:write`
 - L'agent des nœuds d'entrée et de sortie doit être à jour ; si l'hébergeur filtre en amont, ouvrir UDP `51821` sur les nœuds d'entrée
 
 **Organisation**
 - Workspaces multiples avec appartenances et rôles
 - SSO OIDC (Authentik) : les groupes portés par les claims décident de l'accès aux workspaces
 - JWT avec rotation de secret sans couper les sessions en cours
+- Clés API par workspace couvrant toute l'API documentée, avec permissions par module (aucun / lecture / écriture), raccourcis « accès complet » et « lecture seule », et modification du nom, des permissions et de l'expiration sans changer le secret
+- Recherche globale ⌘K / Ctrl+K sur les pages, nœuds, montages et pools, navigable au clavier
 
 ## Architecture
 
@@ -203,7 +209,7 @@ go run .
 ### Ce qu'il remonte
 
 - `agent.heartbeat` toutes les 5 s : CPU, RAM, disque, réseau, I/O, métriques de liens overlay
-- `agent.state_report` toutes les 20 s : volumes réels (capacité et occupation) et rapports SMART
+- `agent.state_report` toutes les 20 s : volumes réels (capacité et occupation) et rapports SMART (listes toujours envoyées non nulles ; le premier rapport après démarrage n'a pas encore de SMART)
 - `agent.log` : ses propres journaux, visibles dans l'interface sans ouvrir de SSH
 - `command_progress` / `command_result` pour chaque commande reçue
 
@@ -254,10 +260,15 @@ l'application elle-même sur `/docs/api`.
 | Accès distant | `/vpn/gateways`, `/vpn/profiles`, `/vpn/profiles/:id/exit`, `/vpn/profiles/:id/rotate-keys`, `/vpn/profiles/:id/config(.conf)` |
 | Exploitation | `/audit-logs`, `/agent-logs`, `/workspaces`, `/api-keys` |
 
-Les routes `/vpn/*` acceptent aussi une **clé API** de workspace
-(`Authorization: Bearer tmk_…`) portant la permission `vpn:read` ou `vpn:write` ;
-une clé n'ouvre aucune autre route. Les clés se gèrent dans Administration →
-Clés API, par les gérants du workspace (rôle `owner` ou admin plateforme).
+Toutes ces routes, sauf Auth, `/workspaces` et `/api-keys`, acceptent aussi une
+**clé API** de workspace (`Authorization: Bearer tmk_…`). Ses permissions se
+règlent par module — `nodes`, `storage`, `network`, `dns`, `vpn`, `alerts` en
+`:read` / `:write`, et `logs:read` — avec des raccourcis « accès complet » et
+« lecture seule » ; une route GET demande `:read`, les autres `:write` (qui
+inclut la lecture). Les clés se gèrent et se modifient (nom, permissions,
+expiration, sans changer le secret) dans Administration → Clés API, par les
+gérants du workspace (rôle `owner` ou admin plateforme). Détails dans
+`/docs/api-keys`.
 
 ## Déploiement Docker
 

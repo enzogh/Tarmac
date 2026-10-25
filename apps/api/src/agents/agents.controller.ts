@@ -11,7 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ApiKeyOrJwtGuard, RequireApiScope } from '../auth/api-key.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { AgentTokenService } from './agent-token.service';
 import { AgentsService } from './agents.service';
@@ -29,7 +29,8 @@ export class AgentsController {
     private readonly prisma: PrismaService,
   ) {}
 
-  @UseGuards(JwtAuthGuard, WorkspaceGuard)
+  @UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
+  @RequireApiScope('nodes:write')
   @Post(':nodeId/update')
   async updateAgent(
     @Param('nodeId') nodeId: string,
@@ -50,6 +51,11 @@ export class AgentsController {
     }
     if (requestedService !== undefined && requestedService.length === 0) {
       throw new BadRequestException('serviceName cannot be empty');
+    }
+    // Building from another repository runs arbitrary code as root on the
+    // node: a leaked automation key must not be enough for that.
+    if (scope.apiKey && (requestedRepo !== undefined || requestedService !== undefined)) {
+      throw new ForbiddenException('API keys can only update the agent from its configured repository (ref only)');
     }
 
     return this.agentsService.triggerAgentUpdate(nodeId, {

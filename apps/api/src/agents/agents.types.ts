@@ -38,7 +38,8 @@ export interface HeartbeatPayload {
 
 export interface StateReportPayload {
   nodeId: string;
-  disks: Array<{
+  // Nullable: Go sends `null` for a nil slice (see onStateReport).
+  disks: null | Array<{
     name: string;
     mountPath: string;
     type: 'hdd' | 'ssd' | 'nvme';
@@ -47,7 +48,7 @@ export interface StateReportPayload {
     usedGb: number;
     physicalDisks?: string[];
   }>;
-  smartReports: Array<{
+  smartReports: null | Array<{
     diskName: string;
     temperatureC: number;
     reallocatedSectors: number;

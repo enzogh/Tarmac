@@ -267,7 +267,9 @@ function ActionsTab() {
                           <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                             {formatDateTime(entry.createdAt)}
                           </TableCell>
-                          <TableCell className="font-mono text-xs">{entry.actorUserId ?? 'système'}</TableCell>
+                          <TableCell className="font-mono text-xs">
+                            {entry.actorUserId ?? apiKeyActor(entry.details) ?? 'système'}
+                          </TableCell>
                           <TableCell>
                             <Badge label={entry.action} type="info" />
                           </TableCell>
@@ -577,6 +579,12 @@ function AgentsTab() {
       </CardContent>
     </Card>
   );
+}
+
+// Changes made with a workspace API key carry the key in their details.
+function apiKeyActor(details: unknown): string | null {
+  const apiKey = (details as { apiKey?: { name?: string } } | null)?.apiKey;
+  return apiKey?.name ? `clé API · ${apiKey.name}` : null;
 }
 
 export default function LogsPage() {

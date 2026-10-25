@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, Globe2, LoaderCircle, Network, PartyPopper } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ArrowLeft, ArrowRight, Globe2, LoaderCircle, Network, PartyPopper } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Callout } from '@/components/Callout';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -12,7 +12,8 @@ import { api, VpnGateway, VpnProfileMode, VpnProfileWithConfig } from '@/lib/api
 import { cn } from '@/lib/utils';
 import { ConfigPanel } from './ConfigPanel';
 import { RouteDiagram } from './RouteDiagram';
-import { MODE_LABEL, NodeFlag, nodeLocation } from './vpn-ui';
+import { NodePicker } from './NodePicker';
+import { MODE_LABEL } from './vpn-ui';
 
 const STEPS = [
   { id: 'entry', title: "Point d'entrée", hint: "Le serveur auquel l'appareil se connecte." },
@@ -43,56 +44,6 @@ export function parseDns(raw: string): string[] {
 
 const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 const WG_KEY = /^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]=$/;
-
-/** A selectable node tile, used for both the entry and the exit pick. */
-export function NodeOption({
-  gateway,
-  selected,
-  disabledReason,
-  badge,
-  onSelect,
-}: {
-  gateway: VpnGateway;
-  selected: boolean;
-  disabledReason?: string | null;
-  badge?: string;
-  onSelect: () => void;
-}) {
-  const location = nodeLocation(gateway);
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      disabled={Boolean(disabledReason)}
-      aria-pressed={selected}
-      className={cn(
-        'relative flex w-full flex-col gap-1 rounded-lg border p-3 text-left transition-colors',
-        selected ? 'border-primary/60 bg-primary/[0.07] ring-1 ring-primary/30' : 'border-border bg-surface-2 hover:border-primary/30',
-        'disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border',
-      )}
-    >
-      <span className="flex items-center gap-2">
-        <NodeFlag node={gateway} />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{gateway.name}</span>
-        {selected ? (
-          <Check className="h-4 w-4 shrink-0 text-primary" />
-        ) : (
-          <span
-            className={cn(
-              'h-2 w-2 shrink-0 rounded-full',
-              gateway.status === 'online' ? 'bg-[hsl(var(--ok))]' : gateway.status === 'degraded' ? 'bg-[hsl(var(--warn))]' : 'bg-[hsl(var(--danger))]',
-            )}
-            aria-label={gateway.status}
-          />
-        )}
-      </span>
-      <span className="truncate font-mono text-2xs text-muted-foreground">{gateway.publicIp ?? 'IP publique inconnue'}</span>
-      {location && <span className="truncate text-2xs text-muted-foreground">{location}</span>}
-      {badge && <span className="text-2xs font-medium text-primary">{badge}</span>}
-      {disabledReason && <span className="text-2xs text-[hsl(var(--warn))]">{disabledReason}</span>}
-    </button>
-  );
-}
 
 function ModeOption({ mode, selected, onSelect }: { mode: VpnProfileMode; selected: boolean; onSelect: () => void }) {
   const Icon = mode === 'full' ? Globe2 : Network;
@@ -163,17 +114,6 @@ export function CreateProfileDialog({
 
   const entry = gateways.find((gateway) => gateway.id === entryId) ?? null;
   const exit = mode === 'full' ? (gateways.find((gateway) => gateway.id === (exitId || entryId)) ?? null) : null;
-  const sortedGateways = useMemo(
-    () =>
-      [...gateways].sort((left, right) => {
-        const leftOk = left.entryEligibility === null && left.status !== 'offline';
-        const rightOk = right.entryEligibility === null && right.status !== 'offline';
-        if (leftOk !== rightOk) return leftOk ? -1 : 1;
-        return left.name.localeCompare(right.name);
-      }),
-    [gateways],
-  );
-
   const dnsList = parseDns(dns);
   const dnsInvalid = dnsList.some((value) => !IPV4.test(value)) || dnsList.length > 4;
   const keyInvalid = ownKey && !WG_KEY.test(publicKey.trim());
@@ -289,24 +229,19 @@ export function CreateProfileDialog({
                   <div className="space-y-2">
                     <Label>Point d&apos;entrée</Label>
                     <p className="text-xs text-muted-foreground">{STEPS[0].hint} Choisissez-le proche de l&apos;utilisateur pour une latence minimale.</p>
-                    {sortedGateways.length === 0 ? (
+                    {gateways.length === 0 ? (
                       <Callout variant="warning">Aucun nœud dans ce workspace. Ajoutez d&apos;abord un nœud depuis la page Nœuds.</Callout>
                     ) : (
-                      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                        {sortedGateways.map((gateway) => (
-                          <NodeOption
-                            key={gateway.id}
-                            gateway={gateway}
-                            selected={gateway.id === entryId}
-                            disabledReason={gateway.entryEligibility}
-                            badge={gateway.entryProfiles > 0 ? `${gateway.entryProfiles} profil(s) déjà connecté(s) ici` : undefined}
-                            onSelect={() => {
-                              setEntryId(gateway.id);
-                              if (exitId === gateway.id) setExitId('');
-                            }}
-                          />
-                        ))}
-                      </div>
+                      <NodePicker
+                        gateways={gateways}
+                        value={entryId}
+                        disabledReason={(gateway) => gateway.entryEligibility}
+                        meta={(gateway) => (gateway.entryProfiles > 0 ? `${gateway.entryProfiles} profil${gateway.entryProfiles > 1 ? 's' : ''}` : null)}
+                        onSelect={(gateway) => {
+                          setEntryId(gateway.id);
+                          if (exitId === gateway.id) setExitId('');
+                        }}
+                      />
                     )}
                   </div>
                 </>
@@ -325,20 +260,15 @@ export function CreateProfileDialog({
                         L&apos;IP publique que verront les sites visités. Vous pourrez la changer à tout moment en un clic,
                         même pendant que l&apos;appareil est connecté.
                       </p>
-                      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                        <NodeOption gateway={entry} selected={exitId === ''} badge="Sortie directe (même nœud)" onSelect={() => setExitId('')} />
-                        {sortedGateways
-                          .filter((gateway) => gateway.id !== entry.id)
-                          .map((gateway) => (
-                            <NodeOption
-                              key={gateway.id}
-                              gateway={gateway}
-                              selected={exitId === gateway.id}
-                              disabledReason={gateway.exitEligibility}
-                              onSelect={() => setExitId(gateway.id)}
-                            />
-                          ))}
-                      </div>
+                      <NodePicker
+                        gateways={gateways}
+                        value={exitId || entry.id}
+                        pinned={[{ gateway: entry, badge: 'Sortie directe' }]}
+                        disabledReason={(gateway) => (gateway.id === entry.id ? null : gateway.exitEligibility)}
+                        meta={(gateway) => (gateway.exitProfiles > 0 ? `${gateway.exitProfiles} profil${gateway.exitProfiles > 1 ? 's' : ''}` : null)}
+                        onSelect={(gateway) => setExitId(gateway.id === entry.id ? '' : gateway.id)}
+                        listClassName="max-h-[15rem]"
+                      />
                     </div>
                   )}
                   <div className="space-y-2">

@@ -2,7 +2,15 @@ import { ExecutionContext, ForbiddenException, Injectable, SetMetadata, Unauthor
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
 import type { Request } from 'express';
-import { API_KEY_TOKEN_PREFIX, ApiKeyScope, apiKeySecretMatches, parseApiKeyToken } from '../api-keys/api-key-token';
+import {
+  API_KEY_TOKEN_PREFIX,
+  ApiKeyResource as ApiKeyResourceName,
+  ApiKeyScope,
+  apiKeySecretMatches,
+  parseApiKeyToken,
+  scopeGrants,
+} from '../api-keys/api-key-token';
+import { requestContext } from '../common/request-context';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface AuthenticatedApiKey {
@@ -17,10 +25,21 @@ interface RequestWithApiKey extends Request {
 }
 
 const API_SCOPE_METADATA = 'tarmac:apiScope';
+const API_RESOURCE_METADATA = 'tarmac:apiResource';
+const SESSION_ONLY_METADATA = 'tarmac:sessionOnly';
 
-// Opens a handler to API keys holding `scope`. Handlers without it stay
-// reachable with a user session only, even behind ApiKeyOrJwtGuard.
+// Opens a handler to API keys holding `scope`, overriding the one derived
+// from @ApiKeyResource (e.g. a POST that only reads).
 export const RequireApiScope = (scope: ApiKeyScope) => SetMetadata(API_SCOPE_METADATA, scope);
+
+// Opens a whole controller to API keys: GET/HEAD need `<resource>:read`,
+// every other method `<resource>:write`. Controllers without it (and without
+// a @RequireApiScope handler) stay reachable with a user session only, even
+// behind ApiKeyOrJwtGuard.
+export const ApiKeyResource = (resource: ApiKeyResourceName) => SetMetadata(API_RESOURCE_METADATA, resource);
+
+// Keeps one handler of an @ApiKeyResource controller session-only.
+export const SessionOnly = () => SetMetadata(SESSION_ONLY_METADATA, true);
 
 // lastUsedAt is informational - writing it on every call of a busy
 // integration would be one UPDATE per request for no benefit.
@@ -64,14 +83,11 @@ export class ApiKeyOrJwtGuard extends AuthGuard('jwt') {
       throw new UnauthorizedException('This API key has expired');
     }
 
-    const requiredScope = this.reflector.getAllAndOverride<ApiKeyScope | undefined>(API_SCOPE_METADATA, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
+    const requiredScope = this.requiredScope(context, request.method);
     if (!requiredScope) {
       throw new ForbiddenException('This endpoint is not available to API keys');
     }
-    if (!key.scopes.includes(requiredScope)) {
+    if (!scopeGrants(key.scopes, requiredScope)) {
       throw new ForbiddenException(`This API key lacks the "${requiredScope}" scope`);
     }
 
@@ -85,6 +101,20 @@ export class ApiKeyOrJwtGuard extends AuthGuard('jwt') {
     }
 
     request.apiKey = { id: key.id, name: key.name, workspaceId: key.workspaceId, scopes: key.scopes };
+    // Lets the audit log attribute what this request changes to the key.
+    const store = requestContext.get();
+    if (store) store.apiKey = { id: key.id, name: key.name };
     return true;
+  }
+
+  private requiredScope(context: ExecutionContext, method: string): ApiKeyScope | undefined {
+    const targets = [context.getHandler(), context.getClass()];
+    if (this.reflector.getAllAndOverride<boolean>(SESSION_ONLY_METADATA, targets)) return undefined;
+    const explicit = this.reflector.getAllAndOverride<ApiKeyScope | undefined>(API_SCOPE_METADATA, targets);
+    if (explicit) return explicit;
+    const resource = this.reflector.getAllAndOverride<ApiKeyResourceName | undefined>(API_RESOURCE_METADATA, targets);
+    if (!resource) return undefined;
+    const reads = method === 'GET' || method === 'HEAD';
+    return `${resource}:${reads ? 'read' : 'write'}`;
   }
 }

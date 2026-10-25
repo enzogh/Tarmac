@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ApiKeyOrJwtGuard, ApiKeyResource } from '../auth/api-key.guard';
 import { CreateNotificationChannelDto } from './dto/create-notification-channel.dto';
 import { UpdateNotificationChannelDto } from './dto/update-notification-channel.dto';
 import { NotificationChannelsService } from './notification-channels.service';
@@ -10,7 +10,8 @@ interface AuthenticatedRequest extends Request {
   user?: { userId?: string };
 }
 
-@UseGuards(JwtAuthGuard, WorkspaceGuard)
+@UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
+@ApiKeyResource('alerts')
 @Controller('notification-channels')
 export class NotificationChannelsController {
   constructor(private readonly notificationChannelsService: NotificationChannelsService) {}

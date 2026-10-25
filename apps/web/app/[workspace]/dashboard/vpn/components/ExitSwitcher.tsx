@@ -1,48 +1,28 @@
 'use client';
 
-import { Check, ChevronDown, LoaderCircle } from 'lucide-react';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { useEffect, useState } from 'react';
+import { ArrowRightLeft, Check, ChevronDown, LoaderCircle, Undo2 } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { VpnGateway, VpnProfile } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { NodeFlag } from './vpn-ui';
+import { NodePicker } from './NodePicker';
+import { NodeFlag, nodeLocation } from './vpn-ui';
 
-// Past this many candidates the chips stop being scannable at a glance; the
-// rest move into a "more" menu.
-const MAX_INLINE_CHIPS = 5;
+// Up to this many possible exits, one chip each is the fastest switch. Past
+// it a chip row stops being scannable, so the card shows the current exit
+// and a searchable picker instead.
+const MAX_INLINE_CHIPS = 4;
 
-type Candidate = { gateway: VpnGateway; direct: boolean; disabledReason: string | null };
-
-function candidatesFor(profile: VpnProfile, gateways: VpnGateway[]): Candidate[] {
-  const list = gateways
-    .filter((gateway) => gateway.id === profile.entryNode.id || gateway.exitEligibility === null)
-    .map((gateway) => ({
-      gateway,
-      direct: gateway.id === profile.entryNode.id,
-      disabledReason:
-        gateway.status === 'offline'
-          ? 'Hors ligne : le trafic serait coupé.'
-          : gateway.id !== profile.entryNode.id && gateway.exitEligibility
-            ? gateway.exitEligibility
-            : null,
-    }));
-  // Entry (direct exit) first, then online nodes, then alphabetical.
-  return list.sort((left, right) => {
-    if (left.direct !== right.direct) return left.direct ? -1 : 1;
-    if ((left.disabledReason === null) !== (right.disabledReason === null)) return left.disabledReason === null ? -1 : 1;
-    return left.gateway.name.localeCompare(right.gateway.name);
-  });
+function exitDisabledReason(profile: VpnProfile, gateway: VpnGateway): string | null {
+  if (gateway.status === 'offline') return 'Hors ligne : le trafic serait coupé.';
+  if (gateway.id !== profile.entryNode.id && gateway.exitEligibility) return gateway.exitEligibility;
+  return null;
 }
 
 /**
- * The one-click exit switch: every node the profile can leave through, as
- * a row of chips. Clicking one re-routes the client's internet traffic
- * through it immediately, without the client having to reconnect.
+ * The exit switch: re-routes the client's internet traffic through another
+ * node immediately, without the client having to reconnect.
  */
 export function ExitSwitcher({
   profile,
@@ -56,88 +36,133 @@ export function ExitSwitcher({
   switchingTo: string | null;
   onSwitch: (exitNodeId: string | null) => void;
 }) {
-  const candidates = candidatesFor(profile, gateways);
-  const currentId = profile.exitNode?.id ?? profile.entryNode.id;
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const entryId = profile.entryNode.id;
+  const currentId = profile.exitNode?.id ?? entryId;
   const busy = switchingTo !== null;
-  const inline = candidates.length > MAX_INLINE_CHIPS + 1 ? candidates.slice(0, MAX_INLINE_CHIPS) : candidates;
-  const overflow = candidates.slice(inline.length);
-  // Keep the active exit visible even when it falls into the overflow.
-  const activeInOverflow = overflow.find((candidate) => candidate.gateway.id === currentId);
-  const shown = activeInOverflow ? [...inline, activeInOverflow] : inline;
-  const hidden = overflow.filter((candidate) => candidate !== activeInOverflow);
+  const pendingId = busy ? switchingTo || entryId : null;
+  const candidates = gateways.filter((gateway) => gateway.id === entryId || gateway.exitEligibility === null);
 
-  const choose = (candidate: Candidate) => {
-    if (busy || candidate.disabledReason || candidate.gateway.id === currentId) return;
-    onSwitch(candidate.direct ? null : candidate.gateway.id);
+  // Close the picker once the switch it started has landed.
+  useEffect(() => {
+    if (!busy) setPickerOpen(false);
+  }, [busy]);
+
+  const choose = (gateway: VpnGateway) => {
+    if (busy || exitDisabledReason(profile, gateway) || gateway.id === currentId) return;
+    onSwitch(gateway.id === entryId ? null : gateway.id);
   };
 
-  const chip = (candidate: Candidate) => {
-    const active = candidate.gateway.id === currentId;
-    const pending = switchingTo !== null && (switchingTo || profile.entryNode.id) === candidate.gateway.id;
-    const button = (
-      <button
-        key={candidate.gateway.id}
-        type="button"
-        onClick={() => choose(candidate)}
-        disabled={Boolean(candidate.disabledReason) || (busy && !pending)}
-        aria-pressed={active}
-        className={cn(
-          'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors',
-          active
-            ? 'border-primary/50 bg-primary/10 font-medium text-foreground'
-            : 'border-border bg-surface-2 text-muted-foreground hover:border-primary/30 hover:text-foreground',
-          'disabled:cursor-not-allowed disabled:opacity-50',
-        )}
-      >
-        {pending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <NodeFlag node={candidate.gateway} className="text-sm" />}
-        <span className="max-w-[10rem] truncate">{candidate.gateway.name}</span>
-        {candidate.direct && <span className="text-2xs text-muted-foreground">(direct)</span>}
-        {active && !pending && <Check className="h-3.5 w-3.5 text-primary" />}
-      </button>
-    );
-    if (!candidate.disabledReason) return button;
+  if (candidates.length <= MAX_INLINE_CHIPS) {
+    const sorted = [...candidates].sort((left, right) => {
+      if ((left.id === entryId) !== (right.id === entryId)) return left.id === entryId ? -1 : 1;
+      return left.name.localeCompare(right.name);
+    });
     return (
-      <Tooltip key={candidate.gateway.id}>
-        <TooltipTrigger asChild>
-          <span>{button}</span>
-        </TooltipTrigger>
-        <TooltipContent>{candidate.disabledReason}</TooltipContent>
-      </Tooltip>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-muted-foreground">Sortir par</span>
+        {sorted.map((gateway) => {
+          const active = gateway.id === currentId;
+          const pending = pendingId === gateway.id;
+          const reason = exitDisabledReason(profile, gateway);
+          const button = (
+            <button
+              key={gateway.id}
+              type="button"
+              onClick={() => choose(gateway)}
+              disabled={Boolean(reason) || (busy && !pending)}
+              aria-pressed={active}
+              className={cn(
+                'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors',
+                active
+                  ? 'border-primary/50 bg-primary/10 font-medium text-foreground'
+                  : 'border-border bg-surface-2 text-muted-foreground hover:border-primary/30 hover:text-foreground',
+                'disabled:cursor-not-allowed disabled:opacity-50',
+              )}
+            >
+              {pending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <NodeFlag node={gateway} className="text-sm" />}
+              <span className="max-w-[10rem] truncate">{gateway.name}</span>
+              {gateway.id === entryId && <span className="text-2xs text-muted-foreground">(direct)</span>}
+              {active && !pending && <Check className="h-3.5 w-3.5 text-primary" />}
+            </button>
+          );
+          if (!reason) return button;
+          return (
+            <Tooltip key={gateway.id}>
+              <TooltipTrigger asChild>
+                <span>{button}</span>
+              </TooltipTrigger>
+              <TooltipContent>{reason}</TooltipContent>
+            </Tooltip>
+          );
+        })}
+      </div>
     );
-  };
+  }
+
+  const current = gateways.find((gateway) => gateway.id === currentId) ?? profile.exitNode ?? profile.entryNode;
+  const location = nodeLocation(current);
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="text-xs text-muted-foreground">Sortir par</span>
-      {shown.map(chip)}
-      {hidden.length > 0 && (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              disabled={busy}
-              className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-surface-2 px-2.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
-            >
-              {hidden.length} autre{hidden.length > 1 ? 's' : ''}
-              <ChevronDown className="h-3.5 w-3.5" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="max-h-72 overflow-y-auto">
-            {hidden.map((candidate) => (
-              <DropdownMenuItem
-                key={candidate.gateway.id}
-                disabled={Boolean(candidate.disabledReason)}
-                onSelect={() => choose(candidate)}
-                className="gap-2"
-              >
-                <NodeFlag node={candidate.gateway} className="text-sm" />
-                <span className="truncate">{candidate.gateway.name}</span>
-                <span className="ml-auto font-mono text-2xs text-muted-foreground">{candidate.gateway.publicIp}</span>
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+      <span className="text-xs text-muted-foreground">Sortie Internet</span>
+      <button
+        type="button"
+        onClick={() => setPickerOpen(true)}
+        disabled={busy}
+        className="group inline-flex h-9 min-w-0 max-w-full items-center gap-2 rounded-md border border-border bg-surface-2 pl-2.5 pr-2 text-left text-xs transition-colors hover:border-primary/40 disabled:opacity-60"
+      >
+        {busy ? <LoaderCircle className="h-4 w-4 animate-spin text-primary" /> : <NodeFlag node={current} />}
+        <span className="min-w-0">
+          <span className="block truncate font-medium text-foreground">
+            {current.name}
+            {currentId === entryId && <span className="ml-1 font-normal text-muted-foreground">(direct)</span>}
+          </span>
+          <span className="block truncate font-mono text-2xs text-muted-foreground">
+            {current.publicIp ?? 'IP inconnue'}
+            {location && <span className="font-sans"> · {location}</span>}
+          </span>
+        </span>
+        <span className="ml-1 inline-flex items-center gap-1 border-l border-border pl-2 text-primary">
+          <ArrowRightLeft className="h-3.5 w-3.5" />
+          Changer
+          <ChevronDown className="h-3.5 w-3.5" />
+        </span>
+      </button>
+      {currentId !== entryId && (
+        <button
+          type="button"
+          onClick={() => onSwitch(null)}
+          disabled={busy || profile.entryNode.status === 'offline'}
+          className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-2xs text-muted-foreground hover:bg-surface-2 hover:text-foreground disabled:opacity-50"
+          title={`Sortir directement par ${profile.entryNode.name}`}
+        >
+          <Undo2 className="h-3.5 w-3.5" />
+          Sortie directe
+        </button>
       )}
+
+      <Dialog open={pickerOpen} onOpenChange={(open) => !busy && setPickerOpen(open)}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Changer la sortie de « {profile.name} »</DialogTitle>
+            <DialogDescription>
+              Le trafic Internet de l&apos;appareil bascule immédiatement sur le serveur choisi, sans reconnexion.
+            </DialogDescription>
+          </DialogHeader>
+          <NodePicker
+            gateways={candidates}
+            value={currentId}
+            autoFocus
+            busyId={pendingId}
+            pinned={[{ gateway: candidates.find((gateway) => gateway.id === entryId) ?? (profile.entryNode as VpnGateway), badge: 'Sortie directe' }]}
+            disabledReason={(gateway) => exitDisabledReason(profile, gateway)}
+            meta={(gateway) => (gateway.exitProfiles > 0 ? `${gateway.exitProfiles} profil${gateway.exitProfiles > 1 ? 's' : ''}` : null)}
+            onSelect={(gateway) => (gateway.id === currentId ? setPickerOpen(false) : choose(gateway))}
+            listClassName="max-h-[min(24rem,55vh)]"
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

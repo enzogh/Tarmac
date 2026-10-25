@@ -84,7 +84,7 @@ export function LogStream({
         ref={viewport}
         onScroll={onScroll}
         className={cn(
-          'scroll-thin min-h-[7rem] overflow-y-auto overflow-x-hidden px-3 py-2 font-mono text-xs leading-relaxed',
+          'scroll-thin min-h-[7rem] overscroll-y-contain overflow-y-auto overflow-x-hidden px-3 py-2 font-mono text-xs leading-relaxed',
           maxHeightClass,
         )}
       >

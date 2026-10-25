@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ApiKeyOrJwtGuard, ApiKeyResource, RequireApiScope } from '../auth/api-key.guard';
 import { CreateMigrationDto } from './dto/create-migration.dto';
 import { ListRemoteDirectoriesDto } from './dto/list-remote-directories.dto';
 import { UpdateMigrationDto } from './dto/update-migration.dto';
@@ -11,7 +11,8 @@ interface AuthenticatedRequest extends Request {
   user?: { userId?: string };
 }
 
-@UseGuards(JwtAuthGuard, WorkspaceGuard)
+@UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
+@ApiKeyResource('storage')
 @Controller('migrations')
 export class MigrationsController {
   constructor(private readonly migrationsService: MigrationsService) {}
@@ -52,7 +53,9 @@ export class MigrationsController {
     );
   }
 
+  // Lists a remote host's directories: a read, despite the POST body.
   @Post('directories/remote')
+  @RequireApiScope('storage:read')
   listRemoteDirectories(@Body() dto: ListRemoteDirectoriesDto, @CurrentWorkspace() scope: WorkspaceScope) {
     const parsedPort = dto.port ? Number.parseInt(dto.port, 10) : undefined;
     return this.migrationsService.listRemoteDirectories(

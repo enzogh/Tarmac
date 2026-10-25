@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ApiKeyOrJwtGuard, ApiKeyResource, RequireApiScope } from '../auth/api-key.guard';
 import { DnsDelegationCheckService } from './dns-delegation-check.service';
 import { DnsDelegationService } from './dns-delegation.service';
 import { DnsGroupsService } from './dns-groups.service';
@@ -18,7 +18,8 @@ interface AuthenticatedRequest extends Request {
   user?: { userId?: string };
 }
 
-@UseGuards(JwtAuthGuard, WorkspaceGuard)
+@UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
+@ApiKeyResource('dns')
 @Controller('dns')
 export class DnsController {
   constructor(
@@ -140,6 +141,7 @@ export class DnsController {
   }
 
   @Post('zones/:id/delegation/check')
+  @RequireApiScope('dns:read')
   recheckDelegation(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope) {
     return this.dnsDelegationCheckService.checkZone(id, scope);
   }

@@ -576,7 +576,14 @@ export class AgentsService implements OnModuleInit {
   }
 
   async onStateReport(nodeId: string, payload: StateReportPayload) {
-    for (const disk of payload.disks) {
+    // Go marshals an empty slice it never allocated as `null`: a freshly
+    // restarted agent (every deploy pushes an update, so all of them at once)
+    // sends `smartReports: null` until its first background smartctl pass
+    // lands, and a host with no disk to report sends `disks: null`.
+    const disks = payload.disks ?? [];
+    const smartReports = payload.smartReports ?? [];
+
+    for (const disk of disks) {
       await this.prisma.disk.upsert({
         where: { nodeId_name: { nodeId, name: disk.name } },
         update: {
@@ -602,16 +609,16 @@ export class AgentsService implements OnModuleInit {
 
     // Remove disks no longer reported by the agent (e.g. unmounted or
     // no-longer-tracked NFS shares) so stale entries don't inflate storage totals.
-    if (payload.disks.length > 0) {
+    if (disks.length > 0) {
       await this.prisma.disk.deleteMany({
         where: {
           nodeId,
-          name: { notIn: payload.disks.map((disk) => disk.name) },
+          name: { notIn: disks.map((disk) => disk.name) },
         },
       });
     }
 
-    if (payload.smartReports.length > 0) {
+    if (smartReports.length > 0) {
       // Agents send a full state report every 20s, but SMART attributes
       // (temperature aside) move on the scale of hours - appending every
       // one of those meant ~4,300 rows/disk/day of near-duplicates. Keep a
@@ -627,7 +634,7 @@ export class AgentsService implements OnModuleInit {
       const recentPerDisk = await this.prisma.smartReport.findMany({
         where: {
           nodeId,
-          diskName: { in: payload.smartReports.map((report) => report.diskName) },
+          diskName: { in: smartReports.map((report) => report.diskName) },
           collectedAt: { gte: heartbeatCutoff },
         },
         orderBy: [{ diskName: 'asc' }, { collectedAt: 'desc' }],
@@ -635,7 +642,7 @@ export class AgentsService implements OnModuleInit {
       });
       const latestByDiskName = new Map(recentPerDisk.map((report) => [report.diskName, report]));
 
-      const changed = payload.smartReports.filter((report) => {
+      const changed = smartReports.filter((report) => {
         const previous = latestByDiskName.get(report.diskName);
         if (!previous) return true;
         return (
@@ -661,7 +668,7 @@ export class AgentsService implements OnModuleInit {
         });
       }
 
-      for (const report of payload.smartReports) {
+      for (const report of smartReports) {
         if (report.overall !== 'warning' && report.overall !== 'critical') continue;
         await this.createSmartHealthAlert({
           nodeId,

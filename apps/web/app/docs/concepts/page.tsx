@@ -200,7 +200,7 @@ export default function ConceptsPage() {
             {section.concepts.map((concept) => {
               const body = (
                 <Card className="h-full transition-colors hover:border-border">
-                  <CardHeader>
+                  <CardHeader className="flex-col items-start justify-start gap-y-1 border-b-0">
                     <div className="flex items-center gap-2.5">
                       <concept.icon className="h-4 w-4 shrink-0 text-muted-foreground" />
                       <CardTitle className="text-base">{concept.title}</CardTitle>

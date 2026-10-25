@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { Request } from 'express';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ApiKeyOrJwtGuard, ApiKeyResource } from '../auth/api-key.guard';
 import { CompleteNodeOnboardingDto } from './dto/complete-node-onboarding.dto';
 import { CreateNodeDto } from './dto/create-node.dto';
 import { MuteNodeDto } from './dto/mute-node.dto';
@@ -26,7 +26,8 @@ interface AuthenticatedRequest extends Request {
   user?: { userId?: string };
 }
 
-@UseGuards(JwtAuthGuard, WorkspaceGuard)
+@UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
+@ApiKeyResource('nodes')
 @Controller('nodes')
 export class NodesController {
   constructor(

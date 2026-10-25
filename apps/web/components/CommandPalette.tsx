@@ -6,7 +6,7 @@ import { Search, type LucideIcon } from 'lucide-react';
 import { HardDrive, Layers, Server } from 'lucide-react';
 import { api } from '../lib/api';
 import { buildNavItems } from '../lib/nav-items';
-import { Dialog, DialogContent } from './ui/dialog';
+import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 
 type PaletteResult = {
   key: string;
@@ -37,6 +37,7 @@ export function CommandPalette() {
   const [entityResults, setEntityResults] = useState<PaletteResult[]>([]);
   const [loaded, setLoaded] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -107,9 +108,15 @@ export function CommandPalette() {
   const results = useMemo(() => {
     const all = [...navResults, ...entityResults];
     const q = query.trim().toLowerCase();
-    if (!q) return all.slice(0, 8);
-    return all.filter((item) => item.label.toLowerCase().includes(q) || item.sublabel?.toLowerCase().includes(q)).slice(0, 8);
+    // Without a query: the pages, then a first slice of entities. With one,
+    // every match - the list scrolls, and ↑/↓ keep the selection in view.
+    if (!q) return all.slice(0, navResults.length + 6);
+    return all.filter((item) => item.label.toLowerCase().includes(q) || item.sublabel?.toLowerCase().includes(q)).slice(0, 100);
   }, [query, entityResults, navResults]);
+
+  useEffect(() => {
+    listRef.current?.querySelector<HTMLElement>(`[data-index="${selectedIndex}"]`)?.scrollIntoView({ block: 'nearest' });
+  }, [selectedIndex]);
 
   const go = (result: PaletteResult) => {
     setOpen(false);
@@ -132,8 +139,9 @@ export function CommandPalette() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-w-lg p-0">
-        <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+      <DialogContent hideClose aria-describedby={undefined} className="flex max-h-[min(32rem,80vh)] max-w-lg flex-col overflow-hidden p-0">
+        <DialogTitle className="sr-only">Recherche rapide</DialogTitle>
+        <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-3">
           <Search className="h-4 w-4 text-muted-foreground" />
           <input
             ref={inputRef}
@@ -147,7 +155,7 @@ export function CommandPalette() {
             className="w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
           />
         </div>
-        <div className="max-h-80 overflow-y-auto p-2">
+        <div ref={listRef} className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-2">
           {results.length === 0 && (
             <p className="px-3 py-6 text-center text-sm text-muted-foreground">Aucun résultat.</p>
           )}
@@ -157,10 +165,13 @@ export function CommandPalette() {
               <button
                 key={result.key}
                 type="button"
+                data-index={index}
                 onClick={() => go(result)}
-                onMouseEnter={() => setSelectedIndex(index)}
+                // mousemove, not mouseenter: rows scrolled under a still
+                // cursor by ↑/↓ must not steal the keyboard selection.
+                onMouseMove={() => setSelectedIndex(index)}
                 className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
-                  index === selectedIndex ? 'bg-violet-500/15 text-foreground' : 'text-muted-foreground hover:bg-white/5'
+                  index === selectedIndex ? 'bg-violet-500/15 text-foreground' : 'text-muted-foreground'
                 }`}
               >
                 <Icon className="h-4 w-4 shrink-0" />
@@ -170,7 +181,7 @@ export function CommandPalette() {
             );
           })}
         </div>
-        <div className="border-t border-border px-4 py-2 text-xs text-zinc-600">
+        <div className="shrink-0 border-t border-border px-4 py-2 text-xs text-zinc-600">
           ↑↓ naviguer · Entrée ouvrir · Échap fermer
         </div>
       </DialogContent>

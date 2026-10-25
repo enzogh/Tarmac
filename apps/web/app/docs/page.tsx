@@ -12,6 +12,8 @@ import {
   HardDrive,
   ArrowRightLeft,
   BookOpen,
+  ShieldCheck,
+  KeyRound,
 } from 'lucide-react';
 import { PageHeader } from '../../components/PageHeader';
 import { Callout } from '../../components/Callout';
@@ -50,6 +52,13 @@ const MODULES: { group: string; items: { icon: typeof Server; title: string; tex
       { icon: Server, title: 'Nœuds', text: 'Onboarding SSH, agents, disques et santé SMART.', href: '/docs/concepts' },
       { icon: Network, title: 'Réseau', text: 'Mesh WireGuard, graphe, carte du monde, passerelles régionales, ping/traceroute.', href: '/docs/concepts' },
       { icon: Globe, title: 'DNS', text: 'Groupes primaire/secondaire, zones, DNSSEC, délégation vérifiée, GeoDNS.', href: '/docs/dns', isNew: true },
+      {
+        icon: ShieldCheck,
+        title: 'VPN',
+        text: "Profils WireGuard par appareil : entrée et sortie choisies parmi toute la flotte, sortie changée à chaud.",
+        href: '/docs/api#vpn',
+        isNew: true,
+      },
     ],
   },
   {
@@ -67,6 +76,13 @@ const MODULES: { group: string; items: { icon: typeof Server; title: string; tex
       { icon: Bell, title: 'Alertes', text: 'Règles de seuil évaluées chaque minute, canaux e-mail / webhook / Slack.', href: '/docs/concepts' },
       { icon: ScrollText, title: 'Journal', text: "Actions d'administration et logs d'agents en direct, filtrables et exportables.", href: '/docs/concepts', isNew: true },
       { icon: LayoutGrid, title: 'Workspaces', text: 'Cloisonnement multi-flottes, membres, propriétaires et connexion SSO Authentik.', href: '/docs/workspaces', isNew: true },
+      {
+        icon: KeyRound,
+        title: 'Clés API',
+        text: 'Automatisation par API sur tous les modules, avec des permissions lecture/écriture par module.',
+        href: '/docs/api-keys',
+        isNew: true,
+      },
     ],
   },
 ];
@@ -87,10 +103,14 @@ export default function DocsHomePage() {
         . Les nouveautés récentes ont leur propre page :{' '}
         <Link href="/docs/workspaces" className="underline underline-offset-2">
           workspaces &amp; SSO
-        </Link>{' '}
-        et{' '}
+        </Link>
+        ,{' '}
         <Link href="/docs/dns" className="underline underline-offset-2">
           DNS
+        </Link>{' '}
+        et{' '}
+        <Link href="/docs/api-keys" className="underline underline-offset-2">
+          clés API
         </Link>
         .
       </Callout>
@@ -151,7 +171,7 @@ export default function DocsHomePage() {
           {QUICK_START.map((step, index) => (
             <Link key={step.title} href={step.href} className="group">
               <Card className="h-full transition-colors group-hover:border-border">
-                <CardHeader>
+                <CardHeader className="flex-col items-start justify-start gap-y-1 border-b-0">
                   <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-600/15 text-sm font-semibold text-primary">
                     {index + 1}
                   </div>

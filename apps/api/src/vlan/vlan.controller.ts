@@ -2,11 +2,12 @@ import { Controller, Get, Post, Param, Body, Query, UseGuards, HttpException, Ht
 import { VlanService } from './vlan.service';
 import { AgentsService } from '../agents/agents.service';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ApiKeyOrJwtGuard, ApiKeyResource } from '../auth/api-key.guard';
 import { PrismaService } from '../prisma/prisma.service';
 
+@ApiKeyResource('network')
 @Controller('vlan')
-@UseGuards(JwtAuthGuard, WorkspaceGuard)
+@UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
 export class VlanController {
   private readonly logger = new Logger(VlanController.name);
 

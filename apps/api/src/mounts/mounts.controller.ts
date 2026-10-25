@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { Request } from 'express';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ApiKeyOrJwtGuard, ApiKeyResource } from '../auth/api-key.guard';
 import { CreateMountDto } from './dto/create-mount.dto';
 import { UpdateMountDto } from './dto/update-mount.dto';
 import { MountsService } from './mounts.service';
@@ -20,7 +20,8 @@ interface AuthenticatedRequest extends Request {
   user?: { userId?: string };
 }
 
-@UseGuards(JwtAuthGuard, WorkspaceGuard)
+@UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
+@ApiKeyResource('storage')
 @Controller('mounts')
 export class MountsController {
   constructor(private readonly mountsService: MountsService) {}

@@ -11,7 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { api, VpnGateway, VpnProfile, VpnProfileMode } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { EXPIRY_OPTIONS, expiryToIso, parseDns } from './CreateProfileDialog';
-import { MODE_LABEL } from './vpn-ui';
+import { NodePicker } from './NodePicker';
+import { MODE_LABEL, NodeLabel } from './vpn-ui';
 
 const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 
@@ -30,6 +31,7 @@ export function EditProfileDialog({
   const [description, setDescription] = useState('');
   const [mode, setMode] = useState<VpnProfileMode>('full');
   const [entryId, setEntryId] = useState('');
+  const [pickingEntry, setPickingEntry] = useState(false);
   const [dns, setDns] = useState('');
   const [expiry, setExpiry] = useState('keep');
   const [saving, setSaving] = useState(false);
@@ -41,6 +43,7 @@ export function EditProfileDialog({
     setDescription(profile.description ?? '');
     setMode(profile.mode);
     setEntryId(profile.entryNode.id);
+    setPickingEntry(false);
     setDns(profile.dns.join(', '));
     setExpiry('keep');
     setError(null);
@@ -49,6 +52,7 @@ export function EditProfileDialog({
   if (!profile) return null;
 
   const entryChanged = entryId !== profile.entryNode.id;
+  const selectedEntry = gateways.find((gateway) => gateway.id === entryId) ?? (entryChanged ? null : profile.entryNode);
   const dnsList = parseDns(dns);
   const dnsInvalid = dnsList.some((value) => !IPV4.test(value)) || dnsList.length > 4;
   const requiresReimport = entryChanged || mode !== profile.mode || dnsList.join(',') !== profile.dns.join(',');
@@ -102,7 +106,46 @@ export function EditProfileDialog({
               />
             </div>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <Label>Point d&apos;entrée</Label>
+              {!pickingEntry && (
+                <button type="button" onClick={() => setPickingEntry(true)} className="text-xs font-medium text-primary hover:underline">
+                  Changer
+                </button>
+              )}
+            </div>
+            {pickingEntry ? (
+              <NodePicker
+                gateways={gateways}
+                value={entryId}
+                autoFocus
+                disabledReason={(gateway) =>
+                  gateway.id !== profile.entryNode.id && gateway.entryEligibility !== null ? gateway.entryEligibility : null
+                }
+                meta={(gateway) => (gateway.id === profile.entryNode.id ? 'Actuel' : null)}
+                onSelect={(gateway) => {
+                  setEntryId(gateway.id);
+                  setPickingEntry(false);
+                }}
+                listClassName="max-h-[14rem]"
+              />
+            ) : (
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2">
+                {selectedEntry ? <NodeLabel node={selectedEntry} showIp /> : <span className="text-sm text-muted-foreground">—</span>}
+                {entryChanged && (
+                  <button
+                    type="button"
+                    onClick={() => setEntryId(profile.entryNode.id)}
+                    className="shrink-0 text-2xs text-muted-foreground hover:text-foreground"
+                  >
+                    Annuler le changement
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+          <div className="grid gap-4 sm:grid-cols-3">
             <div className="space-y-2">
               <Label htmlFor="vpn-edit-mode">Trafic</Label>
               <Select value={mode} onValueChange={(value) => setMode(value as VpnProfileMode)}>
@@ -112,26 +155,6 @@ export function EditProfileDialog({
                 <SelectContent>
                   <SelectItem value="full">{MODE_LABEL.full.title}</SelectItem>
                   <SelectItem value="private">{MODE_LABEL.private.title}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="vpn-edit-entry">Point d&apos;entrée</Label>
-              <Select value={entryId} onValueChange={setEntryId}>
-                <SelectTrigger id="vpn-edit-entry">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {gateways.map((gateway) => (
-                    <SelectItem
-                      key={gateway.id}
-                      value={gateway.id}
-                      disabled={gateway.id !== profile.entryNode.id && gateway.entryEligibility !== null}
-                    >
-                      {gateway.name}
-                      {gateway.publicIp ? ` · ${gateway.publicIp}` : ''}
-                    </SelectItem>
-                  ))}
                 </SelectContent>
               </Select>
             </div>

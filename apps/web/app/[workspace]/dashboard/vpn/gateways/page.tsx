@@ -1,11 +1,13 @@
 'use client';
 
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { ArrowLeft, DoorOpen, Globe2, RadioTower, Users } from 'lucide-react';
+import { ArrowLeft, DoorOpen, Globe2, RadioTower, Search, Users } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { Callout } from '@/components/Callout';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Stat, StatRow } from '@/components/ui/stat';
 import { StatusPill } from '@/components/ui/status';
@@ -56,6 +58,16 @@ export default function VpnGatewaysPage() {
   const connected = gateways.reduce((sum, gateway) => sum + gateway.connectedClients, 0);
   const errors = gateways.filter((gateway) => gateway.apply.status === 'error');
   const listenPort = gateways[0]?.listenPort ?? 51821;
+  const [query, setQuery] = useState('');
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return gateways;
+    return gateways.filter((gateway) =>
+      [gateway.name, gateway.publicIp, gateway.vlanIp, gateway.locationCity, gateway.locationCountry]
+        .filter(Boolean)
+        .some((value) => (value as string).toLowerCase().includes(needle)),
+    );
+  }, [gateways, query]);
 
   return (
     <div className="space-y-6">
@@ -106,12 +118,25 @@ export default function VpnGatewaysPage() {
       </Callout>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Nœuds du workspace</CardTitle>
-          <CardDescription>
-            Un même nœud peut être à la fois point d&apos;entrée et sortie. Le trafic entre l&apos;entrée et la sortie
-            transite par le réseau privé chiffré.
-          </CardDescription>
+        <CardHeader className="flex-row flex-wrap items-start justify-between gap-3 space-y-0">
+          <div className="space-y-1.5">
+            <CardTitle>Nœuds du workspace</CardTitle>
+            <CardDescription>
+              Un même nœud peut être à la fois point d&apos;entrée et sortie. Le trafic entre l&apos;entrée et la sortie
+              transite par le réseau privé chiffré.
+            </CardDescription>
+          </div>
+          {gateways.length > 6 && (
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Nœud, IP, ville…"
+                className="h-8 w-56 pl-8"
+              />
+            </div>
+          )}
         </CardHeader>
         <CardContent flush>
           <Table>
@@ -129,7 +154,7 @@ export default function VpnGatewaysPage() {
             <TableBody>
               {isLoading
                 ? Array.from({ length: 3 }).map((_, index) => <TableRowSkeleton key={index} columns={7} />)
-                : gateways.map((gateway) => (
+                : visible.map((gateway) => (
                     <TableRow key={gateway.id}>
                       <TableCell>
                         <NodeLabel node={gateway} showIp />
@@ -171,8 +196,10 @@ export default function VpnGatewaysPage() {
                   ))}
             </TableBody>
           </Table>
-          {!isLoading && gateways.length === 0 && (
-            <p className="py-10 text-center text-sm text-muted-foreground">Aucun nœud dans ce workspace.</p>
+          {!isLoading && visible.length === 0 && (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              {gateways.length === 0 ? 'Aucun nœud dans ce workspace.' : 'Aucun nœud ne correspond à cette recherche.'}
+            </p>
           )}
         </CardContent>
       </Card>
