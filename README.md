@@ -91,15 +91,17 @@ et les vues topologiques.
 ```mermaid
 flowchart LR
     U(["Navigateur"]) --> W["apps/web<br/>Next.js 14"]
-    W -- REST /api/v1 --> A["apps/api<br/>NestJS 10"]
-    A --> P[("PostgreSQL<br/>Prisma")]
-    A --> R[("Redis")]
-    A <-- "WebSocket /agents-ws" --> N1["apps/agent<br/>nœud 1"]
-    A <-- "WebSocket /agents-ws" --> N2["apps/agent<br/>nœud 2"]
-    A <-- "WebSocket /agents-ws" --> N3["apps/agent<br/>nœud N"]
-    N1 <-- WireGuard --> N2
-    N2 <-- WireGuard --> N3
-    N1 <-- WireGuard --> N3
+    W -- "REST /api/v1" --> A["apps/api<br/>NestJS 10"]
+    A --> DB[("PostgreSQL")]
+    A --> RD[("Redis")]
+    A <-- "WebSocket /agents-ws" --> F
+
+    subgraph F["Flotte &mdash; apps/agent"]
+        direction TB
+        N1["nœud 1"] <-- WireGuard --> N2["nœud 2"]
+        N2 <-- WireGuard --> N3["nœud N"]
+        N1 <-- WireGuard --> N3
+    end
 ```
 
 L'agent est le seul à écrire sur les nœuds. Il ouvre lui-même la connexion
