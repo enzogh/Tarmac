@@ -3,7 +3,7 @@ import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
-import { InviteMemberDto } from './dto/invite-member.dto';
+import { InviteMemberDto, MemberAccessDto } from './dto/member-access.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 import { WorkspacesService } from './workspaces.service';
 
@@ -27,9 +27,8 @@ export class WorkspacesController {
     return this.workspacesService.list(scope, req.user?.userId);
   }
 
-  // Workspace membership/roles are single-tier in v1 (member = full access) -
-  // creating a workspace and managing its members is a platform-admin-only
-  // action until an invite flow exists.
+  // Creating a workspace stays a platform-admin-only action; its owners then
+  // manage members and their roles themselves.
   @Post()
   create(@Body() dto: CreateWorkspaceDto, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
     assertPlatformAdmin(scope);
@@ -87,7 +86,19 @@ export class WorkspacesController {
     @CurrentWorkspace() scope: WorkspaceScope,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.workspacesService.inviteByEmail(id, dto.email, scope, req.user?.userId);
+    return this.workspacesService.inviteByEmail(id, dto, scope, req.user?.userId);
+  }
+
+  // Role (owner/member) and, for members, which areas they read or change.
+  @Patch(':id/members/:userId')
+  updateMember(
+    @Param('id') id: string,
+    @Param('userId') userId: string,
+    @Body() dto: MemberAccessDto,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.workspacesService.updateMember(id, userId, dto, scope, req.user?.userId);
   }
 
   @Delete(':id/members/:userId')

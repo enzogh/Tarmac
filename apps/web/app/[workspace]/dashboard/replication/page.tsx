@@ -523,7 +523,7 @@ export default function ReplicationPage() {
                         <div className="flex w-[100px] shrink-0 items-center justify-end gap-0.5">
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <Button
+                              <Button write
                                 variant="ghost"
                                 size="icon"
                                 disabled={busyJobId === job.id}
@@ -554,19 +554,19 @@ export default function ReplicationPage() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => openGeneralEdit(job)}>
+                              <DropdownMenuItem write onClick={() => openGeneralEdit(job)}>
                                 <Pencil className="h-4 w-4" />
                                 Modifier
                               </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => openSshEdit(job)}>
+                              <DropdownMenuItem write onClick={() => openSshEdit(job)}>
                                 <Settings2 className="h-4 w-4" />
                                 Source SSH
                               </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => rotateTriggerToken(job)}>
+                              <DropdownMenuItem write onClick={() => rotateTriggerToken(job)}>
                                 <RotateCw className="h-4 w-4" />
                                 Lien externe
                               </DropdownMenuItem>
-                              <DropdownMenuItem
+                              <DropdownMenuItem write
                                 onClick={() => deleteJob(job)}
                                 className="text-[hsl(var(--danger))] focus:text-[hsl(var(--danger))]"
                               >
@@ -808,7 +808,7 @@ export default function ReplicationPage() {
             <Button type="button" variant="secondary" onClick={() => setSshEditJob(null)}>
               Annuler
             </Button>
-            <Button type="button" onClick={saveSshSource} disabled={savingSsh}>
+            <Button write type="button" onClick={saveSshSource} disabled={savingSsh}>
               {savingSsh ? 'Enregistrement…' : 'Enregistrer'}
             </Button>
           </DialogFooter>
@@ -852,7 +852,7 @@ export default function ReplicationPage() {
             <Button type="button" variant="secondary" onClick={() => setGeneralEditJob(null)}>
               Annuler
             </Button>
-            <Button type="button" onClick={saveGeneralEdit} disabled={savingGeneral}>
+            <Button write type="button" onClick={saveGeneralEdit} disabled={savingGeneral}>
               {savingGeneral ? 'Enregistrement…' : 'Enregistrer'}
             </Button>
           </DialogFooter>

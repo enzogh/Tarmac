@@ -110,11 +110,22 @@ export class ApiKeyOrJwtGuard extends AuthGuard('jwt') {
   private requiredScope(context: ExecutionContext, method: string): ApiKeyScope | undefined {
     const targets = [context.getHandler(), context.getClass()];
     if (this.reflector.getAllAndOverride<boolean>(SESSION_ONLY_METADATA, targets)) return undefined;
-    const explicit = this.reflector.getAllAndOverride<ApiKeyScope | undefined>(API_SCOPE_METADATA, targets);
-    if (explicit) return explicit;
-    const resource = this.reflector.getAllAndOverride<ApiKeyResourceName | undefined>(API_RESOURCE_METADATA, targets);
-    if (!resource) return undefined;
-    const reads = method === 'GET' || method === 'HEAD';
-    return `${resource}:${reads ? 'read' : 'write'}`;
+    return declaredScope(this.reflector, context, method);
   }
+}
+
+/**
+ * The scope a handler declares, from @RequireApiScope or its controller's
+ * @ApiKeyResource (GET/HEAD read, anything else writes). Undefined for
+ * controllers outside the permission areas (workspaces, keys, accounts).
+ * Also what WorkspaceGuard checks a member's permissions against.
+ */
+export function declaredScope(reflector: Reflector, context: ExecutionContext, method: string): ApiKeyScope | undefined {
+  const targets = [context.getHandler(), context.getClass()];
+  const explicit = reflector.getAllAndOverride<ApiKeyScope | undefined>(API_SCOPE_METADATA, targets);
+  if (explicit) return explicit;
+  const resource = reflector.getAllAndOverride<ApiKeyResourceName | undefined>(API_RESOURCE_METADATA, targets);
+  if (!resource) return undefined;
+  const reads = method === 'GET' || method === 'HEAD';
+  return `${resource}:${reads ? 'read' : 'write'}`;
 }

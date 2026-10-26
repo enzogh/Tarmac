@@ -1424,7 +1424,9 @@ export class AgentsService implements OnModuleInit {
   requestTraceroute(
     nodeId: string,
     targetIp: string,
-    timeoutMs = 15000,
+    // The agent gives up after 15 hops or 4 silent ones (1 s each), and its
+    // system-tool fallback after 18 s: this only catches a vanished agent.
+    timeoutMs = 25000,
   ): Promise<{ targetIp: string; hops: Array<{ hop: number; ip: string | null; latencyMs: number | null }> }> {
     const requestId = `trace:${nodeId}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
 

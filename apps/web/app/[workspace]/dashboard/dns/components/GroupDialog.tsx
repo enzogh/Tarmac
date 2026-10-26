@@ -154,7 +154,7 @@ export function GroupDialog({
           <Button variant="secondary" onClick={() => onOpenChange(false)}>
             Annuler
           </Button>
-          <Button onClick={createGroup} disabled={creating}>
+          <Button write onClick={createGroup} disabled={creating}>
             {creating ? 'Création…' : 'Créer le groupe'}
           </Button>
         </DialogFooter>

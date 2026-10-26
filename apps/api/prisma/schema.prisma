@@ -246,9 +246,13 @@ model WorkspaceMembership {
   id          String    @id @default(cuid())
   workspaceId String
   userId      String
-  // Reserved for owner/admin/viewer distinctions later; v1 authz treats any
-  // membership row as full access to the workspace regardless of this value.
+  // "owner" administers the workspace (settings, members, API keys) and
+  // reaches everything; "member" reaches what `permissions` grants.
   role        String    @default("member")
+  // Same vocabulary as ApiKey.scopes ("<resource>:read|write", write
+  // implying read), enforced by WorkspaceGuard for members. Defaults to
+  // everything, which is what a membership meant before roles existed.
+  permissions String[]  @default(["nodes:read", "nodes:write", "storage:read", "storage:write", "network:read", "network:write", "dns:read", "dns:write", "vpn:read", "vpn:write", "alerts:read", "alerts:write", "logs:read"])
   // "manual" (platform-admin-granted, incl. the Phase 0 backfill) vs "sso"
   // (granted by an Authentik group claim). Lets a future full add+revoke SSO
   // sync only ever touch rows it itself created.

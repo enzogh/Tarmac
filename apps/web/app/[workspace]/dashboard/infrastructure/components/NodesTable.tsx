@@ -1,7 +1,6 @@
 'use client';
 
 import { ArrowDown, ArrowUp, ArrowUpDown, BellOff, Eye, MoreHorizontal, Pencil, RefreshCcw, Thermometer, Trash2, Bell } from 'lucide-react';
-import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,7 +16,7 @@ import { formatCapacity, formatRelative, formatThroughput } from '@/lib/format';
 import { flagFromCountryCode, GeoInfo } from '@/lib/geo';
 import { cn } from '@/lib/utils';
 import { cpuModelShort, cpuShape, memoryUsage } from '@/lib/system-info';
-import { externalIpOf, formatDateTime, InternalDnsBadge, InternalDnsState, isMuted, MiniMeter, smartIssue } from './node-ui';
+import { externalIpOf, formatDateTime, InternalDnsBadge, InternalDnsState, isMuted, MiniMeter, smartIssue, SwapLine } from './node-ui';
 
 export type NodeAction = 'open' | 'edit' | 'update' | 'mute' | 'delete';
 export type NodeSortKey = 'status' | 'name' | 'location' | 'cpu' | 'ram' | 'disk' | 'network' | 'seen';
@@ -52,8 +51,6 @@ export function NodesTable({
   nodes,
   geo,
   labels,
-  selected,
-  onSelectedChange,
   sort,
   onSort,
   internalDns,
@@ -64,8 +61,6 @@ export function NodesTable({
   nodes: NodeActivityItem[];
   geo: (node: NodeActivityItem) => GeoInfo | null;
   labels: Record<string, string[]>;
-  selected: Set<string>;
-  onSelectedChange: (next: Set<string>) => void;
   sort: NodeSort;
   onSort: (key: NodeSortKey) => void;
   internalDns: InternalDnsState | undefined;
@@ -73,37 +68,21 @@ export function NodesTable({
   activeId: string | null;
   onAction: (node: NodeActivityItem, action: NodeAction) => void;
 }) {
-  const allSelected = nodes.length > 0 && nodes.every((node) => selected.has(node.id));
-  const toggleAll = () => {
-    const next = new Set(selected);
-    nodes.forEach((node) => (allSelected ? next.delete(node.id) : next.add(node.id)));
-    onSelectedChange(next);
-  };
-  const toggle = (id: string) => {
-    const next = new Set(selected);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    onSelectedChange(next);
-  };
-
   return (
     <Table>
       <TableHeader>
         <TableRow className="hover:bg-transparent">
-          <TableHead className="w-10">
-            <Checkbox checked={allSelected} indeterminate={!allSelected && nodes.some((node) => selected.has(node.id))} onChange={toggleAll} aria-label="Tout sélectionner" />
-          </TableHead>
           <SortHead label="Nœud" column="name" sort={sort} onSort={onSort} />
           <SortHead label="État" column="status" sort={sort} onSort={onSort} />
           <SortHead label="Localisation" column="location" sort={sort} onSort={onSort} className="hidden lg:table-cell" />
-          <TableHead className="hidden xl:table-cell">Adresses</TableHead>
+          <TableHead className="hidden 2xl:table-cell">Adresses</TableHead>
           <SortHead label="CPU" column="cpu" sort={sort} onSort={onSort} className="hidden md:table-cell" />
-          <SortHead label="RAM" column="ram" sort={sort} onSort={onSort} className="hidden md:table-cell" />
+          <SortHead label="RAM · swap" column="ram" sort={sort} onSort={onSort} className="hidden md:table-cell" />
           <SortHead label="Disque" column="disk" sort={sort} onSort={onSort} className="hidden md:table-cell" />
-          <SortHead label="Réseau" column="network" sort={sort} onSort={onSort} className="hidden 2xl:table-cell" />
-          <TableHead className="hidden lg:table-cell">Agent</TableHead>
+          <SortHead label="Réseau" column="network" sort={sort} onSort={onSort} className="hidden min-[1800px]:table-cell" />
+          <TableHead className="hidden min-[1440px]:table-cell">Agent</TableHead>
           <SortHead label="Vu" column="seen" sort={sort} onSort={onSort} className="hidden sm:table-cell" />
-          <TableHead className="w-12">
+          <TableHead className="sticky right-0 w-12 bg-card">
             <span className="sr-only">Actions</span>
           </TableHead>
         </TableRow>
@@ -119,14 +98,10 @@ export function NodesTable({
           return (
             <TableRow
               key={node.id}
-              data-state={selected.has(node.id) ? 'selected' : undefined}
               onClick={() => onAction(node, 'open')}
               className={cn('cursor-pointer', activeId === node.id && 'bg-primary/[0.06]')}
             >
-              <TableCell className="py-2" onClick={(event) => event.stopPropagation()}>
-                <Checkbox checked={selected.has(node.id)} onChange={() => toggle(node.id)} aria-label={`Sélectionner ${node.name}`} />
-              </TableCell>
-              <TableCell className="max-w-[17rem] py-2">
+              <TableCell className="max-w-[9.5rem] py-2 sm:max-w-[15rem]">
                 <div className="flex items-center gap-1.5">
                   <span className="truncate font-medium text-foreground" title={node.name}>
                     {node.name}
@@ -179,7 +154,7 @@ export function NodesTable({
                   <span className="text-muted-foreground">—</span>
                 )}
               </TableCell>
-              <TableCell className="hidden py-2 font-mono text-2xs xl:table-cell">
+              <TableCell className="hidden py-2 font-mono text-2xs 2xl:table-cell">
                 <div className="text-foreground">{externalIpOf(node) ?? '—'}</div>
                 <div className="text-muted-foreground">{node.vlanIp ?? 'hors réseau privé'}</div>
               </TableCell>
@@ -200,12 +175,8 @@ export function NodesTable({
                   <span className="text-2xs text-muted-foreground">—</span>
                 ) : (
                   <>
-                    <MiniMeter value={node.metrics.ram} />
-                    {memoryUsage(node.systemInfo, node.metrics.ram) && (
-                      <span className="mt-0.5 block whitespace-nowrap text-2xs tabular-nums text-muted-foreground">
-                        {memoryUsage(node.systemInfo, node.metrics.ram)!.label}
-                      </span>
-                    )}
+                    <MiniMeter value={node.metrics.ram} title={memoryUsage(node.systemInfo, node.metrics.ram)?.label} />
+                    <SwapLine info={node.systemInfo} className="mt-1" />
                   </>
                 )}
               </TableCell>
@@ -215,11 +186,11 @@ export function NodesTable({
                   title={`${formatCapacity(node.storage.totalUsedGb)} sur ${formatCapacity(node.storage.totalCapacityGb)}`}
                 />
               </TableCell>
-              <TableCell className="hidden whitespace-nowrap py-2 text-2xs tabular-nums text-muted-foreground 2xl:table-cell">
+              <TableCell className="hidden whitespace-nowrap py-2 text-2xs tabular-nums text-muted-foreground min-[1800px]:table-cell">
                 ↓ {formatThroughput(node.metrics.networkRx)}
                 <br />↑ {formatThroughput(node.metrics.networkTx)}
               </TableCell>
-              <TableCell className="hidden py-2 lg:table-cell">
+              <TableCell className="hidden py-2 min-[1440px]:table-cell">
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span
@@ -243,7 +214,7 @@ export function NodesTable({
               <TableCell className="hidden whitespace-nowrap py-2 text-2xs text-muted-foreground sm:table-cell" title={formatDateTime(node.lastSeenAt)}>
                 {formatRelative(node.lastSeenAt)}
               </TableCell>
-              <TableCell className="py-2 text-right" onClick={(event) => event.stopPropagation()}>
+              <TableCell className="sticky right-0 bg-card py-2 text-right [tr:hover>&]:bg-surface-2" onClick={(event) => event.stopPropagation()}>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
@@ -259,20 +230,20 @@ export function NodesTable({
                       <Eye className="h-3.5 w-3.5" />
                       Détails, DNS et disques
                     </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => onAction(node, 'edit')} className="gap-2">
+                    <DropdownMenuItem write onSelect={() => onAction(node, 'edit')} className="gap-2">
                       <Pencil className="h-3.5 w-3.5" />
                       Renommer, rôle, libellés
                     </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => onAction(node, 'update')} disabled={node.status !== 'online' || updating} className="gap-2">
+                    <DropdownMenuItem write onSelect={() => onAction(node, 'update')} disabled={node.status !== 'online' || updating} className="gap-2">
                       <RefreshCcw className="h-3.5 w-3.5" />
                       Mettre à jour l’agent
                     </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => onAction(node, 'mute')} className="gap-2">
+                    <DropdownMenuItem write onSelect={() => onAction(node, 'mute')} className="gap-2">
                       {isMuted(node) ? <Bell className="h-3.5 w-3.5" /> : <BellOff className="h-3.5 w-3.5" />}
                       {isMuted(node) ? 'Réactiver les alertes' : 'Silence 1 h (maintenance)'}
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem onSelect={() => onAction(node, 'delete')} className="gap-2 text-[hsl(var(--danger))]">
+                    <DropdownMenuItem write onSelect={() => onAction(node, 'delete')} className="gap-2 text-[hsl(var(--danger))]">
                       <Trash2 className="h-3.5 w-3.5" />
                       Supprimer le nœud
                     </DropdownMenuItem>

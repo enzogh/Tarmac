@@ -1,5 +1,6 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { Eye, Lock, Pencil, ShieldAlert, Sparkles, SlidersHorizontal } from 'lucide-react';
 import {
   AccessLevel,
@@ -33,9 +34,17 @@ const LEVELS: Array<{ id: AccessLevel; label: string; icon?: typeof Eye }> = [
 export function PermissionEditor({
   value,
   onChange,
+  hidePresets,
+  showIds = true,
+  footnote,
 }: {
   value: PermissionMap;
   onChange: (next: PermissionMap) => void;
+  /** For callers that offer their own presets above the rows (member roles). */
+  hidePresets?: boolean;
+  /** API ids next to each label: useful for keys, noise for people. */
+  showIds?: boolean;
+  footnote?: ReactNode;
 }) {
   const preset = presetOf(value);
   const granted = API_KEY_RESOURCES.filter((resource) => value[resource.id] !== 'none').length;
@@ -50,7 +59,7 @@ export function PermissionEditor({
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Niveau d'accès">
+      {!hidePresets && <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Niveau d'accès">
         {PRESETS.map((item) => {
           const active = preset === item.id;
           return (
@@ -73,7 +82,7 @@ export function PermissionEditor({
             </button>
           );
         })}
-      </div>
+      </div>}
 
       <div className="overflow-hidden rounded-lg border border-border">
         <div className="flex items-center justify-between gap-2 border-b border-border bg-surface-2/60 px-3 py-2 text-2xs text-muted-foreground">
@@ -96,7 +105,7 @@ export function PermissionEditor({
                   <div className="min-w-0">
                     <p className="flex items-center gap-2 text-sm font-medium text-foreground">
                       {resource.label}
-                      <code className="font-mono text-2xs font-normal text-muted-foreground">{resource.id}</code>
+                      {showIds && <code className="font-mono text-2xs font-normal text-muted-foreground">{resource.id}</code>}
                     </p>
                     <p className="text-2xs text-muted-foreground">{description ?? 'Aucun accès à ce module.'}</p>
                   </div>
@@ -153,8 +162,12 @@ export function PermissionEditor({
         </div>
       )}
       <p className="text-2xs text-muted-foreground">
-        L&apos;écriture inclut la lecture. Aucune clé ne peut gérer les comptes, les workspaces, leurs membres ou les
-        clés API elles-mêmes : ces actions demandent une session.
+        {footnote ?? (
+          <>
+            L&apos;écriture inclut la lecture. Aucune clé ne peut gérer les comptes, les workspaces, leurs membres ou les
+            clés API elles-mêmes : ces actions demandent une session.
+          </>
+        )}
       </p>
     </div>
   );

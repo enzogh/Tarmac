@@ -223,6 +223,11 @@ export class VlanController {
     const message = error instanceof Error ? error.message : String(error);
     if (/is offline|disconnected/.test(message)) return "Le nœud source est hors ligne : son agent ne peut pas lancer le test.";
     if (/timeout|à temps/.test(message)) return "L'agent du nœud source n'a pas répondu à temps.";
+    // Agents from before the built-in traceroute relied on system tools.
+    if (/traceroute\/tracepath not found/.test(message)) {
+      return "L'agent du nœud source n'a ni traceroute ni tracepath : mettez-le à jour depuis la page Nœuds, il trace désormais sans outil externe.";
+    }
+    if (/^no route found to/.test(message)) return message.replace(/^no route found to/, 'Aucune route vers');
     return message;
   }
 

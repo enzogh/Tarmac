@@ -1102,7 +1102,7 @@ export default function MountsPage() {
           description="Montez des sources NFS, avec repli en cas de panne, sur un nœud."
           actions={
             <>
-              <Button variant="outline" onClick={() => openWizard('mount-existing')} className="gap-2">
+              <Button write variant="outline" onClick={() => openWizard('mount-existing')} className="gap-2">
                 <HardDrive className="h-4 w-4" />
                 Monter un partage
               </Button>
@@ -1212,7 +1212,7 @@ export default function MountsPage() {
                           {mount.status === 'error' && (
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                <Button
+                                <Button write
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => retryMount(mount.id)}
@@ -1231,7 +1231,7 @@ export default function MountsPage() {
                           {isRemote && (
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                <Button
+                                <Button write
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => openSshEdit(mount)}
@@ -1245,7 +1245,7 @@ export default function MountsPage() {
                           )}
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <Button
+                              <Button write
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => deleteMount(mount.id)}
@@ -1376,7 +1376,7 @@ export default function MountsPage() {
             <Button type="button" variant="secondary" onClick={() => setSshEditMount(null)}>
               Annuler
             </Button>
-            <Button type="button" onClick={saveSshEdit} disabled={savingSshEdit}>
+            <Button write type="button" onClick={saveSshEdit} disabled={savingSshEdit}>
               {savingSshEdit ? 'Enregistrement…' : 'Enregistrer et réessayer'}
             </Button>
           </DialogFooter>

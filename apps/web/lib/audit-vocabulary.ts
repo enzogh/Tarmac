@@ -149,6 +149,7 @@ const ACTION_VERB: Record<string, string> = {
   'workspace.member.add': 'a ajouté un membre au workspace',
   'workspace.member.invite': 'a invité un membre dans le workspace',
   'workspace.member.remove': 'a retiré un membre du workspace',
+  'workspace.member.update': 'a modifié le rôle d’un membre du workspace',
 };
 
 // Actions whose sentence is complete on its own, without a resource name.

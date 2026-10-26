@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ArrowRightLeft, Check, ChevronDown, LoaderCircle, Undo2 } from 'lucide-react';
+import { ArrowRightLeft, Check, ChevronDown, LoaderCircle, Lock, Undo2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { VpnGateway, VpnProfile } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { useReadOnly } from '@/lib/read-only';
 import { NodePicker } from './NodePicker';
 import { NodeFlag, nodeLocation } from './vpn-ui';
 
@@ -37,6 +38,7 @@ export function ExitSwitcher({
   onSwitch: (exitNodeId: string | null) => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const { readOnly } = useReadOnly();
   const entryId = profile.entryNode.id;
   const currentId = profile.exitNode?.id ?? entryId;
   const busy = switchingTo !== null;
@@ -47,6 +49,24 @@ export function ExitSwitcher({
   useEffect(() => {
     if (!busy) setPickerOpen(false);
   }, [busy]);
+
+  if (readOnly) {
+    const current = gateways.find((gateway) => gateway.id === currentId);
+    return (
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-muted-foreground">Sortie Internet</span>
+        <span className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2.5 text-foreground">
+          {current && <NodeFlag node={current} />}
+          {current?.name ?? profile.entryNode.name}
+          {currentId === entryId && <span className="text-muted-foreground">(direct)</span>}
+        </span>
+        <span className="inline-flex items-center gap-1 text-2xs text-muted-foreground" title="Lecture seule : votre rôle ne permet pas de changer la sortie.">
+          <Lock className="h-3 w-3" />
+          Changement réservé aux éditeurs
+        </span>
+      </div>
+    );
+  }
 
   const choose = (gateway: VpnGateway) => {
     if (busy || exitDisabledReason(profile, gateway) || gateway.id === currentId) return;

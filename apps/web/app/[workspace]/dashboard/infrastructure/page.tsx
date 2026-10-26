@@ -3,8 +3,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
-  Bell,
-  BellOff,
   Cpu,
   FolderSearch,
   Gauge,
@@ -159,7 +157,6 @@ export default function InfrastructurePage() {
   const [countryFilter, setCountryFilter] = useState(ANY);
   const [labelFilter, setLabelFilter] = useState(ANY);
   const [sort, setSort] = useState<NodeSort>({ key: 'status', direction: 'asc' });
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [openId, setOpenId] = useState<string | null>(null);
   const [editNode, setEditNode] = useState<NodeActivityItem | null>(null);
   const [nodeToDelete, setNodeToDelete] = useState<NodeActivityItem | null>(null);
@@ -287,14 +284,6 @@ export default function InfrastructurePage() {
     return filtered.sort((left, right) => factor * compare[sort.key](left, right) || left.name.localeCompare(right.name));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, filter, query, roleFilter, countryFilter, labelFilter, labels, sort, geoByIp]);
-
-  useEffect(() => {
-    setSelected((current) => {
-      const ids = new Set(nodes.map((node) => node.id));
-      const next = new Set([...current].filter((id) => ids.has(id)));
-      return next.size === current.size ? current : next;
-    });
-  }, [nodes]);
 
   const opened = nodes.find((node) => node.id === openId) ?? null;
   const filtersActive = filter !== 'all' || query || roleFilter !== ANY || countryFilter !== ANY || labelFilter !== ANY;
@@ -466,7 +455,6 @@ export default function InfrastructurePage() {
     }
   };
 
-  const selectedNodes = nodes.filter((node) => selected.has(node.id));
   const outdatedOnline = nodes.filter((node) => node.status === 'online' && node.agentUpToDate === false);
 
   return (
@@ -479,7 +467,7 @@ export default function InfrastructurePage() {
             <Tooltip>
               <TooltipTrigger asChild>
                 <span>
-                  <Button variant="secondary" onClick={() => void updateAgents(nodes)} disabled={bulkBusy || outdatedOnline.length === 0} className="gap-1.5">
+                  <Button write variant="secondary" onClick={() => void updateAgents(nodes)} disabled={bulkBusy || outdatedOnline.length === 0} className="gap-1.5">
                     <RefreshCcw className={cn('h-4 w-4', bulkBusy && 'animate-spin')} />
                     {outdatedOnline.length > 0 ? `Mettre à jour ${outdatedOnline.length} agent(s)` : 'Agents à jour'}
                   </Button>
@@ -569,7 +557,7 @@ export default function InfrastructurePage() {
 
         <TabsContent value="nodes" className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <Tabs value={filter} onValueChange={(value) => setFilter(value as Filter)}>
+            <Tabs value={filter} onValueChange={(value) => setFilter(value as Filter)} className="scroll-thin max-w-full overflow-x-auto">
               <TabsList variant="segmented">
                 <TabsTrigger value="all">
                   Tous <TabsCount>{nodes.length}</TabsCount>
@@ -629,31 +617,6 @@ export default function InfrastructurePage() {
             </div>
           </div>
 
-          {selected.size > 0 && view === 'table' && (
-            <div className="sticky top-2 z-20 flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-popover/95 px-3 py-2 shadow-overlay backdrop-blur animate-fade-in">
-              <span className="text-sm font-medium text-foreground">
-                {selected.size} nœud{selected.size > 1 ? 's' : ''} sélectionné{selected.size > 1 ? 's' : ''}
-              </span>
-              <span className="mx-1 h-5 w-px bg-border" />
-              <Button size="sm" variant="secondary" disabled={bulkBusy} onClick={() => void updateAgents(selectedNodes)} className="gap-1.5">
-                <RefreshCcw className="h-3.5 w-3.5" />
-                Mettre à jour les agents
-              </Button>
-              <Button size="sm" variant="secondary" disabled={bulkBusy} onClick={() => void setMute(selectedNodes, true)} className="gap-1.5">
-                <BellOff className="h-3.5 w-3.5" />
-                Silence 1 h
-              </Button>
-              <Button size="sm" variant="secondary" disabled={bulkBusy} onClick={() => void setMute(selectedNodes, false)} className="gap-1.5">
-                <Bell className="h-3.5 w-3.5" />
-                Réactiver les alertes
-              </Button>
-              <span className="flex-1" />
-              <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())} aria-label="Vider la sélection">
-                <X className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          )}
-
           {nodesLoading ? (
             <Card className="overflow-hidden">
               <NodesTableSkeleton />
@@ -674,8 +637,6 @@ export default function InfrastructurePage() {
                   nodes={visible}
                   geo={geo}
                   labels={labels}
-                  selected={selected}
-                  onSelectedChange={setSelected}
                   sort={sort}
                   onSort={onSort}
                   internalDns={internalDns}

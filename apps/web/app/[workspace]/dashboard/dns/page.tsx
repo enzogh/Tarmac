@@ -67,7 +67,7 @@ function GettingStarted({ hasGroups, onCreateGroup, onAddDomain }: { hasGroups: 
               <p className="text-sm font-medium text-foreground">{step.title}</p>
               <p className="flex-1 text-xs text-muted-foreground">{step.text}</p>
               {step.action && (
-                <Button size="sm" onClick={step.action.onClick} className="mt-1 w-fit gap-1.5">
+                <Button write size="sm" onClick={step.action.onClick} className="mt-1 w-fit gap-1.5">
                   <Plus className="h-3.5 w-3.5" />
                   {step.action.label}
                 </Button>
@@ -132,7 +132,7 @@ function DnsPageContent() {
       <Tooltip>
         <TooltipTrigger asChild>
           <span>
-            <Button disabled className="gap-1.5">
+            <Button write disabled className="gap-1.5">
               <Plus className="h-4 w-4" />
               Ajouter un domaine
             </Button>
@@ -141,7 +141,7 @@ function DnsPageContent() {
         <TooltipContent>Créez d&apos;abord un groupe de serveurs DNS.</TooltipContent>
       </Tooltip>
     ) : (
-      <Button onClick={() => setZoneDialogOpen(true)} className="gap-1.5">
+      <Button write onClick={() => setZoneDialogOpen(true)} className="gap-1.5">
         <Plus className="h-4 w-4" />
         Ajouter un domaine
       </Button>
@@ -155,7 +155,7 @@ function DnsPageContent() {
           description="Vos domaines, servis par vos propres serveurs : enregistrements, délégation, DNSSEC et géo-routage."
           actions={
             tab === 'servers' ? (
-              <Button onClick={() => setGroupDialogOpen(true)} className="gap-1.5">
+              <Button write onClick={() => setGroupDialogOpen(true)} className="gap-1.5">
                 <Plus className="h-4 w-4" />
                 Nouveau groupe de serveurs
               </Button>

@@ -10,19 +10,29 @@ import { Diagram, DBox, DFrame, DLink, DNote } from '../../../components/docs/Di
 
 const ROLES: { role: string; scope: string; can: string }[] = [
   {
-    role: 'Membre',
+    role: 'Lecteur',
     scope: 'Un workspace',
-    can: "Accès complet aux ressources du workspace : nœuds, stockage, réseau, DNS, alertes, journal.",
+    can: 'Voit toutes les pages et leurs données, sans pouvoir rien modifier. Idéal pour un client, un auditeur ou une astreinte.',
   },
   {
-    role: 'Propriétaire',
+    role: 'Éditeur',
     scope: 'Un workspace',
-    can: "Tout ce que peut un membre, plus : renommer le workspace, gérer ses membres, le rattacher à un groupe SSO, et le supprimer une fois vidé.",
+    can: 'Consulte et modifie tout : nœuds, stockage, réseau privé, DNS, VPN, alertes. Ne gère ni le workspace ni ses membres.',
+  },
+  {
+    role: 'Personnalisé',
+    scope: 'Un workspace',
+    can: 'Aucun accès, lecture ou modification, choisi page par page (par exemple : DNS en modification, le reste en lecture). Une page sans accès disparaît du menu.',
+  },
+  {
+    role: 'Administrateur',
+    scope: 'Un workspace',
+    can: 'Tout, plus : renommer le workspace, gérer ses membres et leurs rôles, ses clés API, le rattacher à un groupe SSO, et le supprimer une fois vidé.',
   },
   {
     role: 'Administrateur de plateforme',
     scope: 'Toute l’installation',
-    can: "Peut basculer dans n’importe quel workspace, en créer de nouveaux et rattacher n’importe quel compte à l’un d’eux.",
+    can: 'Peut basculer dans n’importe quel workspace, en créer de nouveaux et rattacher n’importe quel compte à l’un d’eux.',
   },
 ];
 
@@ -153,9 +163,9 @@ export default function WorkspacesDocsPage() {
                 Ajout manuel
               </CardTitle>
               <CardDescription>
-                Depuis Paramètres → Membres, le propriétaire ajoute quelqu&apos;un par son adresse e-mail. Le compte
-                doit déjà exister : Tarmac n&apos;envoie pas d&apos;invitation par e-mail, l&apos;ajout est immédiat et
-                la personne voit le workspace apparaître à sa prochaine visite.
+                Depuis Paramètres → Membres et rôles, un administrateur ajoute quelqu&apos;un par son adresse e-mail et
+                choisit son rôle (Lecteur par défaut). Le compte doit déjà exister : Tarmac n&apos;envoie pas
+                d&apos;invitation, l&apos;ajout est immédiat.
               </CardDescription>
             </CardHeader>
           </Card>
@@ -168,7 +178,7 @@ export default function WorkspacesDocsPage() {
               <CardDescription>
                 Un workspace peut déclarer un groupe Authentik. Toute personne membre de ce groupe devient
                 automatiquement membre du workspace à sa connexion suivante, sans intervention. Les accès accordés de
-                cette façon sont marqués comme tels, distincts des ajouts manuels.
+                cette façon sont marqués « SSO » et reçoivent le rôle Éditeur, ajustable ensuite comme les autres.
               </CardDescription>
             </CardHeader>
           </Card>
@@ -197,10 +207,19 @@ export default function WorkspacesDocsPage() {
           </CardContent>
         </Card>
 
+        <Callout>
+          Les rôles s&apos;appliquent côté API autant que dans l&apos;interface : un lecteur qui appelle une route
+          d&apos;écriture reçoit un refus explicite (403). Ils reprennent le découpage des{' '}
+          <Link href="/docs/api-keys" className="underline underline-offset-2">
+            clés API
+          </Link>{' '}
+          : nœuds, stockage, réseau privé, DNS, VPN, alertes et journal. Chacun retrouve ses droits dans Paramètres →
+          Mon accès.
+        </Callout>
         <Callout variant="warning">
-          Celui qui gère un workspace — propriétaire, ou administrateur de plateforme — ne peut pas s&apos;en retirer
-          lui-même, et personne ne peut retirer son dernier propriétaire : il resterait sans personne pour en gérer les
-          membres. Pour le quitter, supprimez le workspace ou demandez à un autre propriétaire de vous retirer.
+          Personne ne modifie son propre rôle ni ne se retire soi-même d&apos;un workspace qu&apos;il administre, et le
+          dernier administrateur ne peut être ni rétrogradé ni retiré : le workspace resterait sans personne pour le
+          gérer. Nommez d&apos;abord un autre administrateur.
         </Callout>
         <Callout>
           Le nom et l&apos;identifiant d&apos;URL (slug) se changent dans Paramètres → Général, y compris pour le

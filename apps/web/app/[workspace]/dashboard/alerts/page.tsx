@@ -226,7 +226,7 @@ function AlertRow({
           {group.status === 'open' && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="secondary" size="sm" disabled={busy} onClick={onAck} className="hidden gap-1.5 sm:inline-flex">
+                <Button write variant="secondary" size="sm" disabled={busy} onClick={onAck} className="hidden gap-1.5 sm:inline-flex">
                   <Eye className="h-3.5 w-3.5" />
                   Prendre en compte
                 </Button>
@@ -235,14 +235,14 @@ function AlertRow({
             </Tooltip>
           )}
           {!resolved && (
-            <Button variant="secondary" size="sm" disabled={busy} onClick={onResolve} className="gap-1.5">
+            <Button write variant="secondary" size="sm" disabled={busy} onClick={onResolve} className="gap-1.5">
               <CheckCircle2 className="h-3.5 w-3.5 text-[hsl(var(--ok))]" />
               Résoudre
             </Button>
           )}
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" disabled={busy} onClick={onDelete} aria-label="Supprimer" className="hover:text-[hsl(var(--danger))]">
+              <Button write variant="ghost" size="icon" disabled={busy} onClick={onDelete} aria-label="Supprimer" className="hover:text-[hsl(var(--danger))]">
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
             </TooltipTrigger>
@@ -482,15 +482,15 @@ export default function AlertsPage() {
                   <span className="text-muted-foreground"> · {selectedIds.length} déclenchement{selectedIds.length > 1 ? 's' : ''}</span>
                 </span>
                 <div className="ml-auto flex flex-wrap items-center gap-2">
-                  <Button variant="secondary" size="sm" disabled={busy} onClick={() => void ackGroups(selectedGroups)} className="gap-1.5">
+                  <Button write variant="secondary" size="sm" disabled={busy} onClick={() => void ackGroups(selectedGroups)} className="gap-1.5">
                     <Eye className="h-3.5 w-3.5" />
                     Prendre en compte
                   </Button>
-                  <Button variant="secondary" size="sm" disabled={busy} onClick={() => void resolveGroups(selectedGroups)} className="gap-1.5">
+                  <Button write variant="secondary" size="sm" disabled={busy} onClick={() => void resolveGroups(selectedGroups)} className="gap-1.5">
                     <CheckCircle2 className="h-3.5 w-3.5 text-[hsl(var(--ok))]" />
                     Résoudre
                   </Button>
-                  <Button variant="secondary" size="sm" disabled={busy} onClick={() => void deleteGroups(selectedGroups)} className="gap-1.5 text-[hsl(var(--danger))]">
+                  <Button write variant="secondary" size="sm" disabled={busy} onClick={() => void deleteGroups(selectedGroups)} className="gap-1.5 text-[hsl(var(--danger))]">
                     <Trash2 className="h-3.5 w-3.5" />
                     Supprimer
                   </Button>

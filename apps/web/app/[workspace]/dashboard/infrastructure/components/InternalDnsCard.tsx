@@ -89,7 +89,7 @@ export function InternalDnsCard({
         </p>
       </div>
       {node && state.internalDnsStatus === 'error' && node.status !== 'offline' && (
-        <Button size="sm" onClick={onRetry} disabled={retrying} className="gap-1.5">
+        <Button write size="sm" onClick={onRetry} disabled={retrying} className="gap-1.5">
           {retrying ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
           Réessayer
         </Button>

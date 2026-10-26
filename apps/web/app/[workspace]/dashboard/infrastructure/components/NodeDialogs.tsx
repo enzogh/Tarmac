@@ -121,7 +121,7 @@ export function EditNodeDialog({
             <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
               Annuler
             </Button>
-            <Button type="submit" disabled={saving}>
+            <Button write type="submit" disabled={saving}>
               {saving ? 'Enregistrement…' : 'Enregistrer'}
             </Button>
           </DialogFooter>
@@ -163,7 +163,7 @@ export function DeleteNodeDialog({
           <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
             Annuler
           </Button>
-          <Button
+          <Button write
             type="button"
             variant="destructive"
             disabled={typed.trim() !== node.name || deleting}

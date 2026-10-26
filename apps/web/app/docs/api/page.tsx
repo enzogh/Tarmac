@@ -157,11 +157,10 @@ const MODULES: Module[] = [
         path: '/workspaces/:id',
         body: 'name?, slug?, ssoGroupClaim?',
         description:
-"Renomme le workspace, change son identifiant d'URL (slug) et/ou le groupe Authentik qui accorde automatiquement l'accès. L'ancien slug reste une redirection et ne peut être repris par aucun autre workspace ; les agents ne sont pas concernés. Propriétaire ou administrateur de plateforme.",
-        isNew: true,
+"Renomme le workspace, change son identifiant d'URL (slug) et/ou le groupe Authentik qui accorde automatiquement l'accès. L'ancien slug reste une redirection et ne peut être repris par aucun autre workspace ; les agents ne sont pas concernés. Administrateur du workspace ou de plateforme.",
       },
       { method: 'GET', path: '/workspaces/users', description: 'Liste tous les comptes (administrateur de plateforme).' },
-      { method: 'GET', path: '/workspaces/:id/members', description: "Liste les membres d'un workspace." },
+      { method: 'GET', path: '/workspaces/:id/members', description: "Liste les membres d'un workspace, avec leur rôle (owner ou member) et leurs permissions." },
       {
         method: 'POST',
         path: '/workspaces/:id/members/:userId',
@@ -170,11 +169,19 @@ const MODULES: Module[] = [
       {
         method: 'POST',
         path: '/workspaces/:id/invite',
-        body: 'email',
+        body: 'email, role?, permissions?',
         description:
-"Ajoute par e-mail un compte déjà existant — le chemin en libre-service du propriétaire. Aucun e-mail n'est envoyé, l'accès est immédiat.",
+"Ajoute par e-mail un compte déjà existant, avec son rôle : owner (administrateur) ou member, dont les permissions reprennent les scopes des clés API (ex. nodes:read, dns:write). Aucun e-mail n'est envoyé, l'accès est immédiat.",
       },
-      { method: 'DELETE', path: '/workspaces/:id/members/:userId', description: "Retire un membre (un propriétaire ne peut pas se retirer lui-même)." },
+      {
+        method: 'PATCH',
+        path: '/workspaces/:id/members/:userId',
+        body: 'role?, permissions?',
+        description:
+"Change le rôle ou les permissions d'un membre. Impossible sur soi-même, et le dernier administrateur ne peut pas être rétrogradé. Tracé dans le journal.",
+        isNew: true,
+      },
+      { method: 'DELETE', path: '/workspaces/:id/members/:userId', description: "Retire un membre (un administrateur ne peut pas se retirer lui-même)." },
       {
         method: 'DELETE',
         path: '/workspaces/:id',

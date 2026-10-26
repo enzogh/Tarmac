@@ -657,13 +657,19 @@ export type WorkspaceDetail = {
 export type WorkspaceListItem = WorkspaceDetail & {
   memberCount: number;
   myRole: 'owner' | 'member' | null;
+  // Everything for owners and platform admins; a member's grants otherwise.
+  myPermissions: ApiKeyScope[];
 };
+
+export type WorkspaceRole = 'owner' | 'member';
+export type MemberAccess = { role?: WorkspaceRole; permissions?: ApiKeyScope[] };
 
 export type WorkspaceMember = {
   id: string;
   workspaceId: string;
   userId: string;
-  role: string;
+  role: WorkspaceRole;
+  permissions: ApiKeyScope[];
   source: 'manual' | 'sso';
   createdAt: string;
   updatedAt: string;
@@ -1215,10 +1221,15 @@ export const api = {
     listMembers: (id: string) => request<WorkspaceMember[]>(`/api/v1/workspaces/${id}/members`),
     addMember: (id: string, userId: string) =>
       request<WorkspaceMember>(`/api/v1/workspaces/${id}/members/${userId}`, { method: 'POST' }),
-    invite: (id: string, email: string) =>
+    invite: (id: string, email: string, access?: MemberAccess) =>
       request<WorkspaceMember>(`/api/v1/workspaces/${id}/invite`, {
         method: 'POST',
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, ...access }),
+      }),
+    updateMember: (id: string, userId: string, access: MemberAccess) =>
+      request<WorkspaceMember>(`/api/v1/workspaces/${id}/members/${userId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(access),
       }),
     removeMember: (id: string, userId: string) =>
       request<{ success: boolean }>(`/api/v1/workspaces/${id}/members/${userId}`, { method: 'DELETE' }),

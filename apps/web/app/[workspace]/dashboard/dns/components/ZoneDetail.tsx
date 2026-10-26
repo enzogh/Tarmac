@@ -119,7 +119,7 @@ export function ZoneDetail({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="secondary" onClick={() => void reapply()} disabled={busy} className="gap-1.5">
+            <Button write variant="secondary" onClick={() => void reapply()} disabled={busy} className="gap-1.5">
               <RefreshCcw className={cn('h-3.5 w-3.5', busy && 'animate-spin')} />
               Réappliquer
             </Button>
@@ -135,7 +135,7 @@ export function ZoneDetail({
                   Voir le journal
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => void remove()} className="gap-2 text-[hsl(var(--danger))]">
+                <DropdownMenuItem write onSelect={() => void remove()} className="gap-2 text-[hsl(var(--danger))]">
                   <Trash2 className="h-3.5 w-3.5" />
                   Supprimer le domaine
                 </DropdownMenuItem>

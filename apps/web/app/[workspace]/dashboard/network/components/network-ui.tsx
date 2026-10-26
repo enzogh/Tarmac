@@ -28,6 +28,7 @@ import { StatusDot, StatusPill, type StatusTone } from '@/components/ui/status';
 import { Tabs, TabsCount, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { useReadOnly } from '@/lib/read-only';
 
 export type LinkStatus = 'healthy' | 'degraded' | 'offline' | 'unknown';
 
@@ -88,6 +89,7 @@ export function SegmentationCard({
   onToggleGateway: (nodeId: string, enabled: boolean) => void;
   onOpenLocations: () => void;
 }) {
+  const { readOnly } = useReadOnly();
   const known = regions.filter((summary) => summary.region !== 'unknown');
   const unknown = regions.find((summary) => summary.region === 'unknown');
   const missingGateway = known.length > 1 ? known.filter((summary) => !summary.gateway) : [];
@@ -187,6 +189,11 @@ export function SegmentationCard({
                       </span>
                       {busy ? (
                         <LoaderCircle className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                      ) : isGateway && readOnly ? (
+                        <span className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-2xs font-medium text-primary">
+                          <Crown className="h-3 w-3" />
+                          Passerelle
+                        </span>
                       ) : isGateway ? (
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -202,7 +209,7 @@ export function SegmentationCard({
                           <TooltipContent>Cliquer pour retirer ce rôle</TooltipContent>
                         </Tooltip>
                       ) : (
-                        known.length > 1 && (
+                        known.length > 1 && !readOnly && (
                           <button
                             type="button"
                             onClick={() => onToggleGateway(member.nodeId, true)}
@@ -224,7 +231,7 @@ export function SegmentationCard({
               <p className="mt-1 text-xs text-muted-foreground">
                 {unknown.members.map((member) => name(member.nodeId)).join(', ')} : pays introuvable, ces nœuds restent reliés à tout le monde.
               </p>
-              <Button variant="secondary" size="sm" className="mt-2 gap-1.5" onClick={onOpenLocations}>
+              <Button write variant="secondary" size="sm" className="mt-2 gap-1.5" onClick={onOpenLocations}>
                 <MapPin className="h-3.5 w-3.5" />
                 Renseigner la localisation
               </Button>
@@ -324,7 +331,7 @@ export function LinksPanel({
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onTest(link.aId, link.bId)} aria-label="Tester">
+                          <Button write variant="ghost" size="icon" className="h-7 w-7" onClick={() => onTest(link.aId, link.bId)} aria-label="Tester">
                             <Play className="h-3.5 w-3.5" />
                           </Button>
                         </TooltipTrigger>
@@ -374,6 +381,7 @@ export function LocationEditor({
   onResetGraph: () => void;
 }) {
   const unknown = rows.filter((row) => !row.region).length;
+  const { readOnly } = useReadOnly();
   return (
     <Card id="network-locations" className="overflow-hidden">
       <button
@@ -420,6 +428,7 @@ export function LocationEditor({
                         placeholder={row.detected?.city ?? 'Ville'}
                         onChange={(event) => onChange(row.nodeId, { city: event.target.value })}
                         onBlur={() => onSave(row.nodeId)}
+                        disabled={readOnly}
                       />
                     </td>
                     <td className="px-2 py-2">
@@ -429,6 +438,7 @@ export function LocationEditor({
                         placeholder={row.detected?.country ?? 'Pays'}
                         onChange={(event) => onChange(row.nodeId, { country: event.target.value })}
                         onBlur={() => onSave(row.nodeId)}
+                        disabled={readOnly}
                       />
                     </td>
                     <td className="px-2 py-2">
@@ -439,6 +449,7 @@ export function LocationEditor({
                         placeholder={row.detected?.countryCode ?? 'FR'}
                         onChange={(event) => onChange(row.nodeId, { countryCode: event.target.value })}
                         onBlur={() => onSave(row.nodeId)}
+                        disabled={readOnly}
                       />
                     </td>
                     <td className="px-2 py-2">
@@ -449,7 +460,7 @@ export function LocationEditor({
                     <td className="px-4 py-2 text-right">
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button variant="ghost" size="sm" disabled={row.saving} onClick={() => onAuto(row.nodeId)} className="gap-1">
+                          <Button write variant="ghost" size="sm" disabled={row.saving} onClick={() => onAuto(row.nodeId)} className="gap-1">
                             {row.saving ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
                             Auto
                           </Button>
@@ -464,7 +475,7 @@ export function LocationEditor({
           </div>
           <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-2.5 text-2xs text-muted-foreground lg:px-5">
             Enregistré à la sortie du champ, partagé avec toute l’équipe.
-            <Button variant="ghost" size="sm" onClick={onResetGraph} className="h-7 text-2xs">
+            <Button write variant="ghost" size="sm" onClick={onResetGraph} className="h-7 text-2xs">
               Réinitialiser la disposition du graphe
             </Button>
           </div>
@@ -477,11 +488,29 @@ export function LocationEditor({
 // --- Matrix -------------------------------------------------------------
 
 const MATRIX_CELL: Record<LinkStatus, string> = {
-  healthy: 'bg-[hsl(var(--ok))]/70 hover:bg-[hsl(var(--ok))]',
-  degraded: 'bg-[hsl(var(--warn))]/70 hover:bg-[hsl(var(--warn))]',
-  offline: 'bg-[hsl(var(--danger))]/70 hover:bg-[hsl(var(--danger))]',
-  unknown: 'bg-surface-3 hover:bg-muted-foreground/40',
+  healthy: 'bg-[hsl(var(--ok))]/15 text-[hsl(var(--ok))] ring-[hsl(var(--ok))]/30 hover:bg-[hsl(var(--ok))]/25',
+  degraded: 'bg-[hsl(var(--warn))]/15 text-[hsl(var(--warn))] ring-[hsl(var(--warn))]/35 hover:bg-[hsl(var(--warn))]/25',
+  offline: 'bg-[hsl(var(--danger))]/15 text-[hsl(var(--danger))] ring-[hsl(var(--danger))]/35 hover:bg-[hsl(var(--danger))]/25',
+  unknown: 'bg-surface-2 text-muted-foreground ring-border hover:bg-surface-3',
 };
+const MATRIX_SWATCH: Record<LinkStatus, string> = {
+  healthy: 'bg-[hsl(var(--ok))]',
+  degraded: 'bg-[hsl(var(--warn))]',
+  offline: 'bg-[hsl(var(--danger))]',
+  unknown: 'bg-muted-foreground/40',
+};
+const RELAYED_FILL = 'bg-[repeating-linear-gradient(135deg,hsl(var(--border))_0_1px,transparent_1px_5px)]';
+// A hairline from corner to corner: "same node", without a dark block that
+// reads as a broken or missing link.
+const SELF_FILL = 'bg-[linear-gradient(to_top_right,transparent_calc(50%-0.5px),hsl(var(--border))_50%,transparent_calc(50%+0.5px))]';
+
+function compactMs(ms: number | null | undefined): string {
+  if (ms == null) return '–';
+  if (ms >= 1000) return `${(ms / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}s`;
+  return String(Math.round(ms));
+}
+
+type MatrixValue = { relayed: boolean; status?: LinkStatus; latencyMs?: number | null; packetLoss?: number | null };
 
 export function ConnectionMatrix({
   nodeIds,
@@ -492,75 +521,146 @@ export function ConnectionMatrix({
 }: {
   nodeIds: string[];
   name: (nodeId: string) => string;
-  cell: (fromId: string, toId: string) => { relayed: boolean; status?: LinkStatus; latencyMs?: number | null; packetLoss?: number | null };
+  cell: (fromId: string, toId: string) => MatrixValue;
   selectedKey: string | null;
   onSelect: (pairKey: string) => void;
 }) {
+  // Rows carry the names; columns only their number, matched by the badge
+  // in front of each row - rotated labels never stay legible past a handful
+  // of nodes. Hovering a cell lights up its row and column.
+  const [hover, setHover] = useState<{ from: string; to: string } | null>(null);
+  const index = useMemo(() => new Map(nodeIds.map((id, position) => [id, position + 1])), [nodeIds]);
+  const hovered = hover ? { ...hover, value: cell(hover.from, hover.to) } : null;
+
   return (
-    <div className="overflow-x-auto">
-      <table className="border-separate border-spacing-1 text-2xs">
-        <thead>
-          <tr>
-            <th className="sticky left-0 bg-surface-1 px-2 text-left font-normal text-muted-foreground">De ↓ · Vers →</th>
-            {nodeIds.map((id) => (
-              <th key={id} className="h-24 w-8 align-bottom font-normal">
-                <span className="inline-block max-w-[6rem] origin-bottom-left translate-x-3 -rotate-45 truncate whitespace-nowrap text-left text-muted-foreground" title={name(id)}>
-                  {name(id)}
-                </span>
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
+    <div className="space-y-3">
+      <div className="scroll-thin overflow-x-auto pb-1">
+        <div
+          role="grid"
+          aria-label="Liens du réseau privé, par sens"
+          className="inline-grid gap-1"
+          style={{ gridTemplateColumns: `minmax(9rem, max-content) repeat(${nodeIds.length}, 2.5rem)` }}
+          onMouseLeave={() => setHover(null)}
+        >
+          <div className="sticky left-0 z-10 flex items-end bg-card pb-1 pr-2 text-2xs text-muted-foreground">
+            Source <span className="mx-1">→</span> cible
+          </div>
+          {nodeIds.map((id) => (
+            <div key={id} role="columnheader" className="flex items-end justify-center pb-1" title={name(id)}>
+              <span
+                className={cn(
+                  'flex h-6 w-6 items-center justify-center rounded-md text-2xs font-medium tabular-nums transition-colors',
+                  hover?.to === id ? 'bg-primary/15 text-primary' : 'bg-surface-2 text-muted-foreground',
+                )}
+              >
+                {index.get(id)}
+              </span>
+            </div>
+          ))}
+
           {nodeIds.map((from) => (
-            <tr key={from}>
-              <th className="sticky left-0 max-w-[10rem] truncate bg-surface-1 px-2 text-left font-normal text-foreground/85" title={name(from)}>
-                {name(from)}
-              </th>
+            <div key={from} role="row" className="contents">
+              <div
+                role="rowheader"
+                className={cn(
+                  'sticky left-0 z-10 flex min-w-0 items-center gap-2 bg-card pr-2 text-xs transition-colors',
+                  hover?.from === from ? 'text-foreground' : 'text-foreground/80',
+                )}
+                title={name(from)}
+              >
+                <span
+                  className={cn(
+                    'flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-2xs font-medium tabular-nums transition-colors',
+                    hover?.from === from ? 'bg-primary/15 text-primary' : 'bg-surface-2 text-muted-foreground',
+                  )}
+                >
+                  {index.get(from)}
+                </span>
+                <span className="max-w-[11rem] truncate">{name(from)}</span>
+              </div>
               {nodeIds.map((to) => {
-                if (from === to) return <td key={to} className="h-7 w-8 rounded bg-surface-2/40" />;
+                if (from === to) {
+                  return <div key={to} role="gridcell" aria-label={`${name(from)} : même nœud`} className={cn('h-9 rounded-md ring-1 ring-inset ring-border/60', SELF_FILL)} />;
+                }
                 const value = cell(from, to);
                 const pairKey = [from, to].sort().join('__');
+                const crossed = hover && (hover.from === from || hover.to === to);
                 const label = value.relayed
                   ? `${name(from)} → ${name(to)} : relayé par les passerelles (pas de lien direct)`
                   : `${name(from)} → ${name(to)} : ${LINK_STATUS[value.status ?? 'unknown'].label} · ${formatMs(value.latencyMs)} · perte ${formatPercent(value.packetLoss)}`;
+                if (value.relayed) {
+                  return (
+                    <div
+                      key={to}
+                      role="gridcell"
+                      aria-label={label}
+                      onMouseEnter={() => setHover({ from, to })}
+                      className={cn('h-9 rounded-md ring-1 ring-inset ring-border/60 transition-opacity', RELAYED_FILL, hover && !crossed && 'opacity-50')}
+                    />
+                  );
+                }
                 return (
-                  <td key={to} className="h-7 w-8 p-0">
-                    {value.relayed ? (
-                      <span
-                        title={label}
-                        className="block h-7 w-8 rounded bg-[repeating-linear-gradient(135deg,hsl(var(--surface-3))_0_3px,transparent_3px_6px)] opacity-70"
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        title={label}
-                        aria-label={label}
-                        onClick={() => onSelect(pairKey)}
-                        className={cn(
-                          'block h-7 w-8 rounded transition-colors',
-                          MATRIX_CELL[value.status ?? 'unknown'],
-                          selectedKey === pairKey && 'ring-2 ring-primary ring-offset-1 ring-offset-surface-1',
-                        )}
-                      />
+                  <button
+                    key={to}
+                    type="button"
+                    role="gridcell"
+                    aria-label={label}
+                    onMouseEnter={() => setHover({ from, to })}
+                    onFocus={() => setHover({ from, to })}
+                    onClick={() => onSelect(pairKey)}
+                    className={cn(
+                      'flex h-9 items-center justify-center rounded-md text-2xs font-medium tabular-nums ring-1 ring-inset transition-[background-color,opacity] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                      MATRIX_CELL[value.status ?? 'unknown'],
+                      hover && !crossed && 'opacity-50',
+                      selectedKey === pairKey && 'ring-2 ring-primary',
                     )}
-                  </td>
+                  >
+                    {compactMs(value.latencyMs)}
+                  </button>
                 );
               })}
-            </tr>
+            </div>
           ))}
-        </tbody>
-      </table>
-      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs text-muted-foreground">
+        </div>
+      </div>
+
+      <div className="flex min-h-[2.25rem] items-center gap-2 rounded-lg border border-border bg-surface-2/40 px-3 py-2 text-xs" aria-live="polite">
+        {hovered ? (
+          <>
+            <span className="truncate font-medium text-foreground">{name(hovered.from)}</span>
+            <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate font-medium text-foreground">{name(hovered.to)}</span>
+            <span className="text-muted-foreground">·</span>
+            {hovered.value.relayed ? (
+              <span className="text-muted-foreground">Relayé par les passerelles, pas de lien direct</span>
+            ) : (
+              <span className="flex flex-wrap items-center gap-x-2 text-muted-foreground">
+                <StatusPill tone={LINK_STATUS[hovered.value.status ?? 'unknown'].tone}>{LINK_STATUS[hovered.value.status ?? 'unknown'].label}</StatusPill>
+                <span className="tabular-nums">{formatMs(hovered.value.latencyMs)}</span>
+                <span className="tabular-nums">perte {formatPercent(hovered.value.packetLoss)}</span>
+                <span className="hidden text-primary sm:inline">· cliquer pour l’historique</span>
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="text-muted-foreground">Chaque case est la latence (ms) d’un sens du lien. Survolez une case pour le détail, cliquez pour afficher son historique.</span>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-2xs text-muted-foreground">
         {(['healthy', 'degraded', 'offline', 'unknown'] as const).map((status) => (
           <span key={status} className="flex items-center gap-1.5">
-            <span className={cn('h-2.5 w-2.5 rounded-sm', MATRIX_CELL[status])} />
+            <span className={cn('h-2 w-2 rounded-full', MATRIX_SWATCH[status])} />
             {LINK_STATUS[status].label}
           </span>
         ))}
         <span className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-sm bg-[repeating-linear-gradient(135deg,hsl(var(--surface-3))_0_2px,transparent_2px_4px)]" />
+          <span className={cn('h-3 w-3 rounded-sm ring-1 ring-inset ring-border', RELAYED_FILL)} />
           Relayé par les passerelles
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className={cn('h-3 w-3 rounded-sm ring-1 ring-inset ring-border', SELF_FILL)} />
+          Même nœud
         </span>
       </div>
     </div>
@@ -665,7 +765,7 @@ export function DiagnosticsPanel({
                 </TabsList>
               </Tabs>
             </div>
-            <Button onClick={onRun} disabled={!ready || running} className="h-9 gap-1.5 px-4">
+            <Button write onClick={onRun} disabled={!ready || running} className="h-9 gap-1.5 px-4">
               {running ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
               {running ? 'Test en cours…' : 'Lancer'}
             </Button>
@@ -754,7 +854,7 @@ function TestResult({
             </span>
           </p>
         </div>
-        <Button variant="ghost" size="sm" onClick={onRerun} disabled={running} className="gap-1.5">
+        <Button write variant="ghost" size="sm" onClick={onRerun} disabled={running} className="gap-1.5">
           <RotateCcw className="h-3.5 w-3.5" />
           Relancer
         </Button>

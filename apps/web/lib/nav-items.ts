@@ -18,7 +18,9 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-export type NavItem = { href: string; label: string; icon: LucideIcon; exact?: boolean };
+import { areaOfPath, type PageArea } from './access';
+
+export type NavItem = { href: string; label: string; icon: LucideIcon; exact?: boolean; area?: PageArea | null };
 // A null label renders as an ungrouped, non-collapsible top-level item
 // (e.g. "Vue d'ensemble"); a real label (plus its own `icon`) renders as a
 // collapsible section (see NavGroupSection in DashboardLayout.tsx).
@@ -95,4 +97,18 @@ export function buildNavGroups(slug: string): NavGroup[] {
 
 export function buildNavItems(slug: string): NavItem[] {
   return buildNavGroups(slug).flatMap((group) => group.items);
+}
+
+/**
+ * Drops what the current member's role doesn't reach (and the groups left
+ * empty), so nobody is shown a page that would only answer "access denied".
+ */
+export function visibleNavGroups(groups: NavGroup[], canSee: (item: NavItem) => boolean): NavGroup[] {
+  return groups
+    .map((group) => ({ ...group, items: group.items.filter(canSee) }))
+    .filter((group) => group.items.length > 0);
+}
+
+export function navItemArea(item: NavItem): PageArea | null {
+  return item.area !== undefined ? item.area : areaOfPath(item.href);
 }

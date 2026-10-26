@@ -2,8 +2,9 @@
 
 import * as React from 'react';
 import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu';
-import { Check, ChevronRight, Circle } from 'lucide-react';
+import { Check, ChevronRight, Circle, Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useReadOnly } from '@/lib/read-only';
 
 // Non-modal by default: a modal menu sets `pointer-events: none` on <body>,
 // and when one of its items opens a Dialog the two locks race - the menu's
@@ -72,18 +73,32 @@ DropdownMenuContent.displayName = DropdownMenuPrimitive.Content.displayName;
 
 const DropdownMenuItem = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Item> & { inset?: boolean }
->(({ className, inset, ...props }, ref) => (
-  <DropdownMenuPrimitive.Item
-    ref={ref}
-    className={cn(
-      'relative flex cursor-default select-none items-center gap-2 rounded-lg px-2 py-1.5 text-sm outline-none transition-colors focus:bg-white/5 focus:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&>svg]:size-4 [&>svg]:shrink-0',
-      inset && 'pl-8',
-      className,
-    )}
-    {...props}
-  />
-));
+  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Item> & {
+    inset?: boolean;
+    /** Changes something: locked, with a padlock, on a read-only page (see Button's `write`). */
+    write?: boolean;
+  }
+>(({ className, inset, write, children, ...props }, ref) => {
+  const { readOnly } = useReadOnly();
+  const locked = write && readOnly;
+  return (
+    <DropdownMenuPrimitive.Item
+      ref={ref}
+      className={cn(
+        'relative flex cursor-default select-none items-center gap-2 rounded-lg px-2 py-1.5 text-sm outline-none transition-colors focus:bg-white/5 focus:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&>svg]:size-4 [&>svg]:shrink-0',
+        inset && 'pl-8',
+        className,
+        locked && 'text-muted-foreground',
+      )}
+      {...props}
+      disabled={locked || props.disabled}
+      title={locked ? 'Lecture seule : votre rôle ne permet pas cette action.' : props.title}
+    >
+      {children}
+      {locked && <Lock className="ml-auto !size-3" aria-label="Lecture seule" />}
+    </DropdownMenuPrimitive.Item>
+  );
+});
 DropdownMenuItem.displayName = DropdownMenuPrimitive.Item.displayName;
 
 const DropdownMenuCheckboxItem = React.forwardRef<

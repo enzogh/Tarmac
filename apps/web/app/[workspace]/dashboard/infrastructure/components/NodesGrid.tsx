@@ -5,7 +5,7 @@ import { NODE_STATUS, StatusDot, describe } from '@/components/ui/status';
 import type { NodeActivityItem } from '@/lib/api';
 import { flagFromCountryCode, GeoInfo } from '@/lib/geo';
 import { cn } from '@/lib/utils';
-import { cpuShape, memoryUsage } from '@/lib/system-info';
+import { cpuShape, memoryUsage, swapUsage } from '@/lib/system-info';
 import { InternalDnsBadge, InternalDnsState, isMuted, MiniMeter, nodeAttention, smartIssue } from './node-ui';
 
 /**
@@ -70,6 +70,12 @@ export function NodesGrid({
               {offline ? <span>—</span> : <MiniMeter value={node.metrics.cpu} title={cpuShape(node.systemInfo) ?? undefined} />}
               <span>RAM</span>
               {offline ? <span>—</span> : <MiniMeter value={node.metrics.ram} title={memoryUsage(node.systemInfo, node.metrics.ram)?.label} />}
+              {!offline && swapUsage(node.systemInfo) && (
+                <>
+                  <span>Swap</span>
+                  <MiniMeter value={swapUsage(node.systemInfo)!.percent} title={swapUsage(node.systemInfo)!.label} />
+                </>
+              )}
               <span>Disque</span>
               <MiniMeter value={node.storage.usageRatio * 100} />
             </div>

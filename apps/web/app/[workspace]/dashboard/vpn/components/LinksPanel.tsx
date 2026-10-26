@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { api, VpnProfile } from '@/lib/api';
+import { useReadOnly } from '@/lib/read-only';
 import { NodeFlag } from './vpn-ui';
 
 type Link = { key: string; from: VpnProfile; to: VpnProfile; mutual: boolean };
@@ -62,6 +63,7 @@ export function LinksPanel({
 }) {
   const [query, setQuery] = useState('');
   const [removing, setRemoving] = useState<string | null>(null);
+  const { readOnly } = useReadOnly();
   const links = useMemo(() => buildLinks(profiles), [profiles]);
   const openToAll = profiles.filter((profile) => profile.access.peers === 'all');
   const visible = useMemo(() => {
@@ -128,7 +130,7 @@ export function LinksPanel({
                 <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Profil, IP, libellé…" className="h-8 w-56 pl-8" />
               </div>
             )}
-            <Button onClick={onCreate} className="gap-1.5" disabled={profiles.length < 2}>
+            <Button write onClick={onCreate} className="gap-1.5" disabled={profiles.length < 2}>
               <Plus className="h-4 w-4" />
               Nouveau lien
             </Button>
@@ -174,7 +176,7 @@ export function LinksPanel({
                       <ProfileRef profile={link.to} onOpen={onOpenProfile} />
                     </TableCell>
                     <TableCell className="py-2 text-right">
-                      <button
+                      {!readOnly && <button
                         type="button"
                         onClick={() => void remove(link)}
                         disabled={removing === link.key}
@@ -183,7 +185,7 @@ export function LinksPanel({
                         className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-2 hover:text-[hsl(var(--danger))]"
                       >
                         {removing === link.key ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
-                      </button>
+                      </button>}
                     </TableCell>
                   </TableRow>
                 ))}

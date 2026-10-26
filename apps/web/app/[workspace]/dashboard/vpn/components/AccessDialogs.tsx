@@ -69,7 +69,7 @@ export function AccessDialog({
           <Button variant="secondary" onClick={() => onOpenChange(false)}>
             Annuler
           </Button>
-          <Button onClick={() => void save()} disabled={saving || Boolean(invalid)} className="gap-1.5">
+          <Button write onClick={() => void save()} disabled={saving || Boolean(invalid)} className="gap-1.5">
             {saving && <LoaderCircle className="h-4 w-4 animate-spin" />}
             Enregistrer
           </Button>
@@ -210,7 +210,7 @@ export function BulkAccessDialog({
           <Button variant="secondary" onClick={() => onOpenChange(false)}>
             Annuler
           </Button>
-          <Button onClick={() => void apply()} disabled={saving || Boolean(invalid)} className="gap-1.5">
+          <Button write onClick={() => void apply()} disabled={saving || Boolean(invalid)} className="gap-1.5">
             {saving && <LoaderCircle className="h-4 w-4 animate-spin" />}
             Appliquer à {ids.length} profils
           </Button>
@@ -327,7 +327,7 @@ export function LinkDialog({
           <Button variant="secondary" onClick={() => onOpenChange(false)}>
             Annuler
           </Button>
-          <Button onClick={() => void apply()} disabled={saving || Boolean(invalid)} className="gap-1.5">
+          <Button write onClick={() => void apply()} disabled={saving || Boolean(invalid)} className="gap-1.5">
             {saving && <LoaderCircle className="h-4 w-4 animate-spin" />}
             Créer les liens
           </Button>
@@ -413,11 +413,11 @@ export function TagDialog({
           {error && <Callout variant="danger">{error}</Callout>}
         </div>
         <DialogFooter>
-          <Button variant="secondary" onClick={() => void run('remove_tag')} disabled={!tag.trim() || saving !== null}>
+          <Button write variant="secondary" onClick={() => void run('remove_tag')} disabled={!tag.trim() || saving !== null}>
             {saving === 'remove_tag' && <LoaderCircle className="h-4 w-4 animate-spin" />}
             Retirer
           </Button>
-          <Button onClick={() => void run('add_tag')} disabled={!tag.trim() || saving !== null} className="gap-1.5">
+          <Button write onClick={() => void run('add_tag')} disabled={!tag.trim() || saving !== null} className="gap-1.5">
             {saving === 'add_tag' && <LoaderCircle className="h-4 w-4 animate-spin" />}
             Ajouter
           </Button>

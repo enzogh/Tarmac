@@ -249,23 +249,23 @@ export function ProfileDrawer({
         </SheetBody>
 
         <SheetFooter>
-          <Button onClick={() => onAction('install')} disabled={!usable} className="gap-1.5">
+          <Button write onClick={() => onAction('install')} disabled={!usable} className="gap-1.5">
             <Download className="h-4 w-4" />
             Installer
           </Button>
-          <Button variant="secondary" onClick={() => onAction('edit')} className="gap-1.5">
+          <Button write variant="secondary" onClick={() => onAction('edit')} className="gap-1.5">
             <Pencil className="h-4 w-4" />
             Modifier
           </Button>
-          <Button variant="secondary" onClick={() => onAction('toggle')} className="gap-1.5">
+          <Button write variant="secondary" onClick={() => onAction('toggle')} className="gap-1.5">
             <Power className="h-4 w-4" />
             {profile.enabled ? 'Désactiver' : 'Réactiver'}
           </Button>
           <span className="flex-1" />
-          <Button variant="ghost" size="icon" onClick={() => onAction('rotate')} title="Régénérer les clés" aria-label="Régénérer les clés">
+          <Button write variant="ghost" size="icon" onClick={() => onAction('rotate')} title="Régénérer les clés" aria-label="Régénérer les clés">
             <RotateCcw className="h-4 w-4" />
           </Button>
-          <Button
+          <Button write
             variant="ghost"
             size="icon"
             onClick={() => onAction('delete')}

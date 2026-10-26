@@ -3,6 +3,7 @@
 import { ReactNode, useEffect, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowLeftRight,
   ArrowDownToLine,
   ArrowUpToLine,
   Bell,
@@ -30,7 +31,7 @@ import { SmartTrendChart } from '@/components/dashboard-charts';
 import { api, DnsNodeRecordRef, NodeActivityItem, SmartHistoryPoint } from '@/lib/api';
 import { formatBytes, formatCapacity, formatRelative, formatThroughput } from '@/lib/format';
 import { flagFromCountryCode, GeoInfo } from '@/lib/geo';
-import { cpuModelShort, cpuShape, formatLoad, loadRatio, memoryUsage, swapLabel, uptimeLabel } from '@/lib/system-info';
+import { cpuModelShort, cpuShape, formatLoad, loadRatio, memoryUsage, swapLabel, swapUsage, uptimeLabel } from '@/lib/system-info';
 import { cn } from '@/lib/utils';
 import { slugifyHostname } from './NodeDialogs';
 import { externalIpOf, formatDateTime, InternalDnsBadge, InternalDnsState, isMuted, MiniMeter, nodeAttention, SMART_LABEL } from './node-ui';
@@ -256,6 +257,9 @@ export function NodeDrawer({
                       label: memoryUsage(node.systemInfo, node.metrics.ram) ? `RAM · ${memoryUsage(node.systemInfo, node.metrics.ram)!.label}` : 'RAM',
                       value: offline ? null : node.metrics.ram,
                     },
+                    ...(swapUsage(node.systemInfo)
+                      ? [{ icon: ArrowLeftRight, label: `Swap · ${swapUsage(node.systemInfo)!.label}`, value: offline ? null : swapUsage(node.systemInfo)!.percent }]
+                      : []),
                     {
                       icon: HardDrive,
                       label: `Stockage · ${formatCapacity(node.storage.totalUsedGb)} / ${formatCapacity(node.storage.totalCapacityGb)}`,
@@ -318,7 +322,7 @@ export function NodeDrawer({
                     </Field>
                   </dl>
                   {node.agentUpToDate === false ? (
-                    <Button size="sm" onClick={onUpdateAgent} disabled={offline || updating} className="gap-1.5">
+                    <Button write size="sm" onClick={onUpdateAgent} disabled={offline || updating} className="gap-1.5">
                       <RefreshCcw className={`h-3.5 w-3.5 ${updating ? 'animate-spin' : ''}`} />
                       Mettre à jour
                     </Button>
@@ -348,7 +352,7 @@ export function NodeDrawer({
                       : 'Désactivée : aucune alerte disque ne sera levée pour ce nœud.'}
                   </p>
                 </div>
-                <Button variant={smartEnabled ? 'secondary' : 'default'} size="sm" disabled={smartBusy} onClick={onToggleSmart} className="shrink-0 gap-1.5">
+                <Button write variant={smartEnabled ? 'secondary' : 'default'} size="sm" disabled={smartBusy} onClick={onToggleSmart} className="shrink-0 gap-1.5">
                   {smartEnabled ? <BellOff className="h-3.5 w-3.5" /> : <Thermometer className="h-3.5 w-3.5" />}
                   {smartEnabled ? 'Désactiver' : 'Réactiver'}
                 </Button>
@@ -423,7 +427,7 @@ export function NodeDrawer({
                               <span className="block text-xs">Le détail est dans le Journal de ce nœud.</span>
                             )}
                             <span className="block text-xs">Une nouvelle tentative part automatiquement toutes les 5 minutes.</span>
-                            <Button size="sm" variant="secondary" onClick={onRetryDns} disabled={dnsBusy || offline} className="gap-1.5">
+                            <Button write size="sm" variant="secondary" onClick={onRetryDns} disabled={dnsBusy || offline} className="gap-1.5">
                               {dnsBusy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
                               Réessayer maintenant
                             </Button>
@@ -431,7 +435,7 @@ export function NodeDrawer({
                         </Callout>
                       )}
                       {offline && <Callout variant="danger">Ce nœud est hors ligne : la résolution des noms internes est interrompue.</Callout>}
-                      <Button variant="secondary" size="sm" onClick={onClearDns} disabled={dnsBusy} className="gap-1.5">
+                      <Button write variant="secondary" size="sm" onClick={onClearDns} disabled={dnsBusy} className="gap-1.5">
                         {dnsBusy && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}
                         Retirer le rôle DNS interne
                       </Button>
@@ -444,7 +448,7 @@ export function NodeDrawer({
                         <span className="font-mono text-foreground">{hostname}.tarmac.local</span>.
                       </p>
                       {otherDnsNode && <Callout variant="info">Un autre nœud tient déjà ce rôle : le désigner ici le lui retire.</Callout>}
-                      <Button size="sm" onClick={onDesignateDns} disabled={dnsBusy || !node.vlanIp} className="gap-1.5">
+                      <Button write size="sm" onClick={onDesignateDns} disabled={dnsBusy || !node.vlanIp} className="gap-1.5">
                         {dnsBusy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Globe className="h-3.5 w-3.5" />}
                         Désigner comme DNS interne
                       </Button>
@@ -467,7 +471,7 @@ export function NodeDrawer({
                           {node.internalDnsForwarderConflict.pid ? ` (pid ${node.internalDnsForwarderConflict.pid})` : ''} : le résolveur de
                           repli (dnsmasq) n’a pas pu démarrer.
                         </span>
-                        <Button size="sm" disabled={dnsBusy} onClick={onResolveForwarder}>
+                        <Button write size="sm" disabled={dnsBusy} onClick={onResolveForwarder}>
                           Tuer le process et réessayer
                         </Button>
                       </span>
@@ -513,16 +517,16 @@ export function NodeDrawer({
         </SheetBody>
 
         <SheetFooter>
-          <Button variant="secondary" onClick={onEdit} className="gap-1.5">
+          <Button write variant="secondary" onClick={onEdit} className="gap-1.5">
             <Pencil className="h-4 w-4" />
             Modifier
           </Button>
-          <Button variant="secondary" onClick={onToggleMute} className="gap-1.5">
+          <Button write variant="secondary" onClick={onToggleMute} className="gap-1.5">
             {isMuted(node) ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />}
             {isMuted(node) ? 'Réactiver les alertes' : 'Silence 1 h'}
           </Button>
           <span className="flex-1" />
-          <Button variant="ghost" onClick={onDelete} className="gap-1.5 text-[hsl(var(--danger))]">
+          <Button write variant="ghost" onClick={onDelete} className="gap-1.5 text-[hsl(var(--danger))]">
             <Trash2 className="h-4 w-4" />
             Supprimer
           </Button>

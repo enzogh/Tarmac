@@ -47,3 +47,9 @@ export function apiKeySecretMatches(secret: string, storedHex: string): boolean 
   const stored = Buffer.from(storedHex, 'hex');
   return candidate.length === stored.length && crypto.timingSafeEqual(candidate, stored);
 }
+
+/** Drops unknown scopes and adds the read each write implies, in a stable order. */
+export function normalizeScopes(scopes: readonly string[]): ApiKeyScope[] {
+  const granted = new Set(scopes);
+  return API_KEY_SCOPES.filter((scope) => granted.has(scope) || (scope.endsWith(':read') && granted.has(scope.replace(':read', ':write'))));
+}

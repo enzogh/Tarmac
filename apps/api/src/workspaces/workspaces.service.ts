@@ -7,6 +7,8 @@ import { WorkspaceScope } from '../auth/workspace.guard';
 import { VlanService } from '../vlan/vlan.service';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
+import { InviteMemberDto, MemberAccessDto } from './dto/member-access.dto';
+import { API_KEY_SCOPES, normalizeScopes } from '../api-keys/api-key-token';
 
 // 10.16.0.0/16 .. 10.31.0.0/16 - see vlan.service.ts's WORKSPACE_SUBNET_BASE_OCTET,
 // which must stay in sync with this cap.
@@ -40,22 +42,28 @@ export class WorkspacesService {
       include: { _count: { select: { memberships: true } } },
     });
 
-    const roleByWorkspaceId = new Map<string, string>();
+    const membershipByWorkspaceId = new Map<string, { role: string; permissions: string[] }>();
     if (userId) {
       const memberships = await this.prisma.workspaceMembership.findMany({
         where: { userId, workspaceId: { in: workspaces.map((w) => w.id) } },
-        select: { workspaceId: true, role: true },
+        select: { workspaceId: true, role: true, permissions: true },
       });
       for (const membership of memberships) {
-        roleByWorkspaceId.set(membership.workspaceId, membership.role);
+        membershipByWorkspaceId.set(membership.workspaceId, membership);
       }
     }
 
-    return workspaces.map(({ _count, ...workspace }) => ({
-      ...workspace,
-      memberCount: _count.memberships,
-      myRole: scope.isPlatformAdmin ? 'owner' : (roleByWorkspaceId.get(workspace.id) ?? null),
-    }));
+    return workspaces.map(({ _count, ...workspace }) => {
+      const membership = membershipByWorkspaceId.get(workspace.id);
+      const unrestricted = scope.isPlatformAdmin || membership?.role === 'owner';
+      return {
+        ...workspace,
+        memberCount: _count.memberships,
+        myRole: scope.isPlatformAdmin ? 'owner' : (membership?.role ?? null),
+        // What the frontend hides or marks read-only; WorkspaceGuard enforces it.
+        myPermissions: unrestricted ? [...API_KEY_SCOPES] : normalizeScopes(membership?.permissions ?? []),
+      };
+    });
   }
 
   // Allocates the next free subnetIndex (1..MAX_WORKSPACE_SUBNETS) and
@@ -266,11 +274,11 @@ export class WorkspacesService {
   // creates the User row (see AuthService.findOrCreateSsoUser), so this
   // covers "invite someone brand new" as long as they've tried logging in
   // once first.
-  async inviteByEmail(workspaceId: string, email: string, scope: WorkspaceScope, actorUserId?: string) {
+  async inviteByEmail(workspaceId: string, dto: InviteMemberDto, scope: WorkspaceScope, actorUserId?: string) {
     await this.assertExists(workspaceId);
     await this.assertCanManageMembers(workspaceId, scope, actorUserId);
 
-    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedEmail = dto.email.trim().toLowerCase();
     const user = await this.prisma.user.findUnique({ where: { email: normalizedEmail } });
     if (!user) {
       throw new NotFoundException(
@@ -278,10 +286,16 @@ export class WorkspacesService {
       );
     }
 
-    const membership = await this.prisma.workspaceMembership.upsert({
+    const role = dto.role ?? 'member';
+    const permissions = dto.permissions ? normalizeScopes(dto.permissions) : undefined;
+    const existing = await this.prisma.workspaceMembership.findUnique({
       where: { workspaceId_userId: { workspaceId, userId: user.id } },
-      create: { workspaceId, userId: user.id, role: 'member', source: 'manual' },
-      update: {},
+    });
+    if (existing) {
+      throw new ConflictException(`${user.email} est déjà membre de ce workspace : modifiez son rôle dans la liste.`);
+    }
+    const membership = await this.prisma.workspaceMembership.create({
+      data: { workspaceId, userId: user.id, role, source: 'manual', ...(permissions ? { permissions } : {}) },
       include: { user: { select: { id: true, email: true, name: true, avatarUrl: true } } },
     });
     await this.auditLogsService.log({
@@ -290,9 +304,53 @@ export class WorkspacesService {
       action: 'workspace.member.invite',
       resourceType: 'workspace',
       resourceId: workspaceId,
-      details: { userId: user.id, email: user.email },
+      details: { userId: user.id, email: user.email, role, permissions: role === 'owner' ? null : membership.permissions },
     });
     return membership;
+  }
+
+  async updateMember(workspaceId: string, userId: string, dto: MemberAccessDto, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertExists(workspaceId);
+    await this.assertCanManageMembers(workspaceId, scope, actorUserId);
+
+    const target = await this.prisma.workspaceMembership.findUnique({
+      where: { workspaceId_userId: { workspaceId, userId } },
+      include: { user: { select: { email: true } } },
+    });
+    if (!target) throw new NotFoundException("Cette personne n'est pas membre de ce workspace.");
+    // Nobody narrows their own access: it's how an owner locks themselves
+    // (and possibly everyone) out of administration.
+    if (userId === actorUserId) {
+      throw new ForbiddenException('Vous ne pouvez pas modifier votre propre rôle. Demandez à un autre administrateur.');
+    }
+    const role = dto.role ?? target.role;
+    if (target.role === 'owner' && role !== 'owner') {
+      const owners = await this.prisma.workspaceMembership.count({ where: { workspaceId, role: 'owner' } });
+      if (owners <= 1) {
+        throw new ForbiddenException('Impossible de retirer le rôle administrateur au dernier administrateur du workspace.');
+      }
+    }
+    const permissions = dto.permissions ? normalizeScopes(dto.permissions) : target.permissions;
+
+    const updated = await this.prisma.workspaceMembership.update({
+      where: { id: target.id },
+      data: { role, permissions },
+      include: { user: { select: { id: true, email: true, name: true, avatarUrl: true } } },
+    });
+    await this.auditLogsService.log({
+      workspaceId,
+      actorUserId,
+      action: 'workspace.member.update',
+      resourceType: 'workspace',
+      resourceId: workspaceId,
+      details: {
+        userId,
+        email: target.user.email,
+        ...(role !== target.role ? { roleBefore: target.role, role } : { role }),
+        ...(role === 'owner' ? {} : { permissions }),
+      },
+    });
+    return updated;
   }
 
   async addMember(workspaceId: string, userId: string, actorUserId?: string) {

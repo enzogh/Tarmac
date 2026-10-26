@@ -1533,7 +1533,7 @@ export default function NetworkPage() {
                 <Zap className="h-4 w-4 text-primary" />
                 Vue d’ensemble des liens
               </CardTitle>
-              <CardDescription>Une case par sens de chaque lien. Survolez pour le détail, cliquez pour afficher son historique ci-dessus.</CardDescription>
+              <CardDescription>Latence de chaque sens de chaque lien, en un coup d’œil. Une ligne par nœud source, une colonne par nœud cible.</CardDescription>
             </CardHeader>
             <CardContent className="pt-4">
               <ConnectionMatrix

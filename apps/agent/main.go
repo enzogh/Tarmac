@@ -804,18 +804,28 @@ func runPing(payload map[string]interface{}) (pingData, error) {
 
 func runTraceroute(payload map[string]interface{}) (tracerouteData, error) {
 	targetIP := strings.TrimSpace(readString(payload, "targetIp"))
-	if targetIP == "" {
+	target := net.ParseIP(targetIP).To4()
+	if target == nil {
 		return tracerouteData{}, errors.New("targetIp is required")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	hops, nativeErr := nativeTraceroute(target)
+	if nativeErr == nil {
+		return tracerouteData{TargetIP: targetIP, Hops: hops}, nil
+	}
+	var probeErr tracerouteProbeError
+	if errors.As(nativeErr, &probeErr) {
+		return tracerouteData{}, describeTraceError(targetIP, probeErr.err)
+	}
+	log.Printf("traceroute: built-in probe unavailable (%v), falling back to system tools", nativeErr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 18*time.Second)
 	defer cancel()
 
-	var hops []tracerouteHop
 	var rawOutput string
 	switch {
 	case commandExists("traceroute"):
-		output, _ := exec.CommandContext(ctx, "traceroute", "-n", "-q", "1", "-w", "1", "-m", "15", targetIP).CombinedOutput()
+		output, _ := exec.CommandContext(ctx, "traceroute", "-n", "-I", "-q", "1", "-w", "1", "-m", "15", targetIP).CombinedOutput()
 		rawOutput = string(output)
 		hops = parseTracerouteOutput(rawOutput)
 	case commandExists("tracepath"):
@@ -823,14 +833,14 @@ func runTraceroute(payload map[string]interface{}) (tracerouteData, error) {
 		rawOutput = string(output)
 		hops = parseTracepathOutput(rawOutput)
 	default:
-		return tracerouteData{}, errors.New("traceroute/tracepath not found on agent (install the 'traceroute' package)")
+		return tracerouteData{}, describeTraceError(targetIP, nativeErr)
 	}
 
 	if len(hops) == 0 {
 		if detail := strings.TrimSpace(rawOutput); detail != "" {
-			return tracerouteData{}, fmt.Errorf("no route found to %s: %s", targetIP, detail)
+			return tracerouteData{}, fmt.Errorf("aucune route vers %s : %s", targetIP, detail)
 		}
-		return tracerouteData{}, fmt.Errorf("no route found to %s", targetIP)
+		return tracerouteData{}, fmt.Errorf("aucune route vers %s", targetIP)
 	}
 
 	return tracerouteData{TargetIP: targetIP, Hops: hops}, nil

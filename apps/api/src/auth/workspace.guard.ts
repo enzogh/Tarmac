@@ -6,9 +6,11 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
+import { scopeGrants } from '../api-keys/api-key-token';
 import { PrismaService } from '../prisma/prisma.service';
-import type { AuthenticatedApiKey } from './api-key.guard';
+import { declaredScope, type AuthenticatedApiKey } from './api-key.guard';
 
 const WORKSPACE_HEADER = 'x-workspace-id';
 
@@ -32,6 +34,9 @@ export interface WorkspaceScope {
   // Set when the request authenticated with a workspace API key instead of
   // a user session (see ApiKeyOrJwtGuard) - there is no user behind it.
   apiKey?: { id: string; name: string; scopes: string[] };
+  // A member's grants in the selected workspace ("<resource>:read|write").
+  // Undefined means unrestricted: platform admins and owners.
+  permissions?: string[];
 }
 
 interface RequestWithWorkspaceScope extends Request {
@@ -45,7 +50,10 @@ interface RequestWithWorkspaceScope extends Request {
 // resolved scope back out in the handler.
 @Injectable()
 export class WorkspaceGuard implements CanActivate {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly reflector: Reflector,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<RequestWithWorkspaceScope>();
@@ -106,7 +114,7 @@ export class WorkspaceGuard implements CanActivate {
 
     const memberships = await this.prisma.workspaceMembership.findMany({
       where: { userId },
-      select: { workspaceId: true, role: true },
+      select: { workspaceId: true, role: true, permissions: true },
     });
     const allowedWorkspaceIds = memberships.map((m) => m.workspaceId);
     if (allowedWorkspaceIds.length === 0) {
@@ -118,15 +126,36 @@ export class WorkspaceGuard implements CanActivate {
     }
 
     const workspaceId = requestedWorkspaceId ?? allowedWorkspaceIds[0];
-    request.workspaceScope = {
-      isPlatformAdmin: false,
-      workspaceId,
-      allowedWorkspaceIds,
-      isManager: memberships.some((m) => m.workspaceId === workspaceId && m.role === 'owner'),
-    };
+    const membership = memberships.find((m) => m.workspaceId === workspaceId);
+    const isManager = membership?.role === 'owner';
+    const permissions = isManager ? undefined : (membership?.permissions ?? []);
+    request.workspaceScope = { isPlatformAdmin: false, workspaceId, allowedWorkspaceIds, isManager, permissions };
+
+    // Members only reach the areas their role grants, with the same scopes
+    // and the same per-handler declarations as API keys.
+    const required = permissions ? declaredScope(this.reflector, context, request.method) : undefined;
+    if (permissions && required && !scopeGrants(permissions, required)) {
+      const [resource, access] = required.split(':');
+      const area = AREA_LABELS[resource] ?? resource;
+      throw new ForbiddenException(
+        access === 'write' && scopeGrants(permissions, `${resource}:read` as typeof required)
+          ? `Votre rôle donne accès à « ${area} » en lecture seule : demandez à un administrateur du workspace pour modifier.`
+          : `Votre rôle ne donne pas accès à « ${area} » dans ce workspace.`,
+      );
+    }
     return true;
   }
 }
+
+const AREA_LABELS: Record<string, string> = {
+  nodes: 'Nœuds',
+  storage: 'Stockage',
+  network: 'Réseau privé',
+  dns: 'DNS',
+  vpn: 'VPN',
+  alerts: 'Alertes',
+  logs: 'Journal',
+};
 
 function firstHeaderValue(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) return value[0];

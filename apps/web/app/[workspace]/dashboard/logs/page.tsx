@@ -1,8 +1,10 @@
 'use client';
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowUp,
   Bell,
+  CalendarClock,
   ChevronDown,
   Download,
   FolderSync,
@@ -353,6 +355,21 @@ function ActionsTab() {
     }
   };
 
+  // Reaching the end of the list loads the next page by itself; the button
+  // stays for keyboard users and as a visible "there is more".
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreRef = useRef(loadMore);
+  loadMoreRef.current = loadMore;
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || loadingMore) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void loadMoreRef.current();
+    }, { rootMargin: '200px' });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [cursor, loadingMore]);
+
   const openExport = (format: 'csv' | 'json') => {
     const from = periodStart(period) ?? new Date(0).toISOString();
     window.open(api.auditLogs.exportUrl({ from, to: new Date().toISOString(), format }), '_blank');
@@ -445,6 +462,7 @@ function ActionsTab() {
           <p className="text-xs text-muted-foreground">
             {filtersActive ? 'Essayez d’élargir la recherche ou la période.' : 'Les modifications faites sur la flotte apparaîtront ici, en direct.'}
           </p>
+          <OlderPeriodFooter period={period} onWiden={setPeriod} bare />
         </div>
       ) : (
         <div className="animate-fade-in">
@@ -463,17 +481,41 @@ function ActionsTab() {
               </ul>
             </section>
           ))}
-          {cursor && (
-            <div className="flex justify-center border-t border-border py-3">
+          {cursor ? (
+            <div ref={sentinelRef} className="flex justify-center border-t border-border py-3">
               <Button variant="secondary" size="sm" onClick={() => void loadMore()} disabled={loadingMore} className="gap-1.5">
                 {loadingMore && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}
                 {loadingMore ? 'Chargement…' : 'Afficher les actions plus anciennes'}
               </Button>
             </div>
+          ) : (
+            <OlderPeriodFooter period={period} onWiden={setPeriod} />
           )}
         </div>
       )}
     </Card>
+  );
+}
+
+// Shown once a period has been read to its start: one click goes further back.
+function OlderPeriodFooter({ period, onWiden, bare }: { period: Period; onWiden: (period: Period) => void; bare?: boolean }) {
+  const order: Period[] = ['24h', '7d', '30d', 'all'];
+  const wider = order.slice(order.indexOf(period) + 1);
+  return (
+    <div className={cn('flex flex-wrap items-center justify-center gap-2 py-3 text-xs text-muted-foreground', !bare && 'border-t border-border')}>
+      {wider.length === 0 ? (
+        <span>Début du journal : toutes les actions sont affichées.</span>
+      ) : (
+        <>
+          <span>{bare ? 'Remonter plus loin :' : `Début de la période (${PERIODS[period].label.toLowerCase()}). Remonter plus loin :`}</span>
+          {wider.map((option) => (
+            <Button key={option} variant="secondary" size="sm" className="h-7 text-2xs" onClick={() => onWiden(option)}>
+              {PERIODS[option].label}
+            </Button>
+          ))}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -486,35 +528,58 @@ const LEVELS: Record<string, { label: string; badge: string; text: string }> = {
   info: { label: 'INFO', badge: 'bg-surface-3 text-muted-foreground', text: 'text-foreground/85' },
 };
 
+const OLDER_PAGE = 200;
+// Agent lines are pruned after this many days (AgentLogsService.RETENTION_DAYS).
+const AGENT_LOG_RETENTION_DAYS = 14;
+const JUMPS: Array<{ value: string; label: string; hours: number }> = [
+  { value: '1h', label: 'Il y a 1 h', hours: 1 },
+  { value: '6h', label: 'Il y a 6 h', hours: 6 },
+  { value: '24h', label: 'Il y a 24 h', hours: 24 },
+  { value: '3d', label: 'Il y a 3 jours', hours: 72 },
+  { value: '7d', label: 'Il y a 7 jours', hours: 168 },
+  { value: '14d', label: 'Il y a 14 jours', hours: 336 },
+];
+const LIVE = 'live';
+
 function AgentsTab() {
   const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
   const [nodeFilter, setNodeFilter] = useState('all');
   const [levelFilter, setLevelFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [jump, setJump] = useState(LIVE);
   const [lines, setLines] = useState<AgentLogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasOlder, setHasOlder] = useState(true);
   const [paused, setPaused] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pendingLinesRef = useRef<AgentLogItem[]>([]);
   const liveBufferRef = useRef<AgentLogItem[]>([]);
+  // Set right before older lines are prepended: the height they add is
+  // given back to scrollTop so the line being read doesn't move.
+  const prependFromHeightRef = useRef<number | null>(null);
 
+  const anchored = jump !== LIVE;
   const nodeName = (nodeId: string) => shortHostname(nodes.find((node) => node.id === nodeId)?.name ?? nodeId.slice(0, 8));
   const sortedNodes = useMemo(() => [...nodes].sort((a, b) => a.name.localeCompare(b.name)), [nodes]);
+  const baseQuery = () => ({ nodeId: nodeFilter === 'all' ? undefined : nodeFilter, level: levelFilter === 'all' ? undefined : levelFilter });
 
   useEffect(() => {
     let cancelled = false;
+    const hours = JUMPS.find((option) => option.value === jump)?.hours;
     setLoading(true);
-    setPaused(false);
+    setPaused(hours !== undefined);
     setPendingCount(0);
+    setHasOlder(true);
     pendingLinesRef.current = [];
     liveBufferRef.current = [];
     void api.agentLogs
-      .list({ nodeId: nodeFilter === 'all' ? undefined : nodeFilter, level: levelFilter === 'all' ? undefined : levelFilter, limit: 200 })
+      .list({ ...baseQuery(), before: hours ? new Date(Date.now() - hours * 3600e3).toISOString() : undefined, limit: OLDER_PAGE })
       .then((result) => {
         if (cancelled) return;
         setLines(result.items.slice().reverse());
+        setHasOlder(result.items.length === OLDER_PAGE);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -522,16 +587,23 @@ function AgentsTab() {
     return () => {
       cancelled = true;
     };
-  }, [nodeFilter, levelFilter]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodeFilter, levelFilter, jump]);
 
-  useEffect(() => {
-    if (paused) return;
+  useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [lines, paused]);
+    if (!el) return;
+    if (prependFromHeightRef.current !== null) {
+      el.scrollTop += el.scrollHeight - prependFromHeightRef.current;
+      prependFromHeightRef.current = null;
+      return;
+    }
+    if (!paused) el.scrollTop = el.scrollHeight;
+  }, [lines, paused, loading]);
 
   useLiveSocket((message) => {
     if (message.type !== 'agent-log.new') return;
+    if (anchored) return; // reading the past: "Revenir au direct" reloads the tail
     const entry = message.payload as AgentLogItem;
     if (nodeFilter !== 'all' && entry.nodeId !== nodeFilter) return;
     if (levelFilter !== 'all' && entry.level !== levelFilter) return;
@@ -545,50 +617,61 @@ function AgentsTab() {
 
   // Bursts of agent activity can push many lines within milliseconds; batching
   // into one state update per 250ms window avoids a full 500-row re-render per line.
+  // Only the live tail is trimmed: someone scrolled up into history is paused,
+  // so what they loaded stays until they come back down.
   useEffect(() => {
     const flush = setInterval(() => {
       if (liveBufferRef.current.length === 0) return;
       const batch = liveBufferRef.current;
       liveBufferRef.current = [];
-      setLines((prev) => [...prev, ...batch].slice(-MAX_LIVE_LINES));
+      setLines((prev) => {
+        const next = [...prev, ...batch];
+        if (next.length <= MAX_LIVE_LINES) return next;
+        setHasOlder(true);
+        return next.slice(-MAX_LIVE_LINES);
+      });
     }, 250);
     return () => clearInterval(flush);
   }, []);
 
   const resume = () => {
+    if (anchored) {
+      setJump(LIVE);
+      return;
+    }
     setPaused(false);
     const pending = pendingLinesRef.current;
     if (pending.length > 0) {
       pendingLinesRef.current = [];
-      setLines((prev) => [...prev, ...pending].slice(-MAX_LIVE_LINES));
+      setLines((prev) => [...prev, ...pending]);
     }
     setPendingCount(0);
+  };
+
+  const loadOlder = async () => {
+    if (lines.length === 0 || loadingOlder || !hasOlder) return;
+    setLoadingOlder(true);
+    setPaused(true);
+    try {
+      const result = await api.agentLogs.list({ ...baseQuery(), before: lines[0].createdAt, limit: OLDER_PAGE });
+      prependFromHeightRef.current = scrollRef.current?.scrollHeight ?? null;
+      setLines((prev) => [...result.items.slice().reverse(), ...prev]);
+      setHasOlder(result.items.length === OLDER_PAGE);
+    } finally {
+      setLoadingOlder(false);
+    }
   };
 
   const handleScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
+    if (el.scrollTop < 80) void loadOlder();
+    if (anchored) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
     if (atBottom) {
       if (paused) resume();
     } else if (!paused) {
       setPaused(true);
-    }
-  };
-
-  const loadOlder = async () => {
-    if (lines.length === 0) return;
-    setLoadingOlder(true);
-    try {
-      const result = await api.agentLogs.list({
-        nodeId: nodeFilter === 'all' ? undefined : nodeFilter,
-        level: levelFilter === 'all' ? undefined : levelFilter,
-        before: lines[0].createdAt,
-        limit: 200,
-      });
-      setLines((prev) => [...result.items.slice().reverse(), ...prev]);
-    } finally {
-      setLoadingOlder(false);
     }
   };
 
@@ -602,6 +685,7 @@ function AgentsTab() {
 
   const needle = search.trim().toLowerCase();
   const shown = needle ? lines.filter((line) => line.message.toLowerCase().includes(needle)) : lines;
+  const oldest = lines[0]?.createdAt;
 
   return (
     <Card className="overflow-hidden">
@@ -627,9 +711,23 @@ function AgentsTab() {
             <TabsTrigger value="info">Infos</TabsTrigger>
           </TabsList>
         </Tabs>
+        <Select value={jump} onValueChange={setJump}>
+          <SelectTrigger className="h-8 w-40 justify-start gap-1.5 text-xs [&>span]:flex-1 [&>span]:text-left" aria-label="Remonter dans l’historique">
+            <CalendarClock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={LIVE}>En direct</SelectItem>
+            {JUMPS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <div className="relative min-w-[12rem] flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input className="h-8 pl-8" placeholder="Filtrer les lignes affichées…" value={search} onChange={(event) => setSearch(event.target.value)} />
+          <Input className="h-8 pl-8" placeholder="Filtrer les lignes chargées…" value={search} onChange={(event) => setSearch(event.target.value)} />
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -646,15 +744,21 @@ function AgentsTab() {
             <DropdownMenuItem onClick={() => openExport('csv', 1)}>Dernière heure</DropdownMenuItem>
             <DropdownMenuItem onClick={() => openExport('csv', 24)}>Dernières 24 h</DropdownMenuItem>
             <DropdownMenuItem onClick={() => openExport('csv', 24 * 7)}>7 derniers jours</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => openExport('csv', 24 * AGENT_LOG_RETENTION_DAYS)}>{AGENT_LOG_RETENTION_DAYS} derniers jours</DropdownMenuItem>
             <DropdownMenuLabel className="text-2xs font-normal text-muted-foreground">JSON</DropdownMenuLabel>
             <DropdownMenuItem onClick={() => openExport('json', 24)}>Dernières 24 h</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
 
-      <div className="flex items-center gap-3 border-b border-border bg-surface-2/40 px-4 py-2 text-2xs lg:px-5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface-2/40 px-4 py-2 text-2xs lg:px-5">
         {loading ? (
           <span className="text-muted-foreground">Chargement…</span>
+        ) : anchored ? (
+          <span className="flex items-center gap-1.5 text-primary">
+            <History className="h-3.5 w-3.5" />
+            Historique jusqu’au {new Date(Date.now() - (JUMPS.find((option) => option.value === jump)?.hours ?? 0) * 3600e3).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+          </span>
         ) : paused ? (
           <span className="flex items-center gap-1.5 text-[hsl(var(--warn))]">
             <PauseCircle className="h-3.5 w-3.5" />
@@ -672,15 +776,13 @@ function AgentsTab() {
         <span className="text-muted-foreground">
           {shown.length} ligne{shown.length > 1 ? 's' : ''}
           {needle ? ` sur ${lines.length}` : ''}
+          {oldest && ` · depuis ${new Date(oldest).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`}
         </span>
         <span className="flex-1" />
-        <Button variant="ghost" size="sm" onClick={() => void loadOlder()} disabled={loadingOlder || lines.length === 0} className="h-7 text-2xs">
-          {loadingOlder ? 'Chargement…' : 'Lignes plus anciennes'}
-        </Button>
-        {paused ? (
+        {paused || anchored ? (
           <Button size="sm" onClick={resume} className="h-7 gap-1.5 text-2xs">
             <PlayCircle className="h-3.5 w-3.5" />
-            Reprendre le direct
+            Revenir au direct
           </Button>
         ) : (
           <Button variant="secondary" size="sm" onClick={() => setPaused(true)} className="h-7 gap-1.5 text-2xs">
@@ -695,24 +797,47 @@ function AgentsTab() {
           <ListSkeleton rows={8} />
         </div>
       ) : (
-        <div ref={scrollRef} onScroll={handleScroll} className="h-[520px] overflow-y-auto bg-background/60 py-2 font-mono text-xs leading-relaxed">
+        <div ref={scrollRef} onScroll={handleScroll} className="h-[min(560px,65vh)] overflow-y-auto bg-background/60 pb-2 font-mono text-xs leading-relaxed">
+          {lines.length > 0 && (
+            <div className="flex justify-center border-b border-border/60 px-4 py-2 font-sans">
+              {hasOlder ? (
+                <Button variant="ghost" size="sm" onClick={() => void loadOlder()} disabled={loadingOlder} className="h-7 gap-1.5 text-2xs text-muted-foreground">
+                  {loadingOlder ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
+                  {loadingOlder ? 'Chargement de l’historique…' : `Charger ${OLDER_PAGE} lignes plus anciennes`}
+                </Button>
+              ) : (
+                <span className="py-1 text-2xs text-muted-foreground">
+                  Début de l’historique — les logs des agents sont conservés {AGENT_LOG_RETENTION_DAYS} jours.
+                </span>
+              )}
+            </div>
+          )}
           {shown.length === 0 && (
             <p className="flex flex-col items-center gap-2 py-16 text-center font-sans text-sm text-muted-foreground">
               <Terminal className="h-5 w-5" />
-              {needle ? 'Aucune ligne ne contient ce texte.' : 'Aucun log d’agent pour ces filtres.'}
+              {needle ? 'Aucune ligne chargée ne contient ce texte.' : anchored ? 'Aucun log d’agent avant ce moment pour ces filtres.' : 'Aucun log d’agent pour ces filtres.'}
             </p>
           )}
-          {shown.map((line) => {
+          {shown.map((line, index) => {
             const level = LEVELS[line.level] ?? LEVELS.info;
+            const previous = shown[index - 1];
+            const newDay = !previous || new Date(previous.createdAt).toDateString() !== new Date(line.createdAt).toDateString();
             return (
-              <div key={line.id} className="flex items-baseline gap-2 px-4 py-0.5 hover:bg-surface-2/60 lg:px-5">
-                <span className="shrink-0 tabular-nums text-muted-foreground/80" title={new Date(line.createdAt).toLocaleString('fr-FR')}>
-                  {new Date(line.createdAt).toLocaleTimeString('fr-FR', { hour12: false })}
-                </span>
-                <span className={cn('w-11 shrink-0 rounded px-1 text-center text-[10px] font-semibold leading-4', level.badge)}>{level.label}</span>
-                {nodeFilter === 'all' && <span className="w-24 shrink-0 truncate text-primary/90">{nodeName(line.nodeId)}</span>}
-                <span className={cn('min-w-0 whitespace-pre-wrap break-words', level.text)}>{line.message}</span>
-              </div>
+              <Fragment key={line.id}>
+                {newDay && (
+                  <div className="sticky top-0 z-10 border-y border-border/60 bg-surface-1/95 px-4 py-1 font-sans text-2xs font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur lg:px-5">
+                    {dayLabel(line.createdAt)}
+                  </div>
+                )}
+                <div className="flex items-baseline gap-2 px-4 py-0.5 hover:bg-surface-2/60 lg:px-5">
+                  <span className="shrink-0 tabular-nums text-muted-foreground/80" title={new Date(line.createdAt).toLocaleString('fr-FR')}>
+                    {new Date(line.createdAt).toLocaleTimeString('fr-FR', { hour12: false })}
+                  </span>
+                  <span className={cn('w-11 shrink-0 rounded px-1 text-center text-[10px] font-semibold leading-4', level.badge)}>{level.label}</span>
+                  {nodeFilter === 'all' && <span className="w-24 shrink-0 truncate text-primary/90">{nodeName(line.nodeId)}</span>}
+                  <span className={cn('min-w-0 whitespace-pre-wrap break-words', level.text)}>{line.message}</span>
+                </div>
+              </Fragment>
             );
           })}
         </div>

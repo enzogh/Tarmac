@@ -62,8 +62,21 @@ export function uptimeLabel(info?: NodeSystemInfo | null): string | null {
   return info?.uptimeSec ? formatDuration(info.uptimeSec) : null;
 }
 
+export type SwapUsage = { percent: number; used: string; total: string; label: string };
+
+/** Swap in use, or null when the host has none (or the agent doesn't report it). */
+export function swapUsage(info?: NodeSystemInfo | null): SwapUsage | null {
+  if (!info?.swapTotalBytes) return null;
+  const usedBytes = Math.max(0, info.swapTotalBytes - (info.swapFreeBytes ?? 0));
+  const used = formatBytes(usedBytes);
+  const total = formatBytes(info.swapTotalBytes);
+  return { percent: (usedBytes / info.swapTotalBytes) * 100, used, total, label: `${used} / ${total}` };
+}
+
+/** A full swap means the RAM has been short for a while: the host is paging. */
+export const SWAP_FULL_PERCENT = 90;
+
 export function swapLabel(info?: NodeSystemInfo | null): string | null {
   if (!info?.swapTotalBytes) return info?.memTotalBytes ? 'Aucun' : null;
-  const used = info.swapTotalBytes - (info.swapFreeBytes ?? 0);
-  return `${formatBytes(used)} / ${formatBytes(info.swapTotalBytes)}`;
+  return swapUsage(info)!.label;
 }

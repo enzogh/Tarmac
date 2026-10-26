@@ -209,7 +209,7 @@ export function EditProfileDialog({
           <Button variant="secondary" onClick={() => onOpenChange(false)}>
             Annuler
           </Button>
-          <Button onClick={() => void save()} disabled={saving || !name.trim() || dnsInvalid} className="gap-1.5">
+          <Button write onClick={() => void save()} disabled={saving || !name.trim() || dnsInvalid} className="gap-1.5">
             {saving && <LoaderCircle className="h-4 w-4 animate-spin" />}
             Enregistrer
           </Button>

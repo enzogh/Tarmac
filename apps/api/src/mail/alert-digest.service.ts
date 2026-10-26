@@ -149,7 +149,12 @@ export class AlertDigestService {
   private async recipientsFor(workspaceId: string): Promise<string[]> {
     const [memberships, channels] = await Promise.all([
       this.prisma.workspaceMembership.findMany({
-        where: { workspaceId, user: { alertEmailsEnabled: true } },
+        // Members whose role hides the Alertes page don't get its emails either.
+        where: {
+          workspaceId,
+          user: { alertEmailsEnabled: true },
+          OR: [{ role: 'owner' }, { permissions: { hasSome: ['alerts:read', 'alerts:write'] } }],
+        },
         select: { user: { select: { email: true, internalEmail: true } } },
       }),
       this.prisma.notificationChannel.findMany({

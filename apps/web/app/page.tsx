@@ -1,280 +1,375 @@
 'use client';
 
 import Link from 'next/link';
-import { motion, type Variants } from 'framer-motion';
+import { motion } from 'framer-motion';
 import {
   ArrowRight,
-  Server,
-  Database,
-  HardDrive,
-  Network,
-  RefreshCw,
   ArrowRightLeft,
   Bell,
-  ShieldCheck,
-  Terminal,
-  Radar,
-  Globe,
-  Globe2,
-  Waypoints,
-  KeyRound,
-  Eye,
-  Pencil,
+  BookOpen,
   Check,
+  ChevronDown,
+  Code2,
+  Crown,
+  Database,
+  Eye,
+  Globe2,
+  HardDrive,
+  KeyRound,
+  Lock,
+  Network,
+  Pencil,
+  Radar,
+  RefreshCw,
+  ScrollText,
+  Server,
+  ShieldCheck,
+  SlidersHorizontal,
+  Waypoints,
+  type LucideIcon,
 } from 'lucide-react';
 import { SiteHeader } from '../components/SiteHeader';
+import { BrandMark } from '../components/BrandMark';
 import { Button } from '../components/ui/button';
-import { RainbowButton } from '../components/ui/rainbow-button';
-import { AnimatedGradientText } from '../components/ui/animated-gradient-text';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Reveal } from '../components/motion/reveal';
-import { AnimatedCounter } from '../components/motion/animated-counter';
 import { WorldConnectivityVisual } from '../components/landing/hero-network-visual';
 import { API_KEY_RESOURCES, type AccessLevel } from '../lib/api-key-permissions';
+import { cn } from '../lib/utils';
 
-const FEATURES = [
+// Grouped the way the console's sidebar is, so what's read here is where
+// it's found once signed in.
+const PILLARS: Array<{ title: string; description: string; icon: LucideIcon; items: Array<{ icon: LucideIcon; title: string; text: string }> }> = [
   {
+    title: 'Infrastructure',
+    description: 'Vos serveurs, reliés et visibles en un coup d’œil.',
     icon: Server,
-    title: 'Nœuds interconnectés',
-    description:
-      "Enregistrez vos serveurs en quelques minutes : un agent léger s'installe via SSH et remonte l'état matériel en continu.",
+    items: [
+      { icon: Server, title: 'Nœuds', text: 'Agent installé en une commande. CPU, RAM, swap, disques SMART et matériel remontés en continu.' },
+      { icon: Network, title: 'Réseau privé', text: 'Mesh WireGuard chiffré, passerelles régionales, latence de chaque lien, ping et traceroute.' },
+      { icon: Globe2, title: 'DNS faisant autorité', text: 'Zones hébergées chez vous : GeoDNS, DNSSEC, délégation vérifiée et DNS interne.' },
+    ],
   },
   {
+    title: 'Stockage & données',
+    description: 'Partager, monter et déplacer sans fichier de config.',
     icon: Database,
-    title: 'Partages NFS',
-    description: 'Créez des partages réseau et gérez les droits d\'accès par client, sans toucher à un fichier de config.',
+    items: [
+      { icon: Database, title: 'Partages NFS', text: 'Dossiers exposés en quelques clics, droits par client.' },
+      { icon: HardDrive, title: 'Montages', text: 'Plusieurs sources derrière un point de montage, bascule automatique en cas de panne.' },
+      { icon: RefreshCw, title: 'Réplication', text: 'Pools de nœuds et synchronisations planifiées pour la redondance.' },
+      { icon: ArrowRightLeft, title: 'Migrations', text: 'Déplacement de volumes entre serveurs, suivi en direct.' },
+    ],
   },
   {
-    icon: HardDrive,
-    title: 'Montages multi-sources',
-    description: 'Montez plusieurs sources NFS derrière un point d\'accès unique, avec bascule automatique en cas de panne.',
-  },
-  {
-    icon: RefreshCw,
-    title: 'Réplication',
-    description: 'Dupliquez vos volumes entre nœuds pour la redondance et la répartition de charge.',
-  },
-  {
-    icon: ArrowRightLeft,
-    title: 'Migrations',
-    description: 'Déplacez des volumes entre serveurs, seedbox ou Storage Box, avec suivi de progression en direct.',
-  },
-  {
-    icon: Network,
-    title: 'Réseau privé (VLAN)',
-    description:
-      'Interconnectez vos nœuds sur un mesh WireGuard privé. Passé quelques régions, désignez des nœuds passerelle pour éviter le maillage complet intercontinental, et testez la latence (ping) ou le chemin réseau (traceroute) entre deux nœuds.',
-  },
-  {
-    icon: Globe,
-    title: 'Carte du monde en direct',
-    description:
-      "Visualisez votre flotte sur une carte géographique, avec l'état de chaque lien animé en temps réel — en complément du graphe topologique classique.",
-  },
-  {
-    icon: Bell,
-    title: 'Alertes',
-    description: 'Définissez des seuils (CPU, RAM, espace disque…) et soyez notifié avant que ça ne devienne un problème.',
-  },
-  {
-    icon: Waypoints,
-    title: 'VPN multi-sorties',
-    description:
-      "Un profil WireGuard par appareil : il entre par le serveur le plus proche et sort sur Internet par n'importe quel autre, trouvé en deux frappes parmi toute la flotte et changé à chaud, sans reconnexion.",
-  },
-  {
-    icon: Globe2,
-    title: 'DNS faisant autorité',
-    description:
-      'Hébergez vos zones sur vos propres serveurs : enregistrements édités en place, GeoDNS, DNSSEC et délégation vérifiée depuis Internet.',
-  },
-  {
-    icon: KeyRound,
-    title: 'API & clés à permissions fines',
-    description:
-      "Tout ce que fait l'interface se pilote par API. Chaque clé reçoit un accès complet, en lecture seule, ou réglé module par module.",
-  },
-  {
-    icon: Radar,
-    title: 'Supervision en direct',
-    description: 'Tableaux de bord temps réel : CPU, RAM, débit réseau et capacité de stockage de toute la flotte.',
+    title: 'Accès & supervision',
+    description: 'Savoir ce qui se passe, et qui peut y toucher.',
+    icon: ShieldCheck,
+    items: [
+      { icon: Waypoints, title: 'VPN multi-sorties', text: 'Un profil par appareil, sortie Internet changée à chaud parmi toute la flotte.' },
+      { icon: Bell, title: 'Alertes', text: 'Seuils par métrique, emails regroupés, webhooks et Slack.' },
+      { icon: ScrollText, title: 'Journal', text: 'Qui a fait quoi, et les logs des agents en direct, avec tout l’historique.' },
+    ],
   },
 ];
 
 const STEPS = [
+  { title: 'Ajoutez un serveur', text: 'Adresse IP et accès SSH : Tarmac installe l’agent, le relie au réseau privé et lui attribue une adresse.' },
+  { title: 'Organisez la flotte', text: 'Régions et passerelles, partages, montages, zones DNS : tout se règle depuis la console.' },
+  { title: 'Invitez l’équipe', text: 'Chaque membre reçoit un rôle : lecteur, éditeur, ou des droits choisis page par page.' },
+  { title: 'Supervisez', text: 'Métriques en direct, alertes avant l’incident, et un journal complet de chaque action.' },
+];
+
+const FACTS = [
+  { value: '1 commande', label: 'pour installer un agent' },
+  { value: '100 %', label: 'auto-hébergé, sans dépendance cloud' },
+  { value: 'WireGuard', label: 'pour chaque lien entre vos nœuds' },
+  { value: 'API REST', label: 'pour tout ce que fait l’interface' },
+];
+
+const FAQ = [
   {
-    title: 'Déclarez un nœud',
-    description: 'Ajoutez un serveur existant et laissez Tarmac y installer son agent de supervision.',
+    q: 'Où sont hébergées mes données ?',
+    a: 'Chez vous. Tarmac s’installe sur votre propre serveur (Docker) et les agents ouvrent eux-mêmes une connexion sortante vers lui : aucun port à exposer sur les nœuds, aucun service tiers.',
   },
   {
-    title: 'Créez vos partages et montages',
-    description: 'Exposez des dossiers en NFS et montez-les sur d\'autres nœuds, avec bascule automatique.',
+    q: 'Quels serveurs sont compatibles ?',
+    a: 'Tout serveur Linux joignable en SSH, physique ou virtuel, chez n’importe quel hébergeur. L’agent est un binaire Go léger, installé comme service systemd.',
   },
   {
-    title: 'Interconnectez la flotte',
-    description: 'Regroupez vos nœuds en pools de réplication et reliez-les sur un réseau privé.',
+    q: 'Puis-je donner un accès en lecture seule à un collègue ou un client ?',
+    a: 'Oui. Dans Paramètres → Membres et rôles, choisissez Lecteur, ou réglez l’accès page par page. Les pages sans accès disparaissent de son menu, et l’API applique les mêmes règles.',
   },
   {
-    title: 'Supervisez',
-    description: 'Suivez l\'activité en direct et réagissez aux alertes avant qu\'elles n\'impactent vos données.',
+    q: 'Plusieurs flottes séparées ?',
+    a: 'Chaque workspace a ses propres nœuds, son sous-réseau privé, ses zones DNS et ses membres. Deux workspaces ne se voient pas sur le réseau.',
   },
 ];
 
-const STATS = [
-  { value: 1, suffix: '', prefix: '', label: 'commande pour déployer un agent' },
-  { value: 60, suffix: 's', prefix: '', label: 'entre deux battements de vie surveillés' },
-  { value: 6, suffix: '', prefix: '', label: 'régions géographiques segmentables' },
-  { value: 100, suffix: '%', prefix: '', label: 'auto-hébergé, aucune dépendance cloud' },
-];
+// --- illustrations --------------------------------------------------------
 
-const fadeUp: Variants = {
-  hidden: { opacity: 0, y: 22 },
-  visible: (delay: number) => ({
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.7, delay, ease: [0.16, 1, 0.3, 1] },
-  }),
-};
+const DEMO_NODES = [
+  { name: 'par-storage-01', city: 'Paris', flag: '🇫🇷', status: 'ok', cpu: 23, ram: 61, swap: 4 },
+  { name: 'fsn-backup-01', city: 'Falkenstein', flag: '🇩🇪', status: 'ok', cpu: 37, ram: 72, swap: 0 },
+  { name: 'gra-compute-02', city: 'Gravelines', flag: '🇫🇷', status: 'warn', cpu: 81, ram: 88, swap: 96 },
+  { name: 'bhs-edge-01', city: 'Beauharnois', flag: '🇨🇦', status: 'ok', cpu: 12, ram: 44, swap: 10 },
+] as const;
 
-// Sample levels for the illustration: a typical "DNS + monitoring" key.
-const PREVIEW_LEVELS: Record<string, AccessLevel> = {
-  nodes: 'read',
-  storage: 'none',
-  network: 'read',
-  dns: 'write',
-  vpn: 'none',
-  alerts: 'write',
-  logs: 'read',
-};
+const tone = (value: number) => (value >= 85 ? 'bg-[hsl(var(--danger))]' : value >= 65 ? 'bg-[hsl(var(--warn))]' : 'bg-[hsl(var(--ok))]');
 
-function ApiKeyPreview() {
+function Meter({ value }: { value: number }) {
   return (
-    <div className="panel overflow-hidden" aria-hidden="true">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <span className="flex items-center gap-2 text-sm font-medium text-foreground">
-          <KeyRound className="h-4 w-4 text-violet-400" />
-          Clé « Automatisation DNS »
+    <span className="flex items-center gap-2">
+      <span className="h-1.5 w-14 overflow-hidden rounded-full bg-surface-3">
+        <span className={cn('block h-full rounded-full', tone(value))} style={{ width: `${value}%` }} />
+      </span>
+      <span className={cn('w-7 text-right text-2xs tabular-nums', value >= 85 ? 'text-[hsl(var(--danger))]' : 'text-muted-foreground')}>{value}%</span>
+    </span>
+  );
+}
+
+// A static rendering of the Nodes screen: what people get, rather than an
+// abstract illustration of it.
+function ConsolePreview() {
+  return (
+    <div className="overflow-hidden rounded-xl border border-border bg-surface-1 shadow-overlay" aria-hidden="true">
+      <div className="flex items-center gap-2 border-b border-border bg-surface-2/60 px-4 py-2.5">
+        <span className="flex gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-surface-3" />
+          <span className="h-2.5 w-2.5 rounded-full bg-surface-3" />
+          <span className="h-2.5 w-2.5 rounded-full bg-surface-3" />
         </span>
-        <span className="rounded-md border border-border bg-surface-2 px-2 py-0.5 text-2xs text-muted-foreground">Personnalisé</span>
+        <span className="ml-2 flex items-center gap-1.5 text-2xs text-muted-foreground">
+          <BrandMark size="sm" className="h-4 w-4" /> Tarmac / Nœuds
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 border-b border-border p-3 sm:grid-cols-4">
+        {[
+          { label: 'En ligne', value: '4 / 4', cls: 'text-[hsl(var(--ok))]' },
+          { label: 'CPU moyen', value: '38 %', cls: 'text-foreground' },
+          { label: 'RAM moyenne', value: '66 %', cls: 'text-[hsl(var(--warn))]' },
+          { label: 'À surveiller', value: '1', cls: 'text-[hsl(var(--warn))]' },
+        ].map((stat) => (
+          <div key={stat.label} className="rounded-lg border border-border bg-surface-2/40 px-3 py-2 text-left">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{stat.label}</p>
+            <p className={cn('text-lg font-semibold tabular-nums', stat.cls)}>{stat.value}</p>
+          </div>
+        ))}
+      </div>
+      <div className="overflow-hidden">
+        <table className="w-full text-left text-xs">
+          <thead>
+            <tr className="border-b border-border text-2xs text-muted-foreground">
+              <th className="px-4 py-2 font-medium">Nœud</th>
+              <th className="hidden px-2 py-2 font-medium sm:table-cell">Localisation</th>
+              <th className="hidden px-2 py-2 font-medium min-[420px]:table-cell">CPU</th>
+              <th className="px-2 py-2 font-medium">RAM · swap</th>
+            </tr>
+          </thead>
+          <tbody>
+            {DEMO_NODES.map((node) => (
+              <tr key={node.name} className="border-b border-border/60 last:border-0">
+                <td className="px-4 py-2.5">
+                  <span className="flex items-center gap-2">
+                    <span className={cn('h-1.5 w-1.5 rounded-full', node.status === 'ok' ? 'bg-[hsl(var(--ok))]' : 'bg-[hsl(var(--warn))]')} />
+                    <span className="font-medium text-foreground">{node.name}</span>
+                  </span>
+                </td>
+                <td className="hidden px-2 py-2.5 text-muted-foreground sm:table-cell">
+                  {node.flag} {node.city}
+                </td>
+                <td className="hidden px-2 py-2.5 min-[420px]:table-cell">
+                  <Meter value={node.cpu} />
+                </td>
+                <td className="px-2 py-2.5">
+                  <Meter value={node.ram} />
+                  <span className={cn('mt-0.5 block text-[10px] tabular-nums', node.swap >= 90 ? 'font-medium text-[hsl(var(--danger))]' : 'text-muted-foreground')}>
+                    {node.swap ? `Swap ${node.swap} %` : 'Pas de swap'}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+const ROLE_DEMO: Array<{ icon: LucideIcon; label: string; text: string; active?: boolean }> = [
+  { icon: Crown, label: 'Administrateur', text: 'Tout, plus les membres et les clés' },
+  { icon: Pencil, label: 'Éditeur', text: 'Consulte et modifie tout' },
+  { icon: Eye, label: 'Lecteur', text: 'Consulte sans rien modifier' },
+  { icon: SlidersHorizontal, label: 'Personnalisé', text: 'Page par page', active: true },
+];
+const DEMO_LEVELS: Record<string, AccessLevel> = { nodes: 'read', storage: 'none', network: 'read', dns: 'write', vpn: 'none', alerts: 'write', logs: 'read' };
+
+function AccessPreview() {
+  return (
+    <div className="overflow-hidden rounded-xl border border-border bg-surface-1 shadow-overlay" aria-hidden="true">
+      <div className="border-b border-border px-4 py-3">
+        <p className="text-sm font-medium text-foreground">Rôle de camille@exemple.fr</p>
+        <div className="mt-3 grid grid-cols-2 gap-1.5">
+          {ROLE_DEMO.map((role) => (
+            <div
+              key={role.label}
+              className={cn(
+                'flex items-start gap-2 rounded-lg border px-2.5 py-2',
+                role.active ? 'border-primary/60 bg-primary/[0.07]' : 'border-border bg-surface-2',
+              )}
+            >
+              <role.icon className={cn('mt-0.5 h-3.5 w-3.5 shrink-0', role.active ? 'text-primary' : 'text-muted-foreground')} />
+              <span className="min-w-0">
+                <span className="block text-xs font-medium text-foreground">{role.label}</span>
+                <span className="block truncate text-[10px] text-muted-foreground">{role.text}</span>
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
       <ul className="divide-y divide-border">
         {API_KEY_RESOURCES.map((resource) => {
-          const level = PREVIEW_LEVELS[resource.id] ?? 'none';
+          const level = DEMO_LEVELS[resource.id] ?? 'none';
           return (
             <li key={resource.id} className="flex items-center justify-between gap-3 px-4 py-2">
-              <span className="flex items-center gap-2 text-sm text-foreground">
-                <resource.icon className={level === 'none' ? 'h-4 w-4 text-muted-foreground' : 'h-4 w-4 text-violet-400'} />
+              <span className={cn('flex items-center gap-2 text-xs', level === 'none' ? 'text-muted-foreground' : 'text-foreground')}>
+                <resource.icon className={cn('h-3.5 w-3.5', level === 'none' ? 'text-muted-foreground/60' : 'text-primary')} />
                 {resource.label}
               </span>
-              <span className="inline-flex rounded-md border border-border bg-surface-2 p-0.5 text-2xs">
-                {(['none', 'read', 'write'] as const).map((item) => (
-                  <span
-                    key={item}
-                    className={
-                      item === level
-                        ? 'inline-flex items-center gap-1 rounded bg-violet-500/15 px-2 py-0.5 font-medium text-foreground'
-                        : 'inline-flex items-center gap-1 px-2 py-0.5 text-muted-foreground'
-                    }
-                  >
-                    {item === 'read' && <Eye className="h-3 w-3" />}
-                    {item === 'write' && <Pencil className="h-3 w-3" />}
-                    {item === 'none' ? 'Aucun' : item === 'read' ? 'Lecture' : 'Écriture'}
-                  </span>
-                ))}
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium',
+                  level === 'write' && 'border-primary/30 bg-primary/10 text-primary',
+                  level === 'read' && 'border-[hsl(var(--info))]/25 bg-[hsl(var(--info))]/10 text-[hsl(var(--info))]',
+                  level === 'none' && 'border-border text-muted-foreground',
+                )}
+              >
+                {level === 'write' ? <Pencil className="h-2.5 w-2.5" /> : level === 'read' ? <Eye className="h-2.5 w-2.5" /> : <Lock className="h-2.5 w-2.5" />}
+                {level === 'write' ? 'Modification' : level === 'read' ? 'Lecture' : 'Aucun accès'}
               </span>
             </li>
           );
         })}
       </ul>
-      <pre className="overflow-x-auto border-t border-border bg-zinc-950/60 px-4 py-3 font-mono text-2xs leading-relaxed text-zinc-300">
-{`curl -X POST https://tarmac.example/api/v1/dns/zones/<zone>/records \\
-  -H "Authorization: Bearer tmk_••••" \\
-  -d '{"name":"www","type":"A","values":[{"content":"203.0.113.10"}]}'`}
-      </pre>
+    </div>
+  );
+}
+
+function SectionIntro({ eyebrow, title, text, center }: { eyebrow: string; title: string; text?: string; center?: boolean }) {
+  return (
+    <div className={cn('max-w-2xl', center && 'mx-auto text-center')}>
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">{eyebrow}</p>
+      <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">{title}</h2>
+      {text && <p className="mt-3 text-sm leading-relaxed text-muted-foreground sm:text-base">{text}</p>}
     </div>
   );
 }
 
 export default function LandingPage() {
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-screen flex-col overflow-x-clip bg-background">
       <SiteHeader />
 
       <main className="flex-1">
         {/* Hero */}
         <section className="relative isolate overflow-hidden">
           <div
-            className="pointer-events-none absolute inset-0 z-0 blur-[2px] [mask-image:linear-gradient(to_bottom,transparent,black_10%,black_92%,transparent)]"
+            className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[620px] opacity-60 blur-[2px] [mask-image:linear-gradient(to_bottom,black_30%,transparent)]"
             aria-hidden="true"
           >
             <WorldConnectivityVisual className="h-full w-full" />
           </div>
+          <div className="pointer-events-none absolute left-1/2 top-24 -z-10 h-72 w-[42rem] -translate-x-1/2 rounded-full bg-primary/20 blur-[120px]" aria-hidden="true" />
 
-          <div className="relative z-10 mx-auto max-w-6xl px-6 pb-20 pt-20 text-center sm:pt-28">
-            <motion.div
-              className="mx-auto mb-6 flex w-fit items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-4 py-1.5 text-xs font-medium text-zinc-400"
-              initial="hidden"
-              animate="visible"
-              custom={0}
-              variants={fadeUp}
-            >
-              <ShieldCheck className="h-3.5 w-3.5 text-violet-400" />
-              Orchestration de flotte auto-hébergée
+          <div className="mx-auto max-w-6xl px-4 pb-16 pt-16 text-center sm:px-6 sm:pt-24">
+            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+              <Link
+                href="/docs/workspaces"
+                className="mx-auto inline-flex items-center gap-2 rounded-full border border-border bg-surface-1/80 py-1 pl-1 pr-3 text-xs text-muted-foreground backdrop-blur transition-colors hover:text-foreground"
+              >
+                <span className="rounded-full bg-primary/15 px-2 py-0.5 font-medium text-primary">Nouveau</span>
+                Rôles et droits par page pour votre équipe
+                <ArrowRight className="h-3 w-3" />
+              </Link>
+              <h1 className="mx-auto mt-6 max-w-3xl text-balance text-4xl font-semibold tracking-tight text-foreground sm:text-6xl">
+                Toute votre flotte de serveurs, <span className="text-primary">une seule console.</span>
+              </h1>
+              <p className="mx-auto mt-5 max-w-2xl text-balance text-base leading-relaxed text-muted-foreground sm:text-lg">
+                Tarmac relie vos serveurs sur un réseau privé chiffré et pilote leur stockage, leur DNS et leurs accès VPN depuis un tableau de bord
+                auto-hébergé — pensé pour les équipes techniques comme pour le self-hosting.
+              </p>
+              <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+                <Button size="lg" asChild className="w-full gap-2 sm:w-auto">
+                  <Link href="/login">
+                    Ouvrir la console
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </Button>
+                <Button size="lg" variant="outline" asChild className="w-full gap-2 sm:w-auto">
+                  <Link href="/docs">
+                    <BookOpen className="h-4 w-4" />
+                    Lire la documentation
+                  </Link>
+                </Button>
+              </div>
             </motion.div>
 
-            <motion.h1
-              className="mx-auto max-w-3xl text-4xl font-semibold tracking-tight text-foreground sm:text-5xl"
-              initial="hidden"
-              animate="visible"
-              custom={0.08}
-              variants={fadeUp}
-            >
-              Pilotez vos nœuds de stockage,{' '}
-              <AnimatedGradientText className="font-semibold">tous interconnectés.</AnimatedGradientText>
-            </motion.h1>
-
-            <motion.p
-              className="mx-auto mt-5 max-w-2xl text-base text-muted-foreground sm:text-lg"
-              initial="hidden"
-              animate="visible"
-              custom={0.16}
-              variants={fadeUp}
-            >
-              Tarmac réunit vos serveurs en une seule flotte : stockage, réseau privé, DNS et VPN pilotés depuis un
-              tableau de bord unique — et automatisables par API — pensé pour les passionnés de self-hosting comme
-              pour les équipes techniques.
-            </motion.p>
-
             <motion.div
-              className="mt-8 flex flex-wrap items-center justify-center gap-3"
-              initial="hidden"
-              animate="visible"
-              custom={0.24}
-              variants={fadeUp}
+              className="mx-auto mt-14 max-w-4xl text-left"
+              initial={{ opacity: 0, y: 24 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.7, delay: 0.15, ease: [0.16, 1, 0.3, 1] }}
             >
-              <RainbowButton size="lg" asChild>
-                <Link href="/login">
-                  Se connecter
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              </RainbowButton>
-              <Button size="lg" variant="outline" asChild>
-                <Link href="/docs">Découvrir la documentation</Link>
-              </Button>
+              <ConsolePreview />
             </motion.div>
           </div>
         </section>
 
-        {/* Stats */}
-        <section className="border-t border-white/[0.06] bg-white/[0.015] py-14">
-          <div className="mx-auto max-w-6xl px-6">
-            <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
-              {STATS.map((stat, index) => (
-                <Reveal key={stat.label} index={index} className="text-center">
-                  <p className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-                    <AnimatedCounter value={stat.value} suffix={stat.suffix} prefix={stat.prefix} />
-                  </p>
-                  <p className="mt-1.5 text-xs text-muted-foreground sm:text-sm">{stat.label}</p>
+        {/* Facts */}
+        <section className="border-y border-border bg-surface-1/50">
+          <dl className="mx-auto grid max-w-6xl grid-cols-2 divide-border px-4 sm:px-6 lg:grid-cols-4 lg:divide-x">
+            {FACTS.map((fact) => (
+              <div key={fact.label} className="px-2 py-6 text-center lg:px-6">
+                <dt className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">{fact.value}</dt>
+                <dd className="mt-1 text-xs text-muted-foreground sm:text-sm">{fact.label}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+
+        {/* Features */}
+        <section id="fonctionnalites" className="scroll-mt-16 py-20 sm:py-24">
+          <div className="mx-auto max-w-6xl px-4 sm:px-6">
+            <SectionIntro
+              center
+              eyebrow="Fonctionnalités"
+              title="Ce dont une flotte a besoin, au même endroit"
+              text="Organisé comme la console : vous retrouvez chaque fonction là où vous l’attendez."
+            />
+            <div className="mt-12 grid gap-4 lg:grid-cols-3">
+              {PILLARS.map((pillar, index) => (
+                <Reveal key={pillar.title} index={index} className="h-full">
+                  <div className="flex h-full flex-col rounded-xl border border-border bg-surface-1 p-5 transition-colors hover:border-primary/30">
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                        <pillar.icon className="h-[18px] w-[18px]" />
+                      </span>
+                      <div>
+                        <h3 className="text-base font-semibold text-foreground">{pillar.title}</h3>
+                        <p className="text-xs text-muted-foreground">{pillar.description}</p>
+                      </div>
+                    </div>
+                    <ul className="mt-5 space-y-4 border-t border-border pt-5">
+                      {pillar.items.map((item) => (
+                        <li key={item.title} className="flex gap-3">
+                          <item.icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                          <span>
+                            <span className="block text-sm font-medium text-foreground">{item.title}</span>
+                            <span className="block text-sm leading-relaxed text-muted-foreground">{item.text}</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </Reveal>
               ))}
             </div>
@@ -282,150 +377,161 @@ export default function LandingPage() {
         </section>
 
         {/* How it works */}
-        <section className="border-t border-white/[0.06] py-20">
-          <div className="mx-auto max-w-6xl px-6">
-            <Reveal className="mx-auto max-w-2xl text-center">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-400">Comment ça marche</p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-                Une flotte de stockage opérationnelle en quatre étapes
-              </h2>
-            </Reveal>
-            <div className="mt-12 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-              {STEPS.map((step, index) => (
-                <Reveal key={step.title} index={index}>
-                  <motion.div
-                    className="panel h-full p-5"
-                    whileHover={{ y: -6 }}
-                    transition={{ type: 'spring', stiffness: 300, damping: 22 }}
-                  >
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-600/15 text-sm font-semibold text-violet-300">
+        <section className="border-t border-border bg-surface-1/40 py-20 sm:py-24">
+          <div className="mx-auto grid max-w-6xl gap-12 px-4 sm:px-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:items-center">
+            <div>
+              <SectionIntro eyebrow="Démarrage" title="Opérationnel en quelques minutes" text="Pas de cluster à monter ni d’agent à configurer à la main : la console fait le travail." />
+              <ol className="mt-8 space-y-5">
+                {STEPS.map((step, index) => (
+                  <li key={step.title} className="relative flex gap-4">
+                    {index < STEPS.length - 1 && <span className="absolute left-[15px] top-9 h-[calc(100%-12px)] w-px bg-border" aria-hidden="true" />}
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-sm font-semibold text-primary">
                       {index + 1}
-                    </div>
-                    <h3 className="mt-4 text-sm font-semibold text-foreground">{step.title}</h3>
-                    <p className="mt-1.5 text-sm text-muted-foreground">{step.description}</p>
-                  </motion.div>
-                </Reveal>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* Features */}
-        <section className="py-20">
-          <div className="mx-auto max-w-6xl px-6">
-            <Reveal className="mx-auto max-w-2xl text-center">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-400">Fonctionnalités</p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-                Tout ce qu'il faut pour gérer une flotte de serveurs
-              </h2>
-            </Reveal>
-            <div className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {FEATURES.map((feature, index) => (
-                <Reveal key={feature.title} index={index % 4} className="h-full">
-                  <motion.div
-                    className="h-full"
-                    whileHover={{ y: -6, scale: 1.015 }}
-                    transition={{ type: 'spring', stiffness: 300, damping: 22 }}
-                  >
-                    <Card className="h-full transition-colors hover:border-violet-500/30 hover:shadow-glow">
-                      <CardHeader className="flex-col items-start justify-start gap-y-1 border-b-0">
-                        <feature.icon className="h-5 w-5 text-violet-400" />
-                        <CardTitle className="pt-3 text-base">{feature.title}</CardTitle>
-                        <CardDescription>{feature.description}</CardDescription>
-                      </CardHeader>
-                    </Card>
-                  </motion.div>
-                </Reveal>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* API */}
-        <section className="border-t border-white/[0.06] py-20">
-          <div className="mx-auto grid max-w-6xl items-center gap-10 px-6 lg:grid-cols-2">
-            <Reveal>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-400">API & automatisation</p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-                Automatisez tout, sans donner plus que nécessaire
-              </h2>
-              <p className="mt-3 text-sm text-muted-foreground sm:text-base">
-                Nœuds, stockage, réseau, DNS, VPN, alertes et journal : chaque module de l&apos;interface a son API. Les
-                clés se règlent comme un jeton GitHub, et se modifient sans casser vos intégrations.
-              </p>
-              <ul className="mt-6 space-y-2.5 text-sm text-muted-foreground">
-                {[
-                  'Accès complet, lecture seule, ou permissions module par module',
-                  'Permissions et expiration modifiables à tout moment, sans changer le secret',
-                  'Chaque action faite avec une clé est tracée dans le journal',
-                ].map((item) => (
-                  <li key={item} className="flex items-start gap-2">
-                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-violet-400" />
-                    {item}
+                    </span>
+                    <span className="pt-1">
+                      <span className="block text-sm font-semibold text-foreground">{step.title}</span>
+                      <span className="block text-sm leading-relaxed text-muted-foreground">{step.text}</span>
+                    </span>
                   </li>
                 ))}
-              </ul>
-              <Button variant="outline" className="mt-7" asChild>
-                <Link href="/docs/api-keys">
-                  Découvrir les clés API
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              </Button>
-            </Reveal>
-            <Reveal index={1}>
-              <ApiKeyPreview />
-            </Reveal>
-          </div>
-        </section>
-
-        {/* CTA */}
-        <section className="border-t border-white/[0.06] py-20">
-          <div className="mx-auto max-w-4xl px-6">
+              </ol>
+            </div>
             <Reveal>
-              <div className="relative">
-                <motion.div
-                  className="pointer-events-none absolute -inset-6 -z-10 rounded-[2rem] bg-violet-600/20 blur-3xl"
-                  aria-hidden="true"
-                  animate={{ opacity: [0.35, 0.6, 0.35], scale: [1, 1.05, 1] }}
-                  transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}
-                />
-                <Card className="bg-panel-glow">
-                  <CardContent className="flex flex-col items-center gap-5 p-10 text-center">
-                    <Terminal className="h-8 w-8 text-violet-400" />
-                    <div>
-                      <h2 className="text-xl font-semibold tracking-tight text-foreground">
-                        Prêt à interconnecter votre stockage ?
-                      </h2>
-                      <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-                        Consultez le guide de démarrage rapide et la référence API dans la documentation, ou connectez-vous
-                        directement au tableau de bord.
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap items-center justify-center gap-3">
-                      <Button asChild>
-                        <Link href="/login">Accéder au tableau de bord</Link>
-                      </Button>
-                      <Button variant="outline" asChild>
-                        <Link href="/docs/api">Référence API</Link>
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
+              <div className="overflow-hidden rounded-xl border border-border bg-surface-1 shadow-overlay">
+                <div className="flex items-center justify-between border-b border-border px-4 py-2.5 text-2xs text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    <Code2 className="h-3.5 w-3.5" />
+                    Installation manuelle (facultative)
+                  </span>
+                  <span>bash</span>
+                </div>
+                <pre className="overflow-x-auto px-4 py-4 font-mono text-xs leading-relaxed text-foreground/85">
+                  <span className="text-muted-foreground"># L’onboarding depuis la console fait la même chose</span>
+                  {'\n'}curl -fsSL https://…/install-agent-service.sh \{'\n'}  | sudo bash -s -- \{'\n'}  --node-id <span className="text-primary">&quot;&lt;NODE_ID&gt;&quot;</span> \{'\n'}  --control-plane-ws <span className="text-primary">&quot;wss://tarmac.exemple/agents-ws&quot;</span> \{'\n'}  --agent-token <span className="text-primary">&quot;&lt;TOKEN&gt;&quot;</span>
+                </pre>
+                <div className="flex items-center gap-2 border-t border-border bg-[hsl(var(--ok))]/[0.06] px-4 py-2.5 text-xs text-[hsl(var(--ok))]">
+                  <Check className="h-3.5 w-3.5" />
+                  par-storage-01 a rejoint le réseau privé · 10.255.0.12
+                </div>
               </div>
             </Reveal>
           </div>
         </section>
+
+        {/* Access */}
+        <section id="acces" className="scroll-mt-16 border-t border-border py-20 sm:py-24">
+          <div className="mx-auto grid max-w-6xl gap-12 px-4 sm:px-6 lg:grid-cols-2 lg:items-center">
+            <Reveal className="order-2 lg:order-1">
+              <AccessPreview />
+            </Reveal>
+            <div className="order-1 lg:order-2">
+              <SectionIntro
+                eyebrow="Rôles & API"
+                title="Chacun accède à ce qu’il lui faut, rien de plus"
+                text="Les mêmes droits s’appliquent aux membres de l’équipe et aux clés API : aucun accès, lecture ou modification, page par page."
+              />
+              <ul className="mt-6 space-y-3 text-sm text-muted-foreground">
+                {[
+                  'Lecteur, Éditeur, Administrateur ou rôle personnalisé, modifiable à tout moment',
+                  'Les pages hors d’accès disparaissent du menu ; la lecture seule est signalée clairement',
+                  'L’API applique exactement les mêmes règles que l’interface',
+                  'Chaque changement de rôle et chaque action est tracé dans le journal',
+                ].map((item) => (
+                  <li key={item} className="flex items-start gap-2.5">
+                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                    {item}
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-7 flex flex-wrap gap-3">
+                <Button variant="outline" asChild className="gap-1.5">
+                  <Link href="/docs/workspaces">
+                    Rôles et membres
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </Button>
+                <Button variant="ghost" asChild className="gap-1.5">
+                  <Link href="/docs/api-keys">
+                    <KeyRound className="h-4 w-4" />
+                    Clés API
+                  </Link>
+                </Button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* FAQ */}
+        <section className="border-t border-border bg-surface-1/40 py-20 sm:py-24">
+          <div className="mx-auto max-w-3xl px-4 sm:px-6">
+            <SectionIntro center eyebrow="Questions fréquentes" title="Avant de vous lancer" />
+            <div className="mt-10 divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface-1">
+              {FAQ.map((item) => (
+                <details key={item.q} className="group">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4 text-sm font-medium text-foreground transition-colors hover:bg-surface-2/50 [&::-webkit-details-marker]:hidden">
+                    {item.q}
+                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+                  </summary>
+                  <p className="px-5 pb-4 text-sm leading-relaxed text-muted-foreground">{item.a}</p>
+                </details>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* CTA */}
+        <section className="border-t border-border py-20 sm:py-24">
+          <div className="mx-auto max-w-6xl px-4 sm:px-6">
+            <div className="relative overflow-hidden rounded-2xl border border-border bg-surface-1 px-6 py-12 text-center sm:px-12">
+              <div className="pointer-events-none absolute -top-24 left-1/2 h-48 w-[36rem] -translate-x-1/2 rounded-full bg-primary/25 blur-[100px]" aria-hidden="true" />
+              <Radar className="mx-auto h-8 w-8 text-primary" />
+              <h2 className="mt-4 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Prêt à reprendre la main sur votre flotte ?</h2>
+              <p className="mx-auto mt-3 max-w-xl text-sm text-muted-foreground sm:text-base">
+                Connectez-vous à la console, ou parcourez le guide de démarrage et la référence API.
+              </p>
+              <div className="mt-7 flex flex-col items-center justify-center gap-3 sm:flex-row">
+                <Button size="lg" asChild className="w-full gap-2 sm:w-auto">
+                  <Link href="/login">
+                    Ouvrir la console
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </Button>
+                <Button size="lg" variant="outline" asChild className="w-full sm:w-auto">
+                  <Link href="/docs/api">Référence API</Link>
+                </Button>
+              </div>
+            </div>
+          </div>
+        </section>
       </main>
 
-      <footer className="border-t border-white/[0.06] py-8">
-        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 text-sm text-muted-foreground sm:flex-row">
-          <p>© {new Date().getFullYear()} Tarmac</p>
-          <div className="flex items-center gap-5">
-            <Link href="/docs" className="hover:text-foreground">Documentation</Link>
-            <Link href="/docs/api" className="hover:text-foreground">API</Link>
-            <Link href="/login" className="hover:text-foreground">Connexion</Link>
+      <footer className="border-t border-border">
+        <div className="mx-auto grid max-w-6xl gap-8 px-4 py-10 sm:grid-cols-[1.5fr_1fr_1fr] sm:px-6">
+          <div>
+            <Link href="/" className="flex items-center gap-2.5">
+              <BrandMark size="sm" />
+              <span className="font-semibold text-foreground">Tarmac</span>
+            </Link>
+            <p className="mt-3 max-w-xs text-sm text-muted-foreground">Orchestration de flotte auto-hébergée : nœuds, réseau privé, stockage, DNS et VPN.</p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70">Produit</p>
+            <ul className="mt-3 space-y-2 text-sm">
+              <li><Link href="/#fonctionnalites" className="text-muted-foreground hover:text-foreground">Fonctionnalités</Link></li>
+              <li><Link href="/#acces" className="text-muted-foreground hover:text-foreground">Rôles & API</Link></li>
+              <li><Link href="/login" className="text-muted-foreground hover:text-foreground">Connexion</Link></li>
+            </ul>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70">Ressources</p>
+            <ul className="mt-3 space-y-2 text-sm">
+              <li><Link href="/docs" className="text-muted-foreground hover:text-foreground">Documentation</Link></li>
+              <li><Link href="/docs/concepts" className="text-muted-foreground hover:text-foreground">Concepts clés</Link></li>
+              <li><Link href="/docs/api" className="text-muted-foreground hover:text-foreground">Référence API</Link></li>
+            </ul>
           </div>
         </div>
+        <div className="border-t border-border py-4 text-center text-xs text-muted-foreground">© {new Date().getFullYear()} Tarmac</div>
       </footer>
     </div>
   );

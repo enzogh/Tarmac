@@ -124,7 +124,7 @@ export function ZoneDialog({
           <Button variant="secondary" onClick={() => onOpenChange(false)}>
             Annuler
           </Button>
-          <Button onClick={() => void create()} disabled={creating || !DOMAIN.test(name) || !groupId} className="gap-1.5">
+          <Button write onClick={() => void create()} disabled={creating || !DOMAIN.test(name) || !groupId} className="gap-1.5">
             {creating && <LoaderCircle className="h-4 w-4 animate-spin" />}
             Ajouter le domaine
           </Button>

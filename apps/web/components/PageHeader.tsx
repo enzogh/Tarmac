@@ -1,4 +1,8 @@
+'use client';
+
 import { ReactNode } from 'react';
+import { usePathname } from 'next/navigation';
+import { areaOfPath, isRestrictedToRead, useWorkspaceAccess } from '../lib/access';
 import { cn } from '../lib/utils';
 
 interface PageHeaderProps {
@@ -8,6 +12,8 @@ interface PageHeaderProps {
   /** Status pills, counts or filters that belong with the title. */
   meta?: ReactNode;
   className?: string;
+  /** Header actions are hidden from read-only members; keep them when they only navigate. */
+  actionsReadOnlySafe?: boolean;
 }
 
 /**
@@ -16,7 +22,13 @@ interface PageHeaderProps {
  * at the top of every screen and competed with the data underneath for
  * attention - the one thing a monitoring console should never do.
  */
-export function PageHeader({ title, description, actions, meta, className }: PageHeaderProps) {
+export function PageHeader({ title, description, actions, meta, className, actionsReadOnlySafe }: PageHeaderProps) {
+  // A page's header actions create or change things (onboard a node, new
+  // share, new zone...): a read-only member would only meet a refusal.
+  const area = areaOfPath(usePathname() ?? '');
+  const access = useWorkspaceAccess(area !== null);
+  const readOnly = area !== null && access.ready && isRestrictedToRead(area, access.level(area));
+  if (readOnly && !actionsReadOnlySafe) actions = undefined;
   return (
     <header className={cn('flex flex-wrap items-start justify-between gap-x-6 gap-y-3', className)}>
       <div className="min-w-0">

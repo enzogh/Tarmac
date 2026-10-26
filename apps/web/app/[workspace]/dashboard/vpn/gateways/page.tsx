@@ -87,6 +87,7 @@ export default function VpnGatewaysPage() {
       <PageHeader
         title="Passerelles VPN"
         description="Les nœuds qui servent de point d'entrée aux appareils ou de sortie vers Internet, et l'état de leur configuration."
+        actionsReadOnlySafe
         actions={
           <Button variant="secondary" asChild>
             <Link href={`/${params.workspace}/dashboard/vpn`} className="gap-1.5">

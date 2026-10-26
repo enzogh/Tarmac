@@ -15,7 +15,6 @@ import {
   ShieldCheck,
   KeyRound,
 } from 'lucide-react';
-import { PageHeader } from '../../components/PageHeader';
 import { Callout } from '../../components/Callout';
 import { SectionLabel } from '../../components/SectionLabel';
 import { AnimatedGradientText } from '../../components/ui/animated-gradient-text';
@@ -49,15 +48,14 @@ const MODULES: { group: string; items: { icon: typeof Server; title: string; tex
   {
     group: 'Infrastructure',
     items: [
-      { icon: Server, title: 'Nœuds', text: 'Onboarding SSH, agents, disques et santé SMART.', href: '/docs/concepts' },
+      { icon: Server, title: 'Nœuds', text: 'Onboarding SSH, agents, matériel, RAM et swap, disques et santé SMART.', href: '/docs/concepts' },
       { icon: Network, title: 'Réseau', text: 'Mesh WireGuard, graphe, carte du monde, passerelles régionales, ping/traceroute.', href: '/docs/concepts' },
-      { icon: Globe, title: 'DNS', text: 'Groupes primaire/secondaire, zones, DNSSEC, délégation vérifiée, GeoDNS.', href: '/docs/dns', isNew: true },
+      { icon: Globe, title: 'DNS', text: 'Groupes primaire/secondaire, zones, DNSSEC, délégation vérifiée, GeoDNS.', href: '/docs/dns' },
       {
         icon: ShieldCheck,
         title: 'VPN',
         text: "Profils WireGuard par appareil : entrée et sortie choisies parmi toute la flotte, sortie changée à chaud.",
         href: '/docs/api#vpn',
-        isNew: true,
       },
     ],
   },
@@ -74,14 +72,13 @@ const MODULES: { group: string; items: { icon: typeof Server; title: string; tex
     group: 'Supervision & organisation',
     items: [
       { icon: Bell, title: 'Alertes', text: 'Règles de seuil évaluées chaque minute, canaux e-mail / webhook / Slack.', href: '/docs/concepts' },
-      { icon: ScrollText, title: 'Journal', text: "Actions d'administration et logs d'agents en direct, filtrables et exportables.", href: '/docs/concepts', isNew: true },
-      { icon: LayoutGrid, title: 'Workspaces', text: 'Cloisonnement multi-flottes, membres, propriétaires et connexion SSO Authentik.', href: '/docs/workspaces', isNew: true },
+      { icon: ScrollText, title: 'Journal', text: "Actions de l'équipe et logs d'agents en direct, avec tout l'historique, filtrables et exportables.", href: '/docs/concepts' },
+      { icon: LayoutGrid, title: 'Workspaces', text: 'Cloisonnement multi-flottes, membres et rôles (lecteur, éditeur, droits par page), connexion SSO.', href: '/docs/workspaces', isNew: true },
       {
         icon: KeyRound,
         title: 'Clés API',
         text: 'Automatisation par API sur tous les modules, avec des permissions lecture/écriture par module.',
         href: '/docs/api-keys',
-        isNew: true,
       },
     ],
   },
@@ -90,30 +87,37 @@ const MODULES: { group: string; items: { icon: typeof Server; title: string; tex
 export default function DocsHomePage() {
   return (
     <div className="space-y-12">
-      <PageHeader
-        title="Documentation Tarmac"
-        description="Tarmac orchestre une flotte de serveurs interconnectés : réseau privé, DNS faisant autorité, partages NFS, montages, réplication, migrations et supervision — le tout depuis un seul tableau de bord."
-      />
-
-      <Callout>
-        Nouveau sur Tarmac ? Commencez par les{' '}
-        <Link href="/docs/concepts" className="underline underline-offset-2">
-          concepts clés
-        </Link>
-        . Les nouveautés récentes ont leur propre page :{' '}
-        <Link href="/docs/workspaces" className="underline underline-offset-2">
-          workspaces &amp; SSO
-        </Link>
-        ,{' '}
-        <Link href="/docs/dns" className="underline underline-offset-2">
-          DNS
-        </Link>{' '}
-        et{' '}
-        <Link href="/docs/api-keys" className="underline underline-offset-2">
-          clés API
-        </Link>
-        .
-      </Callout>
+      <header className="relative overflow-hidden rounded-2xl border border-border bg-surface-1 px-6 py-8 sm:px-8">
+        <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-primary/20 blur-[90px]" aria-hidden="true" />
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Documentation</p>
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Bien démarrer avec Tarmac</h1>
+        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground sm:text-base">
+          Tarmac orchestre une flotte de serveurs interconnectés : réseau privé, DNS faisant autorité, partages NFS, montages, réplication,
+          migrations, VPN et supervision — depuis une seule console.
+        </p>
+        <div className="mt-6 grid gap-3 sm:grid-cols-3">
+          {[
+            { href: '/docs/concepts', icon: BookOpen, title: 'Je découvre', text: 'Les concepts en 5 minutes' },
+            { href: '/docs/workspaces', icon: LayoutGrid, title: 'J’invite mon équipe', text: 'Membres, rôles et droits' },
+            { href: '/docs/api', icon: KeyRound, title: 'J’automatise', text: 'Clés et référence API' },
+          ].map((path) => (
+            <Link
+              key={path.href}
+              href={path.href}
+              className="group flex items-center gap-3 rounded-xl border border-border bg-surface-2/50 px-4 py-3 transition-colors hover:border-primary/40 hover:bg-surface-2"
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <path.icon className="h-4 w-4" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium text-foreground">{path.title}</span>
+                <span className="block text-xs text-muted-foreground">{path.text}</span>
+              </span>
+              <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+            </Link>
+          ))}
+        </div>
+      </header>
 
       <section className="space-y-4">
         <SectionLabel>Architecture</SectionLabel>

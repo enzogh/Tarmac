@@ -367,7 +367,7 @@ export default function StoragePage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge label={pool.strategy} type="info" />
                         <Badge label={statusBadge.label} type={statusBadge.type} />
-                        <Button
+                        <Button write
                           variant="ghost"
                           size="sm"
                           disabled={busyPoolId === pool.id}
@@ -402,7 +402,7 @@ export default function StoragePage() {
                           </span>
                           <div className="flex items-center gap-2">
                             <Badge label={memberStatus.label} type={memberStatus.type} />
-                            <Button
+                            <Button write
                               variant="ghost"
                               size="sm"
                               disabled={busyPoolId === pool.id}

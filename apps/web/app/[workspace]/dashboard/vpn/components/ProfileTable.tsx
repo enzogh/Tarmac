@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowDown, ArrowRight, ArrowUp, ArrowUpDown, Download, MoreHorizontal, Pencil, Power, RotateCcw, ShieldCheck, Trash2, TriangleAlert } from 'lucide-react';
+import { ArrowDown, ArrowRight, ArrowUp, ArrowUpDown, Download, Lock, MoreHorizontal, Pencil, Power, RotateCcw, ShieldCheck, Trash2, TriangleAlert } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu,
@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import type { VpnProfile } from '@/lib/api';
 import { formatRelative, formatThroughput } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { useReadOnly } from '@/lib/read-only';
 import { AccessChips } from './access';
 import { LiveSession, NodeFlag, profileStatus } from './vpn-ui';
 
@@ -65,6 +66,7 @@ export function ProfileTable({
   onAction: (profile: VpnProfile, action: ProfileAction) => void;
   activeId: string | null;
 }) {
+  const { readOnly } = useReadOnly();
   const allSelected = profiles.length > 0 && profiles.every((profile) => selected.has(profile.id));
   const someSelected = profiles.some((profile) => selected.has(profile.id));
   const toggleAll = () => {
@@ -190,14 +192,14 @@ export function ProfileTable({
                       <button
                         type="button"
                         onClick={() => onAction(profile, 'install')}
-                        disabled={!usable}
+                        disabled={!usable || readOnly}
                         aria-label={`Installer ${profile.name}`}
                         className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-2 hover:text-foreground disabled:opacity-40"
                       >
-                        <Download className="h-4 w-4" />
+                        {readOnly ? <Lock className="h-3.5 w-3.5" /> : <Download className="h-4 w-4" />}
                       </button>
                     </TooltipTrigger>
-                    <TooltipContent>Installer sur l&apos;appareil (fichier ou QR code)</TooltipContent>
+                    <TooltipContent>{readOnly ? 'Lecture seule : l’installation donne accès aux clés de l’appareil.' : 'Installer sur l’appareil (fichier ou QR code)'}</TooltipContent>
                   </Tooltip>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -210,24 +212,24 @@ export function ProfileTable({
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-56">
-                      <DropdownMenuItem onSelect={() => onAction(profile, 'access')} className="gap-2">
+                      <DropdownMenuItem write onSelect={() => onAction(profile, 'access')} className="gap-2">
                         <ShieldCheck className="h-3.5 w-3.5" />
                         Règles d&apos;accès
                       </DropdownMenuItem>
-                      <DropdownMenuItem onSelect={() => onAction(profile, 'edit')} className="gap-2">
+                      <DropdownMenuItem write onSelect={() => onAction(profile, 'edit')} className="gap-2">
                         <Pencil className="h-3.5 w-3.5" />
                         Modifier le profil
                       </DropdownMenuItem>
-                      <DropdownMenuItem onSelect={() => onAction(profile, 'toggle')} className="gap-2">
+                      <DropdownMenuItem write onSelect={() => onAction(profile, 'toggle')} className="gap-2">
                         <Power className="h-3.5 w-3.5" />
                         {profile.enabled ? 'Désactiver' : 'Réactiver'}
                       </DropdownMenuItem>
-                      <DropdownMenuItem onSelect={() => onAction(profile, 'rotate')} className="gap-2">
+                      <DropdownMenuItem write onSelect={() => onAction(profile, 'rotate')} className="gap-2">
                         <RotateCcw className="h-3.5 w-3.5" />
                         Régénérer les clés
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem onSelect={() => onAction(profile, 'delete')} className="gap-2 text-[hsl(var(--danger))]">
+                      <DropdownMenuItem write onSelect={() => onAction(profile, 'delete')} className="gap-2 text-[hsl(var(--danger))]">
                         <Trash2 className="h-3.5 w-3.5" />
                         Supprimer
                       </DropdownMenuItem>

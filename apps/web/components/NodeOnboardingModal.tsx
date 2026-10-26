@@ -145,7 +145,7 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
     <>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button onClick={() => setOpen(true)}>
+          <Button write onClick={() => setOpen(true)}>
             <Plus className="h-4 w-4" />
             Onboarder un nœud
           </Button>

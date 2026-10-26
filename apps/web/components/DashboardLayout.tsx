@@ -3,9 +3,11 @@
 import Link from 'next/link';
 import { usePathname, useParams, useRouter } from 'next/navigation';
 import { ReactNode, useEffect, useMemo, useState } from 'react';
-import { LogOut, BookOpen, ChevronDown, Search, Menu, ShieldAlert, X } from 'lucide-react';
+import { LogOut, BookOpen, ChevronDown, Eye, Lock, Search, Menu, ShieldAlert, X } from 'lucide-react';
 import { api } from '../lib/api';
-import { buildNavGroups, buildNavItems, NavItem } from '../lib/nav-items';
+import { buildNavGroups, buildNavItems, NavItem, navItemArea, visibleNavGroups } from '../lib/nav-items';
+import { areaOfPath, isRestrictedToRead, useWorkspaceAccess } from '../lib/access';
+import { ReadOnlyProvider } from '../lib/read-only';
 import { BrandMark } from './BrandMark';
 import { CommandPalette } from './CommandPalette';
 import { Button } from './ui/button';
@@ -29,7 +31,13 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
   const router = useRouter();
   const params = useParams<{ workspace: string }>();
   const slug = params.workspace;
-  const navGroups = useMemo(() => buildNavGroups(slug), [slug]);
+  const access = useWorkspaceAccess();
+  // Cheap enough to rebuild every render, and follows role changes as soon
+  // as the workspaces poll brings them in.
+  const navGroups = visibleNavGroups(buildNavGroups(slug), (item) => {
+    const area = navItemArea(item);
+    return !area || access.level(area) !== 'none';
+  });
   const navItems = useMemo(() => buildNavItems(slug), [slug]);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   // Starts empty (all groups expanded) so server and first client render
@@ -90,7 +98,13 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
       >
         {isActive && <span className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-primary" aria-hidden />}
         <Icon className={cn('h-4 w-4 shrink-0', isActive ? 'text-primary' : 'text-muted-foreground/70')} />
-        {item.label}
+        <span className="min-w-0 flex-1 truncate">{item.label}</span>
+        {(() => {
+          const area = navItemArea(item);
+          return area && isRestrictedToRead(area, access.level(area)) ? (
+            <Eye className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-label="Lecture seule" />
+          ) : null;
+        })()}
       </Link>
     );
   };
@@ -260,12 +274,70 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
           {/* Content */}
           <main className="flex-1 overflow-y-auto">
             <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
-              <NoWorkspaceAccessGate>{children}</NoWorkspaceAccessGate>
+              <NoWorkspaceAccessGate>
+                <PageAccessGate pathname={pathname}>{children}</PageAccessGate>
+              </NoWorkspaceAccessGate>
             </div>
           </main>
         </div>
       </div>
     </TooltipProvider>
+  );
+}
+
+const AREA_LABEL: Record<string, string> = {
+  nodes: 'Nœuds',
+  network: 'Réseau privé',
+  dns: 'DNS',
+  vpn: 'VPN',
+  storage: 'Stockage',
+  alerts: 'Alertes',
+  logs: 'Journal',
+  manage: 'Administration',
+};
+
+// The member's role, applied to the page itself: no access is a clear
+// explanation instead of a page of failed requests, read-only is said up
+// front instead of discovered on the first refused click.
+function PageAccessGate({ pathname, children }: { pathname: string; children: ReactNode }) {
+  const access = useWorkspaceAccess();
+  const area = areaOfPath(pathname);
+  if (!area || !access.ready) return <>{children}</>;
+  const level = access.level(area);
+
+  if (level === 'none') {
+    return (
+      <div className="mx-auto flex max-w-lg flex-col items-center gap-3 rounded-xl border border-border bg-surface-1 px-6 py-16 text-center">
+        <span className="flex h-11 w-11 items-center justify-center rounded-full bg-surface-2">
+          <Lock className="h-5 w-5 text-muted-foreground" />
+        </span>
+        <h2 className="text-base font-semibold text-foreground">Accès restreint</h2>
+        <p className="text-sm text-muted-foreground">
+          {area === 'manage'
+            ? 'Cette page est réservée aux administrateurs du workspace.'
+            : `Votre rôle ne donne pas accès à « ${AREA_LABEL[area]} » dans ce workspace.`}{' '}
+          Un administrateur peut changer vos droits dans Paramètres → Membres.
+        </p>
+      </div>
+    );
+  }
+
+  const readOnly = isRestrictedToRead(area, level);
+  return (
+    <ReadOnlyProvider readOnly={readOnly} area={AREA_LABEL[area]}>
+      {readOnly && (
+        <div className="mb-4 flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-lg border border-[hsl(var(--info))]/25 bg-[hsl(var(--info))]/[0.07] px-3.5 py-2 text-xs text-foreground/90">
+          <Eye className="h-3.5 w-3.5 shrink-0 text-[hsl(var(--info))]" />
+          <span>
+            <span className="font-medium">Lecture seule.</span> Votre rôle permet de consulter « {AREA_LABEL[area]} » sans rien y modifier.
+          </span>
+          <span className="inline-flex items-center gap-1 text-muted-foreground">
+            Les actions marquées <Lock className="h-3 w-3" /> vous sont fermées.
+          </span>
+        </div>
+      )}
+      {children}
+    </ReadOnlyProvider>
   );
 }
 

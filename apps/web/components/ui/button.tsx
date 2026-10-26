@@ -1,7 +1,10 @@
 import * as React from 'react';
 import { Slot } from '@radix-ui/react-slot';
 import { cva, type VariantProps } from 'class-variance-authority';
+import { Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { readOnlyMessage, useReadOnly } from '@/lib/read-only';
+import { Tooltip, TooltipContent, TooltipTrigger } from './tooltip';
 
 const buttonVariants = cva(
   'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
@@ -38,10 +41,46 @@ export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
   asChild?: boolean;
+  /**
+   * The button creates, changes or deletes something. On a page the member
+   * can only read, it stays visible (people see what exists) but locked,
+   * with a padlock and a tooltip saying why.
+   */
+  write?: boolean;
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
+  ({ className, variant, size, asChild = false, write, ...props }, ref) => {
+    const { readOnly, area } = useReadOnly();
+    if (write && readOnly && !asChild) {
+      const { children, onClick: _onClick, disabled: _disabled, title: _title, ...rest } = props;
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              ref={ref}
+              {...rest}
+              type="button"
+              aria-disabled
+              aria-label={typeof rest['aria-label'] === 'string' ? `${rest['aria-label']} (lecture seule)` : undefined}
+              onClick={(event) => event.preventDefault()}
+              className={cn(
+                buttonVariants({ variant, size, className }),
+                'cursor-not-allowed opacity-50 saturate-50 hover:bg-[unset] hover:text-[unset] hover:opacity-60',
+              )}
+            >
+              {size === 'icon' ? <Lock /> : (
+                <>
+                  {children}
+                  <Lock className="!size-3 opacity-80" />
+                </>
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-xs">{readOnlyMessage(area)}</TooltipContent>
+        </Tooltip>
+      );
+    }
     const Comp = asChild ? Slot : 'button';
     return (
       <Comp

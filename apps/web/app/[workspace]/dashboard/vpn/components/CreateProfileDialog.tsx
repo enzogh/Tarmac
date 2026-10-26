@@ -397,7 +397,7 @@ export function CreateProfileDialog({
                   <ArrowRight className="h-4 w-4" />
                 </Button>
               ) : (
-                <Button onClick={() => void submit()} disabled={submitting || Boolean(stepError)} className="gap-1.5">
+                <Button write onClick={() => void submit()} disabled={submitting || Boolean(stepError)} className="gap-1.5">
                   {submitting && <LoaderCircle className="h-4 w-4 animate-spin" />}
                   Créer le profil
                 </Button>

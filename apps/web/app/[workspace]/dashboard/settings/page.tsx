@@ -1,23 +1,51 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import { AlertTriangle, BellRing, Mail, Save, Send, Settings, ShieldCheck, Trash2, Users } from 'lucide-react';
-import { AdminProfile, api, WorkspaceDetail, WorkspaceListItem, WorkspaceMember } from '../../../../lib/api';
+import { FormEvent, ReactNode, useEffect, useState } from 'react';
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { AlertTriangle, BellRing, Building2, Eye, Lock, Pencil, Save, Send, Trash2, UserCircle2, Users, type LucideIcon } from 'lucide-react';
+import { AdminProfile, api, WorkspaceDetail, WorkspaceListItem } from '../../../../lib/api';
+import { API_KEY_RESOURCES, scopesToPermissions } from '../../../../lib/api-key-permissions';
 import { usePolling } from '../../../../lib/hooks/usePolling';
+import { cn } from '../../../../lib/utils';
 import { PageHeader } from '../../../../components/PageHeader';
-import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
-import { Card, CardContent, CardHeader, CardTitle } from '../../../../components/ui/card';
+import { Card, CardContent } from '../../../../components/ui/card';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
 import { Label } from '../../../../components/ui/label';
 import { Badge } from '../../../../components/ui/badge';
 import { Alert, AlertDescription } from '../../../../components/ui/alert';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../../../../components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../../../../components/ui/dialog';
+import { MembersSection } from './components/MembersSection';
+import { RoleBadge, roleOf } from './components/roles';
+
+type SectionId = 'general' | 'members' | 'access' | 'notifications' | 'danger';
+type SectionDef = { id: SectionId; label: string; description: string; icon: LucideIcon; group: 'Workspace' | 'Mon compte'; tone?: 'danger' };
+
+const SECTIONS: Record<SectionId, SectionDef> = {
+  general: { id: 'general', label: 'Général', description: 'Le nom du workspace et son adresse dans l’URL.', icon: Building2, group: 'Workspace' },
+  members: {
+    id: 'members',
+    label: 'Membres et rôles',
+    description: 'Qui a accès à ce workspace, et ce que chacun peut voir ou modifier, page par page.',
+    icon: Users,
+    group: 'Workspace',
+  },
+  access: { id: 'access', label: 'Mon accès', description: 'Ce que votre rôle vous permet de faire dans ce workspace.', icon: Lock, group: 'Workspace' },
+  danger: { id: 'danger', label: 'Zone de danger', description: 'Actions définitives sur ce workspace.', icon: AlertTriangle, group: 'Workspace', tone: 'danger' },
+  notifications: {
+    id: 'notifications',
+    label: 'Notifications',
+    description: 'Vos alertes par email. Personnel : s’applique à tous vos workspaces.',
+    icon: BellRing,
+    group: 'Mon compte',
+  },
+};
 
 export default function WorkspaceSettingsPage() {
   const params = useParams<{ workspace: string }>();
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { data: profile, mutate: refreshProfile } = usePolling('profile', api.profile.get, { intervalMs: 60000 });
   const { data: workspaces, mutate: refreshWorkspaces } = usePolling('workspaces', api.workspaces.list, {
     intervalMs: 15000,
@@ -27,6 +55,15 @@ export default function WorkspaceSettingsPage() {
   const isSuperuser = profile?.isSuperuser ?? false;
   const canManage = isSuperuser || workspace?.myRole === 'owner';
 
+  const available: SectionId[] = canManage
+    ? ['general', 'members', 'notifications', ...(workspace?.isDefault ? [] : (['danger'] as SectionId[]))]
+    : ['access', 'notifications'];
+  const requested = searchParams.get('section') as SectionId | null;
+  const active: SectionId = requested && available.includes(requested) ? requested : available[0];
+  // The section lives in the URL: shareable ("go to Settings → Members"),
+  // and the browser's back button walks between sections.
+  const select = (id: SectionId) => router.replace(`${pathname}?section=${id}`, { scroll: false });
+
   if (!workspaces || !profile || !workspace) {
     return (
       <div className="space-y-6">
@@ -35,50 +72,145 @@ export default function WorkspaceSettingsPage() {
     );
   }
 
-  if (!canManage) {
-    return (
-      <div className="space-y-6">
-        <PageHeader title="Paramètres" description={workspace.name} />
-        <EmailNotificationsCard profile={profile} onSaved={() => void refreshProfile()} />
-        <Card>
-          <CardContent className="flex flex-col items-center gap-2 py-16 text-center">
-            <ShieldCheck className="h-8 w-8 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">
-              Tu es membre de « {workspace.name} » mais seul son propriétaire (ou un administrateur de la plateforme)
-              peut le renommer ou gérer ses membres.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  const section = SECTIONS[active];
+  const groups = (['Workspace', 'Mon compte'] as const).map((group) => ({
+    group,
+    items: available.map((id) => SECTIONS[id]).filter((item) => item.group === group),
+  }));
 
   return (
-    <div className="max-w-3xl space-y-6">
-      <PageHeader title="Paramètres" description={`Gère « ${workspace.name} »`} />
-      <EmailNotificationsCard profile={profile} onSaved={() => void refreshProfile()} />
-      <GeneralCard
-        workspace={workspace}
-        onSaved={(updated) => {
-          void refreshWorkspaces();
-          // The page lives under the slug: follow it to its new address.
-          if (updated.slug !== params.workspace) router.replace(`/${updated.slug}/dashboard/settings`);
-        }}
+    <div className="space-y-6">
+      <PageHeader
+        title="Paramètres"
+        description={canManage ? `Configurez « ${workspace.name} », ses membres et leurs droits.` : `Votre accès à « ${workspace.name} » et vos préférences.`}
+        meta={<RoleBadge choice={canManage ? 'admin' : roleOf(workspace.myRole ?? 'member', workspace.myPermissions)} />}
       />
-      <MembersCard
-        workspace={workspace}
-        currentUserId={profile.id}
-        isSuperuser={isSuperuser}
-        onMembershipChanged={() => void refreshWorkspaces()}
-      />
-      <DangerZoneCard
-        workspace={workspace}
-        onDeleted={() => {
-          void refreshWorkspaces();
-          router.push('/workspaces');
-        }}
-      />
+
+      <div className="grid gap-6 lg:grid-cols-[14rem_minmax(0,1fr)]">
+        <nav aria-label="Sections des paramètres" className="min-w-0 lg:sticky lg:top-0 lg:self-start">
+          {/* Phone: one scrollable row of pills. Desktop: a vertical list
+              grouped like the sidebar, so the page has the same shape as
+              the rest of the app. */}
+          <div className="scroll-thin -mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 lg:mx-0 lg:flex-col lg:gap-4 lg:overflow-visible lg:px-0">
+            {groups.map(({ group, items }) =>
+              items.length === 0 ? null : (
+                <div key={group} className="contents lg:block lg:space-y-0.5">
+                  <p className="hidden px-3 pb-1 text-2xs font-semibold uppercase tracking-wider text-muted-foreground/60 lg:block">{group}</p>
+                  {items.map((item) => {
+                    const isActive = item.id === active;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => select(item.id)}
+                        aria-current={isActive ? 'page' : undefined}
+                        className={cn(
+                          'relative flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md border px-3 py-1.5 text-sm transition-colors lg:w-full lg:border-transparent',
+                          isActive
+                            ? 'border-primary/40 bg-surface-2 font-medium text-foreground'
+                            : 'border-border text-muted-foreground hover:bg-surface-2/60 hover:text-foreground',
+                          item.tone === 'danger' && !isActive && 'text-[hsl(var(--danger))]/80 hover:text-[hsl(var(--danger))]',
+                        )}
+                      >
+                        {isActive && <span className="absolute inset-y-1 left-0 hidden w-0.5 rounded-full bg-primary lg:block" aria-hidden />}
+                        <item.icon className={cn('h-4 w-4 shrink-0', isActive ? 'text-primary' : 'opacity-70', item.tone === 'danger' && 'text-[hsl(var(--danger))]')} />
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              ),
+            )}
+          </div>
+        </nav>
+
+        <section key={active} className="min-w-0 max-w-4xl animate-fade-in space-y-4" aria-labelledby="settings-section-title">
+          <div>
+            <h2 id="settings-section-title" className={cn('text-base font-semibold text-foreground', section.tone === 'danger' && 'text-[hsl(var(--danger))]')}>
+              {section.label}
+            </h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">{section.description}</p>
+          </div>
+
+          {active === 'general' && (
+            <GeneralCard
+              workspace={workspace}
+              onSaved={(updated) => {
+                void refreshWorkspaces();
+                // The page lives under the slug: follow it to its new address.
+                if (updated.slug !== params.workspace) router.replace(`/${updated.slug}/dashboard/settings?section=general`);
+              }}
+            />
+          )}
+          {active === 'members' && (
+            <MembersSection
+              workspace={workspace}
+              currentUserId={profile.id}
+              isSuperuser={isSuperuser}
+              onMembershipChanged={() => void refreshWorkspaces()}
+            />
+          )}
+          {active === 'access' && <MyAccessCard workspace={workspace} />}
+          {active === 'notifications' && <EmailNotificationsCard profile={profile} onSaved={() => void refreshProfile()} />}
+          {active === 'danger' && (
+            <DangerZoneCard
+              workspace={workspace}
+              onDeleted={() => {
+                void refreshWorkspaces();
+                router.push('/workspaces');
+              }}
+            />
+          )}
+        </section>
+      </div>
     </div>
+  );
+}
+
+// A member's own role, page by page: the answer to "why can't I click
+// that?" without having to ask an administrator.
+function MyAccessCard({ workspace }: { workspace: WorkspaceListItem }) {
+  const permissions = scopesToPermissions(workspace.myPermissions);
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+        <span className="flex items-center gap-2 text-sm text-foreground">
+          <UserCircle2 className="h-4 w-4 text-muted-foreground" />
+          Votre rôle
+        </span>
+        <RoleBadge choice={roleOf(workspace.myRole ?? 'member', workspace.myPermissions)} />
+      </div>
+      <ul className="divide-y divide-border">
+        {API_KEY_RESOURCES.map((resource) => {
+          const level = permissions[resource.id];
+          return (
+            <li key={resource.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+              <span className="flex min-w-0 items-center gap-2.5">
+                <resource.icon className={cn('h-4 w-4 shrink-0', level === 'none' ? 'text-muted-foreground/50' : 'text-primary')} />
+                <span className="min-w-0">
+                  <span className={cn('block text-sm', level === 'none' ? 'text-muted-foreground' : 'text-foreground')}>{resource.label}</span>
+                  <span className="block text-2xs text-muted-foreground">{level === 'write' ? resource.write : level === 'read' ? resource.read : 'Page masquée du menu.'}</span>
+                </span>
+              </span>
+              <span
+                className={cn(
+                  'inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-2xs font-medium',
+                  level === 'write' && 'border-primary/30 bg-primary/10 text-primary',
+                  level === 'read' && 'border-[hsl(var(--info))]/25 bg-[hsl(var(--info))]/10 text-[hsl(var(--info))]',
+                  level === 'none' && 'border-border text-muted-foreground',
+                )}
+              >
+                {level === 'write' ? <Pencil className="h-3 w-3" /> : level === 'read' ? <Eye className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+                {level === 'write' ? 'Modification' : level === 'read' ? 'Lecture' : 'Aucun accès'}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="border-t border-border bg-surface-2/40 px-4 py-2.5 text-2xs text-muted-foreground">
+        Besoin de plus ? Un administrateur du workspace peut changer votre rôle dans Paramètres → Membres et rôles.
+      </p>
+    </Card>
   );
 }
 
@@ -119,13 +251,7 @@ function EmailNotificationsCard({ profile, onSaved }: { profile: AdminProfile; o
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <BellRing className="h-4 w-4" />
-          Alertes par email
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-4 pt-5">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 space-y-1">
             <p className="text-sm text-foreground">Recevoir les alertes de mes workspaces</p>
@@ -276,10 +402,7 @@ function GeneralCard({ workspace, onSaved }: { workspace: WorkspaceListItem; onS
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Général</CardTitle>
-      </CardHeader>
-      <CardContent>
+      <CardContent className="pt-5">
         <form onSubmit={submit} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
@@ -331,198 +454,9 @@ function GeneralCard({ workspace, onSaved }: { workspace: WorkspaceListItem; onS
   );
 }
 
-function MembersCard({
-  workspace,
-  currentUserId,
-  isSuperuser,
-  onMembershipChanged,
-}: {
-  workspace: WorkspaceListItem;
-  currentUserId: string;
-  isSuperuser: boolean;
-  onMembershipChanged: () => void;
-}) {
-  const [members, setMembers] = useState<WorkspaceMember[] | null>(null);
-  const [membersError, setMembersError] = useState<string | null>(null);
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteLoading, setInviteLoading] = useState(false);
-  const [inviteError, setInviteError] = useState<string | null>(null);
-  const [memberToRemove, setMemberToRemove] = useState<WorkspaceMember | null>(null);
-  const [removeError, setRemoveError] = useState<string | null>(null);
-
-  const refreshMembers = async () => {
-    try {
-      const data = await api.workspaces.listMembers(workspace.id);
-      setMembers(data);
-    } catch {
-      setMembersError('Impossible de charger les membres de ce workspace.');
-    }
-  };
-
-  useEffect(() => {
-    setMembers(null);
-    setMembersError(null);
-    void refreshMembers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspace.id]);
-
-  const submitInvite = async (event: FormEvent) => {
-    event.preventDefault();
-    setInviteLoading(true);
-    setInviteError(null);
-    try {
-      await api.workspaces.invite(workspace.id, inviteEmail.trim());
-      setInviteEmail('');
-      await refreshMembers();
-      onMembershipChanged();
-    } catch (error) {
-      setInviteError(
-        error instanceof Error
-          ? error.message
-          : "Aucun compte trouvé pour cet email. Cette personne doit d'abord se connecter une fois via SSO.",
-      );
-    } finally {
-      setInviteLoading(false);
-    }
-  };
-
-  const confirmRemove = async (member: WorkspaceMember) => {
-    setRemoveError(null);
-    try {
-      await api.workspaces.removeMember(workspace.id, member.userId);
-      setMemberToRemove(null);
-      await refreshMembers();
-      onMembershipChanged();
-    } catch (error) {
-      setRemoveError(error instanceof Error ? error.message : 'Impossible de retirer ce membre.');
-    }
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Users className="h-4 w-4" />
-          Membres
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-5">
-        <form onSubmit={submitInvite} className="space-y-2">
-          <Label htmlFor="settings-invite-email">Inviter par email</Label>
-          <div className="flex gap-2">
-            <Input
-              id="settings-invite-email"
-              type="email"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              placeholder="personne@exemple.com"
-              required
-            />
-            <Button type="submit" disabled={inviteLoading} className="shrink-0 gap-2">
-              <Mail className="h-4 w-4" />
-              {inviteLoading ? 'Envoi…' : 'Inviter'}
-            </Button>
-          </div>
-          {inviteError && (
-            <Alert variant="destructive">
-              <AlertDescription>{inviteError}</AlertDescription>
-            </Alert>
-          )}
-        </form>
-
-        {membersError && (
-          <Alert variant="destructive">
-            <AlertDescription>{membersError}</AlertDescription>
-          </Alert>
-        )}
-        {removeError && (
-          <Alert variant="destructive">
-            <AlertDescription>{removeError}</AlertDescription>
-          </Alert>
-        )}
-        {members === null && !membersError && <p className="text-sm text-muted-foreground">Chargement…</p>}
-
-        <div className="space-y-1.5">
-          {members?.map((member) => {
-            const isSelf = member.userId === currentUserId;
-            const isOwner = member.role === 'owner';
-            const ownerCount = members.filter((candidate) => candidate.role === 'owner').length;
-            // Mirrors WorkspacesService.removeMember: whoever manages the
-            // workspace (owner, or platform admin whatever their membership)
-            // can't remove themselves, and nobody removes the last owner.
-            const blockedReason =
-              isSelf && (isOwner || isSuperuser)
-                ? 'Vous gérez ce workspace : vous ne pouvez pas vous en retirer vous-même.'
-                : isOwner && ownerCount <= 1
-                  ? 'Dernier propriétaire du workspace.'
-                  : null;
-            const canRemove = blockedReason === null;
-            return (
-              <div
-                key={member.id}
-                className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm text-foreground">
-                    {member.user.name || member.user.email}
-                    {isSelf && <span className="ml-1.5 text-xs text-muted-foreground">(toi)</span>}
-                  </p>
-                  <p className="truncate text-xs text-muted-foreground">{member.user.email}</p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  {isOwner && (
-                    <Badge variant="info" className="gap-1">
-                      <ShieldCheck className="h-3 w-3" />
-                      Propriétaire
-                    </Badge>
-                  )}
-                  <Badge variant="outline">{member.source === 'sso' ? 'SSO' : 'Manuel'}</Badge>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    disabled={!canRemove}
-                    title={blockedReason ?? `Retirer ${member.user.email}`}
-                    aria-label={blockedReason ?? `Retirer ${member.user.email}`}
-                    onClick={() => setMemberToRemove(member)}
-                  >
-                    <Trash2 className={canRemove ? 'h-4 w-4 text-rose-400' : 'h-4 w-4 text-muted-foreground'} />
-                  </Button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </CardContent>
-
-      <Dialog
-        open={!!memberToRemove}
-        onOpenChange={(open) => {
-          if (!open) setMemberToRemove(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Retirer ce membre ?</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            {memberToRemove?.user.email} perdra l&apos;accès à ce workspace immédiatement.
-          </p>
-          <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => setMemberToRemove(null)}>
-              Annuler
-            </Button>
-            <Button type="button" variant="destructive" onClick={() => memberToRemove && void confirmRemove(memberToRemove)}>
-              Retirer
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </Card>
-  );
-}
-
 function DangerZoneCard({ workspace, onDeleted }: { workspace: WorkspaceListItem; onDeleted: () => void }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [typed, setTyped] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -543,43 +477,51 @@ function DangerZoneCard({ workspace, onDeleted }: { workspace: WorkspaceListItem
   };
 
   return (
-    <Card className="border-rose-500/20">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-rose-300">
-          <AlertTriangle className="h-4 w-4" />
-          Zone de danger
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <p className="text-sm text-muted-foreground">
-          Supprime définitivement « {workspace.name} ». Impossible tant qu&apos;il reste des nœuds, pools, partages ou
-          autres ressources dedans — retire-les d&apos;abord.
-        </p>
-        {error && (
+    <Card className="border-[hsl(var(--danger))]/25">
+      <CardContent className="flex flex-col gap-4 pt-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 space-y-1">
+          <p className="text-sm font-medium text-foreground">Supprimer ce workspace</p>
+          <p className="text-xs text-muted-foreground">
+            Supprime définitivement « {workspace.name} », ses membres et sa configuration réseau. Possible seulement une fois
+            vide : retirez d&apos;abord ses nœuds, pools, partages et autres ressources.
+          </p>
+        </div>
+        <Button variant="destructive" className="shrink-0 gap-2" onClick={() => setConfirmOpen(true)}>
+          <Trash2 className="h-4 w-4" />
+          Supprimer…
+        </Button>
+      </CardContent>
+      {error && (
+        <div className="px-5 pb-5">
           <Alert variant="destructive">
             <AlertDescription>{error}</AlertDescription>
           </Alert>
-        )}
-        <Button variant="destructive" className="gap-2" onClick={() => setConfirmOpen(true)}>
-          <Trash2 className="h-4 w-4" />
-          Supprimer ce workspace
-        </Button>
-      </CardContent>
+        </div>
+      )}
 
-      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <DialogContent>
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(open) => {
+          setConfirmOpen(open);
+          setTyped('');
+        }}
+      >
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Supprimer « {workspace.name} » ?</DialogTitle>
+            <DialogDescription>Cette action est irréversible.</DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Cette action est irréversible. Le workspace, ses membres et sa configuration réseau seront supprimés
-            définitivement.
-          </p>
+          <div className="space-y-2">
+            <Label htmlFor="confirm-workspace-name" className="text-xs font-normal text-muted-foreground">
+              Tapez <span className="font-mono font-medium text-foreground">{workspace.name}</span> pour confirmer
+            </Label>
+            <Input id="confirm-workspace-name" value={typed} onChange={(event) => setTyped(event.target.value)} autoComplete="off" />
+          </div>
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={() => setConfirmOpen(false)} disabled={deleting}>
               Annuler
             </Button>
-            <Button type="button" variant="destructive" onClick={() => void confirmDelete()} disabled={deleting}>
+            <Button type="button" variant="destructive" onClick={() => void confirmDelete()} disabled={deleting || typed.trim() !== workspace.name}>
               {deleting ? 'Suppression…' : 'Supprimer définitivement'}
             </Button>
           </DialogFooter>

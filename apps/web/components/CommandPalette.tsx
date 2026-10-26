@@ -5,7 +5,8 @@ import { useParams, useRouter } from 'next/navigation';
 import { Search, type LucideIcon } from 'lucide-react';
 import { HardDrive, Layers, Server } from 'lucide-react';
 import { api } from '../lib/api';
-import { buildNavItems } from '../lib/nav-items';
+import { buildNavItems, navItemArea } from '../lib/nav-items';
+import { useWorkspaceAccess } from '../lib/access';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 
 type PaletteResult = {
@@ -20,16 +21,23 @@ export function CommandPalette() {
   const router = useRouter();
   const params = useParams<{ workspace: string }>();
   const slug = params.workspace;
+  const access = useWorkspaceAccess();
   const navResults = useMemo<PaletteResult[]>(
     () =>
-      buildNavItems(slug).map((item) => ({
+      buildNavItems(slug)
+        .filter((item) => {
+          const area = navItemArea(item);
+          return !area || access.level(area) !== 'none';
+        })
+        .map((item) => ({
         key: `nav:${item.href}`,
         label: item.label,
         sublabel: 'Page',
         href: item.href,
         icon: item.icon,
       })),
-    [slug],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [slug, access.ready, access.level],
   );
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');

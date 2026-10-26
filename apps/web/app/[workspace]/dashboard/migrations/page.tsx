@@ -1010,7 +1010,7 @@ export default function MigrationsPage() {
 
                       <div className="flex flex-wrap gap-2">
                         {migration.status === 'pending' && (
-                          <Button
+                          <Button write
                             onClick={() => startMigration(migration.id)}
                             disabled={busyId === migration.id}
                             className="gap-2 bg-violet-600 text-white hover:bg-violet-500"
@@ -1021,14 +1021,14 @@ export default function MigrationsPage() {
                         )}
 
                         {migration.status === 'failed' && (
-                          <Button variant="secondary" onClick={() => retryMigration(migration.id)} disabled={busyId === migration.id} className="gap-2">
+                          <Button write variant="secondary" onClick={() => retryMigration(migration.id)} disabled={busyId === migration.id} className="gap-2">
                             {busyId === migration.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
                             Relancer
                           </Button>
                         )}
 
                         {migration.status === 'running' && (
-                          <Button
+                          <Button write
                             variant="ghost"
                             onClick={() => stopMigration(migration.id)}
                             disabled={busyId === migration.id}
@@ -1048,13 +1048,13 @@ export default function MigrationsPage() {
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               {canEditMigration(migration) && (
-                                <DropdownMenuItem onClick={() => openEditDialog(migration)}>
+                                <DropdownMenuItem write onClick={() => openEditDialog(migration)}>
                                   <Pencil className="h-4 w-4" />
                                   Éditer
                                 </DropdownMenuItem>
                               )}
                               {canDeleteMigration(migration) && (
-                                <DropdownMenuItem
+                                <DropdownMenuItem write
                                   onClick={() => setDeleteMigration(migration)}
                                   className="text-rose-300 focus:text-rose-200"
                                 >
@@ -1200,7 +1200,7 @@ export default function MigrationsPage() {
             <Button variant="outline" onClick={() => setEditMigration(null)}>
               Annuler
             </Button>
-            <Button onClick={saveEdit} disabled={!editMigration || busyId === editMigration.id}>
+            <Button write onClick={saveEdit} disabled={!editMigration || busyId === editMigration.id}>
               {editMigration && busyId === editMigration.id ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Enregistrer'}
             </Button>
           </DialogFooter>
@@ -1219,7 +1219,7 @@ export default function MigrationsPage() {
             <Button variant="outline" onClick={() => setDeleteMigration(null)}>
               Annuler
             </Button>
-            <Button variant="destructive" onClick={confirmDelete} disabled={!deleteMigration || busyId === deleteMigration.id}>
+            <Button write variant="destructive" onClick={confirmDelete} disabled={!deleteMigration || busyId === deleteMigration.id}>
               {deleteMigration && busyId === deleteMigration.id ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Supprimer'}
             </Button>
           </DialogFooter>

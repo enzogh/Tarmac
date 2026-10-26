@@ -91,7 +91,7 @@ function EmptyState({ onCreate, canCreate }: { onCreate: () => void; canCreate: 
             </li>
           ))}
         </ol>
-        <Button onClick={onCreate} disabled={!canCreate} className="gap-1.5">
+        <Button write onClick={onCreate} disabled={!canCreate} className="gap-1.5">
           <Plus className="h-4 w-4" />
           Créer mon premier profil
         </Button>
@@ -368,7 +368,7 @@ export default function VpnProfilesPage() {
                 Passerelles
               </Link>
             </Button>
-            <Button onClick={() => setCreateOpen(true)} disabled={eligibleEntries.length === 0} className="gap-1.5">
+            <Button write onClick={() => setCreateOpen(true)} disabled={eligibleEntries.length === 0} className="gap-1.5">
               <Plus className="h-4 w-4" />
               Nouveau profil
             </Button>
@@ -522,11 +522,11 @@ export default function VpnProfilesPage() {
                     </button>
                   )}
                   <span className="mx-1 h-5 w-px bg-border" />
-                  <Button size="sm" variant="secondary" onClick={() => setBulkAccess(selectedProfiles)} disabled={bulkBusy} className="gap-1.5">
+                  <Button write size="sm" variant="secondary" onClick={() => setBulkAccess(selectedProfiles)} disabled={bulkBusy} className="gap-1.5">
                     <ShieldCheck className="h-3.5 w-3.5" />
                     Accès
                   </Button>
-                  <Button
+                  <Button write
                     size="sm"
                     variant="secondary"
                     onClick={() => {
@@ -539,19 +539,19 @@ export default function VpnProfilesPage() {
                     <Link2 className="h-3.5 w-3.5" />
                     Relier
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={() => setTagTargets(selectedProfiles)} disabled={bulkBusy} className="gap-1.5">
+                  <Button write size="sm" variant="secondary" onClick={() => setTagTargets(selectedProfiles)} disabled={bulkBusy} className="gap-1.5">
                     <Tag className="h-3.5 w-3.5" />
                     Libellé
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={() => void runBulk('enable')} disabled={bulkBusy} className="gap-1.5">
+                  <Button write size="sm" variant="secondary" onClick={() => void runBulk('enable')} disabled={bulkBusy} className="gap-1.5">
                     <Power className="h-3.5 w-3.5" />
                     Activer
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={() => void runBulk('disable')} disabled={bulkBusy} className="gap-1.5">
+                  <Button write size="sm" variant="secondary" onClick={() => void runBulk('disable')} disabled={bulkBusy} className="gap-1.5">
                     <PowerOff className="h-3.5 w-3.5" />
                     Désactiver
                   </Button>
-                  <Button
+                  <Button write
                     size="sm"
                     variant="secondary"
                     onClick={() => void runBulk('delete')}

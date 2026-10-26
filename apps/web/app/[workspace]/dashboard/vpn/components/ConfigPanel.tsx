@@ -122,11 +122,11 @@ export function ConfigPanel({
             </Step>
           </ol>
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => downloadConfig(filename, config)} className="gap-1.5">
+            <Button write onClick={() => downloadConfig(filename, config)} className="gap-1.5">
               <Download className="h-4 w-4" />
               Télécharger {filename}
             </Button>
-            <Button variant="secondary" onClick={() => void copy()} className="gap-1.5">
+            <Button write variant="secondary" onClick={() => void copy()} className="gap-1.5">
               {copied ? <Check className="h-4 w-4 text-[hsl(var(--ok))]" /> : <Copy className="h-4 w-4" />}
               {copied ? 'Copié' : 'Copier'}
             </Button>

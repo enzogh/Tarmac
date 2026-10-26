@@ -306,7 +306,7 @@ export function RecordEditor({
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
         {record ? (
-          <Button
+          <Button write
             variant="ghost"
             size="sm"
             onClick={() => void remove()}
@@ -323,7 +323,7 @@ export function RecordEditor({
           <Button variant="secondary" size="sm" onClick={onCancel} disabled={saving}>
             Annuler
           </Button>
-          <Button size="sm" onClick={() => void save()} disabled={saving || (touched && hasErrors)} className="gap-1.5">
+          <Button write size="sm" onClick={() => void save()} disabled={saving || (touched && hasErrors)} className="gap-1.5">
             {saving && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}
             Enregistrer
           </Button>

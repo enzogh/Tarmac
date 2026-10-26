@@ -132,7 +132,7 @@ export function RecordsPanel({
               : `${visible.length} sur ${zone.records.length}`}
           </span>
         </div>
-        <Button onClick={() => setEditing('new')} disabled={editing === 'new'} className="gap-1.5">
+        <Button write onClick={() => setEditing('new')} disabled={editing === 'new'} className="gap-1.5">
           <Plus className="h-4 w-4" />
           Ajouter un enregistrement
         </Button>
@@ -160,7 +160,7 @@ export function RecordsPanel({
               Commencez par un enregistrement A qui fait pointer le domaine vers l&apos;un de vos serveurs.
             </p>
           </div>
-          <Button variant="secondary" onClick={() => setEditing('new')} className="gap-1.5">
+          <Button write variant="secondary" onClick={() => setEditing('new')} className="gap-1.5">
             <Plus className="h-4 w-4" />
             Ajouter un enregistrement
           </Button>

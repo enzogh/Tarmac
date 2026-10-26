@@ -236,7 +236,7 @@ export function GroupsSection({
                       <StatusIndicator status={group.status} />
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button
+                          <Button write
                             variant="ghost"
                             size="icon"
                             disabled={busyKey === `group-${group.id}`}
@@ -294,7 +294,7 @@ export function GroupsSection({
                               </Tooltip>
                               <Tooltip>
                                 <TooltipTrigger asChild>
-                                  <Button
+                                  <Button write
                                     variant="ghost"
                                     size="icon"
                                     disabled={busyKey === `member-${group.id}-${member.nodeId}`}
@@ -321,14 +321,14 @@ export function GroupsSection({
                                   pas pu démarrer.
                                 </p>
                                 <div className="flex flex-wrap gap-2">
-                                  <Button
+                                  <Button write
                                     size="sm"
                                     disabled={busyKey === `conflict-${group.id}-${member.nodeId}`}
                                     onClick={() => resolvePortConflict(group.id, member.nodeId)}
                                   >
                                     Tuer le process et réessayer
                                   </Button>
-                                  <Button
+                                  <Button write
                                     size="sm"
                                     variant="secondary"
                                     disabled={busyKey === `member-${group.id}-${member.nodeId}`}
@@ -348,7 +348,7 @@ export function GroupsSection({
                                   L'application a échoué sur {nodeName(member.nodeId)} — ouvre le Journal
                                   ci-dessus pour voir le message d'erreur de l'agent.
                                 </p>
-                                <Button
+                                <Button write
                                   size="sm"
                                   disabled={busyKey === `retry-${group.id}-${member.nodeId}`}
                                   onClick={() => retryGroupMember(group.id, member)}
