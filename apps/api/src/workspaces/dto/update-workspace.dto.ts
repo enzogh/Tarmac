@@ -20,5 +20,6 @@ export class UpdateWorkspaceDto {
   // empty string to clear it (falls back to manual-only membership grants).
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   ssoGroupClaim?: string;
 }

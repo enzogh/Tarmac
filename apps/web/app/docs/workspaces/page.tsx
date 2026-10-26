@@ -176,7 +176,7 @@ export default function WorkspacesDocsPage() {
                 Rattachement par groupe SSO
               </CardTitle>
               <CardDescription>
-                Un workspace peut déclarer un groupe Authentik. Toute personne membre de ce groupe devient
+                Un workspace peut déclarer un groupe Authentik (Paramètres › Général). Toute personne membre de ce groupe devient
                 automatiquement membre du workspace à sa connexion suivante, sans intervention. Les accès accordés de
                 cette façon sont marqués « SSO » et reçoivent le rôle Éditeur, ajustable ensuite comme les autres.
               </CardDescription>

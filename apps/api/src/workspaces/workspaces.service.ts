@@ -179,7 +179,7 @@ export class WorkspacesService {
           where: { id: workspaceId },
           data: {
             ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
-            ...(dto.ssoGroupClaim !== undefined ? { ssoGroupClaim: dto.ssoGroupClaim || null } : {}),
+            ...(dto.ssoGroupClaim !== undefined ? { ssoGroupClaim: dto.ssoGroupClaim.trim() || null } : {}),
             ...(slugChanged ? { slug: dto.slug, previousSlugs } : {}),
           },
         }),

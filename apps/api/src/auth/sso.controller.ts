@@ -122,6 +122,7 @@ export class SsoController {
       // identities while opening the door to legitimate workspace members
       // who aren't platform admins.
       if (!user.isSuperuser && !(await this.authService.hasAnyWorkspaceMembership(user.id))) {
+        this.logger.warn(`SSO login refused for ${email}: no workspace matches groups [${groups.join(', ')}]`);
         return res.redirect(this.loginRedirect({ sso: 'forbidden' }));
       }
 

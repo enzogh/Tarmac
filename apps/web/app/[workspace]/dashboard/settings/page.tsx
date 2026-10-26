@@ -22,7 +22,7 @@ type SectionId = 'general' | 'members' | 'access' | 'notifications' | 'danger';
 type SectionDef = { id: SectionId; label: string; description: string; icon: LucideIcon; group: 'Workspace' | 'Mon compte'; tone?: 'danger' };
 
 const SECTIONS: Record<SectionId, SectionDef> = {
-  general: { id: 'general', label: 'Général', description: 'Le nom du workspace et son adresse dans l’URL.', icon: Building2, group: 'Workspace' },
+  general: { id: 'general', label: 'Général', description: 'Le nom du workspace, son adresse dans l’URL et le groupe Authentik qui y donne accès.', icon: Building2, group: 'Workspace' },
   members: {
     id: 'members',
     label: 'Membres et rôles',
@@ -345,6 +345,7 @@ const NOTICE_KEY = 'tarmac.settings.notice';
 function GeneralCard({ workspace, onSaved }: { workspace: WorkspaceListItem; onSaved: (updated: WorkspaceDetail) => void }) {
   const [name, setName] = useState(workspace.name);
   const [slug, setSlug] = useState(workspace.slug);
+  const [ssoGroup, setSsoGroup] = useState(workspace.ssoGroupClaim ?? '');
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -363,27 +364,30 @@ function GeneralCard({ workspace, onSaved }: { workspace: WorkspaceListItem; onS
   useEffect(() => {
     setName(workspace.name);
     setSlug(workspace.slug);
-  }, [workspace.name, workspace.slug]);
+    setSsoGroup(workspace.ssoGroupClaim ?? '');
+  }, [workspace.name, workspace.slug, workspace.ssoGroupClaim]);
 
   const finalSlug = slug.replace(/-+$/, '');
   const nameChanged = name.trim() !== workspace.name;
   const slugChanged = finalSlug !== workspace.slug;
+  const ssoGroupChanged = ssoGroup.trim() !== (workspace.ssoGroupClaim ?? '');
   const slugInvalid = finalSlug.length < 2 || finalSlug.length > 48;
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!nameChanged && !slugChanged) return;
+    if (!nameChanged && !slugChanged && !ssoGroupChanged) return;
     setSaving(true);
     setNotice(null);
     try {
       const updated = await api.workspaces.update(workspace.id, {
         ...(nameChanged ? { name: name.trim() } : {}),
         ...(slugChanged ? { slug: finalSlug } : {}),
+        ...(ssoGroupChanged ? { ssoGroupClaim: ssoGroup.trim() } : {}),
       });
       const message = slugChanged
         ? `Enregistré. L'ancienne adresse /${workspace.slug} redirige désormais vers /${updated.slug}.`
-        : 'Nom mis à jour.';
+        : 'Enregistré.';
       setNotice({ type: 'success', message });
       if (slugChanged) {
         try {
@@ -427,6 +431,21 @@ function GeneralCard({ workspace, onSaved }: { workspace: WorkspaceListItem; onS
               </p>
             </div>
           </div>
+          <div className="space-y-2 sm:w-1/2 sm:pr-2">
+            <Label htmlFor="workspace-sso-group">Groupe Authentik</Label>
+            <Input
+              id="workspace-sso-group"
+              value={ssoGroup}
+              onChange={(e) => setSsoGroup(e.target.value)}
+              placeholder="Aucun"
+              maxLength={200}
+              spellCheck={false}
+              className="font-mono"
+            />
+            <p className="text-xs text-muted-foreground">
+              Toute personne membre de ce groupe dans Authentik devient membre à sa prochaine connexion.
+            </p>
+          </div>
           {slugChanged && !slugInvalid && (
             <Alert variant="info">
               <AlertDescription>
@@ -438,7 +457,7 @@ function GeneralCard({ workspace, onSaved }: { workspace: WorkspaceListItem; onS
           )}
           {slugInvalid && <p className="text-xs text-[hsl(var(--danger))]">L&apos;identifiant doit faire entre 2 et 48 caractères.</p>}
           <div className="flex justify-end">
-            <Button type="submit" disabled={saving || (!nameChanged && !slugChanged) || slugInvalid || name.trim().length < 2} className="gap-2">
+            <Button type="submit" disabled={saving || (!nameChanged && !slugChanged && !ssoGroupChanged) || slugInvalid || name.trim().length < 2} className="gap-2">
               <Save className="h-4 w-4" />
               {saving ? 'Enregistrement…' : 'Enregistrer'}
             </Button>
