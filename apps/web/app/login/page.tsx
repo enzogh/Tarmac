@@ -14,7 +14,7 @@ type ViewState =
   | { kind: 'checking' }
   | { kind: 'idle' }
   | { kind: 'welcome-back'; profile: AdminProfile }
-  | { kind: 'forbidden' }
+  | { kind: 'forbidden'; disabled: boolean }
   | { kind: 'error'; reason: string | null };
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -78,8 +78,8 @@ function LoginPageContent() {
       return;
     }
 
-    if (sso === 'forbidden') {
-      setState({ kind: 'forbidden' });
+    if (sso === 'forbidden' || sso === 'disabled') {
+      setState({ kind: 'forbidden', disabled: sso === 'disabled' });
       return;
     }
 
@@ -109,10 +109,10 @@ function LoginPageContent() {
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-400">Tarmac</p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">
-              Connexion administrateur
+              Connexion
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Accès réservé aux administrateurs, via Authentik.
+              Connectez-vous avec votre compte d&apos;entreprise, via Authentik.
             </p>
           </div>
         </motion.div>
@@ -248,8 +248,9 @@ function LoginPageContent() {
                     <ShieldX className="h-6 w-6 text-rose-400" />
                   </div>
                   <p className="text-sm text-rose-300">
-                    Ce compte Authentik n&apos;a pas accès à Tarmac : il doit faire partie du groupe d&apos;accès Tarmac.
-                    Demandez-le à un administrateur.
+                    {state.disabled
+                      ? 'Ce compte a été désactivé dans Tarmac. Rapprochez-vous d’un administrateur de la plateforme pour le réactiver.'
+                      : 'Ce compte n’a pas (ou plus) accès à Tarmac : il doit faire partie du groupe d’accès Tarmac sur Authentik. Demandez-le à un administrateur.'}
                   </p>
                   <a href={api.sso.loginUrl()} className="w-full">
                     <Button type="button" variant="outline" className="w-full">

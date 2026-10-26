@@ -2,7 +2,7 @@
 
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { AlertTriangle, BellRing, Building2, Eye, Lock, Pencil, Save, Send, Trash2, UserCircle2, Users, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, BellRing, Building2, CalendarClock, Crown, Eye, Lock, Mail, Pencil, Save, Send, Tag, Trash2, UserCircle2, Users, type LucideIcon } from 'lucide-react';
 import { AdminProfile, api, WorkspaceDetail, WorkspaceListItem } from '../../../../lib/api';
 import { API_KEY_RESOURCES, scopesToPermissions } from '../../../../lib/api-key-permissions';
 import { usePolling } from '../../../../lib/hooks/usePolling';
@@ -15,10 +15,11 @@ import { Label } from '../../../../components/ui/label';
 import { Badge } from '../../../../components/ui/badge';
 import { Alert, AlertDescription } from '../../../../components/ui/alert';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../../../../components/ui/dialog';
+import { CustomRolesSection } from './components/CustomRolesSection';
 import { MembersSection } from './components/MembersSection';
 import { RoleBadge, roleOf } from './components/roles';
 
-type SectionId = 'general' | 'members' | 'access' | 'notifications' | 'danger';
+type SectionId = 'general' | 'members' | 'roles' | 'report' | 'access' | 'notifications' | 'danger';
 type SectionDef = { id: SectionId; label: string; description: string; icon: LucideIcon; group: 'Workspace' | 'Mon compte'; tone?: 'danger' };
 
 const SECTIONS: Record<SectionId, SectionDef> = {
@@ -28,6 +29,20 @@ const SECTIONS: Record<SectionId, SectionDef> = {
     label: 'Membres et rôles',
     description: 'Qui a accès à ce workspace, et ce que chacun peut voir ou modifier, page par page.',
     icon: Users,
+    group: 'Workspace',
+  },
+  roles: {
+    id: 'roles',
+    label: 'Rôles personnalisés',
+    description: 'Des rôles sur mesure pour votre équipe, à attribuer à vos membres.',
+    icon: Tag,
+    group: 'Workspace',
+  },
+  report: {
+    id: 'report',
+    label: 'Rapport hebdomadaire',
+    description: 'Le résumé de la semaine envoyé chaque lundi matin au propriétaire du workspace.',
+    icon: CalendarClock,
     group: 'Workspace',
   },
   access: { id: 'access', label: 'Mon accès', description: 'Ce que votre rôle vous permet de faire dans ce workspace.', icon: Lock, group: 'Workspace' },
@@ -56,7 +71,7 @@ export default function WorkspaceSettingsPage() {
   const canManage = isSuperuser || workspace?.myRole === 'owner';
 
   const available: SectionId[] = canManage
-    ? ['general', 'members', 'notifications', ...(workspace?.isDefault ? [] : (['danger'] as SectionId[]))]
+    ? ['general', 'members', 'roles', 'report', 'notifications', ...(workspace?.isDefault ? [] : (['danger'] as SectionId[]))]
     : ['access', 'notifications'];
   const requested = searchParams.get('section') as SectionId | null;
   const active: SectionId = requested && available.includes(requested) ? requested : available[0];
@@ -150,6 +165,8 @@ export default function WorkspaceSettingsPage() {
               onMembershipChanged={() => void refreshWorkspaces()}
             />
           )}
+          {active === 'roles' && <CustomRolesSection workspace={workspace} />}
+          {active === 'report' && <WeeklyReportCard workspace={workspace} profile={profile} onSaved={() => void refreshWorkspaces()} />}
           {active === 'access' && <MyAccessCard workspace={workspace} />}
           {active === 'notifications' && <EmailNotificationsCard profile={profile} onSaved={() => void refreshProfile()} />}
           {active === 'danger' && (
@@ -210,6 +227,101 @@ function MyAccessCard({ workspace }: { workspace: WorkspaceListItem }) {
       <p className="border-t border-border bg-surface-2/40 px-4 py-2.5 text-2xs text-muted-foreground">
         Besoin de plus ? Un administrateur du workspace peut changer votre rôle dans Paramètres → Membres et rôles.
       </p>
+    </Card>
+  );
+}
+
+// On/off for the Monday summary, who gets it, and a way to see one now.
+function WeeklyReportCard({ workspace, profile, onSaved }: { workspace: WorkspaceListItem; profile: AdminProfile; onSaved: () => void }) {
+  const [saving, setSaving] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const enabled = workspace.weeklyReportEnabled;
+  const recipient = workspace.owner ? workspace.owner.name || workspace.owner.email : null;
+
+  const toggle = async () => {
+    setSaving(true);
+    setNotice(null);
+    try {
+      await api.workspaces.update(workspace.id, { weeklyReportEnabled: !enabled });
+      onSaved();
+    } catch (error) {
+      setNotice({ type: 'error', message: error instanceof Error ? error.message : 'Impossible de modifier ce réglage.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const preview = async () => {
+    setSending(true);
+    setNotice(null);
+    try {
+      const result = await api.workspaces.weeklyReportPreview(workspace.id);
+      setNotice({ type: 'success', message: `Rapport de la semaine envoyé à ${result.sentTo}.` });
+    } catch (error) {
+      setNotice({ type: 'error', message: error instanceof Error ? error.message : "Impossible d'envoyer l'aperçu." });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardContent className="space-y-4 pt-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 space-y-1">
+            <p className="text-sm text-foreground">Envoyer le rapport chaque lundi à 8 h</p>
+            <p className="text-xs text-muted-foreground">
+              Disponibilité des nœuds, alertes de la semaine, stockage qui se remplit et résultat des sauvegardes, avec les points qui demandent
+              votre attention en premier.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={enabled}
+            aria-label="Envoyer le rapport hebdomadaire"
+            onClick={() => void toggle()}
+            disabled={saving}
+            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${
+              enabled ? 'border-primary bg-primary' : 'border-border bg-surface-3'
+            }`}
+          >
+            <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2.5">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <Crown className="h-4 w-4 shrink-0 text-[hsl(var(--warn))]" />
+            <div className="min-w-0">
+              <p className="text-2xs uppercase tracking-wider text-muted-foreground">Destinataire</p>
+              <p className="truncate text-sm text-foreground">
+                {recipient ? `${recipient}${workspace.owner?.id === profile.id ? ' (vous)' : ''}` : 'Les administrateurs du workspace'}
+              </p>
+            </div>
+          </div>
+          <Badge variant="secondary">Propriétaire uniquement</Badge>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Seul le propriétaire le reçoit, sur son adresse de notification. Pour le confier à quelqu&apos;un d&apos;autre, transférez la propriété depuis
+          Membres et rôles.
+        </p>
+
+        <Button type="button" variant="outline" className="gap-2" onClick={() => void preview()} disabled={sending || !profile.alertEmail.mailConfigured}>
+          <Mail className="h-4 w-4" />
+          {sending ? 'Envoi…' : 'M’envoyer le rapport de cette semaine'}
+        </Button>
+        {!profile.alertEmail.mailConfigured && (
+          <p className="text-xs text-muted-foreground">L&apos;envoi d&apos;emails n&apos;est pas encore configuré sur ce serveur.</p>
+        )}
+
+        {notice && (
+          <Alert variant={notice.type === 'error' ? 'destructive' : 'success'}>
+            <AlertDescription>{notice.message}</AlertDescription>
+          </Alert>
+        )}
+      </CardContent>
     </Card>
   );
 }
@@ -292,14 +404,14 @@ function EmailNotificationsCard({ profile, onSaved }: { profile: AdminProfile; o
         </div>
         <p className="text-xs text-muted-foreground">
           {source === 'internal'
-            ? `Adresse @${internalDomain} trouvée sur ton compte à la dernière connexion.`
-            : `Aucune adresse @${internalDomain} trouvée sur ton compte : l'adresse d'inscription est utilisée. Elle est relue à chaque connexion.`}
+            ? `Adresse @${internalDomain} trouvée sur votre compte à la dernière connexion.`
+            : `Aucune adresse @${internalDomain} trouvée sur votre compte : l'adresse de connexion est utilisée. Elle est relue à chaque connexion.`}
         </p>
 
         {!mailConfigured && (
           <Alert variant="warning">
             <AlertDescription>
-              Le relais SMTP n&apos;est pas configuré sur ce serveur (SMTP_HOST / SMTP_PASSWORD) : aucun email ne part pour l&apos;instant.
+              L&apos;envoi d&apos;emails n&apos;est pas encore configuré sur ce serveur : aucun email ne part pour l&apos;instant. Un administrateur de la plateforme peut l&apos;activer.
             </AlertDescription>
           </Alert>
         )}

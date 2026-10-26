@@ -1,4 +1,4 @@
-import { IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 
 export class UpdateWorkspaceDto {
   @IsOptional()
@@ -22,4 +22,9 @@ export class UpdateWorkspaceDto {
   @IsString()
   @MaxLength(200)
   ssoGroupClaim?: string;
+
+  // Monday-morning summary emailed to the owner.
+  @IsOptional()
+  @IsBoolean()
+  weeklyReportEnabled?: boolean;
 }

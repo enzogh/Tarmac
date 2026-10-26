@@ -160,12 +160,13 @@ export default function WorkspacesDocsPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
                 <Users className="h-4 w-4 text-muted-foreground" />
-                Ajout manuel
+                Invitation par e-mail
               </CardTitle>
               <CardDescription>
-                Depuis Paramètres → Membres et rôles, un administrateur ajoute quelqu&apos;un par son adresse e-mail et
-                choisit son rôle (Lecteur par défaut). Le compte doit déjà exister : Tarmac n&apos;envoie pas
-                d&apos;invitation, l&apos;ajout est immédiat.
+                Depuis Paramètres → Membres et rôles, un administrateur invite quelqu&apos;un par son adresse e-mail et
+                choisit son rôle (Lecteur par défaut, ou un rôle personnalisé du workspace). Un compte existant est ajouté
+                tout de suite ; sinon la personne reçoit une invitation, valable 30 jours, et rejoint le workspace à sa
+                première connexion. Dans les deux cas, un e-mail la prévient.
               </CardDescription>
             </CardHeader>
           </Card>

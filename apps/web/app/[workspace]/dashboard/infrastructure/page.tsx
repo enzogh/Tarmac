@@ -15,7 +15,7 @@ import {
   Server,
   X,
 } from 'lucide-react';
-import { api, NodeActivityItem, NodeHeartbeatLiveEvent } from '@/lib/api';
+import { AgentUpdateProgress, api, NodeActivityItem, NodeHeartbeatLiveEvent } from '@/lib/api';
 import { usePolling } from '@/lib/hooks/usePolling';
 import { useLiveSocket } from '@/lib/hooks/useLiveSocket';
 import { GeoInfo, getGeoInfo } from '@/lib/geo';
@@ -32,6 +32,7 @@ import { BannerSkeleton, NodesTableSkeleton, StatCardSkeleton } from '@/componen
 import { Stat, StatRow } from '@/components/ui/stat';
 import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { AgentUpdatesPanel } from './components/AgentUpdatesPanel';
 import { ExplorationTab } from './components/ExplorationTab';
 import { InternalDnsCard } from './components/InternalDnsCard';
 import { DeleteNodeDialog, EditNodeDialog } from './components/NodeDialogs';
@@ -120,6 +121,14 @@ export default function InfrastructurePage() {
           ) ?? current,
         { revalidate: false },
       );
+      return;
+    }
+    if (message.type === 'agent.update') {
+      if (!nodesRaw) return;
+      const { nodeId, ...progress } = message.payload as AgentUpdateProgress & { nodeId: string };
+      void refreshNodes((current) => current?.map((node) => (node.id === nodeId ? { ...node, agentUpdate: progress } : node)) ?? current, {
+        revalidate: false,
+      });
       return;
     }
     if (message.type === 'dns.internal.status') {
@@ -314,6 +323,13 @@ export default function InfrastructurePage() {
     }
   };
 
+  // Progress then shows in AgentUpdatesPanel, fed by the live socket.
+  const retryUpdate = async (node: NodeActivityItem) => {
+    const queued = await updateAgent(node);
+    if (!queued) setNotice({ type: 'error', message: `Impossible de mettre à jour ${node.name} : l’agent est hors ligne.` });
+    await refreshNodes();
+  };
+
   const updateAgents = async (targets: NodeActivityItem[]) => {
     const eligible = targets.filter((node) => node.status === 'online' && node.agentUpToDate !== true);
     if (eligible.length === 0) {
@@ -325,13 +341,10 @@ export default function InfrastructurePage() {
       const results = await Promise.all(eligible.map(updateAgent));
       const succeeded = results.filter(Boolean).length;
       const failed = results.length - succeeded;
-      setNotice({
-        type: failed === 0 ? 'success' : 'error',
-        message:
-          failed === 0
-            ? `Mise à jour lancée sur ${succeeded} agent(s) (recompilation puis redémarrage du service).`
-            : `Mise à jour lancée sur ${succeeded} agent(s), échec sur ${failed} (hors ligne entre-temps).`,
-      });
+      if (failed > 0) {
+        setNotice({ type: 'error', message: `Mise à jour lancée sur ${succeeded} agent(s), impossible sur ${failed} : hors ligne entre-temps.` });
+      }
+      await refreshNodes();
     } finally {
       setBulkBusy(false);
     }
@@ -444,15 +457,7 @@ export default function InfrastructurePage() {
     if (action === 'edit') setEditNode(node);
     if (action === 'delete') setNodeToDelete(node);
     if (action === 'mute') void setMute([node], !isMuted(node));
-    if (action === 'update') {
-      void updateAgent(node).then((queued) =>
-        setNotice(
-          queued
-            ? { type: 'success', message: `Mise à jour de ${node.name} lancée (recompilation puis redémarrage du service).` }
-            : { type: 'error', message: `Impossible de mettre à jour ${node.name} : agent hors ligne.` },
-        ),
-      );
-    }
+    if (action === 'update') void retryUpdate(node);
   };
 
   const outdatedOnline = nodes.filter((node) => node.status === 'online' && node.agentUpToDate === false);
@@ -529,6 +534,8 @@ export default function InfrastructurePage() {
           />
         </StatRow>
       )}
+
+      <AgentUpdatesPanel nodes={nodes} onRetry={(node) => void retryUpdate(node)} />
 
       {!internalDns && nodesLoading && <BannerSkeleton />}
       <InternalDnsCard

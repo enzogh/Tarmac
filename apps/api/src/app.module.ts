@@ -20,6 +20,7 @@ import { NotificationChannelsModule } from './notification-channels/notification
 import { PoolsModule } from './pools/pools.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
+import { ReportsModule } from './reports/reports.module';
 import { SharesModule } from './shares/shares.module';
 import { StorageModule } from './storage/storage.module';
 import { SyncJobsModule } from './sync-jobs/sync-jobs.module';
@@ -61,6 +62,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     AgentsModule,
     AgentLogsModule,
     ReconciliationModule,
+    ReportsModule,
     VlanModule,
     VpnModule,
     ApiKeysModule,

@@ -188,6 +188,16 @@ model User {
   // alertEmailAddress() in mail/alert-recipients.ts.
   internalEmail        String?
   alertEmailsEnabled   Boolean               @default(true)
+  // Set by a platform admin from /admin: the account can no longer sign in
+  // and its sessions stop working, whatever Authentik says.
+  disabledAt           DateTime?
+  // Sessions issued before this instant are refused (JwtStrategy). Bumped
+  // when the account is disabled or AuthentikAccessSync sees it leave the
+  // access group, so losing access takes effect within minutes, not at the
+  // end of the 12 h session.
+  sessionsRevokedAt    DateTime?
+  // Last time AuthentikAccessSync confirmed the access group membership.
+  accessCheckedAt      DateTime?
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
   workspaceMemberships WorkspaceMembership[]
@@ -217,6 +227,10 @@ model Workspace {
   // User who created it, counted against WORKSPACE_CREATION_LIMIT. Null for
   // workspaces that predate the limit.
   createdById   String?
+  // Monday-morning summary emailed to the owner (createdById, or the
+  // administrators of workspaces that predate it) - see WeeklyReportService.
+  weeklyReportEnabled Boolean   @default(true)
+  weeklyReportSentAt  DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -251,8 +265,75 @@ model Workspace {
   auditLogs            AuditLog[]
   vpnProfiles          VpnProfile[]
   apiKeys              ApiKey[]
+  customRoles          WorkspaceCustomRole[]
+  invitations          WorkspaceInvitation[]
 
   @@index([createdById])
+}
+
+// A named set of member permissions defined by a workspace's administrators
+// ("Opérateur stockage", "Support N1"...). Members holding it follow its
+// permissions: editing the role updates every one of them.
+model WorkspaceCustomRole {
+  id          String                @id @default(cuid())
+  workspaceId String
+  workspace   Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  permissions String[]              @default([])
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  memberships WorkspaceMembership[]
+  invitations WorkspaceInvitation[]
+
+  @@unique([workspaceId, name])
+}
+
+// Someone invited by email before they ever signed in to Tarmac. Turned into
+// a membership at their first SSO login with that address (AuthService).
+model WorkspaceInvitation {
+  id           String               @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  email        String
+  role         String               @default("member")
+  permissions  String[]             @default([])
+  customRoleId String?
+  customRole   WorkspaceCustomRole? @relation(fields: [customRoleId], references: [id], onDelete: SetNull)
+  invitedById  String?
+  lastSentAt   DateTime?
+  expiresAt    DateTime
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  @@unique([workspaceId, email])
+  @@index([email])
+}
+
+// Platform-wide settings edited from /admin (key -> JSON value). Each key
+// falls back to its environment variable when absent.
+model PlatformSetting {
+  key         String   @id
+  value       Json
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+}
+
+// One row per node and day (Europe/Paris), filled every minute: how long the
+// node was watched and seen online, and its disk usage at the last sample.
+// Feeds availability and storage growth in the weekly report, since raw
+// metrics are only kept three days.
+model NodeDailyStat {
+  nodeId          String
+  day             DateTime @db.Date
+  observedMinutes Int      @default(0)
+  onlineMinutes   Int      @default(0)
+  diskUsedGb      Int?
+  diskCapacityGb  Int?
+  node            Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@id([nodeId, day])
+  @@index([day])
 }
 
 model WorkspaceMembership {
@@ -270,6 +351,11 @@ model WorkspaceMembership {
   // (granted by an Authentik group claim). Lets a future full add+revoke SSO
   // sync only ever touch rows it itself created.
   source      String    @default("manual")
+  // Custom role the member follows (permissions are copied from it and kept
+  // in step); null for the built-in roles. Deleting the role leaves the
+  // member with its permissions, shown as "Personnalisé".
+  customRoleId String?
+  customRole   WorkspaceCustomRole? @relation(fields: [customRoleId], references: [id], onDelete: SetNull)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -348,6 +434,15 @@ model Node {
   vpnAppliedRevision     DateTime?
   vpnApplyStatus         String?
   vpnApplyError          String?
+  // Progress of the last agent update asked from the dashboard:
+  // sent -> restarting -> done, or failed / timeout with a readable message
+  // (see AgentsService.triggerAgentUpdate and the heartbeat that closes it).
+  agentUpdateStatus            String?
+  agentUpdateMessage           String?
+  agentUpdateFromVersion       String?
+  agentUpdateToVersion         String?
+  agentUpdateStartedAt         DateTime?
+  agentUpdateFinishedAt        DateTime?
   createdAt              DateTime               @default(now())
   updatedAt              DateTime               @updatedAt
   metrics                MetricSample[]
@@ -369,6 +464,7 @@ model Node {
   internalDnsForWorkspace Workspace[]           @relation("InternalDnsNode")
   vpnEntryProfiles       VpnProfile[]           @relation("VpnEntryNode")
   vpnExitProfiles        VpnProfile[]           @relation("VpnExitNode")
+  dailyStats                   NodeDailyStat[]
 
   @@unique([workspaceId, vpnSubnetIndex])
   @@index([workspaceId])

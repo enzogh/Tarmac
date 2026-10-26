@@ -6,6 +6,7 @@ import { parse } from 'url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { AuthService } from '../auth/auth.service';
 import { AUTH_COOKIE_NAME } from '../auth/auth-cookie';
+import { SessionValidityService } from '../auth/session-validity.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 function extractCookie(header: string | undefined, name: string): string | null {
@@ -41,11 +42,15 @@ export class LiveWsServer implements OnModuleInit {
   // at - that was the case here until this fix (audit.new/agent-log.new
   // were broadcast completely unscoped, a real cross-tenant data leak).
   private readonly clients = new Map<WebSocket, string>();
+  // Who opened each socket, so a session revoked after the handshake (account
+  // disabled, access group lost) stops receiving events - see sweepSessions.
+  private readonly sessions = new Map<WebSocket, { userId: string; issuedAt?: number }>();
 
   constructor(
     private readonly adapterHost: HttpAdapterHost,
     private readonly authService: AuthService,
     private readonly prisma: PrismaService,
+    private readonly sessionValidity: SessionValidityService,
   ) {}
 
   onModuleInit() {
@@ -65,18 +70,32 @@ export class LiveWsServer implements OnModuleInit {
       }
 
       void (async () => {
-        if (!(await this.canAccessWorkspace(session.userId, workspaceId))) {
+        if ((await this.sessionValidity.check(session.userId, session.issuedAt)) !== 'ok' || !(await this.canAccessWorkspace(session.userId, workspaceId))) {
           socket.destroy();
           return;
         }
 
         this.wss.handleUpgrade(req, socket, head, (ws) => {
           this.clients.set(ws, workspaceId);
-          ws.on('close', () => this.clients.delete(ws));
-          ws.on('error', () => this.clients.delete(ws));
+          this.sessions.set(ws, { userId: session.userId, issuedAt: session.issuedAt });
+          const drop = () => {
+            this.clients.delete(ws);
+            this.sessions.delete(ws);
+          };
+          ws.on('close', drop);
+          ws.on('error', drop);
         });
       })();
     });
+
+    setInterval(() => void this.sweepSessions(), 30_000).unref();
+  }
+
+  private async sweepSessions() {
+    for (const [ws, session] of this.sessions) {
+      const status = await this.sessionValidity.check(session.userId, session.issuedAt).catch(() => 'ok' as const);
+      if (status !== 'ok') ws.close(4401, 'session revoked');
+    }
   }
 
   // Mirrors WorkspaceGuard's authorization (see auth/workspace.guard.ts):

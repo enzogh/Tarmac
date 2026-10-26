@@ -16,6 +16,7 @@ import { Region, resolveRegion } from '../vlan/region';
 import { AgentLogsService } from '../agent-logs/agent-logs.service';
 import { LiveWsServer } from '../live/live.ws';
 import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
+import { getControlPlaneVersion, isKnownControlPlaneVersion } from '../common/build-info';
 import {
   AgentLogPayload,
   CommandPayload,
@@ -100,6 +101,11 @@ const OVERLAY_RECONCILE_INTERVAL_MS = 3 * 60 * 1000;
 // a single resource command failing, so they're logged as critical rather
 // than a routine error.
 const AGENT_CRITICAL_COMMANDS = new Set(['update_agent', 'uninstall_agent', 'rotate_token']);
+
+// An agent update fetches, compiles (up to 20 min on the agent side) and
+// restarts: past these delays without news it is reported as stuck.
+const AGENT_UPDATE_BUILD_TIMEOUT_MS = 25 * 60 * 1000;
+const AGENT_UPDATE_RESTART_TIMEOUT_MS = 5 * 60 * 1000;
 
 @Injectable()
 export class AgentsService implements OnModuleInit {
@@ -519,6 +525,10 @@ export class AgentsService implements OnModuleInit {
       this.logger.warn(`⚠️  Failed to ensure VLAN membership for node ${nodeId}:`, error);
     }
 
+    if (version && (node.agentUpdateStatus === 'sent' || node.agentUpdateStatus === 'restarting')) {
+      await this.closeAgentUpdateOnHeartbeat(node, version);
+    }
+
     await this.prisma.metricSample.create({
       data: {
         nodeId,
@@ -739,6 +749,10 @@ export class AgentsService implements OnModuleInit {
     if (!callingWorkspaceId) {
       this.logger.warn(`Command result from unknown node ${nodeId} - ignored`);
       return;
+    }
+
+    if (result.command === 'update_agent') {
+      await this.recordAgentUpdateResult(nodeId, callingWorkspaceId, result);
     }
 
     const isAgentCritical =
@@ -1270,7 +1284,7 @@ export class AgentsService implements OnModuleInit {
   }
 
   async triggerAgentUpdate(nodeId: string, options?: { ref?: string; repoUrl?: string; serviceName?: string }) {
-    const node = await this.prisma.node.findUnique({ where: { id: nodeId }, select: { id: true } });
+    const node = await this.prisma.node.findUnique({ where: { id: nodeId }, select: { id: true, workspaceId: true, agentVersion: true } });
     if (!node) {
       throw new NotFoundException('node not found');
     }
@@ -1289,7 +1303,127 @@ export class AgentsService implements OnModuleInit {
       return { queued: false as const, message: 'node is offline' };
     }
 
+    const controlVersion = getControlPlaneVersion();
+    await this.setAgentUpdate(nodeId, node.workspaceId, {
+      agentUpdateStatus: 'sent',
+      agentUpdateMessage: null,
+      agentUpdateFromVersion: node.agentVersion,
+      // A custom ref builds something else than the controller's version.
+      agentUpdateToVersion: !options?.ref && isKnownControlPlaneVersion(controlVersion) ? controlVersion : null,
+      agentUpdateStartedAt: new Date(),
+      agentUpdateFinishedAt: null,
+    });
+
     return { queued: true as const, message: 'agent update command sent' };
+  }
+
+  // --- agent update progress ------------------------------------------
+  // sent (fetch + build on the node) -> restarting (binary replaced, service
+  // restart scheduled) -> done once a heartbeat reports the new version.
+  // failed / timeout carry a sentence the dashboard shows as-is.
+
+  private async setAgentUpdate(nodeId: string, workspaceId: string, data: Prisma.NodeUpdateInput) {
+    const node = await this.prisma.node.update({
+      where: { id: nodeId },
+      data,
+      select: {
+        agentUpdateStatus: true,
+        agentUpdateMessage: true,
+        agentUpdateFromVersion: true,
+        agentUpdateToVersion: true,
+        agentUpdateStartedAt: true,
+        agentUpdateFinishedAt: true,
+      },
+    });
+    this.live.broadcast(
+      'agent.update',
+      {
+        nodeId,
+        status: node.agentUpdateStatus,
+        message: node.agentUpdateMessage,
+        fromVersion: node.agentUpdateFromVersion,
+        toVersion: node.agentUpdateToVersion,
+        startedAt: node.agentUpdateStartedAt?.toISOString() ?? null,
+        finishedAt: node.agentUpdateFinishedAt?.toISOString() ?? null,
+      },
+      workspaceId,
+    );
+  }
+
+  private async recordAgentUpdateResult(nodeId: string, workspaceId: string, result: CommandResultPayload) {
+    const node = await this.prisma.node.findUnique({ where: { id: nodeId }, select: { agentUpdateToVersion: true, agentUpdateStatus: true } });
+    if (!node) return;
+    if (!result.success) {
+      await this.setAgentUpdate(nodeId, workspaceId, {
+        agentUpdateStatus: 'failed',
+        agentUpdateMessage: describeAgentUpdateFailure(result.message),
+        agentUpdateFinishedAt: new Date(),
+      });
+      return;
+    }
+    const built = /\(version ([^)\s]+)\)/.exec(result.message ?? '')?.[1] ?? null;
+    if (built && node.agentUpdateToVersion && built !== node.agentUpdateToVersion) {
+      // The node built the tip of the repository, which is not what the
+      // controller runs: the deployed commit was never pushed.
+      await this.setAgentUpdate(nodeId, workspaceId, {
+        agentUpdateStatus: 'failed',
+        agentUpdateMessage: `L'agent a été recompilé en version ${built}, mais le contrôleur est en ${node.agentUpdateToVersion} : cette version n'est pas encore publiée sur le dépôt Git (push manquant ?). Publiez-la puis relancez la mise à jour.`,
+        agentUpdateFinishedAt: new Date(),
+      });
+      return;
+    }
+    await this.setAgentUpdate(nodeId, workspaceId, {
+      agentUpdateStatus: 'restarting',
+      agentUpdateMessage: null,
+      ...(built && !node.agentUpdateToVersion ? { agentUpdateToVersion: built } : {}),
+    });
+  }
+
+  private async closeAgentUpdateOnHeartbeat(
+    node: { id: string; workspaceId: string; agentUpdateStatus: string | null; agentUpdateFromVersion: string | null; agentUpdateToVersion: string | null },
+    version: string,
+  ) {
+    const reached = node.agentUpdateToVersion ? version === node.agentUpdateToVersion : version !== node.agentUpdateFromVersion;
+    if (!reached) return;
+    await this.setAgentUpdate(node.id, node.workspaceId, {
+      agentUpdateStatus: 'done',
+      agentUpdateMessage: null,
+      agentUpdateToVersion: version,
+      agentUpdateFinishedAt: new Date(),
+    });
+  }
+
+  @Cron(CronExpression.EVERY_MINUTE)
+  async expireStuckAgentUpdates() {
+    try {
+      const now = Date.now();
+      const stuck = await this.prisma.node.findMany({
+        where: { agentUpdateStatus: { in: ['sent', 'restarting'] } },
+        select: { id: true, workspaceId: true, agentUpdateStatus: true, agentUpdateStartedAt: true, updatedAt: true, status: true },
+      });
+      for (const node of stuck) {
+        const started = node.agentUpdateStartedAt?.getTime() ?? 0;
+        if (node.agentUpdateStatus === 'sent' && now - started > AGENT_UPDATE_BUILD_TIMEOUT_MS) {
+          await this.setAgentUpdate(node.id, node.workspaceId, {
+            agentUpdateStatus: 'timeout',
+            agentUpdateMessage:
+              node.status === 'online'
+                ? "L'agent n'a pas confirmé la mise à jour après 25 minutes. Consultez ses logs (Journal → Agents), puis relancez."
+                : "Le nœud s'est déconnecté pendant la mise à jour et n'est pas revenu. Vérifiez le service tarmac-agent sur le serveur.",
+            agentUpdateFinishedAt: new Date(),
+          });
+        } else if (node.agentUpdateStatus === 'restarting' && now - Math.max(started, node.updatedAt.getTime()) > AGENT_UPDATE_RESTART_TIMEOUT_MS) {
+          await this.setAgentUpdate(node.id, node.workspaceId, {
+            agentUpdateStatus: 'timeout',
+            agentUpdateMessage:
+              "Le nouvel agent est installé mais ne s'est pas reconnecté avec sa nouvelle version. Vérifiez le service tarmac-agent sur le serveur (systemctl status tarmac-agent).",
+            agentUpdateFinishedAt: new Date(),
+          });
+        }
+      }
+    } catch (error) {
+      this.logger.warn(`Agent update expiry check failed: ${error instanceof Error ? error.message : error}`);
+    }
   }
 
   /**
@@ -1957,4 +2091,15 @@ function sanitizeSystemInfo(raw: unknown): Prisma.InputJsonObject | null {
     out.load = source.load.filter((value): value is number => typeof value === 'number' && Number.isFinite(value)).slice(0, 3);
   }
   return Object.keys(out).length > 0 ? out : null;
+}
+
+// The agent reports raw command output; this keeps the useful part and
+// says what it means.
+function describeAgentUpdateFailure(raw?: string | null): string {
+  const message = (raw ?? '').trim();
+  if (/cannot fetch repository/i.test(message)) return `Le nœud n'arrive pas à télécharger le code (dépôt Git injoignable ou clé de déploiement refusée). Détail : ${message.slice(0, 300)}`;
+  if (/cannot build agent/i.test(message)) return `La compilation de l'agent a échoué sur le nœud. Détail : ${message.slice(0, 300)}`;
+  if (/install required packages|refresh package index/i.test(message)) return `Impossible d'installer les paquets nécessaires (apt). Détail : ${message.slice(0, 300)}`;
+  if (/restart/i.test(message)) return `Le binaire est à jour mais le redémarrage du service n'a pas pu être programmé. Détail : ${message.slice(0, 300)}`;
+  return message ? `La mise à jour a échoué : ${message.slice(0, 400)}` : 'La mise à jour a échoué sans message de l’agent.';
 }

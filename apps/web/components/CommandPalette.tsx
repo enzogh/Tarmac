@@ -2,9 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { Search, type LucideIcon } from 'lucide-react';
-import { HardDrive, Layers, Server } from 'lucide-react';
-import { api } from '../lib/api';
+import { Bell, Building2, Database, Globe, HardDrive, Layers, RefreshCw, Search, Server, Settings, ShieldCheck, Tag, Users, type LucideIcon } from 'lucide-react';
+import { api, setCurrentWorkspaceId } from '../lib/api';
 import { buildNavItems, navItemArea } from '../lib/nav-items';
 import { useWorkspaceAccess } from '../lib/access';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
@@ -15,7 +14,13 @@ type PaletteResult = {
   sublabel?: string;
   href: string;
   icon: LucideIcon;
+  // Heading the result is listed under.
+  group: string;
+  // Other workspaces need a full page load (see WorkspaceSwitcher).
+  workspaceId?: string;
 };
+
+const SEVERITY_LABEL: Record<string, string> = { critical: 'critique', high: 'élevée', medium: 'moyenne', low: 'faible' };
 
 export function CommandPalette() {
   const router = useRouter();
@@ -30,14 +35,24 @@ export function CommandPalette() {
           return !area || access.level(area) !== 'none';
         })
         .map((item) => ({
-        key: `nav:${item.href}`,
-        label: item.label,
-        sublabel: 'Page',
-        href: item.href,
-        icon: item.icon,
-      })),
+          key: `nav:${item.href}`,
+          label: item.label,
+          sublabel: 'Page',
+          href: item.href,
+          icon: item.icon,
+          group: 'Pages',
+        }))
+        .concat(
+          access.isManager
+            ? [
+                { key: 'nav:members', label: 'Membres et invitations', sublabel: 'Paramètres', href: `/${slug}/dashboard/settings?section=members`, icon: Users, group: 'Pages' },
+                { key: 'nav:roles', label: 'Rôles personnalisés', sublabel: 'Paramètres', href: `/${slug}/dashboard/settings?section=roles`, icon: Tag, group: 'Pages' },
+                { key: 'nav:report', label: 'Rapport hebdomadaire', sublabel: 'Paramètres', href: `/${slug}/dashboard/settings?section=report`, icon: Settings, group: 'Pages' },
+              ]
+            : [],
+        ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [slug, access.ready, access.level],
+    [slug, access.ready, access.level, access.isManager],
   );
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -75,41 +90,76 @@ export function CommandPalette() {
     setTimeout(() => inputRef.current?.focus(), 0);
     if (loaded) return;
 
+    // Each area is fetched only when the role can see it, and one failing
+    // (or forbidden) never hides the others.
     void (async () => {
-      try {
-        const [nodes, mounts, pools] = await Promise.all([
-          api.nodes.list(),
-          api.mounts.list(),
-          api.pools.list(),
-        ]);
-        setEntityResults([
-          ...nodes.map((node) => ({
-            key: `node:${node.id}`,
-            label: node.name,
-            sublabel: `Nœud · ${node.role}`,
-            href: `/${slug}/dashboard/infrastructure`,
-            icon: Server,
-          })),
-          ...mounts.map((mount) => ({
-            key: `mount:${mount.id}`,
-            label: mount.name,
-            sublabel: `Montage · ${mount.targetPath}`,
-            href: `/${slug}/dashboard/mounts`,
-            icon: HardDrive,
-          })),
-          ...pools.map((pool) => ({
-            key: `pool:${pool.id}`,
-            label: pool.name,
-            sublabel: `Pool · ${pool.strategy}`,
-            href: `/${slug}/dashboard/storage`,
-            icon: Layers,
-          })),
-        ]);
-      } catch {
-        // Best effort — nav items still work if entity fetch fails.
-      } finally {
-        setLoaded(true);
+      const can = (area: Parameters<typeof access.level>[0]) => access.level(area) !== 'none';
+      const page = (path: string) => `/${slug}/dashboard/${path}`;
+      const sources: Promise<PaletteResult[]>[] = [
+        api.workspaces.list().then((workspaces) =>
+          workspaces
+            .filter((workspace) => workspace.slug !== slug)
+            .map((workspace) => ({
+              key: `workspace:${workspace.id}`,
+              label: workspace.name,
+              sublabel: 'Changer de workspace',
+              href: `/${workspace.slug}/dashboard`,
+              icon: Building2,
+              group: 'Workspaces',
+              workspaceId: workspace.id,
+            })),
+        ),
+      ];
+      if (can('nodes')) {
+        sources.push(
+          api.nodes.list().then((nodes) =>
+            nodes.map((node) => ({ key: `node:${node.id}`, label: node.name, sublabel: `Nœud · ${node.status === 'online' ? 'en ligne' : 'hors ligne'}`, href: page('infrastructure'), icon: Server, group: 'Nœuds' })),
+          ),
+        );
       }
+      if (can('storage')) {
+        sources.push(
+          api.mounts.list().then((mounts) =>
+            mounts.map((mount) => ({ key: `mount:${mount.id}`, label: mount.name, sublabel: `Montage · ${mount.targetPath}`, href: page('mounts'), icon: HardDrive, group: 'Stockage' })),
+          ),
+          api.pools.list().then((pools) =>
+            pools.map((pool) => ({ key: `pool:${pool.id}`, label: pool.name, sublabel: `Pool · ${pool.strategy}`, href: page('storage'), icon: Layers, group: 'Stockage' })),
+          ),
+          api.shares.list().then((shares) =>
+            shares.map((share) => ({ key: `share:${share.id}`, label: share.name, sublabel: `Partage · ${share.path}`, href: page('storage'), icon: Database, group: 'Stockage' })),
+          ),
+          api.syncJobs.list().then((jobs) =>
+            jobs.map((job) => ({ key: `sync:${job.id}`, label: job.name, sublabel: 'Réplication', href: page('replication'), icon: RefreshCw, group: 'Stockage' })),
+          ),
+        );
+      }
+      if (can('dns')) {
+        sources.push(
+          api.dns.zones.list().then((zones) =>
+            zones.map((zone) => ({ key: `zone:${zone.id}`, label: zone.name, sublabel: 'Zone DNS', href: page('dns'), icon: Globe, group: 'Réseau' })),
+          ),
+        );
+      }
+      if (can('vpn')) {
+        sources.push(
+          api.vpn.list().then((profiles) =>
+            profiles.map((profile) => ({ key: `vpn:${profile.id}`, label: profile.name, sublabel: 'Profil VPN', href: page('vpn'), icon: ShieldCheck, group: 'Réseau' })),
+          ),
+        );
+      }
+      if (can('alerts')) {
+        sources.push(
+          api.alerts.list().then((alerts) =>
+            alerts
+              .filter((alert) => alert.status !== 'resolved')
+              .slice(0, 50)
+              .map((alert) => ({ key: `alert:${alert.id}`, label: alert.message, sublabel: `Alerte ${SEVERITY_LABEL[alert.severity] ?? ''}`.trim(), href: page('alerts'), icon: Bell, group: 'Alertes ouvertes' })),
+          ),
+        );
+      }
+      const settled = await Promise.allSettled(sources);
+      setEntityResults(settled.flatMap((result) => (result.status === 'fulfilled' ? result.value : [])));
+      setLoaded(true);
     })();
   }, [open, loaded]);
 
@@ -128,6 +178,11 @@ export function CommandPalette() {
 
   const go = (result: PaletteResult) => {
     setOpen(false);
+    if (result.workspaceId) {
+      setCurrentWorkspaceId(result.workspaceId);
+      window.location.href = result.href;
+      return;
+    }
     router.push(result.href);
   };
 
@@ -159,7 +214,7 @@ export function CommandPalette() {
               setSelectedIndex(0);
             }}
             onKeyDown={onKeyDown}
-            placeholder="Rechercher un nœud, un montage, un pool, une page…"
+            placeholder="Rechercher un nœud, un partage, une zone DNS, une alerte, une page…"
             className="w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
           />
         </div>
@@ -169,9 +224,11 @@ export function CommandPalette() {
           )}
           {results.map((result, index) => {
             const Icon = result.icon;
+            const heading = index === 0 || results[index - 1].group !== result.group ? result.group : null;
             return (
+              <div key={result.key}>
+              {heading && <p className="px-3 pb-1 pt-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground/60">{heading}</p>}
               <button
-                key={result.key}
                 type="button"
                 data-index={index}
                 onClick={() => go(result)}
@@ -184,8 +241,9 @@ export function CommandPalette() {
               >
                 <Icon className="h-4 w-4 shrink-0" />
                 <span className="flex-1 truncate">{result.label}</span>
-                {result.sublabel && <span className="shrink-0 text-xs text-muted-foreground">{result.sublabel}</span>}
+                {result.sublabel && <span className="max-w-[45%] shrink-0 truncate text-xs text-muted-foreground">{result.sublabel}</span>}
               </button>
+              </div>
             );
           })}
         </div>

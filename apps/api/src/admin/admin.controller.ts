@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Param, Patch, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminService } from './admin.service';
+import { TransferWorkspaceDto, UpdateAdminSettingsDto } from './dto/admin-settings.dto';
 import { UpdateUserLimitDto } from './dto/update-user-limit.dto';
 
 interface AuthenticatedRequest extends Request {
@@ -19,9 +20,51 @@ export class AdminController {
     return this.adminService.listUsers();
   }
 
+  @Get('users/:id')
+  async getUser(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    await this.adminService.assertSuperuser(req.user?.userId);
+    return this.adminService.getUser(id);
+  }
+
   @Patch('users/:id')
   async updateUser(@Param('id') id: string, @Body() dto: UpdateUserLimitDto, @Req() req: AuthenticatedRequest) {
     await this.adminService.assertSuperuser(req.user?.userId);
-    return this.adminService.updateUserLimit(id, dto.workspaceLimit ?? null, req.user?.userId);
+    return this.adminService.updateUser(id, dto, req.user?.userId);
+  }
+
+  @Get('settings')
+  async getSettings(@Req() req: AuthenticatedRequest) {
+    await this.adminService.assertSuperuser(req.user?.userId);
+    return this.adminService.getSettings();
+  }
+
+  @Patch('settings')
+  async updateSettings(@Body() dto: UpdateAdminSettingsDto, @Req() req: AuthenticatedRequest) {
+    await this.adminService.assertSuperuser(req.user?.userId);
+    return this.adminService.updateSettings(dto, req.user?.userId);
+  }
+
+  @Post('access-sync')
+  async runAccessSync(@Req() req: AuthenticatedRequest) {
+    await this.adminService.assertSuperuser(req.user?.userId);
+    return this.adminService.runAccessSync();
+  }
+
+  @Get('email-templates')
+  async listEmailTemplates(@Req() req: AuthenticatedRequest) {
+    await this.adminService.assertSuperuser(req.user?.userId);
+    return this.adminService.listEmailTemplates(req.user?.userId);
+  }
+
+  @Post('email-templates/:id/test')
+  async sendTestEmail(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    await this.adminService.assertSuperuser(req.user?.userId);
+    return this.adminService.sendTestEmail(id, req.user?.userId);
+  }
+
+  @Post('workspaces/:id/transfer')
+  async transferWorkspace(@Param('id') id: string, @Body() dto: TransferWorkspaceDto, @Req() req: AuthenticatedRequest) {
+    await this.adminService.assertSuperuser(req.user?.userId);
+    return this.adminService.transferWorkspace(id, dto.userId, req.user?.userId);
   }
 }

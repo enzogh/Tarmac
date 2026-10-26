@@ -7,6 +7,7 @@ import { findInternalEmail } from '../mail/alert-recipients';
 import { AUTH_COOKIE_MAX_AGE_MS, AUTH_COOKIE_NAME, authCookieOptions } from './auth-cookie';
 import { AuthentikService } from './authentik.service';
 import { AuthService } from './auth.service';
+import { SessionValidityService } from './session-validity.service';
 
 const SSO_STATE_COOKIE = 'tarmac_sso_state';
 const SSO_STATE_TTL = '5m';
@@ -37,6 +38,7 @@ export class SsoController {
     private readonly authService: AuthService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly sessionValidity: SessionValidityService,
   ) {}
 
   @Get('login')
@@ -117,6 +119,13 @@ export class SsoController {
         canCreateWorkspaces: groups.includes(this.accessGroup()),
       });
 
+      this.sessionValidity.forget(user.id);
+
+      if (user.disabledAt) {
+        this.logger.warn(`SSO login refused for ${email}: account disabled in Tarmac`);
+        return res.redirect(this.loginRedirect({ sso: 'disabled' }));
+      }
+
       await this.authService.syncWorkspaceMembershipsFromSso(user.id, groups);
 
       // The access group is what opens the application (platform admins
@@ -126,6 +135,9 @@ export class SsoController {
         this.logger.warn(`SSO login refused for ${email}: not in access group "${this.accessGroup()}" (groups [${groups.join(', ')}])`);
         return res.redirect(this.loginRedirect({ sso: 'forbidden' }));
       }
+
+      // Invitations sent to this address before the account existed.
+      await this.authService.acceptPendingInvitations(user);
 
       if (alertAddressChanged) {
         this.authService.sendAlertAddressConfirmation(user);

@@ -4,8 +4,10 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { AuthentikAccessSyncService } from './authentik-access-sync.service';
 import { AuthentikService } from './authentik.service';
 import { JwtStrategy } from './jwt.strategy';
+import { SessionValidityService } from './session-validity.service';
 import { SsoController } from './sso.controller';
 
 @Module({
@@ -27,7 +29,7 @@ import { SsoController } from './sso.controller';
     }),
   ],
   controllers: [AuthController, SsoController],
-  providers: [AuthService, AuthentikService, JwtStrategy],
-  exports: [JwtModule, AuthService],
+  providers: [AuthService, AuthentikService, JwtStrategy, SessionValidityService, AuthentikAccessSyncService],
+  exports: [JwtModule, AuthService, SessionValidityService, AuthentikAccessSyncService],
 })
 export class AuthModule {}

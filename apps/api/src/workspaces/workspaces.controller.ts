@@ -3,7 +3,7 @@ import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AllowNoWorkspace, CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
-import { InviteMemberDto, MemberAccessDto } from './dto/member-access.dto';
+import { CustomRoleDto, InviteMemberDto, MemberAccessDto, TransferOwnershipDto, UpdateCustomRoleDto } from './dto/member-access.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 import { WorkspacesService } from './workspaces.service';
 
@@ -79,9 +79,8 @@ export class WorkspacesController {
     return this.workspacesService.addMember(id, userId, req.user?.userId);
   }
 
-  // Adds an existing user by email - the self-service invite path for
-  // workspace owners (no outbound-email infra exists to send a real
-  // invitation, see WorkspacesService.inviteByEmail).
+  // Adds an existing account, or emails an invitation to an address that
+  // has never signed in - see WorkspacesService.inviteByEmail.
   @Post(':id/invite')
   invite(
     @Param('id') id: string,
@@ -112,6 +111,70 @@ export class WorkspacesController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.workspacesService.removeMember(id, userId, scope, req.user?.userId);
+  }
+
+  @Get(':id/invitations')
+  listInvitations(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.workspacesService.listInvitations(id, scope, req.user?.userId);
+  }
+
+  @Post(':id/invitations/:invitationId/resend')
+  resendInvitation(
+    @Param('id') id: string,
+    @Param('invitationId') invitationId: string,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.workspacesService.resendInvitation(id, invitationId, scope, req.user?.userId);
+  }
+
+  @Delete(':id/invitations/:invitationId')
+  revokeInvitation(
+    @Param('id') id: string,
+    @Param('invitationId') invitationId: string,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.workspacesService.revokeInvitation(id, invitationId, scope, req.user?.userId);
+  }
+
+  // Named permission sets of this workspace (administrators only).
+  @Get(':id/roles')
+  listRoles(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.workspacesService.listCustomRoles(id, scope, req.user?.userId);
+  }
+
+  @Post(':id/roles')
+  createRole(@Param('id') id: string, @Body() dto: CustomRoleDto, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.workspacesService.createCustomRole(id, dto, scope, req.user?.userId);
+  }
+
+  @Patch(':id/roles/:roleId')
+  updateRole(
+    @Param('id') id: string,
+    @Param('roleId') roleId: string,
+    @Body() dto: UpdateCustomRoleDto,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.workspacesService.updateCustomRole(id, roleId, dto, scope, req.user?.userId);
+  }
+
+  @Delete(':id/roles/:roleId')
+  deleteRole(@Param('id') id: string, @Param('roleId') roleId: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.workspacesService.deleteCustomRole(id, roleId, scope, req.user?.userId);
+  }
+
+  // The current owner (or a platform admin) hands the workspace to another
+  // member - see WorkspacesService.transferOwnership.
+  @Post(':id/transfer')
+  transfer(
+    @Param('id') id: string,
+    @Body() dto: TransferOwnershipDto,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.workspacesService.transferOwnership(id, dto.userId, scope, req.user?.userId, dto.keepAdmin ?? true);
   }
 
   // Owner-or-platform-admin, and only once genuinely empty - see

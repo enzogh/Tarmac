@@ -36,6 +36,8 @@ export type NodeItem = {
   agentVersionAt?: string | null;
   controlVersion?: string | null;
   agentUpToDate?: boolean | null;
+  // Last agent update asked from the dashboard and where it stands.
+  agentUpdate?: AgentUpdateProgress | null;
   mutedUntil?: string | null;
   // False when this node's SMART readings are meaningless (virtualised
   // storage) and its operator has opted out of disk alerts for it.
@@ -54,6 +56,16 @@ export type NodeItem = {
   // routing) - null means never attempted / not applicable.
   internalDnsForwarderStatus?: 'active' | 'unreachable' | 'conflict' | 'error' | null;
   internalDnsForwarderConflict?: { port: number; protocol: string; pid?: number | null; processName?: string | null } | null;
+};
+
+export type AgentUpdateStatus = 'sent' | 'restarting' | 'done' | 'failed' | 'timeout';
+export type AgentUpdateProgress = {
+  status: AgentUpdateStatus;
+  message: string | null;
+  fromVersion: string | null;
+  toVersion: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
 };
 
 export type SmartHistoryPoint = {
@@ -648,21 +660,68 @@ export type WorkspaceDetail = {
   ssoGroupClaim: string | null;
   isDefault: boolean;
   subnetIndex: number | null;
+  // Owner: counted in their creation limit, receives the weekly report.
+  createdById: string | null;
+  weeklyReportEnabled: boolean;
   createdAt: string;
   updatedAt: string;
+};
+
+export type WorkspaceHealthStatus = 'empty' | 'ok' | 'warning' | 'critical';
+export type WorkspaceHealth = {
+  status: WorkspaceHealthStatus;
+  nodesTotal: number;
+  nodesOnline: number;
+  alertsOpen: number;
+  alertsSevere: number;
 };
 
 // list() additionally annotates each workspace with the caller's own role
 // and member count - create()/update() return a plain WorkspaceDetail.
 export type WorkspaceListItem = WorkspaceDetail & {
   memberCount: number;
+  // The caller owns it (created it, or received it by transfer).
+  isOwner: boolean;
+  owner: { id: string; name?: string | null; email: string } | null;
+  health: WorkspaceHealth;
   myRole: 'owner' | 'member' | null;
   // Everything for owners and platform admins; a member's grants otherwise.
   myPermissions: ApiKeyScope[];
 };
 
 export type WorkspaceRole = 'owner' | 'member';
-export type MemberAccess = { role?: WorkspaceRole; permissions?: ApiKeyScope[] };
+export type MemberAccess = { role?: WorkspaceRole; permissions?: ApiKeyScope[]; customRoleId?: string | null };
+
+export type WorkspaceCustomRole = {
+  id: string;
+  workspaceId: string;
+  name: string;
+  description: string | null;
+  permissions: ApiKeyScope[];
+  memberCount: number;
+  invitationCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WorkspaceInvitation = {
+  id: string;
+  workspaceId: string;
+  email: string;
+  role: WorkspaceRole;
+  permissions: ApiKeyScope[];
+  customRoleId: string | null;
+  customRole: { id: string; name: string } | null;
+  invitedBy: string | null;
+  lastSentAt: string | null;
+  expiresAt: string;
+  expired: boolean;
+  createdAt: string;
+};
+
+export type InviteResult =
+  | { status: 'added'; membership: WorkspaceMember; emailed: boolean }
+  | { status: 'invited'; invitation: WorkspaceInvitation & { emailed: boolean } };
 
 export type WorkspaceMember = {
   id: string;
@@ -670,7 +729,11 @@ export type WorkspaceMember = {
   userId: string;
   role: WorkspaceRole;
   permissions: ApiKeyScope[];
-  source: 'manual' | 'sso';
+  source: 'manual' | 'sso' | 'invitation';
+  customRoleId: string | null;
+  customRole: { id: string; name: string } | null;
+  // Owner of the workspace (Workspace.createdById).
+  isOwner: boolean;
   createdAt: string;
   updatedAt: string;
   user: { id: string; email: string; name?: string | null; avatarUrl?: string | null };
@@ -697,11 +760,63 @@ export type AdminUser = {
   effectiveLimit: number;
   createdCount: number;
   membershipCount: number;
+  // Disabled from /admin: can't sign in, sessions cut.
+  disabledAt: string | null;
+  // Last confirmation of the access group by the Authentik sync.
+  accessCheckedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
 
 export type AdminUserList = { defaultLimit: number; users: AdminUser[] };
+
+export type AdminUserDetail = {
+  id: string;
+  email: string;
+  name?: string | null;
+  isSuperuser: boolean;
+  disabledAt: string | null;
+  workspaces: {
+    id: string;
+    name: string;
+    slug: string;
+    isOwner: boolean;
+    roleLabel: string | null;
+    memberCount: number;
+    nodeCount: number;
+    joinedAt: string | null;
+  }[];
+  history: { id: string; action: string; details: Record<string, unknown> | null; createdAt: string; actor: string | null }[];
+};
+
+export type AccessSyncStatus = {
+  configured: boolean;
+  lastRunAt: string | null;
+  ok: boolean | null;
+  message: string | null;
+  checked: number;
+  revoked: string[];
+  restored: string[];
+};
+
+export type AdminSettings = {
+  defaultWorkspaceLimit: number;
+  defaultWorkspaceLimitSource: 'admin' | 'environment';
+  environmentWorkspaceLimit: number;
+  defaultWorkspaceLimitUpdatedAt: string | null;
+  accessSync: AccessSyncStatus;
+  mail: { configured: boolean; from: string };
+};
+
+export type EmailTemplatePreview = {
+  id: string;
+  name: string;
+  trigger: string;
+  audience: string;
+  subject: string;
+  html: string;
+  text: string;
+};
 
 export type AdminProfile = {
   id: string;
@@ -1232,8 +1347,18 @@ export const api = {
 
   admin: {
     listUsers: () => request<AdminUserList>('/api/v1/admin/users'),
-    updateUser: (id: string, payload: { workspaceLimit: number | null }) =>
+    getUser: (id: string) => request<AdminUserDetail>(`/api/v1/admin/users/${id}`),
+    updateUser: (id: string, payload: { workspaceLimit?: number | null; disabled?: boolean }) =>
       request<{ success: boolean }>(`/api/v1/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+    settings: () => request<AdminSettings>('/api/v1/admin/settings'),
+    updateSettings: (payload: { defaultWorkspaceLimit: number | null }) =>
+      request<AdminSettings>('/api/v1/admin/settings', { method: 'PATCH', body: JSON.stringify(payload) }),
+    runAccessSync: () => request<AccessSyncStatus>('/api/v1/admin/access-sync', { method: 'POST' }),
+    emailTemplates: () => request<EmailTemplatePreview[]>('/api/v1/admin/email-templates'),
+    sendTestEmail: (id: string) =>
+      request<{ sentTo: string }>(`/api/v1/admin/email-templates/${encodeURIComponent(id)}/test`, { method: 'POST' }),
+    transferWorkspace: (workspaceId: string, userId: string) =>
+      request<{ success: boolean }>(`/api/v1/admin/workspaces/${workspaceId}/transfer`, { method: 'POST', body: JSON.stringify({ userId }) }),
   },
 
   workspaces: {
@@ -1243,7 +1368,7 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
-    update: (id: string, payload: { name?: string; slug?: string; ssoGroupClaim?: string }) =>
+    update: (id: string, payload: { name?: string; slug?: string; ssoGroupClaim?: string; weeklyReportEnabled?: boolean }) =>
       request<WorkspaceDetail>(`/api/v1/workspaces/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(payload),
@@ -1253,7 +1378,7 @@ export const api = {
     addMember: (id: string, userId: string) =>
       request<WorkspaceMember>(`/api/v1/workspaces/${id}/members/${userId}`, { method: 'POST' }),
     invite: (id: string, email: string, access?: MemberAccess) =>
-      request<WorkspaceMember>(`/api/v1/workspaces/${id}/invite`, {
+      request<InviteResult>(`/api/v1/workspaces/${id}/invite`, {
         method: 'POST',
         body: JSON.stringify({ email, ...access }),
       }),
@@ -1265,6 +1390,22 @@ export const api = {
     removeMember: (id: string, userId: string) =>
       request<{ success: boolean }>(`/api/v1/workspaces/${id}/members/${userId}`, { method: 'DELETE' }),
     delete: (id: string) => request<{ success: boolean }>(`/api/v1/workspaces/${id}`, { method: 'DELETE' }),
+    invitations: (id: string) => request<WorkspaceInvitation[]>(`/api/v1/workspaces/${id}/invitations`),
+    resendInvitation: (id: string, invitationId: string) =>
+      request<WorkspaceInvitation>(`/api/v1/workspaces/${id}/invitations/${invitationId}/resend`, { method: 'POST' }),
+    revokeInvitation: (id: string, invitationId: string) =>
+      request<{ success: boolean }>(`/api/v1/workspaces/${id}/invitations/${invitationId}`, { method: 'DELETE' }),
+    roles: (id: string) => request<WorkspaceCustomRole[]>(`/api/v1/workspaces/${id}/roles`),
+    createRole: (id: string, payload: { name: string; description?: string; permissions: ApiKeyScope[] }) =>
+      request<WorkspaceCustomRole>(`/api/v1/workspaces/${id}/roles`, { method: 'POST', body: JSON.stringify(payload) }),
+    updateRole: (id: string, roleId: string, payload: { name?: string; description?: string; permissions?: ApiKeyScope[] }) =>
+      request<WorkspaceCustomRole>(`/api/v1/workspaces/${id}/roles/${roleId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+    deleteRole: (id: string, roleId: string) =>
+      request<{ success: boolean }>(`/api/v1/workspaces/${id}/roles/${roleId}`, { method: 'DELETE' }),
+    transfer: (id: string, userId: string, keepAdmin = true) =>
+      request<{ success: boolean }>(`/api/v1/workspaces/${id}/transfer`, { method: 'POST', body: JSON.stringify({ userId, keepAdmin }) }),
+    weeklyReportPreview: (id: string) =>
+      request<{ sentTo: string }>(`/api/v1/workspaces/${id}/weekly-report/preview`, { method: 'POST' }),
   },
 
   system: {

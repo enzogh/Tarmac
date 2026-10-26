@@ -77,6 +77,9 @@ export class AuthService implements OnModuleInit {
     if (!user.isSuperuser) {
       throw new UnauthorizedException('Accès réservé aux administrateurs');
     }
+    if (user.disabledAt) {
+      throw new UnauthorizedException('Ce compte a été désactivé.');
+    }
 
     return this.issueSession(user);
   }
@@ -261,6 +264,50 @@ export class AuthService implements OnModuleInit {
     );
   }
 
+  // Turns invitations sent to this address (before the account existed, see
+  // WorkspacesService.inviteByEmail) into memberships, with the role chosen
+  // at invitation time. Expired ones are simply dropped.
+  async acceptPendingInvitations(user: User): Promise<void> {
+    const invitations = await this.prisma.workspaceInvitation.findMany({
+      where: { email: user.email.toLowerCase() },
+      include: { customRole: { select: { permissions: true } } },
+    });
+    if (invitations.length === 0) return;
+
+    const now = new Date();
+    for (const invitation of invitations) {
+      if (invitation.expiresAt > now) {
+        const existing = await this.prisma.workspaceMembership.findUnique({
+          where: { workspaceId_userId: { workspaceId: invitation.workspaceId, userId: user.id } },
+        });
+        if (!existing) {
+          await this.prisma.workspaceMembership.create({
+            data: {
+              workspaceId: invitation.workspaceId,
+              userId: user.id,
+              role: invitation.role,
+              permissions: invitation.customRole?.permissions ?? invitation.permissions,
+              customRoleId: invitation.customRoleId,
+              source: 'invitation',
+            },
+          });
+          await this.prisma.auditLog.create({
+            data: {
+              workspaceId: invitation.workspaceId,
+              actorUserId: user.id,
+              action: 'workspace.invitation.accept',
+              resourceType: 'workspace',
+              resourceId: invitation.workspaceId,
+              details: { email: user.email, role: invitation.role, invitedById: invitation.invitedById },
+            },
+          });
+          this.logger.log(`Invitation to workspace ${invitation.workspaceId} accepted by ${user.email}`);
+        }
+      }
+      await this.prisma.workspaceInvitation.delete({ where: { id: invitation.id } });
+    }
+  }
+
   async getProfile(userId?: string) {
     if (!userId) {
       throw new UnauthorizedException('Session invalide');
@@ -389,11 +436,11 @@ export class AuthService implements OnModuleInit {
   // live-updates WebSocket, which authenticates off the same cookie but
   // has no Express request/guard pipeline to hook into). Tries every
   // secret in the current rotation window, same as JwtStrategy.
-  verifyToken(rawToken: string): { userId: string; email: string } | null {
+  verifyToken(rawToken: string): { userId: string; email: string; issuedAt?: number } | null {
     for (const secret of getCandidateJwtSecrets(this.configService)) {
       try {
-        const payload = jwt.verify(rawToken, secret) as JwtPayload;
-        return { userId: payload.sub, email: payload.email };
+        const payload = jwt.verify(rawToken, secret) as JwtPayload & { iat?: number };
+        return { userId: payload.sub, email: payload.email, issuedAt: payload.iat };
       } catch {
         continue;
       }

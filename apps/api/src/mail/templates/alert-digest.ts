@@ -169,10 +169,10 @@ export function renderAlertDigest(input: AlertDigestInput): RenderedMail {
     </table>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;"><tr>
       <td class="stack" valign="middle">${button(single ? "Voir l'alerte" : 'Ouvrir les alertes', alertsUrl)}</td>
-      <td class="stack hide-sm" valign="middle" align="right" style="font-size:12px;line-height:18px;color:${tokens.faint};">Accuser réception ou résoudre<br>depuis le tableau de bord.</td>
+      <td class="stack hide-sm" valign="middle" align="right" style="font-size:12px;line-height:18px;color:${tokens.faint};">Prenez-les en compte ou résolvez-les<br>depuis la page Alertes.</td>
     </tr></table>`;
 
-  const footer = `Envoyé à <span style="color:${tokens.muted};">${escapeHtml(recipient)}</span> parce que tu es membre de «&nbsp;${escapeHtml(workspaceName)}&nbsp;». Les alertes qui arrivent à quelques secondes d'intervalle sont réunies dans un seul email.<br><a href="${escapeHtml(settingsUrl)}" style="color:${tokens.muted};text-decoration:underline;">Gérer les notifications</a>`;
+  const footer = `Envoyé à <span style="color:${tokens.muted};">${escapeHtml(recipient)}</span> parce que vous suivez les alertes de «&nbsp;${escapeHtml(workspaceName)}&nbsp;». Les alertes qui arrivent à quelques secondes d'intervalle sont réunies dans un seul email.<br><a href="${escapeHtml(settingsUrl)}" style="color:${tokens.muted};text-decoration:underline;">Gérer mes notifications</a>`;
 
   const html = renderLayout({
     title,
@@ -195,7 +195,7 @@ export function renderAlertDigest(input: AlertDigestInput): RenderedMail {
     hidden > 0 ? `… et ${plural(hidden, 'autre alerte', 'autres alertes')}.` : '',
     '',
     `Ouvrir les alertes : ${alertsUrl}`,
-    `Gérer les notifications : ${settingsUrl}`,
+    `Gérer mes notifications : ${settingsUrl}`,
   ]
     .filter((line, index, lines) => line !== '' || lines[index - 1] !== '')
     .join('\n');
