@@ -1,13 +1,11 @@
 import type { RenderedMail } from '../mail.service';
 import {
-  button,
+  actions,
   detailRow,
   escapeHtml,
   eyebrow,
   formatDateTime,
   greeting,
-  heading,
-  iconTile,
   lede,
   panel,
   renderLayout,
@@ -41,10 +39,6 @@ export function renderOwnershipTransfer(input: OwnershipTransferInput): Rendered
   ].join('');
 
   const body = `
-    ${iconTile('&#9733;', 'primary')}
-    ${eyebrow('Transfert de propriété', 'primary')}
-    ${heading(title)}
-    ${lede(`${greeting(recipientName)} la propriété du workspace «&nbsp;${name}&nbsp;» vous a été transférée. Vous en êtes désormais le responsable principal.`)}
     ${panel(rows)}
     ${sectionTitle('Ce qui change pour vous')}
     ${steps([
@@ -52,14 +46,21 @@ export function renderOwnershipTransfer(input: OwnershipTransferInput): Rendered
       'Ce workspace compte désormais dans votre propre limite de création.',
       'Le rapport hebdomadaire du lundi matin vous est maintenant adressé.',
     ])}
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;"><tr><td>${button('Ouvrir les paramètres', settingsUrl)}</td></tr></table>`;
+    ${actions({ label: 'Ouvrir les paramètres', href: settingsUrl }, { label: 'Voir le workspace', href: `${frontendUrl}/${encodeURIComponent(workspaceSlug)}/dashboard` })}`;
 
   const html = renderLayout({
     title,
     preheader: `${previousOwner ?? 'Un administrateur'} vous a confié le workspace ${workspaceName}.`,
     context: workspaceName,
-    accent: 'primary',
+    hero: {
+      icon: '&#9733;',
+      tone: 'primary',
+      eyebrow: 'Transfert de propriété',
+      title,
+      lede: `${greeting(recipientName)} la propriété du workspace «&nbsp;${name}&nbsp;» vous a été transférée. Vous en êtes désormais le responsable principal.`,
+    },
     body,
+    frontendUrl,
     footer: `Envoyé à <span style="color:${tokens.muted};">${escapeHtml(recipient)}</span>, nouveau propriétaire de «&nbsp;${name}&nbsp;».`,
   });
 

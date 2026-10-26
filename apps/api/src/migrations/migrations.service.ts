@@ -12,7 +12,7 @@ import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
 import { PrismaService } from '../prisma/prisma.service';
-import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
+import { alertWorkspaceId } from '../alerts/alert-workspace';
 import { CreateMigrationDto } from './dto/create-migration.dto';
 import { UpdateMigrationDto } from './dto/update-migration.dto';
 
@@ -68,7 +68,7 @@ export class MigrationsService {
 
     await this.prisma.alert.create({
       data: {
-        workspaceId: DEFAULT_WORKSPACE_ID,
+        workspaceId: await alertWorkspaceId(this.prisma, params.nodeId),
         nodeId: params.nodeId ?? null,
         severity: 'high',
         message,

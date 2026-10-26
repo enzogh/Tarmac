@@ -16,6 +16,7 @@ import { Region, resolveRegion } from '../vlan/region';
 import { AgentLogsService } from '../agent-logs/agent-logs.service';
 import { LiveWsServer } from '../live/live.ws';
 import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
+import { alertWorkspaceId } from '../alerts/alert-workspace';
 import { getControlPlaneVersion, isKnownControlPlaneVersion } from '../common/build-info';
 import {
   AgentLogPayload,
@@ -163,10 +164,16 @@ export class AgentsService implements OnModuleInit {
     return /deadlock detected/i.test(message) || /\b40P01\b/i.test(message);
   }
 
-  private async createSystemAlert(message: string, severity: 'medium' | 'high' | 'critical' = 'high') {
+  // workspaceId: the workspace the failure concerns - left out only for
+  // platform-level failures, which go to the default workspace.
+  private async createSystemAlert(
+    message: string,
+    severity: 'medium' | 'high' | 'critical' = 'high',
+    workspaceId: string = DEFAULT_WORKSPACE_ID,
+  ) {
     await this.prisma.alert.create({
       data: {
-        workspaceId: DEFAULT_WORKSPACE_ID,
+        workspaceId,
         severity,
         message: this.normalizeFailureMessage(message),
       },
@@ -188,7 +195,7 @@ export class AgentsService implements OnModuleInit {
 
     await this.prisma.alert.create({
       data: {
-        workspaceId: DEFAULT_WORKSPACE_ID,
+        workspaceId: await alertWorkspaceId(this.prisma, params.nodeId),
         nodeId: params.nodeId ?? null,
         severity: 'high',
         message,
@@ -206,7 +213,7 @@ export class AgentsService implements OnModuleInit {
 
     await this.prisma.alert.create({
       data: {
-        workspaceId: DEFAULT_WORKSPACE_ID,
+        workspaceId: await alertWorkspaceId(this.prisma, params.nodeId),
         nodeId: params.nodeId ?? null,
         severity: 'high',
         message,
@@ -228,7 +235,7 @@ export class AgentsService implements OnModuleInit {
 
     await this.prisma.alert.create({
       data: {
-        workspaceId: DEFAULT_WORKSPACE_ID,
+        workspaceId: await alertWorkspaceId(this.prisma, params.nodeId),
         nodeId: params.nodeId ?? null,
         severity: 'high',
         message,
@@ -247,10 +254,17 @@ export class AgentsService implements OnModuleInit {
     const node = params.nodeName?.trim() || params.nodeId;
     const process = params.processName ? `${params.processName}${params.pid ? ` (pid ${params.pid})` : ''}` : 'un autre process';
     const message = `DNS : le port ${params.port}/${params.protocol} est déjà utilisé sur ${node} par ${process} - PowerDNS n'a pas pu démarrer.`;
+    // The conflict is re-reported on every DNS check (every 30 s): one open
+    // alert per conflict is enough, not one per check.
+    const existing = await this.prisma.alert.findFirst({
+      where: { nodeId: params.nodeId, message, status: { not: 'resolved' } },
+      select: { id: true },
+    });
+    if (existing) return;
 
     await this.prisma.alert.create({
       data: {
-        workspaceId: DEFAULT_WORKSPACE_ID,
+        workspaceId: await alertWorkspaceId(this.prisma, params.nodeId),
         nodeId: params.nodeId,
         severity: 'high',
         message,
@@ -273,7 +287,7 @@ export class AgentsService implements OnModuleInit {
 
     const node = await this.prisma.node.findUnique({
       where: { id: params.nodeId },
-      select: { name: true, mutedUntil: true, smartMonitoringEnabled: true },
+      select: { name: true, workspaceId: true, mutedUntil: true, smartMonitoringEnabled: true },
     });
     // A node whose storage is virtualised reports SMART attributes that
     // belong to the hypervisor, or none at all; its operator can opt out
@@ -288,7 +302,7 @@ export class AgentsService implements OnModuleInit {
 
     await this.prisma.alert.create({
       data: {
-        workspaceId: DEFAULT_WORKSPACE_ID,
+        workspaceId: node?.workspaceId ?? DEFAULT_WORKSPACE_ID,
         nodeId: params.nodeId,
         severity,
         message,
@@ -350,7 +364,12 @@ export class AgentsService implements OnModuleInit {
     void this.vpnService.onAgentConnected(nodeId);
   }
 
-  unregister(nodeId: string) {
+  // A reconnecting agent registers its new socket before the old one's close
+  // fires (it can take a ping timeout to notice). Passing the socket's own
+  // sender keeps that late close from dropping the live one - which left the
+  // node heartbeating as online while every command to it went nowhere.
+  unregister(nodeId: string, send?: SendFn) {
+    if (send && this.senders.get(nodeId) !== send) return;
     this.senders.delete(nodeId);
     for (const [requestId, request] of this.pendingDirectoryRequests.entries()) {
       if (request.nodeId !== nodeId) continue;
@@ -815,6 +834,8 @@ export class AgentsService implements OnModuleInit {
         this.logger.error(`Mount cleanup for ${result.resourceId} failed: ${errorMessage}`);
         await this.createSystemAlert(
           `Nettoyage du montage ${result.resourceId} incomplet sur le nœud : ${errorMessage}. Vérifie manuellement /etc/fstab et le point de montage (les données distantes n'ont pas été touchées).`,
+          'high',
+          callingWorkspaceId,
         );
       } else {
         this.logger.log(`Mount cleanup for ${result.resourceId}: ${result.message ?? 'ok'}`);
@@ -1826,7 +1847,8 @@ export class AgentsService implements OnModuleInit {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(`Failed to reconcile overlay for VLAN ${vlanId}:`, error);
-      await this.createSystemAlert(`Overlay reconcile failed for VLAN ${vlanId}: ${message}`, 'medium');
+      const vlan = await this.prisma.vlan.findUnique({ where: { id: vlanId }, select: { workspaceId: true } }).catch(() => null);
+      await this.createSystemAlert(`Overlay reconcile failed for VLAN ${vlanId}: ${message}`, 'medium', vlan?.workspaceId);
     }
   }
 

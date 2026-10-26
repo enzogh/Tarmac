@@ -3,7 +3,7 @@ import { Prisma, SyncJobStatus } from '@prisma/client';
 import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
-import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
+import { alertWorkspaceId } from '../alerts/alert-workspace';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { UpdateSyncJobDto } from './dto/update-sync-job.dto';
@@ -55,7 +55,7 @@ export class SyncJobsService {
 
     await this.prisma.alert.create({
       data: {
-        workspaceId: DEFAULT_WORKSPACE_ID,
+        workspaceId: await alertWorkspaceId(this.prisma, params.nodeId),
         nodeId: params.nodeId ?? null,
         severity: 'high',
         message,

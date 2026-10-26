@@ -425,7 +425,7 @@ export class VlanService implements OnModuleInit {
     this.connectionAlertCooldownAt.set(cooldownKey, Date.now());
 
     const [source, target] = await Promise.all([
-      this.prisma.node.findUnique({ where: { id: sourceNodeId }, select: { name: true, vlanIp: true, mutedUntil: true } }),
+      this.prisma.node.findUnique({ where: { id: sourceNodeId }, select: { name: true, workspaceId: true, vlanIp: true, mutedUntil: true } }),
       this.prisma.node.findUnique({ where: { id: targetNodeId }, select: { name: true, vlanIp: true, mutedUntil: true } }),
     ]);
 
@@ -439,7 +439,7 @@ export class VlanService implements OnModuleInit {
 
     await this.prisma.alert.create({
       data: {
-        workspaceId: DEFAULT_WORKSPACE_ID,
+        workspaceId: source?.workspaceId ?? DEFAULT_WORKSPACE_ID,
         nodeId: sourceNodeId,
         severity: 'high',
         message: `Lien VLAN hors ligne : ${sourceLabel} ↔ ${targetLabel}`,

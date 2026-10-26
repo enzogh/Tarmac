@@ -1,14 +1,18 @@
 import { AlertSeverity } from '@prisma/client';
 import type { RenderedMail } from '../mail.service';
 import {
-  button,
+  actions,
+  detailRow,
   escapeHtml,
-  eyebrow,
   formatDateTime,
   formatDay,
   formatTime,
+  kpiStrip,
+  note,
+  panel,
   pill,
   renderLayout,
+  sectionTitle,
   tokens,
   tones,
   type Tone,
@@ -81,55 +85,74 @@ function plural(count: number, one: string, many: string) {
   return `${count} ${count > 1 ? many : one}`;
 }
 
-function summaryStrip(counts: Record<AlertSeverity, number>): string {
-  const cells = ORDER.map((severity, index) => {
-    const count = counts[severity];
-    const meta = SEVERITIES[severity];
-    const color = count > 0 ? tones[meta.tone].color : tokens.faint;
-    const divider = index > 0 ? `border-left:1px solid ${tokens.border};` : '';
-    return `<td width="25%" align="left" valign="top" style="${divider}padding:14px 16px;">
-      <div style="font-size:24px;line-height:28px;font-weight:600;color:${color};font-variant-numeric:tabular-nums;">${count}</div>
-      <div style="padding-top:2px;font-size:11px;line-height:16px;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;color:${tokens.muted};">${meta.label}</div>
-    </td>`;
-  }).join('');
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${tokens.surface2}" style="background-color:${tokens.surface2};border:1px solid ${tokens.border};border-radius:10px;margin:0 0 24px;"><tr>${cells}</tr></table>`;
+// "Lien VLAN hors ligne : A ↔ B" -> a short title over its specifics, as
+// the Alertes page shows it (splitMessage in alerts/page.tsx).
+function splitMessage(message: string): { title: string; detail: string | null } {
+  const index = message.indexOf(' : ');
+  if (index > 0 && index <= 48) return { title: message.slice(0, index), detail: message.slice(index + 3) };
+  return { title: message, detail: null };
 }
 
+function nodeChip(nodeName: string | null): string {
+  if (!nodeName) return `<span style="font-size:12px;color:${tokens.muted};">Plateforme</span>`;
+  return `<span style="display:inline-block;padding:1px 8px;border-radius:6px;background-color:${tokens.surface3};border:1px solid ${tokens.border};font-family:${tokens.fontMono};font-size:12px;line-height:18px;color:${tokens.foreground};white-space:nowrap;">${escapeHtml(nodeName)}</span>`;
+}
+
+function repeatChip(count: number): string {
+  return count > 1
+    ? `&nbsp;&nbsp;<span style="display:inline-block;padding:1px 7px;border-radius:999px;background-color:${tokens.surface3};border:1px solid ${tokens.border};font-size:11px;line-height:16px;font-weight:600;color:${tokens.muted};">&times;${count}</span>`
+    : '';
+}
+
+// One alert of a digest: a bar in its severity's colour down the left edge,
+// severity + node + time on top, the message (title / specifics) below.
 function alertRow(row: Row, first: boolean): string {
   const meta = SEVERITIES[row.severity];
   const border = first ? '' : `border-top:1px solid ${tokens.border};`;
-  const node = row.nodeName
-    ? `<span style="font-family:${tokens.fontMono};font-size:12px;color:${tokens.foreground};">${escapeHtml(row.nodeName)}</span>`
-    : `<span style="color:${tokens.muted};">Plateforme</span>`;
-  const repeat =
-    row.count > 1
-      ? `&nbsp;&nbsp;<span style="display:inline-block;padding:1px 7px;border-radius:999px;background-color:${tokens.surface3};border:1px solid ${tokens.border};font-size:11px;line-height:16px;font-weight:600;color:${tokens.muted};">&times;${row.count}</span>`
-      : '';
-  return `<tr><td style="${border}padding:16px 18px;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      <td valign="top">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-          <td valign="middle" style="font-size:12px;line-height:18px;">${pill(meta.label, meta.tone, row.severity === 'critical')}&nbsp;&nbsp;${node}${repeat}</td>
-          <td valign="middle" align="right" style="font-size:12px;line-height:18px;color:${tokens.muted};font-variant-numeric:tabular-nums;white-space:nowrap;">${formatTime(row.latest)}</td>
-        </tr></table>
-        <p style="margin:8px 0 0;font-size:14px;line-height:21px;color:${tokens.foreground};word-break:break-word;">${escapeHtml(row.message)}</p>
-      </td>
-    </tr></table>
-  </td></tr>`;
+  const { title, detail } = splitMessage(row.message);
+  return `<tr>
+    <td width="3" style="${border}width:3px;padding:0;background-color:${tones[meta.tone].color};font-size:0;line-height:0;">&nbsp;</td>
+    <td style="${border}padding:16px 20px 17px 17px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+        <td valign="middle" style="font-size:12px;line-height:20px;">${pill(meta.label, meta.tone, row.severity === 'critical')}&nbsp;&nbsp;${nodeChip(row.nodeName)}${repeatChip(row.count)}</td>
+        <td valign="middle" align="right" style="font-size:12px;line-height:20px;color:${tokens.muted};font-variant-numeric:tabular-nums;white-space:nowrap;">${formatTime(row.latest)}</td>
+      </tr></table>
+      <p style="margin:9px 0 0;font-size:14px;line-height:21px;font-weight:600;color:${tokens.foreground};word-break:break-word;">${escapeHtml(title)}</p>
+      ${detail ? `<p style="margin:2px 0 0;font-size:13px;line-height:20px;color:${tokens.muted};word-break:break-word;">${escapeHtml(detail)}</p>` : ''}
+    </td>
+  </tr>`;
+}
+
+// A lone alert gets the whole card: the hero already carries its title, so
+// the card answers what an on-call person asks next - what exactly, where,
+// how bad, since when.
+function singleAlert(row: Row, workspaceName: string): string {
+  const meta = SEVERITIES[row.severity];
+  const { detail } = splitMessage(row.message);
+  const rows = [
+    detail ? detailRow('Détail', escapeHtml(detail), true) : '',
+    detailRow('Sévérité', pill(meta.label, meta.tone, row.severity === 'critical'), !detail),
+    detailRow('Nœud', row.nodeName ? nodeChip(row.nodeName) : `<span style="color:${tokens.muted};">Plateforme (aucun nœud précis)</span>`, false),
+    detailRow('Déclenchée', `${escapeHtml(formatDateTime(row.latest))}${row.count > 1 ? `<span style="color:${tokens.muted};"> &middot; ${row.count} fois</span>` : ''}`, false),
+    detailRow('Workspace', escapeHtml(workspaceName), false),
+  ];
+  return panel(rows.join(''));
 }
 
 export function renderAlertDigest(input: AlertDigestInput): RenderedMail {
   const { workspaceName, workspaceSlug, recipient, frontendUrl, alerts } = input;
   const rows = collapse(alerts);
   const counts = { critical: 0, high: 0, medium: 0, low: 0 } as Record<AlertSeverity, number>;
-  for (const alert of alerts) counts[alert.severity] += 1;
+  for (const row of rows) counts[row.severity] += 1;
 
   const worst = ORDER.find((severity) => counts[severity] > 0) ?? 'low';
   const worstMeta = SEVERITIES[worst];
   const times = alerts.map((alert) => alert.triggeredAt.getTime());
   const first = new Date(Math.min(...times));
   const last = new Date(Math.max(...times));
-  const single = alerts.length === 1;
+  // Repeats of one alert are still one problem: the email says "an alert",
+  // with its count, not "3 new alerts".
+  const single = rows.length === 1;
 
   const alertsUrl = `${frontendUrl}/${encodeURIComponent(workspaceSlug)}/dashboard/alerts`;
   const settingsUrl = `${frontendUrl}/${encodeURIComponent(workspaceSlug)}/dashboard/settings`;
@@ -138,53 +161,66 @@ export function renderAlertDigest(input: AlertDigestInput): RenderedMail {
     .map((severity) => plural(counts[severity], SEVERITIES[severity].label.toLowerCase(), SEVERITIES[severity].plural))
     .join(', ');
 
-  const title = single ? `Nouvelle alerte ${worstMeta.label.toLowerCase()}` : `${alerts.length} nouvelles alertes`;
+  const singleTitle = single ? splitMessage(rows[0].message).title : '';
+  const title = single ? singleTitle : `${rows.length} nouvelles alertes`;
   const subject = single
-    ? `[Tarmac] ${worstMeta.label} · ${alerts[0].message.slice(0, 90)}${alerts[0].message.length > 90 ? '…' : ''}`
-    : `[Tarmac] ${alerts.length} alertes sur ${workspaceName} · ${breakdown}`;
+    ? `[Tarmac] ${worstMeta.label} · ${rows[0].message.slice(0, 90)}${rows[0].message.length > 90 ? '…' : ''}`
+    : `[Tarmac] ${rows.length} alertes sur ${workspaceName} · ${breakdown}`;
   const when =
     single || last.getTime() - first.getTime() < 60_000
       ? `Le ${formatDateTime(last)}`
       : `Entre ${formatTime(first)} et ${formatTime(last)}, le ${formatDay(last)}`;
-  const lede = single
-    ? `${when}, sur le workspace «&nbsp;${escapeHtml(workspaceName)}&nbsp;».`
-    : `${when}, sur le workspace «&nbsp;${escapeHtml(workspaceName)}&nbsp;». Elles sont arrivées ensemble et sont regroupées ici en un seul message.`;
+  const intro = single
+    ? `${when}${rows[0].nodeName ? ` sur <strong style="color:${tokens.foreground};font-weight:600;">${escapeHtml(rows[0].nodeName)}</strong>` : ''}, dans le workspace «&nbsp;${escapeHtml(workspaceName)}&nbsp;». Voici ce qui s'est passé.`
+    : `${when}, dans le workspace «&nbsp;${escapeHtml(workspaceName)}&nbsp;». Elles sont arrivées ensemble : les voici réunies dans un seul message, les plus graves en premier.`;
 
   const shown = rows.slice(0, MAX_ROWS);
-  const hiddenRows = rows.slice(MAX_ROWS);
-  const hidden = hiddenRows.reduce((sum, row) => sum + row.count, 0);
+  const hidden = rows.length - shown.length;
 
-  const body = `
-    ${eyebrow(single ? 'Alerte' : 'Alertes groupées', worstMeta.tone)}
-    <h1 class="h1" style="margin:0 0 10px;font-size:26px;line-height:32px;font-weight:600;letter-spacing:-0.02em;color:${tokens.foreground};">${escapeHtml(title)}</h1>
-    <p style="margin:0 0 26px;font-size:14px;line-height:22px;color:${tokens.muted};">${lede}</p>
-    ${single ? '' : summaryStrip(counts)}
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${tokens.surface2}" style="background-color:${tokens.surface2};border:1px solid ${tokens.border};border-radius:10px;">
+  const body = single
+    ? `${singleAlert(rows[0], workspaceName)}
+    ${note('Prenez-la en compte depuis la page Alertes pour que vos collègues sachent que quelqu’un s’en occupe. Elle se résout d’elle-même quand le problème disparaît.')}
+    ${actions({ label: "Voir l'alerte", href: alertsUrl })}`
+    : `${kpiStrip(
+        ORDER.map((severity) => ({
+          value: String(counts[severity]),
+          label: SEVERITIES[severity].label,
+          tone: counts[severity] > 0 ? SEVERITIES[severity].tone : ('muted' as const),
+        })),
+        0,
+      )}
+    ${sectionTitle('Détail', escapeHtml(breakdown))}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${tokens.surface2}" style="background-color:${tokens.surface2};border:1px solid ${tokens.border};border-radius:12px;border-collapse:separate;overflow:hidden;">
       ${shown.map((row, index) => alertRow(row, index === 0)).join('')}
       ${
         hidden > 0
-          ? `<tr><td style="border-top:1px solid ${tokens.border};padding:14px 18px;font-size:13px;line-height:20px;color:${tokens.muted};">… et ${plural(hidden, 'autre alerte', 'autres alertes')}, à retrouver dans Tarmac.</td></tr>`
+          ? `<tr><td colspan="2" style="border-top:1px solid ${tokens.border};padding:14px 20px;font-size:13px;line-height:20px;color:${tokens.muted};">… et ${plural(hidden, 'autre alerte', 'autres alertes')}, à retrouver dans Tarmac.</td></tr>`
           : ''
       }
     </table>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;"><tr>
-      <td class="stack" valign="middle">${button(single ? "Voir l'alerte" : 'Ouvrir les alertes', alertsUrl)}</td>
-      <td class="stack hide-sm" valign="middle" align="right" style="font-size:12px;line-height:18px;color:${tokens.faint};">Prenez-les en compte ou résolvez-les<br>depuis la page Alertes.</td>
-    </tr></table>`;
+    ${actions({ label: 'Ouvrir les alertes', href: alertsUrl })}`;
 
-  const footer = `Envoyé à <span style="color:${tokens.muted};">${escapeHtml(recipient)}</span> parce que vous suivez les alertes de «&nbsp;${escapeHtml(workspaceName)}&nbsp;». Les alertes qui arrivent à quelques secondes d'intervalle sont réunies dans un seul email.<br><a href="${escapeHtml(settingsUrl)}" style="color:${tokens.muted};text-decoration:underline;">Gérer mes notifications</a>`;
+  const footer = `Envoyé à <span style="color:${tokens.muted};">${escapeHtml(recipient)}</span> parce que vous suivez les alertes de «&nbsp;${escapeHtml(workspaceName)}&nbsp;». Les alertes simultanées sont réunies dans un seul email, et une alerte qui se répète n'est pas renvoyée tant qu'elle n'est pas résolue.`;
 
   const html = renderLayout({
     title,
-    preheader: single ? alerts[0].message : `${breakdown} — ${rows[0]?.message ?? ''}`,
+    preheader: single ? rows[0].message : `${breakdown} — ${rows[0]?.message ?? ''}`,
     context: workspaceName,
-    accent: worstMeta.tone,
+    hero: {
+      icon: '&#9888;',
+      tone: worstMeta.tone,
+      eyebrow: single ? `Alerte ${worstMeta.label.toLowerCase()}` : 'Alertes groupées',
+      title,
+      lede: intro,
+    },
     body,
     footer,
+    links: [{ label: 'Gérer mes notifications', href: settingsUrl }],
+    frontendUrl,
   });
 
   const text = [
-    `${title} — ${workspaceName}`,
+    `${single ? `Alerte ${worstMeta.label.toLowerCase()}` : title} — ${workspaceName}`,
     `${when}.`,
     single ? '' : `Résumé : ${breakdown}.`,
     '',

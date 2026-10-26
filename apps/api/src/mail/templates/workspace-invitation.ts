@@ -1,13 +1,11 @@
 import type { RenderedMail } from '../mail.service';
 import {
-  button,
+  actions,
   detailRow,
   escapeHtml,
   eyebrow,
   formatDay,
   greeting,
-  heading,
-  iconTile,
   lede,
   note,
   panel,
@@ -70,14 +68,10 @@ export function renderWorkspaceInvitation(input: WorkspaceInvitationInput): Rend
       ]);
 
   const body = `
-    ${iconTile(invited ? '&#9993;' : '&#10003;', invited ? 'primary' : 'ok')}
-    ${eyebrow(invited ? 'Invitation' : 'Nouvel accès', invited ? 'primary' : 'ok')}
-    ${heading(title)}
-    ${lede(intro)}
     ${panel(rows)}
     ${sectionTitle('Pour commencer')}
     ${nextSteps}
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;"><tr><td>${button(invited ? 'Rejoindre le workspace' : `Ouvrir ${workspaceName}`, actionUrl)}</td></tr></table>
+    ${actions({ label: invited ? 'Rejoindre le workspace' : `Ouvrir ${workspaceName}`, href: actionUrl })}
     ${
       invited
         ? note("La connexion est refusée ? Votre compte doit faire partie du groupe d'accès Tarmac : demandez-le à la personne qui vous a invité ou à votre administrateur.", 'warn')
@@ -92,9 +86,16 @@ export function renderWorkspaceInvitation(input: WorkspaceInvitationInput): Rend
     title,
     preheader: invited ? `Votre rôle : ${roleLabel}. Connectez-vous avec ${recipient} pour rejoindre le workspace.` : `Votre rôle : ${roleLabel}.`,
     context: workspaceName,
-    accent: invited ? 'primary' : 'ok',
+    hero: {
+      icon: invited ? '&#9993;' : '&#10003;',
+      tone: invited ? 'primary' : 'ok',
+      eyebrow: invited ? 'Invitation' : 'Nouvel accès',
+      title,
+      lede: intro,
+    },
     body,
     footer,
+    frontendUrl,
   });
 
   const text = textLines([

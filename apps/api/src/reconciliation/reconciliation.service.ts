@@ -67,7 +67,7 @@ export class ReconciliationService implements OnModuleInit {
 
     for (const mount of pendingMounts) {
       if (!mount.nodeId || !this.agentsService.isConnected(mount.nodeId)) {
-        await this.reportStuckMount(mount.id, mount.name, mount.nodeId);
+        await this.reportStuckMount(mount.id, mount.name, mount.nodeId, mount.workspaceId);
         continue;
       }
       this.stuckMountAlertAt.delete(mount.id);
@@ -217,7 +217,7 @@ export class ReconciliationService implements OnModuleInit {
     }
   }
 
-  private async reportStuckMount(mountId: string, mountName: string, nodeId: string | null) {
+  private async reportStuckMount(mountId: string, mountName: string, nodeId: string | null, workspaceId: string) {
     const lastAlertAt = this.stuckMountAlertAt.get(mountId) ?? 0;
     if (Date.now() - lastAlertAt < STUCK_MOUNT_ALERT_COOLDOWN_MS) return;
     this.stuckMountAlertAt.set(mountId, Date.now());
@@ -229,7 +229,7 @@ export class ReconciliationService implements OnModuleInit {
     this.logger.warn(message);
     await this.prisma.alert.create({
       data: {
-        workspaceId: DEFAULT_WORKSPACE_ID,
+        workspaceId,
         nodeId: nodeId ?? null,
         severity: 'medium',
         message,

@@ -9,6 +9,9 @@ import { Card } from '@/components/ui/card';
 
 // How long a finished update stays listed, so the result is seen.
 const KEEP_FINISHED_MS = 30 * 60 * 1000;
+// "Masquer" survives a reload or coming back to the page: updates finished
+// before this instant stay hidden.
+const DISMISSED_STORAGE_KEY = 'tarmac.agentUpdates.dismissedAt';
 
 const STEPS: { status: AgentUpdateStatus; label: string; icon: typeof Hammer }[] = [
   { status: 'sent', label: 'Téléchargement et compilation', icon: Hammer },
@@ -34,6 +37,23 @@ function elapsed(from: string | null, to: string | null, now: number) {
 export function AgentUpdatesPanel({ nodes, onRetry }: { nodes: NodeActivityItem[]; onRetry: (node: NodeActivityItem) => void }) {
   const [now, setNow] = useState(() => Date.now());
   const [dismissedAt, setDismissedAt] = useState(0);
+  useEffect(() => {
+    try {
+      const stored = Number(localStorage.getItem(DISMISSED_STORAGE_KEY));
+      if (Number.isFinite(stored) && stored > 0) setDismissedAt(stored);
+    } catch {
+      // Storage unavailable (private window): dismissal lasts for this visit only.
+    }
+  }, []);
+  const dismiss = () => {
+    const at = Date.now();
+    setDismissedAt(at);
+    try {
+      localStorage.setItem(DISMISSED_STORAGE_KEY, String(at));
+    } catch {
+      // Same as above.
+    }
+  };
 
   const tracked = nodes
     .filter((node) => {
@@ -70,7 +90,7 @@ export function AgentUpdatesPanel({ nodes, onRetry }: { nodes: NodeActivityItem[
           </p>
         </div>
         {running === 0 && (
-          <Button variant="ghost" size="sm" className="h-8 gap-1.5" onClick={() => setDismissedAt(Date.now())}>
+          <Button variant="ghost" size="sm" className="h-8 gap-1.5" onClick={dismiss}>
             <X className="h-3.5 w-3.5" />
             Masquer
           </Button>

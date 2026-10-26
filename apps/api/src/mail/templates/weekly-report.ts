@@ -1,12 +1,11 @@
 import { AlertSeverity } from '@prisma/client';
 import type { RenderedMail } from '../mail.service';
 import {
-  button,
+  actions,
   escapeHtml,
   eyebrow,
   formatDay,
   greeting,
-  heading,
   kpiStrip,
   lede,
   meter,
@@ -16,8 +15,8 @@ import {
   sectionTitle,
   textLines,
   tokens,
-  tones,
   type Tone,
+  tones,
 } from './layout';
 
 export interface WeeklyReportInput {
@@ -224,24 +223,29 @@ export function renderWeeklyReport(input: WeeklyReportInput): RenderedMail {
         )}`;
 
   const body = `
-    ${eyebrow(`Rapport hebdomadaire · ${period}`, points.length === 0 ? 'ok' : 'warn')}
-    ${heading(title)}
-    ${lede(`${greeting(recipientName)} voici le résumé de la semaine écoulée. ${escapeHtml(verdict)}`, 22)}
     ${kpis}
     ${attention}
     ${nodesSection}
     ${alertsSection}
     ${storageSection}
     ${backupsSection}
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:30px;"><tr><td>${button('Ouvrir le tableau de bord', dashboardUrl)}</td></tr></table>`;
+    ${actions({ label: 'Ouvrir le tableau de bord', href: dashboardUrl }, { label: 'Voir les alertes', href: `${dashboardUrl}/alerts` }, 34)}`;
 
   const html = renderLayout({
     title,
     preheader: `${fleetAvailability === null ? '' : `Disponibilité ${percent(fleetAvailability)} · `}${plural(alerts.total, 'alerte', 'alertes')} · ${verdict}`,
     context: workspaceName,
-    accent: points.length === 0 ? 'ok' : 'warn',
+    hero: {
+      icon: points.length === 0 ? '&#10003;' : '&#9650;',
+      tone: points.length === 0 ? 'ok' : 'warn',
+      eyebrow: `Rapport hebdomadaire · ${period}`,
+      title,
+      lede: `${greeting(recipientName)} voici le résumé de la semaine écoulée. ${escapeHtml(verdict)}`,
+    },
     body,
-    footer: `Envoyé chaque lundi à <span style="color:${tokens.muted};">${escapeHtml(recipient)}</span>, propriétaire de «&nbsp;${escapeHtml(workspaceName)}&nbsp;».<br><a href="${escapeHtml(settingsUrl)}" style="color:${tokens.muted};text-decoration:underline;">Ne plus recevoir ce rapport</a>`,
+    footer: `Envoyé chaque lundi à <span style="color:${tokens.muted};">${escapeHtml(recipient)}</span>, propriétaire de «&nbsp;${escapeHtml(workspaceName)}&nbsp;».`,
+    links: [{ label: 'Ne plus recevoir ce rapport', href: settingsUrl }],
+    frontendUrl,
   });
 
   const text = textLines([

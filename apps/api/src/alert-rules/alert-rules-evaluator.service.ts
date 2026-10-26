@@ -2,7 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Comparator } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 
 const SUPPORTED_METRICS = ['cpu', 'ram', 'disk'] as const;
 type SupportedMetric = (typeof SUPPORTED_METRICS)[number];
@@ -50,7 +49,7 @@ export class AlertRulesEvaluatorService {
     if (rules.length === 0) return;
 
     const [nodes, latestSamples, openAlerts] = await Promise.all([
-      this.prisma.node.findMany({ select: { id: true, name: true, mutedUntil: true } }),
+      this.prisma.node.findMany({ select: { id: true, workspaceId: true, name: true, mutedUntil: true } }),
       this.prisma.metricSample.findMany({
         where: { createdAt: { gte: new Date(Date.now() - 10 * 60_000) } },
         orderBy: [{ nodeId: 'asc' }, { createdAt: 'desc' }],
@@ -68,15 +67,17 @@ export class AlertRulesEvaluatorService {
     // Collect breaches/recoveries while scanning, then flush with a single createMany +
     // updateMany — a mass outage or mass-recovery (many nodes crossing a threshold at once)
     // would otherwise mean one sequential DB round trip per (rule, node) pair in this tick.
-    const toCreate: { ruleId: string; nodeId: string; severity: typeof rules[number]['severity']; message: string }[] = [];
+    const toCreate: { workspaceId: string; ruleId: string; nodeId: string; severity: typeof rules[number]['severity']; message: string }[] = [];
     const toResolveIds: string[] = [];
 
     for (const rule of rules) {
       if (!isSupportedMetric(rule.metric)) continue;
 
-      const targetNodes = rule.nodeId
-        ? nodes.filter((node) => node.id === rule.nodeId)
-        : nodes;
+      // A rule only ever watches its own workspace's nodes - without this a
+      // workspace-wide rule fired on every node of the platform.
+      const targetNodes = nodes.filter(
+        (node) => node.workspaceId === rule.workspaceId && (!rule.nodeId || node.id === rule.nodeId),
+      );
 
       for (const node of targetNodes) {
         if (node.mutedUntil && node.mutedUntil.getTime() > now) continue;
@@ -90,6 +91,7 @@ export class AlertRulesEvaluatorService {
 
         if (isBreached && !openAlert) {
           toCreate.push({
+            workspaceId: rule.workspaceId,
             ruleId: rule.id,
             nodeId: node.id,
             severity: rule.severity,
@@ -104,7 +106,7 @@ export class AlertRulesEvaluatorService {
     await Promise.all([
       toCreate.length > 0
         ? this.prisma.alert.createMany({
-            data: toCreate.map((alert) => ({ ...alert, workspaceId: DEFAULT_WORKSPACE_ID })),
+            data: toCreate,
           })
         : Promise.resolve(),
       toResolveIds.length > 0

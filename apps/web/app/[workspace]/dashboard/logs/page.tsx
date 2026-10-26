@@ -21,6 +21,7 @@ import {
   Server,
   ShieldCheck,
   Terminal,
+  Trash2,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -49,6 +50,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../../components
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '../../../../components/ui/dropdown-menu';
 import { ListSkeleton } from '../../../../components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../../../../components/ui/dialog';
+import { Alert, AlertDescription } from '../../../../components/ui/alert';
+import { useWorkspace } from '../../../../lib/workspace-context';
 
 const ANY = '__any__';
 
@@ -213,7 +217,7 @@ function AuditDetails({ entry, refs }: { entry: AuditLogItem; refs: Record<strin
   );
 }
 
-function AuditRow({ entry, refs, slug }: { entry: AuditLogItem; refs: Record<string, string>; slug: string }) {
+function AuditRow({ entry, refs, slug, onDelete }: { entry: AuditLogItem; refs: Record<string, string>; slug: string; onDelete?: () => void }) {
   const [open, setOpen] = useState(false);
   const category = CATEGORY_STYLE[auditCategory(entry.resourceType)];
   const { verb, needsResource } = auditVerb(entry.action, entry.resourceType);
@@ -261,7 +265,159 @@ function AuditRow({ entry, refs, slug }: { entry: AuditLogItem; refs: Record<str
         Détails
         <ChevronDown className={cn('h-3 w-3 transition-transform', open && 'rotate-180')} />
       </button>
+      {onDelete && (
+        <button
+          type="button"
+          onClick={onDelete}
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-[hsl(var(--danger))]/10 hover:text-[hsl(var(--danger))] focus-visible:opacity-100 group-hover:opacity-100"
+          aria-label="Supprimer cette entrée du journal"
+          title="Supprimer cette entrée"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      )}
     </li>
+  );
+}
+
+type PurgeRequest = {
+  title: string;
+  description: string;
+  // What exactly goes, line by line ("Période : 7 derniers jours"...).
+  scope: Array<{ label: string; value: string }>;
+  confirmLabel: string;
+  // Extra choice inside the dialog (the agents tab picks a time range).
+  options?: { label: string; value: string }[];
+  run: (option?: string) => Promise<number>;
+};
+
+/**
+ * Deleting journal entries is reserved to platform admins and can't be
+ * undone, so it always goes through this dialog: what will be deleted, in
+ * which workspace, and a plain warning - never a one-click delete.
+ */
+function PurgeDialog({ request, onClose }: { request: PurgeRequest | null; onClose: () => void }) {
+  const { currentWorkspace } = useWorkspace();
+  const [option, setOption] = useState<string | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<number | null>(null);
+
+  useEffect(() => {
+    setOption(request?.options?.[0]?.value);
+    setBusy(false);
+    setError(null);
+    setDone(null);
+  }, [request]);
+
+  const confirm = async () => {
+    if (!request) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setDone(await request.run(option));
+    } catch {
+      setError('La suppression a échoué. Réessayez dans un instant ; si cela persiste, vérifiez que vous êtes toujours administrateur de la plateforme.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={request !== null} onOpenChange={(open) => !open && !busy && onClose()}>
+      <DialogContent className="max-w-md">
+        {request && done === null && (
+          <>
+            <DialogHeader>
+              <span className="mb-1 flex h-10 w-10 items-center justify-center rounded-xl bg-[hsl(var(--danger))]/10 text-[hsl(var(--danger))]">
+                <Trash2 className="h-5 w-5" />
+              </span>
+              <DialogTitle>{request.title}</DialogTitle>
+              <DialogDescription>{request.description}</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+            {request.options && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-foreground">Période à supprimer</p>
+                <Tabs value={option} onValueChange={setOption}>
+                  <TabsList variant="segmented" className="flex w-full">
+                    {request.options.map((item) => (
+                      <TabsTrigger key={item.value} value={item.value} className="flex-1">
+                        {item.label}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </Tabs>
+              </div>
+            )}
+            <dl className="divide-y divide-border rounded-lg border border-border bg-surface-2 text-xs">
+              {[{ label: 'Workspace', value: currentWorkspace?.name ?? '—' }, ...request.scope].map((row) => (
+                <div key={row.label} className="flex items-start justify-between gap-4 px-3 py-2">
+                  <dt className="shrink-0 text-muted-foreground">{row.label}</dt>
+                  <dd className="text-right font-medium text-foreground">{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="rounded-lg border border-[hsl(var(--danger))]/25 bg-[hsl(var(--danger))]/5 px-3 py-2 text-xs leading-relaxed text-foreground/90">
+              Action définitive : les entrées supprimées ne pourront pas être récupérées. Pensez à les exporter avant si vous pourriez en avoir besoin.
+            </p>
+            {error && (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>
+                Annuler
+              </Button>
+              <Button type="button" variant="destructive" onClick={() => void confirm()} disabled={busy} className="gap-1.5">
+                {busy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                {busy ? 'Suppression…' : request.confirmLabel}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+        {request && done !== null && (
+          <>
+            <DialogHeader>
+              <span className="mb-1 flex h-10 w-10 items-center justify-center rounded-xl bg-[hsl(var(--ok))]/10 text-[hsl(var(--ok))]">
+                <ShieldCheck className="h-5 w-5" />
+              </span>
+              <DialogTitle>{done === 0 ? 'Rien à supprimer' : `${done.toLocaleString('fr-FR')} entrée${done > 1 ? 's' : ''} supprimée${done > 1 ? 's' : ''}`}</DialogTitle>
+              <DialogDescription>
+                {done === 0 ? 'Aucune entrée ne correspondait à cette sélection : le journal est inchangé.' : 'Le journal a été mis à jour.'}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button type="button" onClick={onClose}>
+                Fermer
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Toolbar entry point, only rendered for platform admins.
+function PurgeButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="secondary"
+          size="icon"
+          onClick={onClick}
+          aria-label="Supprimer des entrées du journal"
+          className="shrink-0 text-[hsl(var(--danger))] hover:bg-[hsl(var(--danger))]/10 hover:text-[hsl(var(--danger))]"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>Supprimer des entrées · réservé aux administrateurs de la plateforme</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -298,6 +454,9 @@ function ActionsTab() {
   const [actor, setActor] = useState(ANY);
   const [resourceType, setResourceType] = useState(ANY);
   const [period, setPeriod] = useState<Period>('7d');
+  const { isPlatformAdmin } = useWorkspace();
+  const [purge, setPurge] = useState<PurgeRequest | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQuery(query.trim()), 300);
@@ -331,7 +490,7 @@ function ActionsTab() {
     return () => {
       cancelled = true;
     };
-  }, [filters]);
+  }, [filters, reloadKey]);
 
   useLiveSocket((message) => {
     if (message.type !== 'audit.new') return;
@@ -387,6 +546,41 @@ function ActionsTab() {
   }, [items]);
 
   const filtersActive = query.trim() !== '' || actor !== ANY || resourceType !== ANY;
+
+  const askDeleteEntry = (entry: AuditLogItem) =>
+    setPurge({
+      title: 'Supprimer cette entrée ?',
+      description: 'Elle disparaîtra du journal de ce workspace. Sa suppression, elle, y restera tracée.',
+      scope: [
+        { label: 'Date', value: new Date(entry.createdAt).toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short' }) },
+        { label: 'Action', value: `${entry.actor?.name ?? 'Système'} ${auditVerb(entry.action, entry.resourceType).verb}` },
+      ],
+      confirmLabel: 'Supprimer l’entrée',
+      run: async () => {
+        const { deleted } = await api.auditLogs.remove({ ids: [entry.id] });
+        setItems((prev) => prev.filter((item) => item.id !== entry.id));
+        return deleted;
+      },
+    });
+
+  const askDeleteFiltered = () =>
+    setPurge({
+      title: filtersActive ? 'Supprimer les actions filtrées ?' : 'Supprimer les actions de la période ?',
+      description: 'Toutes les actions correspondant à la sélection ci-dessous seront retirées du journal, y compris celles pas encore chargées à l’écran. La suppression, elle, y restera tracée.',
+      scope: [
+        { label: 'Période', value: PERIODS[period].label },
+        { label: 'Personne', value: actor === ANY ? 'Toutes' : (facets?.actors.find((item) => item.id === actor)?.name ?? '—') },
+        { label: 'Éléments', value: resourceType === ANY ? 'Tous' : (RESOURCE_FILTER_LABEL[resourceType] ?? resourceType) },
+        ...(filters.q ? [{ label: 'Recherche', value: `« ${filters.q} »` }] : []),
+        { label: 'Entrées', value: cursor ? `${items.length} affichées, et plus` : `${items.length}` },
+      ],
+      confirmLabel: 'Supprimer définitivement',
+      run: async () => {
+        const { deleted } = await api.auditLogs.remove({ from: filters.from, actorUserId: filters.actorUserId, resourceType: filters.resourceType, q: filters.q });
+        setReloadKey((key) => key + 1);
+        return deleted;
+      },
+    });
 
   return (
     <Card className="overflow-hidden">
@@ -449,7 +643,9 @@ function ActionsTab() {
           </Button>
         )}
         <ExportMenu onExport={openExport} hint={`Toutes les actions · ${PERIODS[period].label.toLowerCase()}`} />
+        {isPlatformAdmin && items.length > 0 && <PurgeButton onClick={askDeleteFiltered} />}
       </div>
+      <PurgeDialog request={purge} onClose={() => setPurge(null)} />
 
       {loading ? (
         <div className="p-4 lg:p-5">
@@ -476,7 +672,7 @@ function ActionsTab() {
               </h3>
               <ul className="divide-y divide-border/60">
                 {day.entries.map((entry) => (
-                  <AuditRow key={entry.id} entry={entry} refs={refs} slug={slug} />
+                  <AuditRow key={entry.id} entry={entry} refs={refs} slug={slug} onDelete={isPlatformAdmin ? () => askDeleteEntry(entry) : undefined} />
                 ))}
               </ul>
             </section>
@@ -547,6 +743,9 @@ function AgentsTab() {
   const [levelFilter, setLevelFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [jump, setJump] = useState(LIVE);
+  const { isPlatformAdmin } = useWorkspace();
+  const [purge, setPurge] = useState<PurgeRequest | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [lines, setLines] = useState<AgentLogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -588,7 +787,7 @@ function AgentsTab() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodeFilter, levelFilter, jump]);
+  }, [nodeFilter, levelFilter, jump, reloadKey]);
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -683,6 +882,32 @@ function AgentsTab() {
     );
   };
 
+  const LEVEL_FILTER_LABEL: Record<string, string> = { all: 'Tous', error: 'Erreurs', warning: 'Avertissements', info: 'Infos' };
+  const askPurge = () =>
+    setPurge({
+      title: 'Supprimer des logs d’agents ?',
+      description: 'Les lignes correspondant aux filtres actuels seront supprimées pour la période choisie.',
+      scope: [
+        { label: 'Nœud', value: nodeFilter === 'all' ? 'Tous les nœuds' : nodeName(nodeFilter) },
+        { label: 'Niveau', value: LEVEL_FILTER_LABEL[levelFilter] ?? levelFilter },
+      ],
+      options: [
+        { label: '1 h', value: '1' },
+        { label: '24 h', value: '24' },
+        { label: '7 jours', value: String(24 * 7) },
+        { label: 'Tout', value: 'all' },
+      ],
+      confirmLabel: 'Supprimer définitivement',
+      run: async (option) => {
+        const { deleted } = await api.agentLogs.remove({
+          ...baseQuery(),
+          from: option && option !== 'all' ? new Date(Date.now() - Number(option) * 3600e3).toISOString() : undefined,
+        });
+        setReloadKey((key) => key + 1);
+        return deleted;
+      },
+    });
+
   const needle = search.trim().toLowerCase();
   const shown = needle ? lines.filter((line) => line.message.toLowerCase().includes(needle)) : lines;
   const oldest = lines[0]?.createdAt;
@@ -749,7 +974,9 @@ function AgentsTab() {
             <DropdownMenuItem onClick={() => openExport('json', 24)}>Dernières 24 h</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        {isPlatformAdmin && <PurgeButton onClick={askPurge} />}
       </div>
+      <PurgeDialog request={purge} onClose={() => setPurge(null)} />
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface-2/40 px-4 py-2 text-2xs lg:px-5">
         {loading ? (

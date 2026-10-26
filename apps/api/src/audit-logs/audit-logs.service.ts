@@ -47,27 +47,7 @@ export class AuditLogsService {
   ) {
     const limit = Math.min(Math.max(params.limit ?? 200, 1), 500);
     const items = await this.prisma.auditLog.findMany({
-      where: {
-        AND: [
-          params.before ? { createdAt: { lt: params.before } } : {},
-          params.from ? { createdAt: { gte: params.from } } : {},
-          params.actorUserId ? { actorUserId: params.actorUserId } : {},
-          params.action ? { action: params.action } : {},
-          params.resourceType ? { resourceType: params.resourceType } : {},
-          params.q
-            ? {
-                OR: [
-                  { action: { contains: params.q, mode: 'insensitive' as const } },
-                  { resourceType: { contains: params.q, mode: 'insensitive' as const } },
-                  { resourceId: { contains: params.q, mode: 'insensitive' as const } },
-                  // Searching "enzo" finds what Enzo did.
-                  { actorUserId: { in: await this.userIdsMatching(params.q) } },
-                ],
-              }
-            : {},
-          { workspaceId: scope.workspaceId },
-        ],
-      },
+      where: await this.filterWhere(params, scope),
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
@@ -80,6 +60,64 @@ export class AuditLogsService {
       refs: Object.fromEntries(refs),
       nextCursor: items.length === limit ? items[items.length - 1].createdAt.toISOString() : null,
     };
+  }
+
+  private async filterWhere(
+    params: { before?: Date; from?: Date; actorUserId?: string; action?: string; resourceType?: string; q?: string },
+    scope: WorkspaceScope,
+  ): Promise<Prisma.AuditLogWhereInput> {
+    return {
+      AND: [
+        params.before ? { createdAt: { lt: params.before } } : {},
+        params.from ? { createdAt: { gte: params.from } } : {},
+        params.actorUserId ? { actorUserId: params.actorUserId } : {},
+        params.action ? { action: params.action } : {},
+        params.resourceType ? { resourceType: params.resourceType } : {},
+        params.q
+          ? {
+              OR: [
+                { action: { contains: params.q, mode: 'insensitive' as const } },
+                { resourceType: { contains: params.q, mode: 'insensitive' as const } },
+                { resourceId: { contains: params.q, mode: 'insensitive' as const } },
+                // Searching "enzo" finds what Enzo did.
+                { actorUserId: { in: await this.userIdsMatching(params.q) } },
+              ],
+            }
+          : {},
+        { workspaceId: scope.workspaceId },
+      ],
+    };
+  }
+
+  /**
+   * Platform admins (superusers) only - see AuditLogsController.remove. The
+   * journal is the record of who did what, so its own purge is recorded
+   * right after: the trace of the deletion is the one entry that survives it.
+   */
+  async remove(
+    params: { ids?: string[]; from?: Date; actorUserId?: string; resourceType?: string; q?: string },
+    scope: WorkspaceScope,
+    actorUserId?: string,
+  ) {
+    const where: Prisma.AuditLogWhereInput = params.ids
+      ? { id: { in: params.ids }, workspaceId: scope.workspaceId }
+      : // A sweep by period or filters keeps earlier purge traces: only an
+        // explicit, one-by-one delete can remove those.
+        { AND: [await this.filterWhere(params, scope), { action: { not: 'audit_log.delete' } }] };
+    const { count } = await this.prisma.auditLog.deleteMany({ where });
+    if (count > 0) {
+      await this.log({
+        workspaceId: scope.workspaceId as string,
+        actorUserId,
+        action: 'audit_log.delete',
+        resourceType: 'audit_log',
+        details: {
+          count,
+          ...(params.ids ? {} : { since: params.from?.toISOString() ?? null, actorUserId: params.actorUserId ?? null, resourceType: params.resourceType ?? null, q: params.q ?? null }),
+        },
+      });
+    }
+    return { deleted: count };
   }
 
   // Values for the journal's filter menus, from what this workspace's

@@ -1,13 +1,11 @@
 import type { RenderedMail } from '../mail.service';
 import {
-  button,
+  actions,
   detailRow,
   escapeHtml,
   eyebrow,
   formatDateTime,
   greeting,
-  heading,
-  iconTile,
   lede,
   note,
   panel,
@@ -69,26 +67,23 @@ export function renderNotificationAddress(input: NotificationAddressInput): Rend
       : `Pour changer d'adresse ou couper ces emails, ouvrez <strong style="color:${tokens.foreground};">Paramètres → Notifications</strong> dans n'importe quel workspace.`;
 
   const body = `
-    ${iconTile('&#10003;', 'ok')}
-    ${eyebrow(kind === 'test' ? 'Test de notification' : 'Notifications activées', 'ok')}
-    ${heading(title)}
-    ${lede(escapeHtml(intro))}
     ${panel(rows)}
     ${note(tip)}
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;"><tr><td>${button('Ouvrir Tarmac', settingsUrl)}</td></tr></table>`;
+    ${actions({ label: 'Gérer mes notifications', href: settingsUrl })}`;
 
   const footer =
     source === 'channel'
       ? `Envoyé à <span style="color:${tokens.muted};">${escapeHtml(recipient)}</span>, configurée comme canal de notification${workspaceName ? ` de «&nbsp;${escapeHtml(workspaceName)}&nbsp;»` : ''}.`
-      : `Envoyé à <span style="color:${tokens.muted};">${escapeHtml(recipient)}</span>. L'adresse est relue à chaque connexion : une adresse @${escapeHtml(internalDomain)} sur votre compte passe toujours en priorité.<br><a href="${escapeHtml(settingsUrl)}" style="color:${tokens.muted};text-decoration:underline;">Gérer mes notifications</a>`;
+      : `Envoyé à <span style="color:${tokens.muted};">${escapeHtml(recipient)}</span>. L'adresse est relue à chaque connexion : une adresse @${escapeHtml(internalDomain)} sur votre compte passe toujours en priorité.`;
 
   const html = renderLayout({
     title,
     preheader: kind === 'test' ? "L'envoi d'emails de Tarmac fonctionne." : `Les alertes Tarmac arriveront sur ${recipient}.`,
     context: workspaceName ?? undefined,
-    accent: 'ok',
+    hero: { icon: '&#10003;', tone: 'ok', eyebrow: kind === 'test' ? 'Test de notification' : 'Notifications activées', title, lede: escapeHtml(intro) },
     body,
     footer,
+    frontendUrl,
   });
 
   const text = textLines([

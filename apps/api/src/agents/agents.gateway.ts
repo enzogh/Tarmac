@@ -27,14 +27,15 @@ export class AgentsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     client.data.nodeId = nodeId;
-    this.agentsService.register(nodeId, (event, payload) => client.emit(event, payload));
+    client.data.send = (event: string, payload: unknown) => client.emit(event, payload);
+    this.agentsService.register(nodeId, client.data.send);
     void this.agentTokenService.resendPendingRotationIfNeeded(nodeId);
   }
 
   handleDisconnect(client: Socket) {
     const nodeId = client.data.nodeId as string | undefined;
     if (nodeId) {
-      this.agentsService.unregister(nodeId);
+      this.agentsService.unregister(nodeId, client.data.send);
     }
   }
 

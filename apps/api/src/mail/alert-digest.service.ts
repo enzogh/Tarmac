@@ -94,8 +94,24 @@ export class AlertDigestService {
   ) {
     const ids = alerts.map((alert) => alert.id);
     // Something that already resolved itself while the burst settled isn't
-    // worth an email.
-    const toSend = alerts.filter((alert) => alert.status !== 'resolved');
+    // worth an email, and neither is a repeat of a problem already mailed
+    // and still unresolved: a persistent condition re-raises its alert on
+    // every check (the Alertes page groups those occurrences), which used to
+    // send the same alert over and over.
+    const alreadyMailed = await this.prisma.alert.findMany({
+      where: {
+        workspaceId,
+        id: { notIn: ids },
+        status: { not: 'resolved' },
+        emailNotifiedAt: { not: null },
+        message: { in: [...new Set(alerts.map((alert) => alert.message))] },
+      },
+      select: { nodeId: true, message: true },
+    });
+    const ongoing = new Set(alreadyMailed.map((alert) => `${alert.nodeId ?? ''}\u0000${alert.message}`));
+    const toSend = alerts.filter(
+      (alert) => alert.status !== 'resolved' && !ongoing.has(`${alert.nodeId ?? ''}\u0000${alert.message}`),
+    );
 
     const recipients = toSend.length > 0 ? await this.recipientsFor(workspaceId) : [];
     if (toSend.length === 0 || recipients.length === 0) {

@@ -1,9 +1,10 @@
-import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
-import type { Response } from 'express';
+import { Body, Controller, ForbiddenException, Get, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import { ApiKeyOrJwtGuard, ApiKeyResource } from '../auth/api-key.guard';
 import { toCsv } from '../common/csv';
 import { AuditLogsService } from './audit-logs.service';
+import { DeleteAuditLogsDto } from './dto/delete-audit-logs.dto';
 
 @UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
 @ApiKeyResource('logs')
@@ -33,6 +34,24 @@ export class AuditLogsController {
         q,
       },
       scope,
+    );
+  }
+
+  // Superusers only, in whichever workspace they are looking at: workspace
+  // owners and API keys can read and export the journal, never rewrite it.
+  @Post('delete')
+  remove(@Body() dto: DeleteAuditLogsDto, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: Request & { user?: { userId?: string } }) {
+    if (!scope.isPlatformAdmin) throw new ForbiddenException('Seul un administrateur de la plateforme peut supprimer des entrées du journal.');
+    return this.auditLogsService.remove(
+      {
+        ids: dto.ids,
+        from: dto.from ? new Date(dto.from) : undefined,
+        actorUserId: dto.actorUserId,
+        resourceType: dto.resourceType,
+        q: dto.q?.trim() || undefined,
+      },
+      scope,
+      req.user?.userId,
     );
   }
 

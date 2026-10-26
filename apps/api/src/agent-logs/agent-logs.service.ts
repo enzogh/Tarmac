@@ -77,6 +77,22 @@ export class AgentLogsService {
     });
   }
 
+  // Platform admins (superusers) only - see AgentLogsController.remove.
+  async remove(params: { nodeId?: string; level?: string; from?: Date }, scope: WorkspaceScope) {
+    const scopedNodeIds = await this.scopedNodeIds(scope);
+    if (params.nodeId && !scopedNodeIds.includes(params.nodeId)) return { deleted: 0 };
+    const { count } = await this.prisma.agentLog.deleteMany({
+      where: {
+        AND: [
+          { nodeId: params.nodeId ? params.nodeId : { in: scopedNodeIds } },
+          params.level ? { level: params.level } : {},
+          params.from ? { createdAt: { gte: params.from } } : {},
+        ],
+      },
+    });
+    return { deleted: count };
+  }
+
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async pruneOldLogs() {
     const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);

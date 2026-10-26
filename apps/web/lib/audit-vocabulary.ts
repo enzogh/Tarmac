@@ -7,6 +7,7 @@ export type AuditCategory = 'node' | 'network' | 'vpn' | 'dns' | 'storage' | 'tr
 
 export const RESOURCE_LABEL: Record<string, string> = {
   node: 'nœud',
+  audit_log: 'journal',
   vpn_profile: 'profil VPN',
   api_key: 'clé API',
   alert: 'alerte',
@@ -30,6 +31,7 @@ export const RESOURCE_LABEL: Record<string, string> = {
 // Plural / filter-menu form.
 export const RESOURCE_FILTER_LABEL: Record<string, string> = {
   node: 'Nœuds',
+  audit_log: 'Journal',
   vpn_profile: 'Profils VPN',
   api_key: 'Clés API',
   alert: 'Alertes',
@@ -52,6 +54,7 @@ export const RESOURCE_FILTER_LABEL: Record<string, string> = {
 
 const CATEGORY_BY_RESOURCE: Record<string, AuditCategory> = {
   node: 'node',
+  audit_log: 'access',
   vpn_profile: 'vpn',
   api_key: 'access',
   alert: 'alert',
@@ -99,6 +102,7 @@ const ACTION_VERB: Record<string, string> = {
   'alert.resolve': 'a résolu une alerte',
   'alert.delete': 'a supprimé une alerte',
   'alert.bulk_delete': 'a supprimé des alertes',
+  'audit_log.delete': 'a supprimé des entrées du journal',
   'alert_rule.create': 'a créé la règle d’alerte',
   'alert_rule.update': 'a modifié la règle d’alerte',
   'alert_rule.delete': 'a supprimé la règle d’alerte',
@@ -161,6 +165,7 @@ const ACTION_VERB: Record<string, string> = {
 
 // Actions whose sentence is complete on its own, without a resource name.
 const SELF_CONTAINED = new Set([
+  'audit_log.delete',
   'node.rotate_agent_token_all',
   'alert.create',
   'alert.ack',
@@ -196,6 +201,10 @@ export const DETAIL_LABEL: Record<string, string> = {
   scopes: 'Permissions',
   ids: 'Éléments',
   count: 'Nombre',
+  since: 'Depuis',
+  actorUserId: 'Personne',
+  resourceType: 'Élément',
+  q: 'Recherche',
   clientIp: 'Adresse client',
   entryNodeId: 'Point d’entrée',
   exitNodeId: 'Sortie internet',

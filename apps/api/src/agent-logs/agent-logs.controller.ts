@@ -1,9 +1,10 @@
-import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Post, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import { ApiKeyOrJwtGuard, ApiKeyResource } from '../auth/api-key.guard';
 import { toCsv } from '../common/csv';
 import { AgentLogsService } from './agent-logs.service';
+import { DeleteAgentLogsDto } from './dto/delete-agent-logs.dto';
 
 @UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
 @ApiKeyResource('logs')
@@ -30,6 +31,13 @@ export class AgentLogsController {
       },
       scope,
     );
+  }
+
+  // Superusers only - same rule as the actions journal.
+  @Post('delete')
+  remove(@Body() dto: DeleteAgentLogsDto, @CurrentWorkspace() scope: WorkspaceScope) {
+    if (!scope.isPlatformAdmin) throw new ForbiddenException('Seul un administrateur de la plateforme peut supprimer des logs d’agents.');
+    return this.agentLogsService.remove({ nodeId: dto.nodeId, level: dto.level, from: dto.from ? new Date(dto.from) : undefined }, scope);
   }
 
   @Get('export')

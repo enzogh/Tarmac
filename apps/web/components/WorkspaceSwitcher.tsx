@@ -61,7 +61,9 @@ export function WorkspaceSwitcher() {
   return (
     <div className="mt-2">
       <Select value={currentWorkspaceId ?? undefined} onValueChange={switchWorkspace}>
-        <SelectTrigger className="h-auto w-full gap-2.5 rounded-md border-border bg-surface-2 px-2 py-1.5 hover:bg-surface-3 [&>span]:line-clamp-none">
+        {/* line-clamp-none (unclamped name) also sets display:block on every
+            direct span, which would undo the tile's flex centering. */}
+        <SelectTrigger className="h-auto w-full gap-2.5 rounded-md border-border bg-surface-2 px-2 py-1.5 hover:bg-surface-3 [&>span:first-child]:flex [&>span]:line-clamp-none">
           <WorkspaceTile name={activeName} />
           <span className="min-w-0 flex-1 text-left">
             <span className="block truncate text-xs font-medium text-foreground">{activeName}</span>

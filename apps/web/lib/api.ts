@@ -1294,6 +1294,9 @@ export const api = {
     facets: () => request<{ actions: string[]; resourceTypes: string[]; actors: AuditActor[] }>('/api/v1/audit-logs/facets'),
     exportUrl: (params: { from: string; to: string; format: 'csv' | 'json' }) =>
       `${API_BASE}/api/v1/audit-logs/export?${new URLSearchParams(params).toString()}`,
+    // Superusers only. Either `ids`, or everything matching the filters.
+    remove: (payload: { ids?: string[]; from?: string; actorUserId?: string; resourceType?: string; q?: string }) =>
+      request<{ deleted: number }>('/api/v1/audit-logs/delete', { method: 'POST', body: JSON.stringify(payload) }),
   },
 
   agentLogs: {
@@ -1311,6 +1314,9 @@ export const api = {
       if (params.nodeId) query.set('nodeId', params.nodeId);
       return `${API_BASE}/api/v1/agent-logs/export?${query.toString()}`;
     },
+    // Superusers only. No `from` = the whole retained history.
+    remove: (payload: { nodeId?: string; level?: string; from?: string }) =>
+      request<{ deleted: number }>('/api/v1/agent-logs/delete', { method: 'POST', body: JSON.stringify(payload) }),
   },
 
   vpn: {

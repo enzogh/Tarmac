@@ -4,7 +4,7 @@ import { IncomingMessage } from 'http';
 import { parse } from 'url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { PrismaService } from '../prisma/prisma.service';
-import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
+import { alertWorkspaceId } from '../alerts/alert-workspace';
 import { AgentTokenService } from './agent-token.service';
 import { AgentsService } from './agents.service';
 import {
@@ -62,13 +62,14 @@ export class AgentsWsServer implements OnModuleInit {
   }
 
   private attachClient(ws: WebSocket, nodeId: string) {
-    this.agentsService.register(nodeId, (_event, payload) => {
+    const send = (_event: string, payload: unknown) => {
       const message: AgentWsMessage = {
         type: 'command',
         payload,
       };
       ws.send(JSON.stringify(message));
-    });
+    };
+    this.agentsService.register(nodeId, send);
 
     void this.agentTokenService.resendPendingRotationIfNeeded(nodeId);
 
@@ -108,7 +109,7 @@ export class AgentsWsServer implements OnModuleInit {
         this.invalidPayloadAlertAt.set(cooldownKey, Date.now());
         await this.prisma.alert.create({
           data: {
-            workspaceId: DEFAULT_WORKSPACE_ID,
+            workspaceId: await alertWorkspaceId(this.prisma, nodeId),
             nodeId,
             severity: 'medium',
             message: `Invalid agent WS payload (${msgType}) for node ${nodeId}: ${message}`,
@@ -118,7 +119,7 @@ export class AgentsWsServer implements OnModuleInit {
     });
 
     ws.on('close', () => {
-      this.agentsService.unregister(nodeId);
+      this.agentsService.unregister(nodeId, send);
     });
   }
 }
