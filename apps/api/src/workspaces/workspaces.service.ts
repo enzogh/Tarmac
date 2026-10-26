@@ -5,6 +5,7 @@ import { slugify } from '../common/slugify';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceScope } from '../auth/workspace.guard';
 import { VlanService } from '../vlan/vlan.service';
+import { workspaceCreationQuota } from './workspace-quota';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 import { InviteMemberDto, MemberAccessDto } from './dto/member-access.dto';
@@ -88,7 +89,7 @@ export class WorkspacesService {
       const subnetIndex = await this.nextSubnetIndex();
       try {
         created = await this.prisma.workspace.create({
-          data: { name: dto.name, slug, subnetIndex },
+          data: { name: dto.name, slug, subnetIndex, createdById: actorUserId },
         });
         break;
       } catch (error) {
@@ -135,6 +136,20 @@ export class WorkspacesService {
     await this.vlanService.getOrCreateVlan(created.id);
 
     return created;
+  }
+
+  // Counts the workspaces this user created that still exist, so deleting
+  // one frees a slot.
+  async assertCreationQuota(userId?: string) {
+    const quota = userId ? await workspaceCreationQuota(this.prisma, userId) : null;
+    if (!quota) {
+      throw new ForbiddenException("Votre compte n'est pas autorisé à créer un workspace.");
+    }
+    if (quota.used >= quota.limit) {
+      throw new ForbiddenException(
+        `Vous avez atteint la limite de ${quota.limit} workspace${quota.limit > 1 ? 's' : ''} créé${quota.limit > 1 ? 's' : ''}. Supprimez-en un ou demandez à un administrateur.`,
+      );
+    }
   }
 
   private async nextSubnetIndex(): Promise<number> {
@@ -460,11 +475,9 @@ export class WorkspacesService {
       );
     }
 
-    await this.prisma.$transaction([
-      this.prisma.vlan.deleteMany({ where: { workspaceId } }),
-      this.prisma.workspace.delete({ where: { id: workspaceId } }),
-    ]);
-
+    // Logged first: AuditLog.workspaceId references the workspace, so an
+    // entry written after the delete fails its foreign key. The delete then
+    // sets it to null (onDelete: SetNull) and resourceId keeps the id.
     await this.auditLogsService.log({
       workspaceId,
       actorUserId,
@@ -473,6 +486,11 @@ export class WorkspacesService {
       resourceId: workspaceId,
       details: { name: workspace.name, slug: workspace.slug },
     });
+
+    await this.prisma.$transaction([
+      this.prisma.vlan.deleteMany({ where: { workspaceId } }),
+      this.prisma.workspace.delete({ where: { id: workspaceId } }),
+    ]);
     return { success: true };
   }
 

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { AdminModule } from './admin/admin.module';
 import { AgentLogsModule } from './agent-logs/agent-logs.module';
 import { AgentsModule } from './agents/agents.module';
 import { AlertRulesModule } from './alert-rules/alert-rules.module';
@@ -42,6 +43,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     PrismaModule,
     MailModule,
     AuthModule,
+    AdminModule,
     LiveModule,
     NodesModule,
     SharesModule,

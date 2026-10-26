@@ -683,12 +683,37 @@ export type WorkspaceUserOption = {
   isSuperuser: boolean;
 };
 
+// One row of the platform-admin user list (/admin).
+export type AdminUser = {
+  id: string;
+  email: string;
+  name?: string | null;
+  avatarUrl?: string | null;
+  isSuperuser: boolean;
+  // In the Authentik access group at their last login.
+  canCreateWorkspaces: boolean;
+  // Per-user override; null follows the platform default.
+  workspaceLimit: number | null;
+  effectiveLimit: number;
+  createdCount: number;
+  membershipCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AdminUserList = { defaultLimit: number; users: AdminUser[] };
+
 export type AdminProfile = {
   id: string;
   email: string;
   name?: string | null;
   avatarUrl?: string | null;
   isSuperuser: boolean;
+  // Member of the Authentik access group: may sign in and create workspaces.
+  canCreateWorkspaces: boolean;
+  // Workspaces this user created vs. how many they may; null for platform
+  // admins (no limit) and users who can't create any.
+  workspaceQuota: { used: number; limit: number } | null;
   internalEmail?: string | null;
   alertEmailsEnabled: boolean;
   // Where alert emails actually go: the internal address found at the last
@@ -1203,6 +1228,12 @@ export const api = {
       request<ApiKeyItem>(`/api/v1/api-keys/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
     revoke: (id: string) => request<ApiKeyItem>(`/api/v1/api-keys/${id}/revoke`, { method: 'POST' }),
     remove: (id: string) => request<{ success: boolean }>(`/api/v1/api-keys/${id}`, { method: 'DELETE' }),
+  },
+
+  admin: {
+    listUsers: () => request<AdminUserList>('/api/v1/admin/users'),
+    updateUser: (id: string, payload: { workspaceLimit: number | null }) =>
+      request<{ success: boolean }>(`/api/v1/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   },
 
   workspaces: {

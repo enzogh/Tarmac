@@ -4,6 +4,7 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  SetMetadata,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -13,6 +14,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { declaredScope, type AuthenticatedApiKey } from './api-key.guard';
 
 const WORKSPACE_HEADER = 'x-workspace-id';
+const ALLOW_NO_WORKSPACE_METADATA = 'workspace:allowNoWorkspace';
+
+// For the few handlers a signed-in user with no membership yet must still
+// reach (listing their - empty - workspaces, creating their first one). They
+// get a scope with no selected workspace, so they must never read
+// workspace-scoped data.
+export const AllowNoWorkspace = () => SetMetadata(ALLOW_NO_WORKSPACE_METADATA, true);
 
 export interface WorkspaceScope {
   // Only controls WHICH workspaces this caller may select into (every
@@ -118,7 +126,15 @@ export class WorkspaceGuard implements CanActivate {
     });
     const allowedWorkspaceIds = memberships.map((m) => m.workspaceId);
     if (allowedWorkspaceIds.length === 0) {
-      throw new ForbiddenException('No workspace access');
+      const allowed = this.reflector.getAllAndOverride<boolean>(ALLOW_NO_WORKSPACE_METADATA, [
+        context.getHandler(),
+        context.getClass(),
+      ]);
+      if (!allowed || requestedWorkspaceId) {
+        throw new ForbiddenException('No workspace access');
+      }
+      request.workspaceScope = { isPlatformAdmin: false, allowedWorkspaceIds: [], isManager: false, permissions: [] };
+      return true;
     }
 
     if (requestedWorkspaceId && !allowedWorkspaceIds.includes(requestedWorkspaceId)) {

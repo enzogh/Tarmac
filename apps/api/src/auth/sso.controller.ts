@@ -114,15 +114,16 @@ export class SsoController {
         name: typeof claims.name === 'string' ? claims.name : null,
         avatarUrl: typeof claims.picture === 'string' ? claims.picture : null,
         isSuperuser: claims.is_superuser === true,
+        canCreateWorkspaces: groups.includes(this.accessGroup()),
       });
 
       await this.authService.syncWorkspaceMembershipsFromSso(user.id, groups);
 
-      // Preserves today's fail-closed behavior for genuinely unrecognized
-      // identities while opening the door to legitimate workspace members
-      // who aren't platform admins.
-      if (!user.isSuperuser && !(await this.authService.hasAnyWorkspaceMembership(user.id))) {
-        this.logger.warn(`SSO login refused for ${email}: no workspace matches groups [${groups.join(', ')}]`);
+      // The access group is what opens the application (platform admins
+      // aside); which workspaces the user then sees depends only on their
+      // memberships, and they may create a few of their own.
+      if (!user.isSuperuser && !user.canCreateWorkspaces) {
+        this.logger.warn(`SSO login refused for ${email}: not in access group "${this.accessGroup()}" (groups [${groups.join(', ')}])`);
         return res.redirect(this.loginRedirect({ sso: 'forbidden' }));
       }
 
@@ -213,6 +214,10 @@ export class SsoController {
       this.logger.error(`Failed to start Authentik SSO flow: ${error instanceof Error ? error.message : error}`);
       return res.redirect(this.loginRedirect({ sso: 'error', reason: 'discovery_failed' }));
     }
+  }
+
+  private accessGroup() {
+    return this.configService.get<string>('AUTHENTIK_ACCESS_GROUP', 'tarmac');
   }
 
   private loginRedirect(params: Record<string, string>) {

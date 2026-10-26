@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { ArrowRight, Layers, LogOut, Plus, Search, ShieldCheck, Users } from 'lucide-react';
-import { api, setCurrentWorkspaceId, WorkspaceListItem } from '../../lib/api';
+import { api, ApiError, setCurrentWorkspaceId, WorkspaceListItem } from '../../lib/api';
 import { BrandMark } from '../../components/BrandMark';
 import { usePolling } from '../../lib/hooks/usePolling';
 import { Button } from '../../components/ui/button';
@@ -40,10 +41,12 @@ function initials(name: string): string {
 
 export default function WorkspacesHomePage() {
   const router = useRouter();
-  const { data: profile } = usePolling('profile', api.profile.get, { intervalMs: 60000 });
+  const { data: profile, mutate: mutateProfile } = usePolling('profile', api.profile.get, { intervalMs: 60000 });
   const { data: workspaces, isLoading, mutate } = usePolling('workspaces', api.workspaces.list, { intervalMs: 15000 });
 
-  const isSuperuser = profile?.isSuperuser ?? false;
+  const quota = profile?.workspaceQuota ?? null;
+  const canCreate = (profile?.isSuperuser || profile?.canCreateWorkspaces) ?? false;
+  const quotaReached = !profile?.isSuperuser && quota !== null && quota.used >= quota.limit;
 
   const [query, setQuery] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
@@ -88,10 +91,20 @@ export default function WorkspacesHomePage() {
             <BrandMark />
             <span className="text-sm font-semibold tracking-tight text-foreground">Tarmac</span>
           </span>
-          <Button variant="ghost" size="sm" onClick={() => void handleLogout()} className="gap-2">
-            <LogOut className="h-4 w-4" />
-            Déconnexion
-          </Button>
+          <span className="flex items-center gap-1">
+            {profile?.isSuperuser && (
+              <Button variant="ghost" size="sm" asChild className="gap-2">
+                <Link href="/admin">
+                  <ShieldCheck className="h-4 w-4" />
+                  Administration
+                </Link>
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => void handleLogout()} className="gap-2">
+              <LogOut className="h-4 w-4" />
+              Déconnexion
+            </Button>
+          </span>
         </div>
       </header>
 
@@ -103,11 +116,20 @@ export default function WorkspacesHomePage() {
               Chaque workspace regroupe sa propre flotte de nœuds, ses partages et ses alertes.
             </p>
           </div>
-          {isSuperuser && (
-            <Button onClick={() => setCreateOpen(true)} className="gap-2">
-              <Plus className="h-4 w-4" />
-              Nouveau workspace
-            </Button>
+          {canCreate && (
+            <div className="flex flex-col items-end gap-1">
+              <Button onClick={() => setCreateOpen(true)} disabled={quotaReached} className="gap-2">
+                <Plus className="h-4 w-4" />
+                Nouveau workspace
+              </Button>
+              {!profile?.isSuperuser && quota && (
+                <span className="text-xs text-muted-foreground">
+                  {quotaReached
+                    ? `Limite atteinte : ${quota.limit} workspace${quota.limit > 1 ? 's' : ''} créé${quota.limit > 1 ? 's' : ''}`
+                    : `${quota.used} sur ${quota.limit} créé${quota.limit > 1 ? 's' : ''}`}
+                </span>
+              )}
+            </div>
           )}
         </div>
 
@@ -131,8 +153,16 @@ export default function WorkspacesHomePage() {
               <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
                 <Layers className="h-7 w-7 text-muted-foreground" />
                 <p className="max-w-sm text-sm text-muted-foreground">
-                  Aucun workspace accessible. Contacte un administrateur pour qu&apos;il t&apos;y ajoute.
+                  {canCreate
+                    ? 'Aucun workspace pour l’instant. Crée le tien, ou attends qu’on t’invite dans un workspace existant.'
+                    : 'Aucun workspace accessible. Contacte un administrateur pour qu’il t’y ajoute.'}
                 </p>
+                {canCreate && !quotaReached && (
+                  <Button onClick={() => setCreateOpen(true)} variant="outline" className="mt-1 gap-2">
+                    <Plus className="h-4 w-4" />
+                    Créer un workspace
+                  </Button>
+                )}
               </CardContent>
             </Card>
           )}
@@ -195,6 +225,7 @@ export default function WorkspacesHomePage() {
         onCreated={() => {
           setCreateOpen(false);
           void mutate();
+          void mutateProfile();
         }}
       />
     </div>
@@ -230,8 +261,12 @@ function CreateWorkspaceDialog({
     try {
       await api.workspaces.create({ name, slug: slug.trim() || undefined });
       onCreated();
-    } catch {
-      setError('Impossible de créer ce workspace. Le nom ou le slug est peut-être déjà utilisé (ou réservé).');
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.status === 403
+          ? err.message
+          : 'Impossible de créer ce workspace. Le nom ou le slug est peut-être déjà utilisé (ou réservé).',
+      );
     } finally {
       setLoading(false);
     }

@@ -1,7 +1,7 @@
 import { Body, Controller, ForbiddenException, Get, Param, Patch, Post, Delete, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
+import { AllowNoWorkspace, CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { InviteMemberDto, MemberAccessDto } from './dto/member-access.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
@@ -23,15 +23,18 @@ export class WorkspacesController {
   constructor(private readonly workspacesService: WorkspacesService) {}
 
   @Get()
+  @AllowNoWorkspace()
   list(@CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
     return this.workspacesService.list(scope, req.user?.userId);
   }
 
-  // Creating a workspace stays a platform-admin-only action; its owners then
-  // manage members and their roles themselves.
+  // Platform admins create freely; members of the Authentik access group
+  // (User.canCreateWorkspaces) up to WORKSPACE_CREATION_LIMIT. The creator
+  // becomes owner and then manages members and their roles.
   @Post()
-  create(@Body() dto: CreateWorkspaceDto, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
-    assertPlatformAdmin(scope);
+  @AllowNoWorkspace()
+  async create(@Body() dto: CreateWorkspaceDto, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    if (!scope.isPlatformAdmin) await this.workspacesService.assertCreationQuota(req.user?.userId);
     return this.workspacesService.create(dto, req.user?.userId);
   }
 

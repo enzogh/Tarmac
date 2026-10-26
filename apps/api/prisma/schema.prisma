@@ -173,6 +173,14 @@ model User {
   name                 String?
   avatarUrl            String?
   isSuperuser          Boolean               @default(false)
+  // Mirrors membership of the Authentik access group (AUTHENTIK_ACCESS_GROUP)
+  // at the last SSO login: required to sign in at all (platform admins
+  // aside), and lets the user create up to WORKSPACE_CREATION_LIMIT
+  // workspaces. Refreshed both ways on every login.
+  canCreateWorkspaces  Boolean               @default(false)
+  // Per-user override of WORKSPACE_CREATION_LIMIT, set by a platform admin
+  // from /admin. Null follows the default.
+  workspaceLimit       Int?
   ssoSubject           String?               @unique
   // Address on the internal mail domain (ALERT_EMAIL_INTERNAL_DOMAIN,
   // intraced.fr by default) found in the Authentik claims at the last SSO
@@ -206,6 +214,9 @@ model Workspace {
   // the Default workspace, which permanently keeps the legacy 10.255.0.0/16
   // range instead so existing node IPs never move.
   subnetIndex   Int?     @unique
+  // User who created it, counted against WORKSPACE_CREATION_LIMIT. Null for
+  // workspaces that predate the limit.
+  createdById   String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -240,6 +251,8 @@ model Workspace {
   auditLogs            AuditLog[]
   vpnProfiles          VpnProfile[]
   apiKeys              ApiKey[]
+
+  @@index([createdById])
 }
 
 model WorkspaceMembership {

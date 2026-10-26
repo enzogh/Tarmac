@@ -17,6 +17,7 @@ import { alertEmailAddress, alertEmailSource, internalMailDomain } from '../mail
 import { MailService } from '../mail/mail.service';
 import { renderNotificationAddress } from '../mail/templates/notification-address';
 import { PrismaService } from '../prisma/prisma.service';
+import { workspaceCreationQuota } from '../workspaces/workspace-quota';
 import { LoginDto } from './dto/login.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { getCandidateJwtSecrets } from './jwt-secrets';
@@ -95,6 +96,10 @@ export class AuthService implements OnModuleInit {
   // gets upgraded rather than duplicated), else creates a fresh SSO-only
   // user.
   //
+  // canCreateWorkspaces, unlike isSuperuser, follows the access group both
+  // ways: losing it only stops new workspace creation, never touches existing
+  // memberships.
+  //
   // isSuperuser mirrors the claim honestly - it must NEVER be hardcoded true
   // here. Before Phase 3, every caller of this method had already rejected
   // non-superuser claims upstream, so hardcoding true was a no-op; now that
@@ -117,6 +122,7 @@ export class AuthService implements OnModuleInit {
     name?: string | null;
     avatarUrl?: string | null;
     isSuperuser: boolean;
+    canCreateWorkspaces: boolean;
   }): Promise<{ user: User; alertAddressChanged: boolean }> {
     const email = claims.email.trim().toLowerCase();
     const internalEmail = claims.internalEmail?.trim().toLowerCase() || null;
@@ -135,6 +141,7 @@ export class AuthService implements OnModuleInit {
           name: claims.name ?? existingBySubject.name,
           avatarUrl: claims.avatarUrl ?? existingBySubject.avatarUrl,
           isSuperuser: existingBySubject.isSuperuser || claims.isSuperuser,
+          canCreateWorkspaces: claims.canCreateWorkspaces,
         },
       });
       return withChange(updated, existingBySubject);
@@ -150,6 +157,7 @@ export class AuthService implements OnModuleInit {
           name: claims.name ?? existingByEmail.name,
           avatarUrl: claims.avatarUrl ?? existingByEmail.avatarUrl,
           isSuperuser: existingByEmail.isSuperuser || claims.isSuperuser,
+          canCreateWorkspaces: claims.canCreateWorkspaces,
         },
       });
       return withChange(updated, existingByEmail);
@@ -163,6 +171,7 @@ export class AuthService implements OnModuleInit {
         name: claims.name,
         avatarUrl: claims.avatarUrl,
         isSuperuser: claims.isSuperuser,
+        canCreateWorkspaces: claims.canCreateWorkspaces,
       },
     });
     return withChange(created, null);
@@ -252,11 +261,6 @@ export class AuthService implements OnModuleInit {
     );
   }
 
-  async hasAnyWorkspaceMembership(userId: string): Promise<boolean> {
-    const count = await this.prisma.workspaceMembership.count({ where: { userId } });
-    return count > 0;
-  }
-
   async getProfile(userId?: string) {
     if (!userId) {
       throw new UnauthorizedException('Session invalide');
@@ -270,6 +274,7 @@ export class AuthService implements OnModuleInit {
         name: true,
         avatarUrl: true,
         isSuperuser: true,
+        canCreateWorkspaces: true,
         internalEmail: true,
         alertEmailsEnabled: true,
         createdAt: true,
@@ -295,7 +300,11 @@ export class AuthService implements OnModuleInit {
             orderBy: { createdAt: 'asc' },
           });
 
-    return { ...user, workspaces, alertEmail: this.alertEmailSettings(user) };
+    // Null for platform admins (no limit) and for users outside the access
+    // group (no creation at all, canCreateWorkspaces says which).
+    const workspaceQuota = user.isSuperuser ? null : await workspaceCreationQuota(this.prisma, user.id);
+
+    return { ...user, workspaces, workspaceQuota, alertEmail: this.alertEmailSettings(user) };
   }
 
   private alertEmailSettings(user: { email: string; internalEmail: string | null }) {

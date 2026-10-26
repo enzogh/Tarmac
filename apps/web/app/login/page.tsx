@@ -248,7 +248,8 @@ function LoginPageContent() {
                     <ShieldX className="h-6 w-6 text-rose-400" />
                   </div>
                   <p className="text-sm text-rose-300">
-                    Ce compte Authentik n&apos;a pas les droits administrateur nécessaires pour accéder à Tarmac.
+                    Ce compte Authentik n&apos;a pas accès à Tarmac : il doit faire partie du groupe d&apos;accès Tarmac.
+                    Demandez-le à un administrateur.
                   </p>
                   <a href={api.sso.loginUrl()} className="w-full">
                     <Button type="button" variant="outline" className="w-full">
