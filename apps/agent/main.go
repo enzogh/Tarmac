@@ -42,6 +42,7 @@ type heartbeat struct {
 	Overlay     *overlayState       `json:"overlay,omitempty"`
 	LinkMetrics []overlayLinkMetric `json:"linkMetrics,omitempty"`
 	VpnPeers    []vpnPeerStat       `json:"vpnPeers,omitempty"`
+	System      *systemInfo         `json:"system,omitempty"`
 }
 
 type overlayState struct {
@@ -4141,6 +4142,7 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 			disks := collectDisks()
 			metrics := c.collectMetrics(disks)
 			linkMetrics := c.collectOverlayLinkMetrics("tarmacwg0")
+			system := collectSystemInfo()
 			if err := client.send(envelope{
 				Type: "agent.heartbeat",
 				Payload: heartbeat{
@@ -4150,6 +4152,7 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 					Overlay:     overlay,
 					LinkMetrics: linkMetrics,
 					VpnPeers:    collectVpnPeerStats(),
+					System:      &system,
 				},
 			}); err != nil {
 				return err

@@ -28,8 +28,10 @@ import { NODE_STATUS, StatusPill, describe } from '@/components/ui/status';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SmartTrendChart } from '@/components/dashboard-charts';
 import { api, DnsNodeRecordRef, NodeActivityItem, SmartHistoryPoint } from '@/lib/api';
-import { formatCapacity, formatRelative, formatThroughput } from '@/lib/format';
+import { formatBytes, formatCapacity, formatRelative, formatThroughput } from '@/lib/format';
 import { flagFromCountryCode, GeoInfo } from '@/lib/geo';
+import { cpuModelShort, cpuShape, formatLoad, loadRatio, memoryUsage, swapLabel, uptimeLabel } from '@/lib/system-info';
+import { cn } from '@/lib/utils';
 import { slugifyHostname } from './NodeDialogs';
 import { externalIpOf, formatDateTime, InternalDnsBadge, InternalDnsState, isMuted, MiniMeter, nodeAttention, SMART_LABEL } from './node-ui';
 
@@ -49,6 +51,60 @@ function Field({ label, children, mono, copy }: { label: string; children: React
 
 function SectionTitle({ children }: { children: ReactNode }) {
   return <h3 className="mb-2 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">{children}</h3>;
+}
+
+function HardwareSection({ node }: { node: NodeActivityItem }) {
+  const info = node.systemInfo;
+  if (!info) {
+    return (
+      <section>
+        <SectionTitle>Matériel et système</SectionTitle>
+        <p className="rounded-lg border border-border bg-surface-2/40 px-3 py-2 text-xs text-muted-foreground">
+          Mettez à jour l’agent de ce nœud pour voir son processeur, sa mémoire totale et son système.
+        </p>
+      </section>
+    );
+  }
+  const ratio = loadRatio(info);
+  return (
+    <section>
+      <SectionTitle>Matériel et système</SectionTitle>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
+        <div className="col-span-2 min-w-0">
+          <dt className="text-2xs text-muted-foreground">Processeur</dt>
+          <dd className="truncate text-sm text-foreground" title={info.cpuModel}>
+            {cpuModelShort(info) ?? '—'}
+            {info.cpuMhz ? <span className="text-muted-foreground"> · {(info.cpuMhz / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} GHz</span> : null}
+          </dd>
+        </div>
+        <Field label="Cœurs">
+          {cpuShape(info) ?? '—'}
+          {info.cpuSockets && info.cpuSockets > 1 ? ` · ${info.cpuSockets} sockets` : ''}
+        </Field>
+        <Field label="Charge moyenne (1 / 5 / 15 min)">
+          {info.load?.length ? (
+            <span className={cn(ratio !== null && ratio >= 1 ? 'text-[hsl(var(--danger))]' : ratio !== null && ratio >= 0.7 ? 'text-[hsl(var(--warn))]' : undefined)}>
+              {info.load.map(formatLoad).join(' / ')}
+            </span>
+          ) : (
+            '—'
+          )}
+        </Field>
+        <Field label="Mémoire totale">
+          {info.memTotalBytes ? formatBytes(info.memTotalBytes) : '—'}
+          {info.memAvailableBytes ? <span className="text-muted-foreground"> · {formatBytes(info.memAvailableBytes)} disponibles</span> : null}
+        </Field>
+        <Field label="Swap utilisé">{swapLabel(info) ?? '—'}</Field>
+        <Field label="Système">{info.os ?? '—'}</Field>
+        <Field label="Noyau" mono>
+          {info.kernel ?? '—'}
+          {info.arch ? ` (${info.arch})` : ''}
+        </Field>
+        <Field label="Allumé depuis">{uptimeLabel(info) ?? '—'}</Field>
+        <Field label="Type de machine">{info.virtualization === 'vm' ? 'Machine virtuelle' : 'Serveur physique'}</Field>
+      </dl>
+    </section>
+  );
 }
 
 const chartData = (points: SmartHistoryPoint[]) =>
@@ -194,8 +250,12 @@ export function NodeDrawer({
                 <SectionTitle>Charge</SectionTitle>
                 <div className="grid gap-2 rounded-lg border border-border bg-surface-2/40 p-3">
                   {[
-                    { icon: Cpu, label: 'CPU', value: offline ? null : node.metrics.cpu },
-                    { icon: Gauge, label: 'RAM', value: offline ? null : node.metrics.ram },
+                    { icon: Cpu, label: cpuShape(node.systemInfo) ? `CPU · ${cpuShape(node.systemInfo)}` : 'CPU', value: offline ? null : node.metrics.cpu },
+                    {
+                      icon: Gauge,
+                      label: memoryUsage(node.systemInfo, node.metrics.ram) ? `RAM · ${memoryUsage(node.systemInfo, node.metrics.ram)!.label}` : 'RAM',
+                      value: offline ? null : node.metrics.ram,
+                    },
                     {
                       icon: HardDrive,
                       label: `Stockage · ${formatCapacity(node.storage.totalUsedGb)} / ${formatCapacity(node.storage.totalCapacityGb)}`,
@@ -225,6 +285,8 @@ export function NodeDrawer({
                   </div>
                 </div>
               </section>
+
+              <HardwareSection node={node} />
 
               <section>
                 <SectionTitle>Réseau</SectionTitle>
@@ -413,8 +475,10 @@ export function NodeDrawer({
                   </Callout>
                 ) : (
                   <p className="rounded-lg border border-border bg-surface-2/40 px-3 py-2 text-xs text-muted-foreground">
-                    {node.internalDnsForwarderStatus === 'active'
-                      ? 'Résolveur de repli actif : ce nœud résout *.tarmac.local.'
+                    {node.internalDnsForwarderStatus === 'unreachable'
+                      ? 'Ce nœud n’obtient aucune réponse du serveur DNS interne (port 5300 sur le réseau privé) : *.tarmac.local ne se résout pas ici. Vérifiez le pare-feu du nœud DNS.'
+                      : node.internalDnsForwarderStatus === 'active'
+                      ? 'Ce nœud résout *.tarmac.local : le serveur DNS interne répond.'
                       : node.internalDnsForwarderStatus === 'error'
                         ? 'Le résolveur de repli a échoué — voir le Journal.'
                         : internalDns?.internalDnsNodeId

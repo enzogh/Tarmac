@@ -302,6 +302,10 @@ model Node {
   // Free-form labels to sort a large fleet (site, client, usage), shared by
   // everyone in the workspace.
   labels                 String[]               @default([])
+  // Hardware and OS as last reported by the agent (CPU model/cores, total
+  // RAM and swap, load average, OS, kernel, uptime) - refreshed with every
+  // heartbeat, see systemInfo in the agent's system.go.
+  systemInfo             Json?
   // Custom label for <dnsHostname>.tarmac.local when this workspace has a
   // node designated to run the internal DNS zone (see Workspace.
   // internalDnsNode) - null means derive one from `name` instead.

@@ -30,7 +30,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { CardListSkeleton, StatCardSkeleton } from '@/components/ui/skeleton';
+import { BannerSkeleton, NodesTableSkeleton, StatCardSkeleton } from '@/components/ui/skeleton';
 import { Stat, StatRow } from '@/components/ui/stat';
 import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -116,6 +116,7 @@ export default function InfrastructurePage() {
                   agentVersionAt: update.agentVersionAt,
                   agentUpToDate: update.agentVersion && node.controlVersion ? update.agentVersion === node.controlVersion : null,
                   metrics: { ...update.metrics, sampledAt: update.lastSeenAt },
+                  systemInfo: update.system ?? node.systemInfo,
                 }
               : node,
           ) ?? current,
@@ -541,6 +542,7 @@ export default function InfrastructurePage() {
         </StatRow>
       )}
 
+      {!internalDns && nodesLoading && <BannerSkeleton />}
       <InternalDnsCard
         state={internalDns}
         nodes={nodes}
@@ -653,7 +655,9 @@ export default function InfrastructurePage() {
           )}
 
           {nodesLoading ? (
-            <CardListSkeleton cards={4} />
+            <Card className="overflow-hidden">
+              <NodesTableSkeleton />
+            </Card>
           ) : nodes.length === 0 ? (
             <Card className="py-12 text-center text-sm text-muted-foreground">Aucun nœud enregistré. Cliquez sur « Onboarder un nœud » pour commencer.</Card>
           ) : visible.length === 0 ? (

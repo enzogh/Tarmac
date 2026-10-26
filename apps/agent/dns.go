@@ -1733,6 +1733,37 @@ func checkInternalPdnsDnsPort(ctx context.Context, port int) error {
 	return nil
 }
 
+const internalDnsFirewallComment = "tarmac-internal-dns"
+
+// setInternalDnsFirewall opens (or closes) the internal DNS port on the
+// overlay interface only. Hosts running ufw or a default-DROP INPUT policy
+// otherwise drop every query the rest of the fleet sends here: the instance
+// answers locally, its API works, and *.tarmac.local still times out
+// everywhere else. The rule goes first in INPUT, ahead of ufw's chains, and
+// accepts nothing that doesn't arrive over the WireGuard mesh.
+func setInternalDnsFirewall(enabled bool, port int) error {
+	if !commandExists("iptables") || port <= 0 {
+		return nil
+	}
+	var firstErr error
+	for _, protocol := range []string{"udp", "tcp"} {
+		spec := []string{"-i", "tarmacwg0", "-p", protocol, "--dport", strconv.Itoa(port), "-j", "ACCEPT", "-m", "comment", "--comment", internalDnsFirewallComment}
+		exists := exec.Command("iptables", append([]string{"-C", "INPUT"}, spec...)...).Run() == nil
+		var out []byte
+		var err error
+		switch {
+		case enabled && !exists:
+			out, err = exec.Command("iptables", append([]string{"-I", "INPUT", "1"}, spec...)...).CombinedOutput()
+		case !enabled && exists:
+			out, err = exec.Command("iptables", append([]string{"-D", "INPUT"}, spec...)...).CombinedOutput()
+		}
+		if err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("internal DNS firewall rule (%s/%d): %s", protocol, port, strings.TrimSpace(string(out)))
+		}
+	}
+	return firstErr
+}
+
 // internalPdnsJournalTail returns the instance's last log lines, appended
 // to a start failure so the Journal says why instead of "see journalctl".
 func internalPdnsJournalTail(ctx context.Context) string {
@@ -1829,6 +1860,9 @@ func installInternalPdns(ctx context.Context, port, apiPort int) (string, int, e
 				return "", 0, fmt.Errorf("cannot start %s: %s%s", internalPdnsSystemdUnit, firstLine(string(out)), internalPdnsJournalTail(ctx))
 			}
 		}
+	}
+	if err := setInternalDnsFirewall(true, port); err != nil {
+		return "", 0, err
 	}
 	if err := os.MkdirAll(filepath.Dir(internalDnsMarkerPath), 0o755); err == nil {
 		_ = os.WriteFile(internalDnsMarkerPath, []byte("enabled\n"), 0o600)
@@ -1942,7 +1976,11 @@ func removeInternalDns(ctx context.Context) (string, error) {
 	}
 
 	if apiKey, err := os.ReadFile(internalPdnsApiKeyPath); err == nil {
-		client := &pdnsClient{apiKey: strings.TrimSpace(string(apiKey)), baseURL: "http://127.0.0.1:8090/api/v1/servers/localhost"}
+		apiPort := internalPdnsConfiguredPort("webserver-port")
+		if apiPort == 0 {
+			apiPort = 8090
+		}
+		client := &pdnsClient{apiKey: strings.TrimSpace(string(apiKey)), baseURL: fmt.Sprintf("http://127.0.0.1:%d/api/v1/servers/localhost", apiPort)}
 		if err := client.deleteZone(ctx, internalDnsZoneName); err != nil {
 			log.Printf("dns: internal DNS uninstall could not remove tarmac.local (continuing): %v", err)
 		}
@@ -1957,6 +1995,9 @@ func removeInternalDns(ctx context.Context) (string, error) {
 		}
 	}
 
+	if err := setInternalDnsFirewall(false, internalPdnsConfiguredPort("local-port")); err != nil {
+		log.Printf("dns: internal DNS uninstall: %v (continuing)", err)
+	}
 	_ = os.Remove(internalDnsMarkerPath)
 	return "internal DNS instance stopped and tarmac.local removed", nil
 }
@@ -2141,7 +2182,46 @@ type internalDnsRouteResultData struct {
 // pushRouteToFleet), which is what makes an already-deployed fleet pick up
 // the route automatically the moment its agent reconnects. Empty ip clears
 // the route (internal DNS turned off for this workspace).
+// probeInternalDns sends one real query (SOA tarmac.local) to the internal
+// DNS server over the mesh. A configured route says nothing about whether
+// the server answers: a firewall on the DNS node dropping the port left
+// every node reporting "active" while *.tarmac.local timed out everywhere.
+func probeInternalDns(ip string, port int) bool {
+	conn, err := net.DialTimeout("udp", net.JoinHostPort(ip, strconv.Itoa(port)), 2*time.Second)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	id := uint16(time.Now().UnixNano())
+	query := []byte{byte(id >> 8), byte(id), 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0}
+	for _, label := range strings.Split(strings.TrimSuffix(internalDnsZoneName, "."), ".") {
+		query = append(query, byte(len(label)))
+		query = append(query, label...)
+	}
+	query = append(query, 0, 0, 6, 0, 1) // QTYPE SOA, QCLASS IN
+	for attempt := 0; attempt < 2; attempt++ {
+		_ = conn.SetDeadline(time.Now().Add(1500 * time.Millisecond))
+		if _, err := conn.Write(query); err != nil {
+			return false
+		}
+		reply := make([]byte, 512)
+		n, err := conn.Read(reply)
+		if err == nil && n >= 12 && reply[0] == query[0] && reply[1] == query[1] {
+			return true
+		}
+	}
+	return false
+}
+
 func ensureInternalDnsSplitRoute(ctx context.Context, ip string, port int, records []internalDnsHostRecord) internalDnsRouteResultData {
+	result := applyInternalDnsSplitRoute(ctx, ip, port, records)
+	if result.Status == "active" && !probeInternalDns(ip, port) {
+		result.Status = "unreachable"
+	}
+	return result
+}
+
+func applyInternalDnsSplitRoute(ctx context.Context, ip string, port int, records []internalDnsHostRecord) internalDnsRouteResultData {
 	if ip == "" {
 		if commandExists("resolvectl") {
 			if out, err := exec.CommandContext(ctx, "resolvectl", "domain", "tarmacwg0", "").CombinedOutput(); err != nil {
@@ -2507,6 +2587,14 @@ func handleEnsureInternalDnsRouteCommand(ctx context.Context, cmd commandPayload
 		records = append(records, internalDnsHostRecord{Name: name, Content: content})
 	}
 	data := ensureInternalDnsSplitRoute(ctx, ip, port, records)
+	// This 30 s tick also reaches the node serving the zone: the firewall
+	// rule isn't persistent, so it is restored here after a reboot or an
+	// iptables reload instead of waiting for the next record change.
+	if _, err := os.Stat(internalDnsMarkerPath); err == nil {
+		if err := setInternalDnsFirewall(true, internalPdnsConfiguredPort("local-port")); err != nil {
+			log.Printf("dns: %v", err)
+		}
+	}
 	result.Data = data
 	if data.Status == "conflict" {
 		result.Success = false

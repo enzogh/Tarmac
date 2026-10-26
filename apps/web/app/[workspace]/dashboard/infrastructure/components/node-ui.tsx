@@ -47,6 +47,7 @@ export function nodeAttention(node: NodeActivityItem): string[] {
   if (smartIssue(node)) reasons.push('Disque SMART');
   if (node.storage.usageRatio >= 0.9) reasons.push('Stockage plein');
   if (node.internalDnsForwarderStatus === 'conflict') reasons.push('Conflit DNS');
+  if (node.internalDnsForwarderStatus === 'unreachable') reasons.push('DNS interne injoignable');
   return reasons;
 }
 

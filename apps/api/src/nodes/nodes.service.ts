@@ -31,6 +31,7 @@ type ActivityNode = {
   vlanIp: string | null;
   dnsHostname: string | null;
   labels: string[];
+  systemInfo: Prisma.JsonValue | null;
   internalDnsForwarderStatus: string | null;
   internalDnsForwarderConflict: unknown;
 };
@@ -368,6 +369,7 @@ export class NodesService implements OnModuleInit {
         vlanIp: node.vlanIp,
         dnsHostname: node.dnsHostname,
         labels: node.labels,
+        systemInfo: node.systemInfo,
         internalDnsForwarderStatus: node.internalDnsForwarderStatus,
         internalDnsForwarderConflict: node.internalDnsForwarderConflict,
         controlVersion,

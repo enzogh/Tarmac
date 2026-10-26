@@ -13,16 +13,18 @@ export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivEl
   );
 }
 
+// Same box as <Stat> (rounded-xl, p-4, label row, 1.75rem figure, hint) so
+// the row doesn't jump when the real tiles replace it.
 export function StatCardSkeleton() {
   return (
-    <div className="rounded-2xl border border-border bg-surface-1 p-6 shadow-panel backdrop-blur-xl">
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-3">
-          <Skeleton className="h-3.5 w-24" />
-          <Skeleton className="h-8 w-20" />
-          <Skeleton className="h-3 w-28" />
-        </div>
-        <Skeleton className="h-8 w-8 rounded-full" />
+    <div className="flex min-w-0 flex-col justify-between gap-3 rounded-xl border border-border bg-surface-1 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <Skeleton className="h-3 w-24" />
+        <Skeleton className="h-4 w-4 rounded" />
+      </div>
+      <div>
+        <Skeleton className="h-7 w-16" />
+        <Skeleton className="mt-1.5 h-3 w-28" />
       </div>
     </div>
   );
@@ -90,6 +92,46 @@ export function CardListSkeleton({ cards = 4 }: { cards?: number }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Rows shaped like the Nodes table: checkbox, name over address, status, meters. */
+export function NodesTableSkeleton({ rows = 6 }: { rows?: number }) {
+  return (
+    <div className="divide-y divide-border">
+      <div className="flex items-center gap-4 px-4 py-2.5">
+        <Skeleton className="h-3.5 w-3.5 rounded" />
+        <Skeleton className="h-3 w-20" />
+        <Skeleton className="ml-auto hidden h-3 w-48 md:block" />
+      </div>
+      {Array.from({ length: rows }).map((_, index) => (
+        <div key={index} className="flex items-center gap-4 px-4 py-3">
+          <Skeleton className="h-3.5 w-3.5 shrink-0 rounded" />
+          <div className="min-w-0 flex-1 space-y-1.5 sm:max-w-[16rem]">
+            <Skeleton className="h-3.5 w-3/4" />
+            <Skeleton className="h-3 w-1/2" />
+          </div>
+          <Skeleton className="hidden h-5 w-16 rounded-md sm:block" />
+          <Skeleton className="hidden h-1.5 w-20 rounded-full md:block" />
+          <Skeleton className="hidden h-1.5 w-20 rounded-full md:block" />
+          <Skeleton className="hidden h-1.5 w-20 rounded-full lg:block" />
+          <Skeleton className="ml-auto h-6 w-6 rounded-md" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** One-line status banner (internal DNS card and similar). */
+export function BannerSkeleton() {
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-border bg-surface-1 px-4 py-3">
+      <Skeleton className="h-8 w-8 shrink-0 rounded-lg" />
+      <div className="flex-1 space-y-1.5">
+        <Skeleton className="h-3.5 w-56" />
+        <Skeleton className="h-3 w-80 max-w-full" />
+      </div>
     </div>
   );
 }

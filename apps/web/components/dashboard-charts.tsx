@@ -74,7 +74,8 @@ export function FleetPerformanceChart({ data }: { data: FleetPerformancePoint[] 
           {/* minTickGap replaces a label every ~25px with one every ~70px:
               the 6h window produced some twenty overlapping timestamps. */}
           <XAxis dataKey="label" minTickGap={56} {...AXIS} />
-          <YAxis domain={[0, 100]} width={44} unit=" %" {...AXIS} />
+          {/* Fleet averages usually sit at a few percent: a fixed 0-100 axis drew them as a flat line. */}
+          <YAxis domain={[0, (max: number) => Math.min(100, Math.max(10, Math.ceil(max / 10) * 10))]} width={44} unit=" %" {...AXIS} />
           <ChartTooltip content={<ChartTooltipContent valueFormatter={(v) => `${Math.round(v)} %`} />} />
           <Area dataKey="cpu" type="monotone" stroke="var(--color-cpu)" fill="url(#fill-cpu)" strokeWidth={1.75} isAnimationActive={false} />
           <Area dataKey="ram" type="monotone" stroke="var(--color-ram)" fill="url(#fill-ram)" strokeWidth={1.75} isAnimationActive={false} />
@@ -145,7 +146,7 @@ function fillTone(percent: number) {
  * rest of the console already shows - and the proportion the donut encodes is
  * spelled out by the capacity next to it rather than duplicated as a figure.
  */
-export function StorageBreakdownChart({ data }: { data: StorageSlice[] }) {
+export function StorageBreakdownChart({ data, stacked }: { data: StorageSlice[]; stacked?: boolean }) {
   if (data.length === 0 || data.every((slice) => slice.value === 0)) {
     return <ChartEmptyState label="Aucune donnée de stockage pour le moment." className="h-48" />;
   }
@@ -157,7 +158,7 @@ export function StorageBreakdownChart({ data }: { data: StorageSlice[] }) {
   );
 
   return (
-    <div className="flex flex-col items-center gap-5 sm:flex-row">
+    <div className={cn('flex flex-col items-center gap-5', !stacked && 'sm:flex-row')}>
       <div className="relative h-44 w-44 shrink-0">
         <ChartContainer config={config} className="h-full w-full">
           <PieChart>
@@ -176,7 +177,7 @@ export function StorageBreakdownChart({ data }: { data: StorageSlice[] }) {
           <span className="text-2xs text-muted-foreground">occupés</span>
         </div>
       </div>
-      <ul className="min-w-0 flex-1 space-y-1">
+      <ul className={cn('min-w-0 flex-1 space-y-1', stacked && 'w-full')}>
         {ordered.map((slice, index) => (
           <li key={slice.name} className="flex items-center gap-3 text-xs">
             <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: seriesColor(index) }} />

@@ -452,7 +452,8 @@ export class AgentsService implements OnModuleInit {
   }
 
   async onHeartbeat(nodeId: string, payload: HeartbeatPayload) {
-    const { metrics, overlay, linkMetrics, vpnPeers, version } = payload;
+    const { metrics, overlay, linkMetrics, vpnPeers, version, system } = payload;
+    const systemInfo = sanitizeSystemInfo(system);
     const now = new Date();
     const versionFields = version ? { agentVersion: version, agentVersionAt: now } : {};
 
@@ -468,6 +469,7 @@ export class AgentsService implements OnModuleInit {
           overlaySshPublicKey: overlay?.sshPublicKey,
           overlaySshUser: overlay?.sshUser,
           ...versionFields,
+          ...(systemInfo ? { systemInfo } : {}),
         },
       })
       .catch(async () => {
@@ -561,6 +563,7 @@ export class AgentsService implements OnModuleInit {
           ioRead: metrics.ioRead ?? 0,
           ioWrite: metrics.ioWrite ?? 0,
         },
+        system: systemInfo ?? null,
       },
       node.workspaceId,
     );
@@ -1933,4 +1936,23 @@ export class AgentsService implements OnModuleInit {
       );
     }
   }
+}
+
+// Keeps only the known fields, with the expected types: this lands in the
+// database and in every dashboard as-is.
+function sanitizeSystemInfo(raw: unknown): Prisma.InputJsonObject | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const source = raw as Record<string, unknown>;
+  const out: Record<string, string | number | number[]> = {};
+  for (const key of ['cpuModel', 'os', 'kernel', 'arch', 'virtualization']) {
+    if (typeof source[key] === 'string') out[key] = (source[key] as string).slice(0, 200);
+  }
+  for (const key of ['cpuThreads', 'cpuCores', 'cpuSockets', 'cpuMhz', 'memTotalBytes', 'memAvailableBytes', 'swapTotalBytes', 'swapFreeBytes', 'uptimeSec']) {
+    const value = source[key];
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) out[key] = value;
+  }
+  if (Array.isArray(source.load)) {
+    out.load = source.load.filter((value): value is number => typeof value === 'number' && Number.isFinite(value)).slice(0, 3);
+  }
+  return Object.keys(out).length > 0 ? out : null;
 }

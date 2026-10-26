@@ -5,6 +5,7 @@ import { NODE_STATUS, StatusDot, describe } from '@/components/ui/status';
 import type { NodeActivityItem } from '@/lib/api';
 import { flagFromCountryCode, GeoInfo } from '@/lib/geo';
 import { cn } from '@/lib/utils';
+import { cpuShape, memoryUsage } from '@/lib/system-info';
 import { InternalDnsBadge, InternalDnsState, isMuted, MiniMeter, nodeAttention, smartIssue } from './node-ui';
 
 /**
@@ -66,9 +67,9 @@ export function NodesGrid({
             </div>
             <div className="mt-2.5 grid grid-cols-[2.5rem_1fr] items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground">
               <span>CPU</span>
-              {offline ? <span>—</span> : <MiniMeter value={node.metrics.cpu} />}
+              {offline ? <span>—</span> : <MiniMeter value={node.metrics.cpu} title={cpuShape(node.systemInfo) ?? undefined} />}
               <span>RAM</span>
-              {offline ? <span>—</span> : <MiniMeter value={node.metrics.ram} />}
+              {offline ? <span>—</span> : <MiniMeter value={node.metrics.ram} title={memoryUsage(node.systemInfo, node.metrics.ram)?.label} />}
               <span>Disque</span>
               <MiniMeter value={node.storage.usageRatio * 100} />
             </div>

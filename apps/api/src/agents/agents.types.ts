@@ -1,6 +1,7 @@
 export interface HeartbeatPayload {
   nodeId: string;
   version?: string;
+  system?: Record<string, unknown>;
   metrics: {
     cpu: number;
     ram: number;

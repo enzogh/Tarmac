@@ -28,6 +28,9 @@ export function InternalDnsCard({
   if (!state) return null;
   const node = nodes.find((item) => item.id === state.internalDnsNodeId) ?? null;
   const conflicts = nodes.filter((item) => item.internalDnsForwarderStatus === 'conflict').length;
+  // Reported by each node's agent from a real query, every ~30 s.
+  const unreachable = nodes.filter((item) => item.status !== 'offline' && item.internalDnsForwarderStatus === 'unreachable');
+  const reachable = nodes.filter((item) => item.status !== 'offline' && item.internalDnsForwarderStatus === 'active').length;
 
   let tone: 'ok' | 'warn' | 'danger' | 'neutral' = 'neutral';
   let title = 'DNS interne non configuré';
@@ -41,10 +44,14 @@ export function InternalDnsCard({
       tone = 'danger';
       title = `DNS interne hors ligne — ${node.name}`;
       detail = 'Le nœud qui sert tarmac.local ne répond plus : la résolution des noms internes est interrompue.';
+    } else if (state.internalDnsStatus === 'active' && unreachable.length > 0) {
+      tone = 'danger';
+      title = `DNS interne installé sur ${node.name}, mais injoignable depuis ${unreachable.length} nœud${unreachable.length > 1 ? 's' : ''}`;
+      detail = `${unreachable.map((item) => item.name.split('.')[0]).join(', ')} n’obtien${unreachable.length > 1 ? 'nent' : 't'} aucune réponse sur le port 5300 : le pare-feu de ${node.name.split('.')[0]} bloque probablement le réseau privé. Un agent à jour ouvre ce port automatiquement.`;
     } else if (state.internalDnsStatus === 'active') {
       tone = 'ok';
       title = `DNS interne actif sur ${node.name}`;
-      detail = `${state.records.length} nom${state.records.length > 1 ? 's' : ''} publié${state.records.length > 1 ? 's' : ''} sous tarmac.local${node.vlanIp ? `, servi par ${node.vlanIp}` : ''}.`;
+      detail = `${state.records.length} nom${state.records.length > 1 ? 's' : ''} publié${state.records.length > 1 ? 's' : ''} sous tarmac.local${node.vlanIp ? `, servi par ${node.vlanIp}` : ''}${reachable > 0 ? ` · résolu par ${reachable} nœud${reachable > 1 ? 's' : ''}` : ''}.`;
     } else if (state.internalDnsStatus === 'error') {
       tone = 'danger';
       title = `Échec de l’installation du DNS interne sur ${node.name}`;

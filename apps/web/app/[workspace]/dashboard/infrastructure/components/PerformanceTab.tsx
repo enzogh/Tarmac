@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { ChartEmptyState } from '@/components/dashboard-charts';
 import { Input } from '@/components/ui/input';
-import { CardListSkeleton, ChartCardSkeleton } from '@/components/ui/skeleton';
+import { ChartCardSkeleton, NodesTableSkeleton, StatCardSkeleton } from '@/components/ui/skeleton';
 import { NODE_STATUS, StatusDot, describe } from '@/components/ui/status';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { api, NodeActivityItem, NodeSeriesPoint } from '@/lib/api';
@@ -15,6 +15,7 @@ import { seriesColor } from '@/lib/chart-colors';
 import { formatRelative, formatThroughput, shortHostname } from '@/lib/format';
 import { usePolling } from '@/lib/hooks/usePolling';
 import { cn } from '@/lib/utils';
+import { cpuShape, memoryUsage } from '@/lib/system-info';
 import { MiniMeter } from './node-ui';
 
 type MetricKey = 'cpu' | 'ram' | 'disk' | 'network';
@@ -246,9 +247,16 @@ export function PerformanceTab({
 
   if (loading) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <StatCardSkeleton key={index} />
+          ))}
+        </div>
         <ChartCardSkeleton />
-        <CardListSkeleton cards={4} />
+        <Card className="overflow-hidden">
+          <NodesTableSkeleton rows={4} />
+        </Card>
       </div>
     );
   }
@@ -434,9 +442,15 @@ export function PerformanceTab({
                     </td>
                     <td className="px-3 py-2.5">
                       <MiniMeter value={node.metrics.cpu} className="w-28" />
+                      {cpuShape(node.systemInfo) && <span className="mt-0.5 block text-2xs text-muted-foreground">{cpuShape(node.systemInfo)}</span>}
                     </td>
                     <td className="px-3 py-2.5">
                       <MiniMeter value={node.metrics.ram} className="w-28" />
+                      {memoryUsage(node.systemInfo, node.metrics.ram) && (
+                        <span className="mt-0.5 block whitespace-nowrap text-2xs tabular-nums text-muted-foreground">
+                          {memoryUsage(node.systemInfo, node.metrics.ram)!.label}
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-2.5">
                       <MiniMeter value={node.storage.usageRatio * 100} className="w-28" />

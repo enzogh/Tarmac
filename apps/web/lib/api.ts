@@ -47,10 +47,12 @@ export type NodeItem = {
   dnsHostname?: string | null;
   // Shared labels (Node.labels on the API side).
   labels?: string[];
+  // Hardware/OS reported by the agent, see lib/system-info.ts.
+  systemInfo?: import('./system-info').NodeSystemInfo | null;
   // Status of this node's own local fallback resolver for *.tarmac.local
   // (only relevant on nodes that can't use systemd-resolved's split-DNS
   // routing) - null means never attempted / not applicable.
-  internalDnsForwarderStatus?: 'active' | 'conflict' | 'error' | null;
+  internalDnsForwarderStatus?: 'active' | 'unreachable' | 'conflict' | 'error' | null;
   internalDnsForwarderConflict?: { port: number; protocol: string; pid?: number | null; processName?: string | null } | null;
 };
 
@@ -308,6 +310,7 @@ export type NodeMetricSample = {
 // for merging into cached activity data the instant a heartbeat lands.
 export type NodeHeartbeatLiveEvent = {
   nodeId: string;
+  system?: import('./system-info').NodeSystemInfo | null;
   status: 'offline' | 'online' | 'degraded';
   lastSeenAt: string;
   agentVersion: string | null;

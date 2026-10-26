@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -15,8 +15,18 @@ export const slugifyHostname = (name: string) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 
+// The dialogs stay mounted while they close: unmounting an open Radix dialog
+// (returning null as soon as `node` is cleared) skips its own cleanup of the
+// page-wide pointer lock. The last node is kept so the closing frame still
+// has something to render.
+function useRetained<T>(value: T | null): T | null {
+  const last = useRef(value);
+  if (value) last.current = value;
+  return value ?? last.current;
+}
+
 export function EditNodeDialog({
-  node,
+  node: current,
   labels,
   onOpenChange,
   onSave,
@@ -31,15 +41,16 @@ export function EditNodeDialog({
   const [labelText, setLabelText] = useState('');
   const [dnsHostname, setDnsHostname] = useState('');
   const [saving, setSaving] = useState(false);
+  const node = useRetained(current);
 
   useEffect(() => {
-    if (!node) return;
-    setName(node.name);
-    setRole(node.role);
+    if (!current) return;
+    setName(current.name);
+    setRole(current.role);
     setLabelText(labels.join(', '));
-    setDnsHostname(node.dnsHostname ?? '');
+    setDnsHostname(current.dnsHostname ?? '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [node?.id]);
+  }, [current?.id]);
 
   if (!node) return null;
 
@@ -64,7 +75,7 @@ export function EditNodeDialog({
   };
 
   return (
-    <Dialog open onOpenChange={onOpenChange}>
+    <Dialog open={Boolean(current)} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Modifier « {node.name} »</DialogTitle>
@@ -121,7 +132,7 @@ export function EditNodeDialog({
 }
 
 export function DeleteNodeDialog({
-  node,
+  node: current,
   onOpenChange,
   onConfirm,
 }: {
@@ -131,10 +142,11 @@ export function DeleteNodeDialog({
 }) {
   const [typed, setTyped] = useState('');
   const [deleting, setDeleting] = useState(false);
-  useEffect(() => setTyped(''), [node?.id]);
+  const node = useRetained(current);
+  useEffect(() => setTyped(''), [current?.id]);
   if (!node) return null;
   return (
-    <Dialog open onOpenChange={onOpenChange}>
+    <Dialog open={Boolean(current)} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Supprimer « {node.name} » ?</DialogTitle>

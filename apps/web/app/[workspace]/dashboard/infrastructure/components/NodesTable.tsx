@@ -16,6 +16,7 @@ import type { NodeActivityItem } from '@/lib/api';
 import { formatCapacity, formatRelative, formatThroughput } from '@/lib/format';
 import { flagFromCountryCode, GeoInfo } from '@/lib/geo';
 import { cn } from '@/lib/utils';
+import { cpuModelShort, cpuShape, memoryUsage } from '@/lib/system-info';
 import { externalIpOf, formatDateTime, InternalDnsBadge, InternalDnsState, isMuted, MiniMeter, smartIssue } from './node-ui';
 
 export type NodeAction = 'open' | 'edit' | 'update' | 'mute' | 'delete';
@@ -183,10 +184,30 @@ export function NodesTable({
                 <div className="text-muted-foreground">{node.vlanIp ?? 'hors réseau privé'}</div>
               </TableCell>
               <TableCell className="hidden py-2 md:table-cell">
-                {offline ? <span className="text-2xs text-muted-foreground">—</span> : <MiniMeter value={node.metrics.cpu} />}
+                {offline ? (
+                  <span className="text-2xs text-muted-foreground">—</span>
+                ) : (
+                  <>
+                    <MiniMeter value={node.metrics.cpu} title={[cpuModelShort(node.systemInfo), cpuShape(node.systemInfo)].filter(Boolean).join(' · ') || undefined} />
+                    {node.systemInfo?.cpuThreads && (
+                      <span className="mt-0.5 block text-2xs text-muted-foreground">{node.systemInfo.cpuThreads} threads</span>
+                    )}
+                  </>
+                )}
               </TableCell>
               <TableCell className="hidden py-2 md:table-cell">
-                {offline ? <span className="text-2xs text-muted-foreground">—</span> : <MiniMeter value={node.metrics.ram} />}
+                {offline ? (
+                  <span className="text-2xs text-muted-foreground">—</span>
+                ) : (
+                  <>
+                    <MiniMeter value={node.metrics.ram} />
+                    {memoryUsage(node.systemInfo, node.metrics.ram) && (
+                      <span className="mt-0.5 block whitespace-nowrap text-2xs tabular-nums text-muted-foreground">
+                        {memoryUsage(node.systemInfo, node.metrics.ram)!.label}
+                      </span>
+                    )}
+                  </>
+                )}
               </TableCell>
               <TableCell className="hidden py-2 md:table-cell">
                 <MiniMeter
