@@ -63,6 +63,7 @@ et les vues topologiques.
 - Historique des liens sur 1 h / 24 h / 7 j avec pourcentage de disponibilité, purgé après 30 jours
 - Alerte « Lien VLAN hors ligne » seulement si le lien reste coupé 90 s, avec 3 min de grâce après chaque démarrage de l'API : un redéploiement ou une reconnexion d'agent n'en déclenche plus
 - Graphe topologique et carte du monde, positions de nœuds déplaçables et mémorisées
+- Page Nœuds pensée pour des dizaines de serveurs : tableau triable ou grille compacte, filtres (état, pays, rôle, libellé, « à surveiller »), actions groupées, panneau de détail (charge, disques/SMART, DNS) et état du DNS interne affiché en tête de page
 
 **DNS**
 - Zones autoritaires servies par PowerDNS, maîtres comme esclaves (AXFR, TSIG)
@@ -90,8 +91,10 @@ et les vues topologiques.
 - Entrée → sortie relayée en IPIP au-dessus du maillage, une règle de routage par client et NAT sur la sortie, réappliqués de façon idempotente par l'agent (`conntrack` coupe les flux ouverts lors d'une bascule)
 - Sessions et débit en temps réel, expiration automatique, régénération des clés, clé publique fournie par l'appareil en option
 - Choix de l'entrée et de la sortie par recherche (nom, IP, ville) et filtre par pays, pensé pour des flottes de dizaines de serveurs
+- Règles d'accès par profil, appliquées par le pare-feu du nœud d'entrée : serveurs du réseau privé (tout / nœuds choisis / aucun) et autres appareils VPN (isolé par défaut / profils choisis / tous), y compris entre points d'entrée différents ; un profil « réseau privé uniquement » ne peut plus sortir sur Internet même en modifiant sa configuration
+- Liste pensée pour des centaines de profils : tableau filtrable et triable, libellés, actions groupées (accès, liens, activation, suppression) via `POST /vpn/profiles/bulk`, vue « Liens d'accès »
 - Création et bascule aussi par API, avec une clé API portant la permission `vpn:read` / `vpn:write`
-- L'agent des nœuds d'entrée et de sortie doit être à jour ; si l'hébergeur filtre en amont, ouvrir UDP `51821` sur les nœuds d'entrée
+- L'agent des nœuds d'entrée et de sortie doit être à jour (un agent trop ancien applique le VPN sans cloisonner les clients, signalé « Agent à mettre à jour ») ; si l'hébergeur filtre en amont, ouvrir UDP `51821` sur les nœuds d'entrée
 
 **Organisation**
 - Workspaces multiples avec appartenances et rôles ; nom et slug modifiables (y compris pour le workspace par défaut), l'ancien slug restant une redirection, sans impact sur les agents
@@ -258,7 +261,7 @@ l'application elle-même sur `/docs/api`.
 | DNS | `/dns/groups`, `/dns/groups/:id/members`, `/dns/zones`, `/dns/zones/:id/records`, `/dns/zones/:id/dnssec`, `/dns/internal` |
 | Réplication | `/sync-jobs`, `/sync-jobs/:id/runs`, `/migrations`, `/migrations/directories` |
 | Alertes | `/alert-rules`, `/alerts`, `/alerts/:id/ack`, `/alerts/:id/resolve`, `/notification-channels` |
-| Accès distant | `/vpn/gateways`, `/vpn/profiles`, `/vpn/profiles/:id/exit`, `/vpn/profiles/:id/rotate-keys`, `/vpn/profiles/:id/config(.conf)` |
+| Accès distant | `/vpn/gateways`, `/vpn/profiles`, `/vpn/profiles/bulk`, `/vpn/profiles/:id/exit`, `/vpn/profiles/:id/rotate-keys`, `/vpn/profiles/:id/config(.conf)` |
 | Exploitation | `/audit-logs`, `/agent-logs`, `/workspaces`, `/api-keys` |
 
 Toutes ces routes, sauf Auth, `/workspaces` et `/api-keys`, acceptent aussi une

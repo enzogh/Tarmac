@@ -163,6 +163,14 @@ enum VpnProfileMode {
   private
 }
 
+// Reach of a VPN client towards one class of destinations (fleet nodes, or
+// other VPN clients): everything, an explicit list, or nothing.
+enum VpnAccessScope {
+  all
+  selected
+  none
+}
+
 model User {
   id                   String                @id @default(cuid())
   email                String                @unique
@@ -908,6 +916,17 @@ model VpnProfile {
   clientPrivateKey  String?
   presharedKey      String
   dns               String[]       @default([])
+  // Free-form labels to sort a large fleet of profiles (team, site, usage).
+  tags              String[]       @default([])
+  // What this client may open connections to, enforced by its entry node's
+  // firewall (replies to allowed connections always come back). `meshAccess`
+  // covers the fleet's private IPs - the entry node itself included -,
+  // `peerAccess` the other VPN clients, on any entry node. Internet access
+  // follows `mode`. Ids of deleted nodes/profiles are dropped on the fly.
+  meshAccess        VpnAccessScope @default(all)
+  meshNodeIds       String[]       @default([])
+  peerAccess        VpnAccessScope @default(none)
+  peerProfileIds    String[]       @default([])
   enabled           Boolean        @default(true)
   expiresAt         DateTime?
   // Bumped on every change that alters what the nodes must apply (entry,

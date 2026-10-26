@@ -128,6 +128,10 @@ const config: Config = {
         'flow-y': {
           to: { backgroundPosition: '0 8px' },
         },
+        'sheet-in': {
+          from: { transform: 'translateX(100%)' },
+          to: { transform: 'translateX(0)' },
+        },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
@@ -138,6 +142,7 @@ const config: Config = {
         rainbow: 'rainbow var(--speed, 2s) infinite linear',
         'flow-x': 'flow-x 0.8s linear infinite',
         'flow-y': 'flow-y 0.8s linear infinite',
+        'sheet-in': 'sheet-in 200ms cubic-bezier(0.32, 0.72, 0, 1)',
       },
     },
   },

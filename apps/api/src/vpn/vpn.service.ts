@@ -16,16 +16,20 @@ import { LiveWsServer } from '../live/live.ws';
 import { extractExternalIp } from '../nodes/extract-external-ip';
 import { PrismaService } from '../prisma/prisma.service';
 import { VlanService } from '../vlan/vlan.service';
-import { CreateVpnProfileDto } from './dto/create-vpn-profile.dto';
+import { BulkVpnProfilesDto } from './dto/bulk-vpn-profiles.dto';
+import { CreateVpnProfileDto, VpnAccessScopeValue } from './dto/create-vpn-profile.dto';
 import { RotateVpnKeysDto } from './dto/rotate-keys.dto';
 import { UpdateVpnProfileDto } from './dto/update-vpn-profile.dto';
 import { configFilename, renderClientConfig } from './vpn-config';
 import { generateWireguardKeyPair, generateWireguardPresharedKey } from './vpn-keys';
 import {
   assignRoutingTables,
+  clientRangeCidrs,
   clientSubnet,
   entryGatewayCidr,
+  inMesh,
   MAX_ENTRY_SUBNETS,
+  meshNodeRangeCidrs,
   pickFreeClientIp,
   tunnelName,
   VPN_DEFAULT_DNS,
@@ -70,22 +74,39 @@ export type VpnPeerStat = {
 };
 
 type ApplyTunnel = { name: string; localIp: string; remoteIp: string; table: number; returnSubnets: string[] };
+// What one client may open connections to, enforced by its entry node:
+// `internet` = anything outside the mesh, `local` = the entry node itself,
+// `localDns` = only port 53 on it, `allow` = forwarded destinations (other
+// nodes, other clients), `dns` = mesh resolvers reachable on port 53 only.
+type ClientPolicy = { internet: boolean; local: boolean; localDns: boolean; allow: string[]; dns: string[] };
 type ApplyPayload = {
   revision: string;
   meshInterface: string;
   meshCidr: string;
+  // Tells the agent every client carries a policy and anything it doesn't
+  // allow must be dropped (agents predating it ignore the field).
+  isolation: true;
   entry: {
     interfaceName: string;
     listenPort: number;
     addressCidr: string;
     clientSubnet: string;
-    clients: Array<{ publicKey: string; presharedKey: string; ip: string; table: number }>;
+    clients: Array<{ publicKey: string; presharedKey: string; ip: string; table: number; policy: ClientPolicy }>;
   } | null;
   tunnels: ApplyTunnel[];
   natSubnets: string[];
 };
 
 type Actor = { userId?: string; scope: WorkspaceScope };
+
+function normalizeTags(tags: string[] | undefined): string[] {
+  const seen = new Map<string, string>();
+  for (const raw of tags ?? []) {
+    const tag = raw.trim().replace(/\s+/g, ' ');
+    if (tag && !seen.has(tag.toLowerCase())) seen.set(tag.toLowerCase(), tag);
+  }
+  return [...seen.values()].slice(0, 10);
+}
 
 function isUniqueConstraintError(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
@@ -130,6 +151,10 @@ export class VpnService {
     const expiresAt = this.parseFutureDate(dto.expiresAt);
     const keys = dto.publicKey ? { publicKey: dto.publicKey, privateKey: null } : generateWireguardKeyPair();
     await this.assertPublicKeyFree(keys.publicKey);
+    const meshAccess = dto.meshAccess ?? 'all';
+    const peerAccess = dto.peerAccess ?? 'none';
+    const meshNodeIds = await this.normalizeNodeIds(meshAccess, dto.meshNodeIds, workspaceId);
+    const peerProfileIds = await this.normalizePeerIds(peerAccess, dto.peerProfileIds, workspaceId);
 
     const meshCidr = await this.vlanService.getVlanSubnet(workspaceId);
     const subnetIndex = await this.ensureEntrySubnet(entryNode.id, workspaceId);
@@ -151,6 +176,11 @@ export class VpnService {
             clientPrivateKey: keys.privateKey,
             presharedKey: generateWireguardPresharedKey(),
             dns: dto.dns ?? (mode === 'full' ? VPN_DEFAULT_DNS : []),
+            tags: normalizeTags(dto.tags),
+            meshAccess,
+            meshNodeIds,
+            peerAccess,
+            peerProfileIds,
             expiresAt,
             createdByUserId: actor.userId ?? null,
             createdByApiKeyId: actor.scope.apiKey?.id ?? null,
@@ -169,6 +199,8 @@ export class VpnService {
       entryNodeId: entryNode.id,
       exitNodeId,
       clientIp: created.clientIp,
+      meshAccess,
+      peerAccess,
     });
     await this.reconcileWorkspace(workspaceId);
     this.broadcastChanged(workspaceId, created.id);
@@ -185,7 +217,29 @@ export class VpnService {
 
     if (dto.name !== undefined) data.name = dto.name.trim();
     if (dto.description !== undefined) data.description = dto.description?.trim() || null;
-    if (dto.dns !== undefined) data.dns = dto.dns;
+    if (dto.dns !== undefined) {
+      data.dns = dto.dns;
+      // Mesh resolvers are opened in the firewall per client.
+      routingChanged = true;
+    }
+    if (dto.tags !== undefined) data.tags = normalizeTags(dto.tags);
+    if (dto.meshAccess !== undefined || dto.meshNodeIds !== undefined) {
+      const meshAccess = dto.meshAccess ?? existing.meshAccess;
+      data.meshAccess = meshAccess;
+      data.meshNodeIds = await this.normalizeNodeIds(meshAccess, dto.meshNodeIds ?? existing.meshNodeIds, workspaceId);
+      routingChanged = true;
+    }
+    if (dto.peerAccess !== undefined || dto.peerProfileIds !== undefined) {
+      const peerAccess = dto.peerAccess ?? existing.peerAccess;
+      data.peerAccess = peerAccess;
+      data.peerProfileIds = await this.normalizePeerIds(
+        peerAccess,
+        dto.peerProfileIds ?? existing.peerProfileIds,
+        workspaceId,
+        id,
+      );
+      routingChanged = true;
+    }
     if (dto.expiresAt !== undefined) {
       data.expiresAt = dto.expiresAt === null ? null : this.parseFutureDate(dto.expiresAt);
       routingChanged = true;
@@ -297,10 +351,116 @@ export class VpnService {
   async remove(id: string, actor: Actor) {
     const existing = await this.findOwned(id, actor.scope);
     await this.prisma.vpnProfile.delete({ where: { id } });
+    await this.dropPeerReferences(existing.workspaceId, [id]);
     await this.audit(actor, 'vpn_profile.delete', id, { name: existing.name, clientIp: existing.clientIp });
     await this.reconcileWorkspace(existing.workspaceId);
     this.broadcastChanged(existing.workspaceId, id);
     return { success: true };
+  }
+
+  async bulk(dto: BulkVpnProfilesDto, actor: Actor) {
+    const workspaceId = actor.scope.workspaceId as string;
+    const profiles = await this.prisma.vpnProfile.findMany({
+      where: { workspaceId, id: { in: [...new Set(dto.ids)] } },
+      select: { id: true, name: true, enabled: true, tags: true, peerAccess: true, peerProfileIds: true },
+    });
+    if (profiles.length === 0) throw new NotFoundException('Aucun profil VPN trouvé');
+    const ids = profiles.map((profile) => profile.id);
+    let routingChanged = false;
+
+    switch (dto.action) {
+      case 'enable':
+      case 'disable': {
+        const enabled = dto.action === 'enable';
+        const changed = profiles.filter((profile) => profile.enabled !== enabled).map((profile) => profile.id);
+        if (changed.length > 0) {
+          await this.prisma.vpnProfile.updateMany({
+            where: { id: { in: changed } },
+            data: { enabled, configChangedAt: new Date() },
+          });
+          routingChanged = true;
+        }
+        break;
+      }
+      case 'delete':
+        await this.prisma.vpnProfile.deleteMany({ where: { id: { in: ids } } });
+        await this.dropPeerReferences(workspaceId, ids);
+        routingChanged = true;
+        break;
+      case 'add_tag':
+      case 'remove_tag': {
+        const tag = dto.tag?.trim();
+        if (!tag) throw new BadRequestException('Précisez le libellé à ajouter ou retirer.');
+        for (const profile of profiles) {
+          const tags =
+            dto.action === 'add_tag'
+              ? normalizeTags([...profile.tags, tag])
+              : profile.tags.filter((existing) => existing.toLowerCase() !== tag.toLowerCase());
+          if (tags.join('\n') !== profile.tags.join('\n')) {
+            await this.prisma.vpnProfile.update({ where: { id: profile.id }, data: { tags } });
+          }
+        }
+        break;
+      }
+      case 'add_peers':
+      case 'remove_peers': {
+        const peerIds =
+          dto.action === 'add_peers'
+            ? await this.normalizePeerIds('selected', dto.peerIds, workspaceId)
+            : [...new Set(dto.peerIds ?? [])];
+        if (peerIds.length === 0) throw new BadRequestException('Précisez les profils à relier.');
+        const now = new Date();
+        for (const profile of profiles) {
+          // "all" already covers every peer, and can't lose just one.
+          if (profile.peerAccess === 'all') continue;
+          const current = profile.peerAccess === 'selected' ? profile.peerProfileIds : [];
+          const next =
+            dto.action === 'add_peers'
+              ? [...new Set([...current, ...peerIds.filter((peerId) => peerId !== profile.id)])]
+              : current.filter((peerId) => !peerIds.includes(peerId));
+          if (next.length === current.length && next.every((peerId) => current.includes(peerId))) continue;
+          await this.prisma.vpnProfile.update({
+            where: { id: profile.id },
+            data: { peerAccess: next.length > 0 ? 'selected' : 'none', peerProfileIds: next, configChangedAt: now },
+          });
+          routingChanged = true;
+        }
+        break;
+      }
+      case 'set_mesh_access': {
+        if (!dto.scope) throw new BadRequestException("Précisez l'accès au réseau privé.");
+        const meshNodeIds = await this.normalizeNodeIds(dto.scope, dto.meshNodeIds, workspaceId);
+        await this.prisma.vpnProfile.updateMany({
+          where: { id: { in: ids } },
+          data: { meshAccess: dto.scope, meshNodeIds, configChangedAt: new Date() },
+        });
+        routingChanged = true;
+        break;
+      }
+      case 'set_peer_access': {
+        if (dto.scope !== 'all' && dto.scope !== 'none') {
+          throw new BadRequestException('Seuls « tous les profils » et « isolé » s’appliquent en masse.');
+        }
+        await this.prisma.vpnProfile.updateMany({
+          where: { id: { in: ids } },
+          data: { peerAccess: dto.scope, peerProfileIds: [], configChangedAt: new Date() },
+        });
+        routingChanged = true;
+        break;
+      }
+    }
+
+    await this.audit(actor, `vpn_profile.bulk_${dto.action}`, 'bulk', {
+      count: ids.length,
+      ids,
+      names: profiles.map((profile) => profile.name),
+      ...(dto.tag ? { tag: dto.tag } : {}),
+      ...(dto.peerIds ? { peerIds: dto.peerIds } : {}),
+      ...(dto.scope ? { scope: dto.scope, meshNodeIds: dto.meshNodeIds ?? [] } : {}),
+    });
+    if (routingChanged) await this.reconcileWorkspace(workspaceId);
+    this.live.broadcast('vpn.changed', {}, workspaceId);
+    return { count: ids.length };
   }
 
   async getConfig(id: string, scope: WorkspaceScope) {
@@ -370,6 +530,12 @@ export class VpnService {
    * in IPIP addressed to the exit's mesh IP to cross it. On the entry, a
    * per-client `ip rule` picks the exit's routing table; the exit routes the
    * entry's client subnet back through the same tunnel and NATs it out.
+   *
+   * Access rules are enforced where a client's packets enter the fleet: its
+   * entry node gets one policy per client and drops whatever it doesn't
+   * allow. Clients allowed to reach a client of another entry node get an
+   * IPIP tunnel between the two entries (same mechanism as exits), each side
+   * routing the other's client subnet through it un-NATed.
    */
   async reconcileWorkspace(workspaceId: string, onlyNodeId?: string): Promise<void> {
     const [nodes, profiles, meshCidr] = await Promise.all([
@@ -382,6 +548,17 @@ export class VpnService {
     ]);
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const now = Date.now();
+    const usableEntry = (nodeId: string) => {
+      const node = nodeById.get(nodeId);
+      return node?.vlanIp && node.vpnSubnetIndex != null && node.overlayPublicKey ? node : null;
+    };
+    const liveProfiles = profiles.filter((profile) => this.isLive(profile, now) && usableEntry(profile.entryNodeId));
+    const liveById = new Map(liveProfiles.map((profile) => [profile.id, profile]));
+    const liveEntries = new Set(liveProfiles.map((profile) => profile.entryNodeId));
+    const meshNodeCidrs = meshNodeRangeCidrs(meshCidr);
+    const clientCidrs = clientRangeCidrs(meshCidr);
+    // Unordered pairs of entry nodes whose clients talk to each other.
+    const entryLinks = new Set<string>();
 
     type NodeState = {
       entry: ApplyPayload['entry'];
@@ -407,10 +584,9 @@ export class VpnService {
       return tunnel;
     };
 
-    for (const profile of profiles) {
-      if (!this.isLive(profile, now)) continue;
-      const entry = nodeById.get(profile.entryNodeId);
-      if (!entry?.vlanIp || entry.vpnSubnetIndex == null || !entry.overlayPublicKey) continue;
+    for (const profile of liveProfiles) {
+      const entry = usableEntry(profile.entryNodeId);
+      if (!entry?.vlanIp || entry.vpnSubnetIndex == null) continue;
 
       const subnet = clientSubnet(meshCidr, entry.vpnSubnetIndex);
       const entryState = stateFor(entry.id);
@@ -422,11 +598,30 @@ export class VpnService {
         clients: [],
       };
       entryState.natSubnets.add(subnet);
+      const policy = this.clientPolicy(profile, entry, {
+        meshCidr,
+        meshNodeCidrs,
+        clientCidrs,
+        nodeById,
+        liveById,
+        gatewayIp: entryGatewayCidr(meshCidr, entry.vpnSubnetIndex).split('/')[0],
+      });
+      for (const peerEntryId of policy.remoteEntries) {
+        if (peerEntryId !== entry.id && liveEntries.has(peerEntryId)) {
+          entryLinks.add([entry.id, peerEntryId].sort().join('|'));
+        }
+      }
+      if (profile.peerAccess === 'all') {
+        for (const peerEntryId of liveEntries) {
+          if (peerEntryId !== entry.id) entryLinks.add([entry.id, peerEntryId].sort().join('|'));
+        }
+      }
       entryState.entry.clients.push({
         publicKey: profile.clientPublicKey,
         presharedKey: profile.presharedKey,
         ip: profile.clientIp,
         table: 0,
+        policy: policy.policy,
       });
 
       const exit = profile.mode === 'full' && profile.exitNodeId ? nodeById.get(profile.exitNodeId) : undefined;
@@ -436,6 +631,15 @@ export class VpnService {
       const exitState = stateFor(exit.id);
       tunnelFor(exitState, entry.id).returnSubnets.add(subnet);
       exitState.natSubnets.add(subnet);
+    }
+
+    for (const link of entryLinks) {
+      const [leftId, rightId] = link.split('|');
+      const left = usableEntry(leftId);
+      const right = usableEntry(rightId);
+      if (!left || !right || left.vpnSubnetIndex == null || right.vpnSubnetIndex == null) continue;
+      tunnelFor(stateFor(left.id), right.id).returnSubnets.add(clientSubnet(meshCidr, right.vpnSubnetIndex));
+      tunnelFor(stateFor(right.id), left.id).returnSubnets.add(clientSubnet(meshCidr, left.vpnSubnetIndex));
     }
 
     const revision = new Date().toISOString();
@@ -471,6 +675,7 @@ export class VpnService {
         revision,
         meshInterface: 'tarmacwg0',
         meshCidr,
+        isolation: true,
         entry: state?.entry ?? null,
         tunnels,
         natSubnets: [...(state?.natSubnets ?? [])].sort(),
@@ -498,7 +703,7 @@ export class VpnService {
   async onApplyResult(
     nodeId: string,
     workspaceId: string,
-    result: { revision: string; success: boolean; message?: string; active?: boolean },
+    result: { revision: string; success: boolean; message?: string; active?: boolean; policy?: boolean },
   ) {
     const revision = new Date(result.revision);
     if (Number.isNaN(revision.getTime())) return;
@@ -511,14 +716,21 @@ export class VpnService {
     if (node.vpnAppliedRevision && node.vpnAppliedRevision > revision) return;
 
     const cleared = result.success && result.active === false;
+    // An agent that predates access rules applies tunnels and routes fine
+    // but leaves its clients unfiltered: working, yet not what was asked.
+    const outdated = result.success && result.policy !== true;
     await this.prisma.node.update({
       where: { id: nodeId },
       data: cleared
         ? { vpnAppliedRevision: null, vpnApplyStatus: null, vpnApplyError: null }
         : {
             vpnAppliedRevision: revision,
-            vpnApplyStatus: result.success ? 'active' : 'error',
-            vpnApplyError: result.success ? null : (result.message ?? 'Erreur inconnue').slice(0, 700),
+            vpnApplyStatus: result.success ? (outdated ? 'outdated' : 'active') : 'error',
+            vpnApplyError: result.success
+              ? outdated
+                ? "Agent trop ancien pour les règles d'accès : les clients de ce nœud ne sont pas cloisonnés. Mettez à jour l'agent depuis la page Nœuds."
+                : null
+              : (result.message ?? 'Erreur inconnue').slice(0, 700),
           },
     });
     this.live.broadcast('vpn.changed', { nodeId }, workspaceId);
@@ -636,6 +848,115 @@ export class VpnService {
     if (!node.vlanIp) return "Ce nœud n'a pas encore rejoint le réseau privé.";
     if (!node.overlayPublicKey) return "L'agent de ce nœud n'a pas encore publié sa clé WireGuard.";
     return null;
+  }
+
+  private clientPolicy(
+    profile: VpnProfile,
+    entry: { id: string; vlanIp: string | null },
+    context: {
+      meshCidr: string;
+      meshNodeCidrs: string[];
+      clientCidrs: string[];
+      nodeById: Map<string, { vlanIp: string | null }>;
+      liveById: Map<string, VpnProfile>;
+      gatewayIp: string;
+    },
+  ): { policy: ClientPolicy; remoteEntries: Set<string> } {
+    const allow = new Set<string>();
+    const dns = new Set<string>();
+    const remoteEntries = new Set<string>();
+    let local = profile.meshAccess === 'all';
+    let localDns = false;
+
+    if (profile.meshAccess === 'all') {
+      context.meshNodeCidrs.forEach((cidr) => allow.add(cidr));
+    } else if (profile.meshAccess === 'selected') {
+      for (const nodeId of profile.meshNodeIds) {
+        if (nodeId === entry.id) {
+          local = true;
+          continue;
+        }
+        const node = context.nodeById.get(nodeId);
+        if (node?.vlanIp) allow.add(`${node.vlanIp}/32`);
+      }
+    }
+
+    if (profile.peerAccess === 'all') {
+      context.clientCidrs.forEach((cidr) => allow.add(cidr));
+    } else if (profile.peerAccess === 'selected') {
+      for (const peerId of profile.peerProfileIds) {
+        const peer = context.liveById.get(peerId);
+        if (!peer || peer.id === profile.id) continue;
+        allow.add(`${peer.clientIp}/32`);
+        remoteEntries.add(peer.entryNodeId);
+      }
+    }
+
+    // A resolver inside the fleet is always reachable on port 53, whatever
+    // the access rules - otherwise the client couldn't resolve anything.
+    for (const ip of profile.dns) {
+      if (!inMesh(context.meshCidr, ip)) continue;
+      if (ip === entry.vlanIp || ip === context.gatewayIp) localDns = true;
+      else dns.add(`${ip}/32`);
+    }
+
+    return {
+      policy: {
+        internet: profile.mode === 'full',
+        local,
+        localDns: localDns && !local,
+        allow: [...allow].sort(),
+        dns: [...dns].filter((cidr) => !allow.has(cidr)).sort(),
+      },
+      remoteEntries,
+    };
+  }
+
+  private async normalizeNodeIds(scope: VpnAccessScopeValue, ids: string[] | undefined, workspaceId: string) {
+    if (scope !== 'selected') return [];
+    const unique = [...new Set(ids ?? [])];
+    if (unique.length === 0) {
+      throw new BadRequestException('Sélectionnez au moins un nœud, ou choisissez « Aucun accès au réseau privé ».');
+    }
+    const found = await this.prisma.node.findMany({ where: { workspaceId, id: { in: unique } }, select: { id: true } });
+    if (found.length !== unique.length) throw new NotFoundException('Un des nœuds sélectionnés est introuvable.');
+    return unique;
+  }
+
+  private async normalizePeerIds(
+    scope: VpnAccessScopeValue,
+    ids: string[] | undefined,
+    workspaceId: string,
+    selfId?: string,
+  ) {
+    if (scope !== 'selected') return [];
+    const unique = [...new Set(ids ?? [])].filter((id) => id !== selfId);
+    if (unique.length === 0) {
+      throw new BadRequestException('Sélectionnez au moins un profil, ou choisissez « Isolé des autres profils ».');
+    }
+    const found = await this.prisma.vpnProfile.findMany({
+      where: { workspaceId, id: { in: unique } },
+      select: { id: true },
+    });
+    if (found.length !== unique.length) throw new NotFoundException('Un des profils sélectionnés est introuvable.');
+    return unique;
+  }
+
+  // Deleted profiles disappear from everyone's "may reach" list; a profile
+  // left with an empty selection falls back to isolated.
+  private async dropPeerReferences(workspaceId: string, removedIds: string[]) {
+    const referencing = await this.prisma.vpnProfile.findMany({
+      where: { workspaceId, peerProfileIds: { hasSome: removedIds } },
+      select: { id: true, peerProfileIds: true },
+    });
+    const removed = new Set(removedIds);
+    for (const profile of referencing) {
+      const peerProfileIds = profile.peerProfileIds.filter((id) => !removed.has(id));
+      await this.prisma.vpnProfile.update({
+        where: { id: profile.id },
+        data: { peerProfileIds, ...(peerProfileIds.length === 0 ? { peerAccess: 'none' } : {}) },
+      });
+    }
   }
 
   private async assertEntryNode(nodeId: string, workspaceId: string) {
@@ -762,6 +1083,13 @@ export class VpnService {
       enabled: profile.enabled,
       expiresAt: profile.expiresAt,
       dns: profile.dns,
+      tags: profile.tags,
+      access: {
+        mesh: profile.meshAccess,
+        meshNodeIds: profile.meshNodeIds,
+        peers: profile.peerAccess,
+        peerProfileIds: profile.peerProfileIds,
+      },
       clientIp: profile.clientIp,
       clientPublicKey: profile.clientPublicKey,
       hasPrivateKey: profile.clientPrivateKey !== null,
@@ -789,7 +1117,11 @@ export class VpnService {
     profile: ProfileWithNodes,
     effectiveExit: NodeRefRow | null,
     now: number,
-  ): { status: 'active' | 'pending' | 'error' | 'disabled' | 'expired'; message: string | null } {
+  ): {
+    status: 'active' | 'pending' | 'error' | 'disabled' | 'expired';
+    message: string | null;
+    warning?: string | null;
+  } {
     if (profile.expiresAt && profile.expiresAt.getTime() <= now) return { status: 'expired', message: null };
     if (!profile.enabled) return { status: 'disabled', message: null };
 
@@ -813,7 +1145,11 @@ export class VpnService {
         };
       }
     }
-    return { status: 'active', message: null };
+    // Access rules only matter where the client enters the fleet.
+    if (profile.entryNode.vpnApplyStatus === 'outdated') {
+      return { status: 'active', message: null, warning: `${profile.entryNode.name} : ${profile.entryNode.vpnApplyError}` };
+    }
+    return { status: 'active', message: null, warning: null };
   }
 
   private async audit(actor: Actor, action: string, resourceId: string, details: Record<string, unknown>) {

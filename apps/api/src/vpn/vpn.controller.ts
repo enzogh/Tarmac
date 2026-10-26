@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Req, Res, UseGuards 
 import { Request, Response } from 'express';
 import { ApiKeyOrJwtGuard, ApiKeyResource, RequireApiScope } from '../auth/api-key.guard';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
+import { BulkVpnProfilesDto } from './dto/bulk-vpn-profiles.dto';
 import { CreateVpnProfileDto } from './dto/create-vpn-profile.dto';
 import { RotateVpnKeysDto } from './dto/rotate-keys.dto';
 import { SwitchVpnExitDto } from './dto/switch-exit.dto';
@@ -43,6 +44,12 @@ export class VpnController {
   @RequireApiScope('vpn:write')
   create(@Body() dto: CreateVpnProfileDto, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
     return this.vpnService.create(dto, { scope, userId: req.user?.userId });
+  }
+
+  @Post('profiles/bulk')
+  @RequireApiScope('vpn:write')
+  bulk(@Body() dto: BulkVpnProfilesDto, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.vpnService.bulk(dto, { scope, userId: req.user?.userId });
   }
 
   @Patch('profiles/:id')

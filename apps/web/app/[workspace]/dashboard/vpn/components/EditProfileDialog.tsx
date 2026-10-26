@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { api, VpnGateway, VpnProfile, VpnProfileMode } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
-import { EXPIRY_OPTIONS, expiryToIso, parseDns } from './CreateProfileDialog';
+import { EXPIRY_OPTIONS, expiryToIso, parseDns, parseTags } from './CreateProfileDialog';
 import { NodePicker } from './NodePicker';
 import { MODE_LABEL, NodeLabel } from './vpn-ui';
 
@@ -29,6 +29,7 @@ export function EditProfileDialog({
 }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [tags, setTags] = useState('');
   const [mode, setMode] = useState<VpnProfileMode>('full');
   const [entryId, setEntryId] = useState('');
   const [pickingEntry, setPickingEntry] = useState(false);
@@ -41,6 +42,7 @@ export function EditProfileDialog({
     if (!profile) return;
     setName(profile.name);
     setDescription(profile.description ?? '');
+    setTags(profile.tags.join(', '));
     setMode(profile.mode);
     setEntryId(profile.entryNode.id);
     setPickingEntry(false);
@@ -65,6 +67,7 @@ export function EditProfileDialog({
       await api.vpn.update(profile.id, {
         name: name.trim(),
         description: description.trim() || null,
+        tags: parseTags(tags),
         mode,
         dns: dnsList,
         ...(entryChanged ? { entryNodeId: entryId } : {}),
@@ -88,7 +91,9 @@ export function EditProfileDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Modifier « {profile.name} »</DialogTitle>
-          <DialogDescription>La sortie Internet se change directement depuis la carte du profil.</DialogDescription>
+          <DialogDescription>
+            La sortie Internet se change depuis le détail du profil, les accès depuis « Règles d&apos;accès ».
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
@@ -103,6 +108,15 @@ export function EditProfileDialog({
                 value={description}
                 maxLength={500}
                 onChange={(event) => setDescription(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="vpn-edit-tags">Libellés</Label>
+              <Input
+                id="vpn-edit-tags"
+                value={tags}
+                onChange={(event) => setTags(event.target.value)}
+                placeholder="Séparés par des virgules"
               />
             </div>
           </div>

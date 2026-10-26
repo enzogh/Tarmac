@@ -51,11 +51,22 @@ var (
 	vpnWgKeyPattern      = regexp.MustCompile(`^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]=$`)
 )
 
+// What one client may open connections to (replies always come back).
+// See ClientPolicy in vpn.service.ts.
+type vpnPolicy struct {
+	internet bool
+	local    bool
+	localDns bool
+	allow    []string
+	dns      []string
+}
+
 type vpnClient struct {
 	publicKey    string
 	presharedKey string
 	ip           string
 	table        int
+	policy       vpnPolicy
 }
 
 type vpnEntry struct {
@@ -75,9 +86,13 @@ type vpnTunnel struct {
 }
 
 type vpnDesired struct {
-	revision   string
-	meshIface  string
-	meshCidr   string
+	revision  string
+	meshIface string
+	meshCidr  string
+	// Set by APIs that send a policy with every client: whatever a client's
+	// policy doesn't allow is dropped. Without it clients are unfiltered,
+	// as before access rules existed.
+	isolation  bool
 	entry      *vpnEntry
 	tunnels    []vpnTunnel
 	natSubnets []string
@@ -124,6 +139,7 @@ func parseVpnPayload(payload map[string]interface{}) (vpnDesired, error) {
 		revision:  readString(payload, "revision"),
 		meshIface: readString(payload, "meshInterface"),
 		meshCidr:  readString(payload, "meshCidr"),
+		isolation: readBool(payload, "isolation"),
 	}
 	if desired.meshIface == "" {
 		desired.meshIface = "tarmacwg0"
@@ -171,6 +187,20 @@ func parseVpnPayload(payload map[string]interface{}) (vpnDesired, error) {
 			}
 			if client.table != 0 && (client.table < vpnTableMin || client.table > vpnTableMax) {
 				return desired, fmt.Errorf("routing table %d out of the managed range", client.table)
+			}
+			if rawPolicy, ok := record["policy"].(map[string]interface{}); ok {
+				client.policy = vpnPolicy{
+					internet: readBool(rawPolicy, "internet"),
+					local:    readBool(rawPolicy, "local"),
+					localDns: readBool(rawPolicy, "localDns"),
+					allow:    readStringSlice(rawPolicy, "allow"),
+					dns:      readStringSlice(rawPolicy, "dns"),
+				}
+				for _, cidr := range append(append([]string{}, client.policy.allow...), client.policy.dns...) {
+					if !validCidr(cidr) {
+						return desired, fmt.Errorf("invalid policy destination %q for client %s", cidr, client.publicKey)
+					}
+				}
 			}
 			entry.clients = append(entry.clients, client)
 		}
@@ -764,16 +794,31 @@ func syncVpnFirewall(desired vpnDesired) error {
 
 	tunnels := vpnTunnelPrefix + "+"
 	clamp := []string{"-p", "tcp", "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--clamp-mss-to-pmtu"}
-	specs[0].rules = [][]string{{"-i", tunnels, "-j", "ACCEPT"}, {"-o", tunnels, "-j", "ACCEPT"}}
+	isolated := entryIface != "" && desired.isolation
+	if isolated {
+		// Client policies come first: the tunnel rules below would
+		// otherwise accept anything a client sends towards another node.
+		specs[0].rules = vpnClientForwardRules(desired)
+	}
+	specs[0].rules = append(specs[0].rules, []string{"-i", tunnels, "-j", "ACCEPT"}, []string{"-o", tunnels, "-j", "ACCEPT"})
 	specs[3].rules = [][]string{append([]string{"-o", tunnels}, clamp...)}
 	if entryIface != "" {
-		specs[0].rules = append(specs[0].rules, []string{"-i", entryIface, "-j", "ACCEPT"}, []string{"-o", entryIface, "-j", "ACCEPT"})
+		if isolated {
+			// Nothing but replies and other entries' allowed clients (via
+			// the tunnels, accepted above) may reach a client.
+			specs[0].rules = append(specs[0].rules, []string{"-o", entryIface, "-j", "DROP"})
+		} else {
+			specs[0].rules = append(specs[0].rules, []string{"-i", entryIface, "-j", "ACCEPT"}, []string{"-o", entryIface, "-j", "ACCEPT"})
+		}
 		specs[1].rules = append(specs[1].rules, []string{"-p", "udp", "--dport", strconv.Itoa(desired.entry.listenPort), "-j", "ACCEPT"})
 		specs[3].rules = append(specs[3].rules, append([]string{"-o", entryIface}, clamp...))
 	}
 	if len(desired.tunnels) > 0 {
 		// IPIP (protocol 4) between entry and exit arrives over the mesh.
 		specs[1].rules = append(specs[1].rules, []string{"-i", desired.meshIface, "-p", "4", "-j", "ACCEPT"})
+	}
+	if isolated {
+		specs[1].rules = append(specs[1].rules, vpnClientInputRules(desired)...)
 	}
 	for _, subnet := range desired.natSubnets {
 		// Client-to-client and entry->exit relaying keep the client's own
@@ -793,20 +838,91 @@ func syncVpnFirewall(desired vpnDesired) error {
 				return err
 			}
 		}
-		if err := iptablesRun("-t", spec.table, "-F", spec.chain); err != nil {
+		if err := fillVpnChain(spec); err != nil {
 			return err
-		}
-		for _, rule := range spec.rules {
-			args := append([]string{"-t", spec.table, "-A", spec.chain}, rule...)
-			args = append(args, "-m", "comment", "--comment", "tarmac-vpn")
-			if err := iptablesRun(args...); err != nil {
-				return err
-			}
 		}
 		for _, parent := range spec.parents {
 			if err := ensureVpnJump(spec.table, parent, spec.chain); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func vpnClientForwardRules(desired vpnDesired) [][]string {
+	iface := desired.entry.iface
+	rules := [][]string{
+		{"-i", iface, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"},
+		{"-o", iface, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"},
+	}
+	for _, client := range desired.entry.clients {
+		src := client.ip + "/32"
+		for _, cidr := range client.policy.allow {
+			rules = append(rules, []string{"-i", iface, "-s", src, "-d", cidr, "-j", "ACCEPT"})
+		}
+		for _, cidr := range client.policy.dns {
+			for _, proto := range []string{"udp", "tcp"} {
+				rules = append(rules, []string{"-i", iface, "-s", src, "-d", cidr, "-p", proto, "--dport", "53", "-j", "ACCEPT"})
+			}
+		}
+		if client.policy.internet {
+			rules = append(rules, []string{"-i", iface, "-s", src, "!", "-d", desired.meshCidr, "-j", "ACCEPT"})
+		}
+	}
+	return append(rules, []string{"-i", iface, "-j", "DROP"})
+}
+
+// Traffic from clients to the entry node itself (its private, public or
+// gateway address) never crosses FORWARD.
+func vpnClientInputRules(desired vpnDesired) [][]string {
+	iface := desired.entry.iface
+	rules := [][]string{
+		{"-i", iface, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"},
+		// Pinging the gateway is how people check the tunnel is up.
+		{"-i", iface, "-p", "icmp", "-j", "ACCEPT"},
+	}
+	for _, client := range desired.entry.clients {
+		src := client.ip + "/32"
+		if client.policy.local {
+			rules = append(rules, []string{"-i", iface, "-s", src, "-j", "ACCEPT"})
+		} else if client.policy.localDns {
+			for _, proto := range []string{"udp", "tcp"} {
+				rules = append(rules, []string{"-i", iface, "-s", src, "-p", proto, "--dport", "53", "-j", "ACCEPT"})
+			}
+		}
+	}
+	return append(rules, []string{"-i", iface, "-j", "DROP"})
+}
+
+// Replaces a chain's content in one atomic iptables-restore when available
+// (a few hundred client rules would otherwise mean as many iptables runs,
+// with the chain half-filled in between), rule by rule otherwise.
+func fillVpnChain(spec vpnChainSpec) error {
+	comment := []string{"-m", "comment", "--comment", "tarmac-vpn"}
+	if commandExists("iptables-restore") {
+		var script strings.Builder
+		fmt.Fprintf(&script, "*%s\n:%s - [0:0]\n", spec.table, spec.chain)
+		for _, rule := range spec.rules {
+			fmt.Fprintf(&script, "-A %s %s %s\n", spec.chain, strings.Join(rule, " "), strings.Join(comment, " "))
+		}
+		script.WriteString("COMMIT\n")
+		// --noflush keeps every other chain of the table; declaring ours
+		// flushes just this one.
+		cmd := exec.Command("iptables-restore", "--noflush")
+		cmd.Stdin = strings.NewReader(script.String())
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("iptables-restore %s/%s: %s", spec.table, spec.chain, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	if err := iptablesRun("-t", spec.table, "-F", spec.chain); err != nil {
+		return err
+	}
+	for _, rule := range spec.rules {
+		args := append([]string{"-t", spec.table, "-A", spec.chain}, rule...)
+		if err := iptablesRun(append(args, comment...)...); err != nil {
+			return err
 		}
 	}
 	return nil

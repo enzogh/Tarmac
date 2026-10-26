@@ -8,8 +8,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { api, VpnGateway, VpnProfileMode, VpnProfileWithConfig } from '@/lib/api';
+import { api, VpnAccess, VpnGateway, VpnProfile, VpnProfileMode, VpnProfileWithConfig } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { AccessEditor, accessError, accessPayload, DEFAULT_ACCESS } from './access';
 import { ConfigPanel } from './ConfigPanel';
 import { RouteDiagram } from './RouteDiagram';
 import { NodePicker } from './NodePicker';
@@ -18,6 +19,7 @@ import { MODE_LABEL } from './vpn-ui';
 const STEPS = [
   { id: 'entry', title: "Point d'entrée", hint: "Le serveur auquel l'appareil se connecte." },
   { id: 'traffic', title: 'Trafic et sortie', hint: 'Ce qui passe par le VPN, et par où il sort sur Internet.' },
+  { id: 'access', title: 'Accès', hint: "Ce que l'appareil peut joindre une fois connecté." },
   { id: 'review', title: 'Finalisation', hint: 'Options et récapitulatif.' },
 ] as const;
 
@@ -33,6 +35,10 @@ export const EXPIRY_OPTIONS = [
 export function expiryToIso(value: string): string | undefined {
   if (value === 'never') return undefined;
   return new Date(Date.now() + Number(value) * 24 * 60 * 60 * 1000).toISOString();
+}
+
+export function parseTags(raw: string): string[] {
+  return [...new Set(raw.split(',').map((part) => part.trim()).filter(Boolean))].slice(0, 10);
 }
 
 export function parseDns(raw: string): string[] {
@@ -70,16 +76,20 @@ export function CreateProfileDialog({
   open,
   onOpenChange,
   gateways,
+  profiles,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   gateways: VpnGateway[];
+  profiles: VpnProfile[];
   onCreated: () => void;
 }) {
   const [step, setStep] = useState(0);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [tags, setTags] = useState('');
+  const [access, setAccess] = useState<VpnAccess>(DEFAULT_ACCESS);
   const [entryId, setEntryId] = useState<string | null>(null);
   const [mode, setMode] = useState<VpnProfileMode>('full');
   // '' = leave directly through the entry node.
@@ -97,6 +107,8 @@ export function CreateProfileDialog({
     setStep(0);
     setName('');
     setDescription('');
+    setTags('');
+    setAccess(DEFAULT_ACCESS);
     setMode('full');
     setExitId('');
     setDns('');
@@ -126,6 +138,8 @@ export function CreateProfileDialog({
           ? "Choisissez le nœud auquel l'appareil va se connecter."
           : null
       : step === 2
+        ? accessError(access)
+        : step === 3
         ? dnsInvalid
           ? 'Serveurs DNS : jusqu’à 4 adresses IPv4 séparées par des virgules.'
           : keyInvalid
@@ -147,6 +161,8 @@ export function CreateProfileDialog({
         dns: dnsList.length > 0 ? dnsList : undefined,
         expiresAt: expiryToIso(expiry),
         publicKey: ownKey ? publicKey.trim() : undefined,
+        tags: parseTags(tags),
+        ...accessPayload(access),
       });
       setCreated(profile);
       onCreated();
@@ -225,6 +241,23 @@ export function CreateProfileDialog({
                         placeholder="Ex. Accès télétravail"
                       />
                     </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label htmlFor="vpn-tags">
+                        Libellés <span className="font-normal text-muted-foreground">(facultatif, séparés par des virgules)</span>
+                      </Label>
+                      <Input
+                        id="vpn-tags"
+                        value={tags}
+                        onChange={(event) => setTags(event.target.value)}
+                        placeholder="Ex. Support, Paris"
+                        list="vpn-create-tags"
+                      />
+                      <datalist id="vpn-create-tags">
+                        {[...new Set(profiles.flatMap((profile) => profile.tags))].map((tag) => (
+                          <option key={tag} value={tag} />
+                        ))}
+                      </datalist>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label>Point d&apos;entrée</Label>
@@ -279,6 +312,10 @@ export function CreateProfileDialog({
               )}
 
               {step === 2 && entry && (
+                <AccessEditor value={access} onChange={setAccess} mode={mode} gateways={gateways} profiles={profiles} />
+              )}
+
+              {step === 3 && entry && (
                 <>
                   <div className="space-y-2">
                     <Label>Récapitulatif</Label>
@@ -339,7 +376,9 @@ export function CreateProfileDialog({
                 </>
               )}
 
-              {(error || (stepError && step === 2)) && <Callout variant="danger">{error ?? stepError}</Callout>}
+              {(error || (stepError && step >= 2)) && (
+                <Callout variant={error || step === 3 ? 'danger' : 'warning'}>{error ?? stepError}</Callout>
+              )}
             </div>
 
             <DialogFooter className="sm:justify-between">

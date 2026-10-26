@@ -3789,7 +3789,7 @@ func handleCommand(ctx context.Context, cmd commandPayload, onProgress func(prog
 		// The revision is what the API matches results against.
 		result.ResourceID = readString(cmd.Payload, "revision")
 		message, active, err := applyVpn(cmd.Payload)
-		result.Data = map[string]bool{"vpnActive": active}
+		result.Data = map[string]bool{"vpnActive": active, "vpnPolicy": true}
 		if err != nil {
 			result.Success = false
 			result.Message = err.Error()

@@ -30,12 +30,30 @@ function meshPrefix(meshCidr: string): string {
   return `${octets[0]}.${octets[1]}`;
 }
 
+export function inMesh(meshCidr: string, ip: string): boolean {
+  return ip.startsWith(`${meshPrefix(meshCidr)}.`);
+}
+
 export function clientSubnet(meshCidr: string, subnetIndex: number): string {
   return `${meshPrefix(meshCidr)}.${CLIENT_SUBNET_BASE_OCTET + subnetIndex}.0/24`;
 }
 
 export function entryGatewayCidr(meshCidr: string, subnetIndex: number): string {
   return `${meshPrefix(meshCidr)}.${CLIENT_SUBNET_BASE_OCTET + subnetIndex}.1/24`;
+}
+
+// The two halves of the workspace /16, as CIDRs an iptables rule can match
+// without the iprange module: everything below the client range (fleet
+// nodes, x.y.0.0 - x.y.99.255) and the client range itself (x.y.100.0 -
+// x.y.255.255, every entry node's /24).
+export function meshNodeRangeCidrs(meshCidr: string): string[] {
+  const prefix = meshPrefix(meshCidr);
+  return [`${prefix}.0.0/18`, `${prefix}.64.0/19`, `${prefix}.96.0/22`];
+}
+
+export function clientRangeCidrs(meshCidr: string): string[] {
+  const prefix = meshPrefix(meshCidr);
+  return [`${prefix}.100.0/22`, `${prefix}.104.0/21`, `${prefix}.112.0/20`, `${prefix}.128.0/17`];
 }
 
 export function pickFreeClientIp(meshCidr: string, subnetIndex: number, used: Iterable<string>): string | null {

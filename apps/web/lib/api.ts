@@ -472,6 +472,26 @@ export type VpnNodeRef = {
 
 export type VpnProfileMode = 'full' | 'private';
 export type VpnDeploymentStatus = 'active' | 'pending' | 'error' | 'disabled' | 'expired';
+export type VpnAccessScope = 'all' | 'selected' | 'none';
+// What a client may open connections to (replies always come back),
+// enforced by its entry node's firewall.
+export type VpnAccess = {
+  mesh: VpnAccessScope;
+  meshNodeIds: string[];
+  peers: VpnAccessScope;
+  peerProfileIds: string[];
+};
+export type VpnBulkAction =
+  | 'enable'
+  | 'disable'
+  | 'delete'
+  | 'add_tag'
+  | 'remove_tag'
+  | 'add_peers'
+  | 'remove_peers'
+  | 'set_mesh_access'
+  | 'set_peer_access';
+export type VpnBulkOptions = { tag?: string; peerIds?: string[]; scope?: VpnAccessScope; meshNodeIds?: string[] };
 
 export type VpnProfile = {
   id: string;
@@ -481,6 +501,8 @@ export type VpnProfile = {
   enabled: boolean;
   expiresAt: string | null;
   dns: string[];
+  tags: string[];
+  access: VpnAccess;
   clientIp: string;
   clientPublicKey: string;
   // False when the profile was created with the caller's own public key:
@@ -491,7 +513,9 @@ export type VpnProfile = {
   exitNodeId: string | null;
   // ...and the node traffic actually leaves through (null in private mode).
   exitNode: VpnNodeRef | null;
-  deployment: { status: VpnDeploymentStatus; message: string | null };
+  // `warning`: deployed, but the entry node's agent is too old to enforce
+  // the access rules.
+  deployment: { status: VpnDeploymentStatus; message: string | null; warning?: string | null };
   session: {
     connected: boolean;
     lastHandshakeAt: string | null;
@@ -518,6 +542,11 @@ export type VpnProfilePayload = {
   dns?: string[];
   expiresAt?: string | null;
   publicKey?: string;
+  tags?: string[];
+  meshAccess?: VpnAccessScope;
+  meshNodeIds?: string[];
+  peerAccess?: VpnAccessScope;
+  peerProfileIds?: string[];
 };
 
 export type VpnGateway = VpnNodeRef & {
@@ -530,7 +559,7 @@ export type VpnGateway = VpnNodeRef & {
   entryProfiles: number;
   exitProfiles: number;
   connectedClients: number;
-  apply: { status: 'active' | 'error' | null; error: string | null; revision: string | null };
+  apply: { status: 'active' | 'outdated' | 'error' | null; error: string | null; revision: string | null };
 };
 
 // Pushed on the live socket by the entry node's heartbeat (every ~5s).
@@ -1121,6 +1150,11 @@ export const api = {
     rotateKeys: (id: string) =>
       request<VpnProfileWithConfig>(`/api/v1/vpn/profiles/${id}/rotate-keys`, { method: 'POST', body: '{}' }),
     remove: (id: string) => request<{ success: boolean }>(`/api/v1/vpn/profiles/${id}`, { method: 'DELETE' }),
+    bulk: (ids: string[], action: VpnBulkAction, options: VpnBulkOptions = {}) =>
+      request<{ count: number }>('/api/v1/vpn/profiles/bulk', {
+        method: 'POST',
+        body: JSON.stringify({ ids, action, ...options }),
+      }),
     config: (id: string) =>
       request<{ filename: string; config: string; complete: boolean }>(`/api/v1/vpn/profiles/${id}/config`),
   },

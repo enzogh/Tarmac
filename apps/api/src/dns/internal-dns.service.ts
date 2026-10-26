@@ -46,10 +46,15 @@ export class InternalDnsService implements OnModuleInit {
   async setInternalDnsNode(nodeId: string, scope: WorkspaceScope, actorUserId?: string) {
     const node = await this.prisma.node.findFirst({ where: { id: nodeId, workspaceId: scope.workspaceId } });
     if (!node) throw new NotFoundException('node not found');
+    const workspace = await this.prisma.workspace.findUnique({
+      where: { id: scope.workspaceId as string },
+      select: { internalDnsNodeId: true },
+    });
 
     await this.prisma.workspace.update({
       where: { id: scope.workspaceId as string },
-      data: { internalDnsNodeId: nodeId },
+      // Whatever the previous node reported says nothing about this one.
+      data: { internalDnsNodeId: nodeId, ...(workspace?.internalDnsNodeId !== nodeId ? { internalDnsStatus: 'pending' } : {}) },
     });
     this.lastPushedSignature.delete(scope.workspaceId as string);
     const cleanupSent = await this.pushToNode(nodeId, scope.workspaceId as string);

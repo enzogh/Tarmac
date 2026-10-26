@@ -174,6 +174,8 @@ export interface CommandResultPayload {
     // Set by `apply_vpn`: false once the node carries no VPN state at all
     // (everything torn down), so it can stop receiving applies.
     vpnActive?: boolean;
+    // Set by `apply_vpn` on agents that enforce per-client access rules.
+    vpnPolicy?: boolean;
   };
 }
 

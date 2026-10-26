@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const testKey = "zK5TQbSagVfhf0MEF/ff8DKmemxMz3xXRrlyB5c5RA8="
 
@@ -91,5 +94,67 @@ func TestNormalizeRulePrefix(t *testing.T) {
 	}
 	if got := normalizeRulePrefix("all", nil); got != "" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestParseVpnPayloadPolicy(t *testing.T) {
+	payload := validVpnPayload()
+	payload["isolation"] = true
+	client := payload["entry"].(map[string]interface{})["clients"].([]interface{})[0].(map[string]interface{})
+	client["policy"] = map[string]interface{}{
+		"internet": true,
+		"local":    false,
+		"localDns": true,
+		"allow":    []interface{}{"10.255.0.7/32", "10.255.102.3/32"},
+		"dns":      []interface{}{"10.255.0.9/32"},
+	}
+	desired, err := parseVpnPayload(payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	policy := desired.entry.clients[0].policy
+	if !desired.isolation || !policy.internet || policy.local || !policy.localDns || len(policy.allow) != 2 || len(policy.dns) != 1 {
+		t.Fatalf("policy not fully parsed: %+v", policy)
+	}
+
+	client["policy"].(map[string]interface{})["allow"] = []interface{}{"10.255.0.7/32 -j ACCEPT"}
+	if _, err := parseVpnPayload(payload); err == nil {
+		t.Fatal("a policy destination that isn't a CIDR must be refused")
+	}
+}
+
+func TestVpnClientRulesDropByDefault(t *testing.T) {
+	payload := validVpnPayload()
+	payload["isolation"] = true
+	desired, err := parseVpnPayload(payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	desired.entry.clients[0].policy = vpnPolicy{internet: true, allow: []string{"10.255.0.7/32"}}
+
+	forward := vpnClientForwardRules(desired)
+	last := forward[len(forward)-1]
+	if strings.Join(last, " ") != "-i tarmacvpn0 -j DROP" {
+		t.Fatalf("forward rules must end with a drop, got %v", last)
+	}
+	joined := make([]string, 0, len(forward))
+	for _, rule := range forward {
+		joined = append(joined, strings.Join(rule, " "))
+	}
+	all := strings.Join(joined, "\n")
+	for _, want := range []string{
+		"-i tarmacvpn0 -s 10.255.101.2/32 -d 10.255.0.7/32 -j ACCEPT",
+		"-i tarmacvpn0 -s 10.255.101.2/32 ! -d 10.255.0.0/16 -j ACCEPT",
+	} {
+		if !strings.Contains(all, want) {
+			t.Fatalf("missing rule %q in:\n%s", want, all)
+		}
+	}
+
+	input := vpnClientInputRules(desired)
+	for _, rule := range input {
+		if strings.Join(rule, " ") == "-i tarmacvpn0 -s 10.255.101.2/32 -j ACCEPT" {
+			t.Fatal("a client without local access must not reach the entry node")
+		}
 	}
 }

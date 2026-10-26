@@ -34,6 +34,18 @@ function SyncState({ gateway }: { gateway: VpnGateway }) {
     );
   }
   if (!carriesVpn) return <span className="text-xs text-muted-foreground">Non utilisé</span>;
+  if (gateway.apply.status === 'outdated') {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span>
+            <StatusPill tone="warn">Agent à mettre à jour</StatusPill>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-sm">{gateway.apply.error}</TooltipContent>
+      </Tooltip>
+    );
+  }
   if (gateway.status === 'offline') return <StatusPill tone="warn">Hors ligne</StatusPill>;
   if (gateway.apply.status === 'active') {
     return (
@@ -57,6 +69,7 @@ export default function VpnGatewaysPage() {
   const exits = gateways.filter((gateway) => gateway.exitProfiles > 0);
   const connected = gateways.reduce((sum, gateway) => sum + gateway.connectedClients, 0);
   const errors = gateways.filter((gateway) => gateway.apply.status === 'error');
+  const outdated = gateways.filter((gateway) => gateway.apply.status === 'outdated' && gateway.entryProfiles > 0);
   const listenPort = gateways[0]?.listenPort ?? 51821;
   const [query, setQuery] = useState('');
   const visible = useMemo(() => {
@@ -88,6 +101,13 @@ export default function VpnGatewaysPage() {
         <Callout variant="danger">
           {errors.length} nœud{errors.length > 1 ? 's n’ont' : ' n’a'} pas pu appliquer la configuration VPN (
           {errors.map((gateway) => gateway.name).join(', ')}). Survolez le statut pour voir l&apos;erreur.
+        </Callout>
+      )}
+
+      {outdated.length > 0 && (
+        <Callout variant="warning">
+          {outdated.map((gateway) => gateway.name).join(', ')} : agent trop ancien pour appliquer les règles d&apos;accès des
+          profils — leurs appareils ne sont pas cloisonnés. Mettez à jour l&apos;agent depuis la page Nœuds.
         </Callout>
       )}
 

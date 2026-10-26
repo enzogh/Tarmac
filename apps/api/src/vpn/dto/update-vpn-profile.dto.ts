@@ -7,11 +7,18 @@ import {
   IsISO8601,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   MinLength,
   ValidateIf,
 } from 'class-validator';
-import { VPN_PROFILE_MODES, VpnProfileModeValue } from './create-vpn-profile.dto';
+import {
+  VPN_ACCESS_SCOPES,
+  VPN_PROFILE_MODES,
+  VPN_TAG,
+  VpnAccessScopeValue,
+  VpnProfileModeValue,
+} from './create-vpn-profile.dto';
 
 export class UpdateVpnProfileDto {
   @IsOptional()
@@ -55,4 +62,30 @@ export class UpdateVpnProfileDto {
   @ValidateIf((_, value) => value !== null)
   @IsISO8601()
   expiresAt?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @Matches(VPN_TAG, { each: true, message: 'each tag must be 1-32 letters, digits, spaces, dots, dashes or underscores' })
+  tags?: string[];
+
+  @IsOptional()
+  @IsIn(VPN_ACCESS_SCOPES)
+  meshAccess?: VpnAccessScopeValue;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  @IsString({ each: true })
+  meshNodeIds?: string[];
+
+  @IsOptional()
+  @IsIn(VPN_ACCESS_SCOPES)
+  peerAccess?: VpnAccessScopeValue;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(1000)
+  @IsString({ each: true })
+  peerProfileIds?: string[];
 }
