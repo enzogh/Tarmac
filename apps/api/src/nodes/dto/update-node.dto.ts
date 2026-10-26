@@ -1,4 +1,4 @@
-import { IsBoolean, IsIn, IsNumber, IsOptional, IsString, MinLength } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class UpdateNodeDto {
   @IsOptional()
@@ -56,4 +56,11 @@ export class UpdateNodeDto {
   @IsOptional()
   @IsBoolean()
   smartMonitoringEnabled?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  labels?: string[];
 }

@@ -65,7 +65,7 @@ import {
   StepConfig,
 } from '../../../../components/ui/wizard';
 import { DirectoryBrowser } from '../../../../components/ui/directory-browser';
-import { readNodeLabels } from '../../../../lib/node-labels';
+import { useNodeLabels } from '../../../../lib/node-labels';
 import { CardListSkeleton, StatCardSkeleton, TableRowSkeleton } from '../../../../components/ui/skeleton';
 
 const MIGRATION_PRESETS: PresetOption[] = [
@@ -161,7 +161,7 @@ function RemoteEndpointFields({
 export default function MigrationsPage() {
   const { data: migrations = [], mutate: refreshMigrations, isLoading: migrationsLoading } = usePolling('migrations', api.migrations.list, { intervalMs: 20000 });
   const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
-  const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
+  const nodeLabels = useNodeLabels();
   const [migrationsTab, setMigrationsTab] = useState('active');
   const [wizardOpen, setWizardOpen] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState<PresetOption | null>(null);
@@ -259,9 +259,6 @@ export default function MigrationsPage() {
     }
   };
 
-  useEffect(() => {
-    setNodeLabels(readNodeLabels());
-  }, []);
 
   useEffect(() => {
     const sourceReady =

@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 export type InternalDnsState = {
   internalDnsNodeId: string | null;
   internalDnsStatus: 'pending' | 'active' | 'error';
+  internalDnsError?: string | null;
   records: Array<{ name: string; content: string }>;
 };
 

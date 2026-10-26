@@ -61,7 +61,7 @@ import { SectionLabel } from '../../../../components/SectionLabel';
 import { RESOURCE_STATUS, StatusDot, StatusPill, describe } from '../../../../components/ui/status';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
 import { shortHostname } from '../../../../lib/format';
-import { readNodeLabels } from '../../../../lib/node-labels';
+import { useNodeLabels } from '../../../../lib/node-labels';
 
 // ─── Presets ────────────────────────────────────────────────────────────────
 
@@ -216,11 +216,8 @@ export default function MountsPage() {
     }
     return members;
   }, { intervalMs: 20000 });
-  const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
+  const nodeLabels = useNodeLabels();
 
-  useEffect(() => {
-    setNodeLabels(readNodeLabels());
-  }, []);
 
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardMode, setWizardMode] = useState<WizardMode>('create-share');

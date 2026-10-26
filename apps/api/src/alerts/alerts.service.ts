@@ -16,7 +16,7 @@ export class AlertsService {
     return this.prisma.alert.findMany({
       where: scopeWhere(scope),
       orderBy: { triggeredAt: 'desc' },
-      include: { rule: true, node: true },
+      include: { rule: true, node: { select: { id: true, name: true } } },
       take: 300,
     });
   }
@@ -29,7 +29,7 @@ export class AlertsService {
   async create(dto: CreateAlertDto, scope: WorkspaceScope, actorUserId?: string) {
     const created = await this.prisma.alert.create({
       data: { ...dto, workspaceId: scope.workspaceId as string },
-      include: { node: true, rule: true },
+      include: { node: { select: { id: true, name: true } }, rule: true },
     });
     await this.auditLogsService.log({
       workspaceId: scope.workspaceId as string,

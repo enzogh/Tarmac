@@ -34,6 +34,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       JWT_SECRET_PREVIOUS: ${JWT_SECRET_PREVIOUS:-}
       AGENT_SHARED_TOKEN: ${AGENT_SHARED_TOKEN:?AGENT_SHARED_TOKEN must be set}
+      # Chiffre au repos les clés VPN et secrets TSIG (voir common/secret-box.ts).
+      TARMAC_SECRETS_KEY: ${TARMAC_SECRETS_KEY:?TARMAC_SECRETS_KEY must be set}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@tarmac.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       ENABLE_DEFAULT_ADMIN: ${ENABLE_DEFAULT_ADMIN:-true}

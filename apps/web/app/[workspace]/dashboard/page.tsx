@@ -21,7 +21,7 @@ import { Stat, StatRow } from '../../../components/ui/stat';
 import { ALERT_STATUS, RESOURCE_STATUS, SEVERITY, StatusPill, describe } from '../../../components/ui/status';
 import { Progress } from '../../../components/ui/progress';
 import { CardListSkeleton, ChartCardSkeleton, ListSkeleton, StatCardSkeleton } from '../../../components/ui/skeleton';
-import { readNodeLabels } from '../../../lib/node-labels';
+import { useNodeLabels } from '../../../lib/node-labels';
 import { SectionLabel } from '../../../components/SectionLabel';
 import { formatCapacityGb, formatInt, formatRelative, formatTime as formatClock } from '../../../lib/format';
 
@@ -48,11 +48,8 @@ function smoothSeries<T extends Record<string, number | string>>(
 }
 
 export default function OverviewPage() {
-  const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
+  const nodeLabels = useNodeLabels();
 
-  useEffect(() => {
-    setNodeLabels(readNodeLabels());
-  }, []);
 
   const {
     data: activitiesRaw,

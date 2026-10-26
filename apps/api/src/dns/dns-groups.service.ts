@@ -3,6 +3,7 @@ import { DnsServerGroupMemberStatus, Prisma } from '@prisma/client';
 import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
+import { sealSecret } from '../common/secret-box';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDnsGroupDto } from './dto/create-dns-group.dto';
 import { UpdateDnsGroupDto } from './dto/update-dns-group.dto';
@@ -226,7 +227,7 @@ export class DnsGroupsService {
   // apply_dns_server_group result echoes back the TSIG key it generated -
   // relayed to secondary members on their next reconcile tick.
   setGroupTsigKeySecret(groupId: string, tsigKeySecret: string) {
-    return this.prisma.dnsServerGroup.update({ where: { id: groupId }, data: { tsigKeySecret } });
+    return this.prisma.dnsServerGroup.update({ where: { id: groupId }, data: { tsigKeySecret: sealSecret(tsigKeySecret) } });
   }
 
   getPrimaryMember(groupId: string) {

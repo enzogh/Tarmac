@@ -13,6 +13,7 @@ import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { WorkspaceScope } from '../auth/workspace.guard';
 import { LiveWsServer } from '../live/live.ws';
+import { openSecret, sealSecret } from '../common/secret-box';
 import { extractExternalIp } from '../nodes/extract-external-ip';
 import { PrismaService } from '../prisma/prisma.service';
 import { VlanService } from '../vlan/vlan.service';
@@ -44,6 +45,11 @@ const SESSION_ACTIVE_WINDOW_MS = 3 * 60 * 1000;
 // the live socket carries them in real time, the database only needs a
 // recent copy.
 const SESSION_STATS_WRITE_INTERVAL_MS = 30_000;
+// Workspace-wide pushes are coalesced: a burst of changes (bulk edit, several
+// toggles in a row) sends one apply to the nodes, once things settle for
+// RECONCILE_QUIET_MS or at the latest RECONCILE_MAX_WAIT_MS after the first.
+const RECONCILE_QUIET_MS = 300;
+const RECONCILE_MAX_WAIT_MS = 2_000;
 const UNIQUE_RETRIES = 5;
 
 const NODE_REF_SELECT = {
@@ -116,6 +122,10 @@ function isUniqueConstraintError(error: unknown) {
 export class VpnService {
   private readonly logger = new Logger(VpnService.name);
   private readonly statsWrittenAt = new Map<string, number>();
+  private readonly pendingReconciles = new Map<
+    string,
+    { firstAt: number; timer: NodeJS.Timeout; waiters: Array<{ resolve: () => void; reject: (error: unknown) => void }> }
+  >();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -173,8 +183,8 @@ export class VpnService {
             exitNodeId,
             clientIp,
             clientPublicKey: keys.publicKey,
-            clientPrivateKey: keys.privateKey,
-            presharedKey: generateWireguardPresharedKey(),
+            clientPrivateKey: sealSecret(keys.privateKey),
+            presharedKey: sealSecret(generateWireguardPresharedKey()),
             dns: dto.dns ?? (mode === 'full' ? VPN_DEFAULT_DNS : []),
             tags: normalizeTags(dto.tags),
             meshAccess,
@@ -332,8 +342,8 @@ export class VpnService {
       where: { id },
       data: {
         clientPublicKey: keys.publicKey,
-        clientPrivateKey: keys.privateKey,
-        presharedKey: generateWireguardPresharedKey(),
+        clientPrivateKey: sealSecret(keys.privateKey),
+        presharedKey: sealSecret(generateWireguardPresharedKey()),
         configChangedAt: new Date(),
         lastHandshakeAt: null,
         clientEndpoint: null,
@@ -537,7 +547,27 @@ export class VpnService {
    * IPIP tunnel between the two entries (same mechanism as exits), each side
    * routing the other's client subnet through it un-NATed.
    */
-  async reconcileWorkspace(workspaceId: string, onlyNodeId?: string): Promise<void> {
+  reconcileWorkspace(workspaceId: string, onlyNodeId?: string): Promise<void> {
+    if (onlyNodeId) return this.pushWorkspace(workspaceId, onlyNodeId);
+    return new Promise<void>((resolve, reject) => {
+      const now = Date.now();
+      const pending = this.pendingReconciles.get(workspaceId);
+      if (pending) clearTimeout(pending.timer);
+      const entry = pending ?? { firstAt: now, timer: undefined as unknown as NodeJS.Timeout, waiters: [] };
+      entry.waiters.push({ resolve, reject });
+      const delay = Math.max(0, Math.min(RECONCILE_QUIET_MS, entry.firstAt + RECONCILE_MAX_WAIT_MS - now));
+      entry.timer = setTimeout(() => {
+        this.pendingReconciles.delete(workspaceId);
+        this.pushWorkspace(workspaceId).then(
+          () => entry.waiters.forEach((waiter) => waiter.resolve()),
+          (error) => entry.waiters.forEach((waiter) => waiter.reject(error)),
+        );
+      }, delay);
+      this.pendingReconciles.set(workspaceId, entry);
+    });
+  }
+
+  private async pushWorkspace(workspaceId: string, onlyNodeId?: string): Promise<void> {
     const [nodes, profiles, meshCidr] = await Promise.all([
       this.prisma.node.findMany({
         where: { workspaceId },
@@ -618,7 +648,7 @@ export class VpnService {
       }
       entryState.entry.clients.push({
         publicKey: profile.clientPublicKey,
-        presharedKey: profile.presharedKey,
+        presharedKey: openSecret(profile.presharedKey),
         ip: profile.clientIp,
         table: 0,
         policy: policy.policy,
@@ -744,6 +774,7 @@ export class VpnService {
     });
     const byKey = new Map(profiles.map((profile) => [profile.clientPublicKey, profile]));
     const now = Date.now();
+    const writes: Prisma.PrismaPromise<unknown>[] = [];
     const live: Array<{
       profileId: string;
       lastHandshakeAt: string | null;
@@ -772,10 +803,22 @@ export class VpnService {
       const lastWrite = this.statsWrittenAt.get(profile.id) ?? 0;
       if (!handshakeChanged && !endpointChanged && now - lastWrite < SESSION_STATS_WRITE_INTERVAL_MS) continue;
       this.statsWrittenAt.set(profile.id, now);
-      await this.prisma.vpnProfile.update({
-        where: { id: profile.id },
-        data: { lastHandshakeAt: handshake, clientEndpoint: endpoint, rxBytes, txBytes },
-      });
+      writes.push(
+        this.prisma.vpnProfile.update({
+          where: { id: profile.id },
+          data: { lastHandshakeAt: handshake, clientEndpoint: endpoint, rxBytes, txBytes },
+        }),
+      );
+    }
+    // One round-trip per report instead of one per active session.
+    if (writes.length > 0) {
+      try {
+        await this.prisma.$transaction(writes);
+      } catch (error) {
+        // Typically a profile deleted mid-report; the next report rewrites them.
+        for (const entry of live) this.statsWrittenAt.delete(entry.profileId);
+        this.logger.warn(`VPN session stats not saved for node ${nodeId}: ${error instanceof Error ? error.message : error}`);
+      }
     }
 
     if (live.length > 0) this.live.broadcast('vpn.stats', { nodeId, peers: live }, workspaceId);
@@ -1046,8 +1089,8 @@ export class VpnService {
       entryNodeName: profile.entryNode.name,
       mode: profile.mode,
       clientIp: profile.clientIp,
-      clientPrivateKey: profile.clientPrivateKey,
-      presharedKey: profile.presharedKey,
+      clientPrivateKey: openSecret(profile.clientPrivateKey),
+      presharedKey: openSecret(profile.presharedKey),
       dns: profile.dns,
       serverPublicKey: profile.entryNode.overlayPublicKey,
       endpoint: `${host.includes(':') ? `[${host}]` : host}:${VPN_LISTEN_PORT}`,

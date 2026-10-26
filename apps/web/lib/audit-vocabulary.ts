@@ -1,0 +1,223 @@
+// French wording for the audit journal. The API records machine actions
+// ("vpn_profile.switch_exit"); the journal reads them back as sentences
+// ("a changé la sortie internet du profil VPN test"). An action missing
+// here still shows, with its raw code, rather than disappearing.
+
+export type AuditCategory = 'node' | 'network' | 'vpn' | 'dns' | 'storage' | 'transfer' | 'alert' | 'access' | 'workspace';
+
+export const RESOURCE_LABEL: Record<string, string> = {
+  node: 'nœud',
+  vpn_profile: 'profil VPN',
+  api_key: 'clé API',
+  alert: 'alerte',
+  alert_rule: 'règle d’alerte',
+  notification_channel: 'canal de notification',
+  dns_record: 'enregistrement DNS',
+  dns_zone: 'zone DNS',
+  dns_server_group: 'groupe DNS',
+  dns_server_group_member: 'membre de groupe DNS',
+  migration: 'migration',
+  mount: 'montage',
+  share: 'partage',
+  share_client: 'client de partage',
+  pool: 'pool',
+  pool_member: 'membre de pool',
+  sync_job: 'réplication',
+  sync_job_run: 'exécution de réplication',
+  workspace: 'workspace',
+};
+
+// Plural / filter-menu form.
+export const RESOURCE_FILTER_LABEL: Record<string, string> = {
+  node: 'Nœuds',
+  vpn_profile: 'Profils VPN',
+  api_key: 'Clés API',
+  alert: 'Alertes',
+  alert_rule: 'Règles d’alerte',
+  notification_channel: 'Canaux de notification',
+  dns_record: 'Enregistrements DNS',
+  dns_zone: 'Zones DNS',
+  dns_server_group: 'Groupes DNS',
+  dns_server_group_member: 'Membres de groupe DNS',
+  migration: 'Migrations',
+  mount: 'Montages',
+  share: 'Partages',
+  share_client: 'Clients de partage',
+  pool: 'Pools',
+  pool_member: 'Membres de pool',
+  sync_job: 'Réplications',
+  sync_job_run: 'Exécutions de réplication',
+  workspace: 'Workspace',
+};
+
+const CATEGORY_BY_RESOURCE: Record<string, AuditCategory> = {
+  node: 'node',
+  vpn_profile: 'vpn',
+  api_key: 'access',
+  alert: 'alert',
+  alert_rule: 'alert',
+  notification_channel: 'alert',
+  dns_record: 'dns',
+  dns_zone: 'dns',
+  dns_server_group: 'dns',
+  dns_server_group_member: 'dns',
+  migration: 'transfer',
+  sync_job: 'transfer',
+  sync_job_run: 'transfer',
+  mount: 'storage',
+  share: 'storage',
+  share_client: 'storage',
+  pool: 'storage',
+  pool_member: 'storage',
+  workspace: 'workspace',
+};
+
+// Verb phrase, completed by the resource ("… le nœud ns320594").
+const ACTION_VERB: Record<string, string> = {
+  'node.create': 'a ajouté le nœud',
+  'node.update': 'a modifié le nœud',
+  'node.delete': 'a supprimé le nœud',
+  'node.mute': 'a mis en silence les alertes du nœud',
+  'node.unmute': 'a réactivé les alertes du nœud',
+  'node.rotate_agent_token': 'a renouvelé le jeton d’agent du nœud',
+  'node.rotate_agent_token_all': 'a renouvelé les jetons de tous les agents',
+  'dns.internal.designate': 'a désigné comme DNS interne le nœud',
+  'dns.internal.clear': 'a retiré le rôle DNS interne du nœud',
+  'dns.internal.retry': 'a relancé l’installation du DNS interne sur',
+  'vpn_profile.create': 'a créé le profil VPN',
+  'vpn_profile.update': 'a modifié le profil VPN',
+  'vpn_profile.delete': 'a supprimé le profil VPN',
+  'vpn_profile.rotate_keys': 'a renouvelé les clés du profil VPN',
+  'vpn_profile.switch_exit': 'a changé la sortie internet du profil VPN',
+  'vpn_profile.expire': 'a désactivé à expiration le profil VPN',
+  'api_key.create': 'a créé la clé API',
+  'api_key.update': 'a modifié la clé API',
+  'api_key.revoke': 'a révoqué la clé API',
+  'api_key.delete': 'a supprimé la clé API',
+  'alert.create': 'a créé une alerte',
+  'alert.ack': 'a pris en compte une alerte',
+  'alert.resolve': 'a résolu une alerte',
+  'alert.delete': 'a supprimé une alerte',
+  'alert.bulk_delete': 'a supprimé des alertes',
+  'alert_rule.create': 'a créé la règle d’alerte',
+  'alert_rule.update': 'a modifié la règle d’alerte',
+  'alert_rule.delete': 'a supprimé la règle d’alerte',
+  'notification_channel.create': 'a créé le canal de notification',
+  'notification_channel.update': 'a modifié le canal de notification',
+  'notification_channel.delete': 'a supprimé le canal de notification',
+  'notification_channel.test': 'a testé le canal de notification',
+  'dns.group.create': 'a créé le groupe DNS',
+  'dns.group.update': 'a modifié le groupe DNS',
+  'dns.group.delete': 'a supprimé le groupe DNS',
+  'dns.group_member.upsert': 'a ajouté ou modifié un membre du groupe DNS',
+  'dns.group_member.delete': 'a retiré un membre du groupe DNS',
+  'dns.group_member.resolve_port_conflict': 'a libéré le port 53 pour un membre du groupe DNS',
+  'dns.zone.create': 'a créé la zone DNS',
+  'dns.zone.delete': 'a supprimé la zone DNS',
+  'dns.zone.reapply': 'a redéployé la zone DNS',
+  'dns.record.upsert': 'a enregistré l’entrée DNS',
+  'dns.record.delete': 'a supprimé l’entrée DNS',
+  'migration.create': 'a créé la migration',
+  'migration.update': 'a modifié la migration',
+  'migration.start': 'a lancé la migration',
+  'migration.stop': 'a arrêté la migration',
+  'migration.retry': 'a relancé la migration',
+  'migration.delete': 'a supprimé la migration',
+  'mount.create': 'a créé le montage',
+  'mount.update': 'a modifié le montage',
+  'mount.remount': 'a remonté le montage',
+  'mount.delete': 'a supprimé le montage',
+  'share.create': 'a créé le partage',
+  'share.update': 'a modifié le partage',
+  'share.reapply': 'a redéployé le partage',
+  'share.delete': 'a supprimé le partage',
+  'share.client.upsert': 'a autorisé un client sur le partage',
+  'share.client.delete': 'a retiré un client du partage',
+  'pool.create': 'a créé le pool',
+  'pool.update': 'a modifié le pool',
+  'pool.delete': 'a supprimé le pool',
+  'pool.member.upsert': 'a ajouté un membre au pool',
+  'pool.member.delete': 'a retiré un membre du pool',
+  'sync_job.create': 'a créé la réplication',
+  'sync_job.update': 'a modifié la réplication',
+  'sync_job.delete': 'a supprimé la réplication',
+  'sync_job.run': 'a lancé la réplication',
+  'sync_job.rotate_trigger_token': 'a renouvelé le jeton de déclenchement de la réplication',
+  'workspace.create': 'a créé le workspace',
+  'workspace.update': 'a modifié le workspace',
+  'workspace.delete': 'a supprimé le workspace',
+  'workspace.member.add': 'a ajouté un membre au workspace',
+  'workspace.member.invite': 'a invité un membre dans le workspace',
+  'workspace.member.remove': 'a retiré un membre du workspace',
+};
+
+// Actions whose sentence is complete on its own, without a resource name.
+const SELF_CONTAINED = new Set([
+  'node.rotate_agent_token_all',
+  'alert.create',
+  'alert.ack',
+  'alert.resolve',
+  'alert.delete',
+  'alert.bulk_delete',
+]);
+
+export function auditCategory(resourceType: string): AuditCategory {
+  return CATEGORY_BY_RESOURCE[resourceType] ?? 'workspace';
+}
+
+export function auditVerb(action: string, resourceType: string): { verb: string; needsResource: boolean } {
+  const verb = ACTION_VERB[action];
+  if (verb) return { verb, needsResource: !SELF_CONTAINED.has(action) };
+  const label = RESOURCE_LABEL[resourceType] ?? resourceType;
+  return { verb: `${action} sur ${label}`, needsResource: true };
+}
+
+// Field names that appear in `details`, for the expanded view.
+export const DETAIL_LABEL: Record<string, string> = {
+  name: 'Nom',
+  previousName: 'Ancien nom',
+  slug: 'Identifiant',
+  previousSlug: 'Ancien identifiant',
+  from: 'Avant',
+  to: 'Après',
+  changes: 'Champs modifiés',
+  type: 'Type',
+  mode: 'Mode',
+  role: 'Rôle',
+  prefix: 'Préfixe',
+  scopes: 'Permissions',
+  ids: 'Éléments',
+  count: 'Nombre',
+  clientIp: 'Adresse client',
+  entryNodeId: 'Point d’entrée',
+  exitNodeId: 'Sortie internet',
+  meshAccess: 'Accès réseau privé',
+  peerAccess: 'Accès aux autres clients',
+  zoneId: 'Zone',
+  nodeId: 'Nœud',
+  minutes: 'Durée (min)',
+  apiKey: 'Via la clé API',
+};
+
+// Field names in `changes` arrays.
+export const FIELD_LABEL: Record<string, string> = {
+  name: 'nom',
+  role: 'rôle',
+  enabled: 'activation',
+  configChangedAt: 'configuration',
+  dnsHostname: 'nom DNS',
+  labels: 'libellés',
+  smartMonitoringEnabled: 'surveillance SMART',
+  locationCity: 'ville',
+  locationCountry: 'pays',
+  graphX: 'position',
+  graphY: 'position',
+  expiresAt: 'expiration',
+  description: 'description',
+  tags: 'étiquettes',
+  dns: 'DNS',
+  mode: 'mode',
+  exitNodeId: 'sortie internet',
+  meshAccess: 'accès réseau privé',
+  peerAccess: 'accès aux autres clients',
+};

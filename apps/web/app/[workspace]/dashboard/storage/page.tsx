@@ -26,7 +26,7 @@ import { Button } from '../../../../components/ui/button';
 import { Alert, AlertDescription } from '../../../../components/ui/alert';
 import { Badge, NodeLabelBadges, StatCard } from '../../../../components/ui';
 import { CardListSkeleton, StatCardSkeleton } from '../../../../components/ui/skeleton';
-import { readNodeLabels } from '../../../../lib/node-labels';
+import { useNodeLabels } from '../../../../lib/node-labels';
 import { SectionLabel } from '../../../../components/SectionLabel';
 import {
   WizardDialog,
@@ -81,7 +81,7 @@ export default function StoragePage() {
   const [selectedPreset, setSelectedPreset] = useState<PresetOption | null>(null);
   const [notice, setNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
   const [busyPoolId, setBusyPoolId] = useState<string | null>(null);
-  const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
+  const nodeLabels = useNodeLabels();
 
   const [formData, setFormData] = useState({
     name: '',
@@ -89,9 +89,6 @@ export default function StoragePage() {
     nodeIds: [] as string[],
   });
 
-  useEffect(() => {
-    setNodeLabels(readNodeLabels());
-  }, []);
 
   const resetForm = () => {
     setFormData({ name: '', strategy: 'mirror', nodeIds: [] });

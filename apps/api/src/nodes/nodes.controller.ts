@@ -125,6 +125,12 @@ export class NodesController {
     return this.nodesService.activity(range, scope);
   }
 
+  // Before :id/metrics so "series" is never read as a node id.
+  @Get('activity/series')
+  activitySeries(@Query('range') range = '1h', @CurrentWorkspace() scope: WorkspaceScope) {
+    return this.nodesService.activitySeries(range, scope);
+  }
+
   @Get(':id/metrics')
   metrics(@Param('id') id: string, @Query('range') range = '1h', @CurrentWorkspace() scope: WorkspaceScope) {
     return this.nodesService.metrics(id, range, scope);

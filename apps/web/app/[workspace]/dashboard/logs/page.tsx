@@ -1,31 +1,61 @@
 'use client';
 
-import { Fragment, useEffect, useRef, useState } from 'react';
-import { Download, History, PauseCircle, PlayCircle, ScrollText, Search, Server } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Bell,
+  ChevronDown,
+  Download,
+  FolderSync,
+  Globe,
+  HardDrive,
+  History,
+  KeyRound,
+  LayoutGrid,
+  LoaderCircle,
+  Network,
+  PauseCircle,
+  PlayCircle,
+  Search,
+  Server,
+  ShieldCheck,
+  Terminal,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { api, AgentLogItem, AuditLogItem } from '../../../../lib/api';
+import {
+  AuditCategory,
+  auditCategory,
+  auditVerb,
+  DETAIL_LABEL,
+  FIELD_LABEL,
+  RESOURCE_FILTER_LABEL,
+  RESOURCE_LABEL,
+} from '../../../../lib/audit-vocabulary';
 import { usePolling } from '../../../../lib/hooks/usePolling';
 import { useLiveSocket } from '../../../../lib/hooks/useLiveSocket';
+import { shortHostname } from '../../../../lib/format';
+import { cn } from '../../../../lib/utils';
 import { PageHeader } from '../../../../components/PageHeader';
-import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
-import { Callout } from '../../../../components/Callout';
-import { SectionLabel } from '../../../../components/SectionLabel';
-import { Badge } from '../../../../components/ui';
-import { Card, CardContent, CardHeader, CardTitle } from '../../../../components/ui/card';
+import { Card } from '../../../../components/ui/card';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
-import { Label } from '../../../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../../components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../../components/ui/tabs';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../../components/ui/table';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '../../../../components/ui/dropdown-menu';
 import { ListSkeleton } from '../../../../components/ui/skeleton';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
+
+const ANY = '__any__';
 
 // resourceType -> where an audit entry's affected resource can be reviewed,
-// relative to the active workspace's /<slug>/dashboard root (see usage
-// below). notification_channel and share_client have no dedicated page yet.
+// relative to the active workspace's /<slug>/dashboard root.
 const RESOURCE_ROUTES: Record<string, string> = {
   node: '/infrastructure',
+  vpn_profile: '/vpn',
+  api_key: '/api-keys',
   migration: '/migrations',
   mount: '/mounts',
   share: '/mounts',
@@ -35,82 +65,262 @@ const RESOURCE_ROUTES: Record<string, string> = {
   sync_job_run: '/replication',
   alert: '/alerts',
   alert_rule: '/alerts',
+  dns_zone: '/dns',
+  dns_record: '/dns',
+  dns_server_group: '/dns',
+  dns_server_group_member: '/dns',
+  workspace: '/settings',
 };
 
-const LEVEL_TEXT_CLASS: Record<string, string> = {
-  info: 'text-zinc-300',
-  warning: 'text-amber-400',
-  error: 'text-rose-400',
-  critical: 'text-red-300 font-semibold',
+const CATEGORY_STYLE: Record<AuditCategory, { icon: LucideIcon; className: string }> = {
+  node: { icon: Server, className: 'bg-primary/10 text-primary' },
+  network: { icon: Network, className: 'bg-[hsl(var(--info))]/10 text-[hsl(var(--info))]' },
+  vpn: { icon: ShieldCheck, className: 'bg-[hsl(var(--info))]/10 text-[hsl(var(--info))]' },
+  dns: { icon: Globe, className: 'bg-[hsl(var(--chart-3))]/10 text-[hsl(var(--chart-3))]' },
+  storage: { icon: HardDrive, className: 'bg-[hsl(var(--chart-4))]/10 text-[hsl(var(--chart-4))]' },
+  transfer: { icon: FolderSync, className: 'bg-[hsl(var(--chart-5))]/10 text-[hsl(var(--chart-5))]' },
+  alert: { icon: Bell, className: 'bg-[hsl(var(--warn))]/10 text-[hsl(var(--warn))]' },
+  access: { icon: KeyRound, className: 'bg-[hsl(var(--danger))]/10 text-[hsl(var(--danger))]' },
+  workspace: { icon: LayoutGrid, className: 'bg-surface-3 text-muted-foreground' },
 };
 
-const LEVEL_BADGE_TYPE: Record<string, 'info' | 'warning' | 'error' | 'critical'> = {
-  info: 'info',
-  warning: 'warning',
-  error: 'error',
-  critical: 'critical',
+type Period = '24h' | '7d' | '30d' | 'all';
+const PERIODS: Record<Period, { label: string; ms: number | null }> = {
+  '24h': { label: 'Dernières 24 h', ms: 24 * 3600e3 },
+  '7d': { label: '7 derniers jours', ms: 7 * 24 * 3600e3 },
+  '30d': { label: '30 derniers jours', ms: 30 * 24 * 3600e3 },
+  all: { label: 'Tout l’historique', ms: null },
+};
+const periodStart = (period: Period) => {
+  const ms = PERIODS[period].ms;
+  return ms === null ? undefined : new Date(Date.now() - ms).toISOString();
 };
 
-const LEVEL_LABEL: Record<string, string> = {
-  info: 'INFO',
-  warning: 'WARN',
-  error: 'ERROR',
-  critical: 'CRIT',
-};
+const formatClock = (iso: string) => new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
-function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString('fr-FR');
+function dayLabel(iso: string): string {
+  const date = new Date(iso);
+  const today = new Date();
+  const startOf = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const diff = Math.round((startOf(today) - startOf(date)) / 86_400_000);
+  if (diff === 0) return 'Aujourd’hui';
+  if (diff === 1) return 'Hier';
+  const label = date.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', ...(date.getFullYear() !== today.getFullYear() ? { year: 'numeric' } : {}) });
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString('fr-FR', { hour12: false });
+function initials(name: string) {
+  const parts = name.split(/[\s.@_-]+/).filter(Boolean);
+  return ((parts[0]?.[0] ?? '?') + (parts[1]?.[0] ?? '')).toUpperCase();
 }
 
-type AuditFilters = {
-  q: string;
-  actorUserId: string;
-  action: string;
-  resourceType: string;
-  from: string;
-};
+// Changes made with a workspace API key carry the key in their details.
+function apiKeyActor(details: unknown): string | null {
+  const apiKey = (details as { apiKey?: { name?: string } } | null)?.apiKey;
+  return apiKey?.name ? apiKey.name : null;
+}
 
-function matchesAuditFilters(entry: AuditLogItem, filters: AuditFilters) {
-  if (filters.actorUserId && entry.actorUserId !== filters.actorUserId) return false;
-  if (filters.action && entry.action !== filters.action) return false;
-  if (filters.resourceType && entry.resourceType !== filters.resourceType) return false;
-  if (filters.q) {
-    const haystack = `${entry.action} ${entry.resourceType} ${entry.resourceId ?? ''}`.toLowerCase();
-    if (!haystack.includes(filters.q.toLowerCase())) return false;
+function Actor({ entry }: { entry: AuditLogItem }) {
+  const viaKey = apiKeyActor(entry.details);
+  if (entry.actor) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex cursor-default items-center gap-1.5 font-medium text-foreground">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-[9px] font-semibold text-primary">{initials(entry.actor.name)}</span>
+            {entry.actor.name}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{entry.actor.email}</TooltipContent>
+      </Tooltip>
+    );
   }
-  return true;
+  if (viaKey) {
+    return (
+      <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+        <KeyRound className="h-3.5 w-3.5 text-muted-foreground" />
+        Clé API « {viaKey} »
+      </span>
+    );
+  }
+  if (entry.actorUserId) return <span className="font-medium text-foreground">Utilisateur supprimé</span>;
+  return <span className="font-medium text-foreground">Tarmac</span>;
+}
+
+function DetailValue({ value, refs }: { value: unknown; refs: Record<string, string> }) {
+  if (value === null || value === undefined || value === '') return <span className="text-muted-foreground">—</span>;
+  if (typeof value === 'boolean') return <>{value ? 'oui' : 'non'}</>;
+  if (typeof value === 'string') {
+    const name = refs[value];
+    return name ? (
+      <span title={value} className="font-medium text-foreground">
+        {shortHostname(name)}
+      </span>
+    ) : (
+      <span className="break-all">{value}</span>
+    );
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <span className="text-muted-foreground">aucun</span>;
+    if (value.length > 6 && value.every((item) => typeof item === 'string' && !refs[item])) return <>{value.length} éléments</>;
+    return (
+      <span className="flex flex-wrap gap-1">
+        {value.map((item, index) => (
+          <span key={index} className="rounded border border-border bg-surface-2 px-1.5 py-px">
+            {typeof item === 'string' ? (FIELD_LABEL[item] ?? refs[item] ?? item) : JSON.stringify(item)}
+          </span>
+        ))}
+      </span>
+    );
+  }
+  if (typeof value === 'object') {
+    const name = (value as { name?: unknown }).name;
+    return <>{typeof name === 'string' ? name : <code className="break-all text-2xs">{JSON.stringify(value)}</code>}</>;
+  }
+  return <>{String(value)}</>;
+}
+
+function AuditDetails({ entry, refs }: { entry: AuditLogItem; refs: Record<string, string> }) {
+  const [raw, setRaw] = useState(false);
+  const details = entry.details && typeof entry.details === 'object' && !Array.isArray(entry.details) ? (entry.details as Record<string, unknown>) : null;
+  const order = (key: string) => ['name', 'from', 'to'].indexOf(key) + 1 || 9;
+  const fields = details ? Object.entries(details).filter(([key]) => key !== 'apiKey').sort(([a], [b]) => order(a) - order(b)) : [];
+  return (
+    <div className="mt-2 rounded-lg border border-border bg-surface-2/50 p-3 text-xs">
+      {fields.length > 0 && !raw && (
+        <dl className="grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-1.5">
+          {fields.map(([key, value]) => (
+            <Fragment key={key}>
+              <dt className="text-muted-foreground">{DETAIL_LABEL[key] ?? key}</dt>
+              <dd className="min-w-0 text-foreground/90">
+                <DetailValue value={value} refs={refs} />
+              </dd>
+            </Fragment>
+          ))}
+        </dl>
+      )}
+      {(raw || fields.length === 0) && (
+        <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-2xs text-muted-foreground">
+          {JSON.stringify({ action: entry.action, resourceType: entry.resourceType, resourceId: entry.resourceId, details: entry.details }, null, 2)}
+        </pre>
+      )}
+      <button type="button" onClick={() => setRaw((value) => !value)} className="mt-2 text-2xs text-muted-foreground hover:text-foreground">
+        {raw ? 'Vue lisible' : 'Données brutes'}
+      </button>
+    </div>
+  );
+}
+
+function AuditRow({ entry, refs, slug }: { entry: AuditLogItem; refs: Record<string, string>; slug: string }) {
+  const [open, setOpen] = useState(false);
+  const category = CATEGORY_STYLE[auditCategory(entry.resourceType)];
+  const { verb, needsResource } = auditVerb(entry.action, entry.resourceType);
+  const detailsName = (entry.details as { name?: unknown } | null)?.name;
+  const resourceName =
+    (entry.resourceId && refs[entry.resourceId]) || (typeof detailsName === 'string' ? detailsName : null) || (entry.resourceId ? entry.resourceId.slice(0, 8) : null);
+  const deleted = entry.resourceId && !refs[entry.resourceId];
+  const route = RESOURCE_ROUTES[entry.resourceType];
+
+  return (
+    <li className="group flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2/40 lg:px-5">
+      <span className="w-11 shrink-0 pt-0.5 text-right text-2xs tabular-nums text-muted-foreground" title={new Date(entry.createdAt).toLocaleString('fr-FR')}>
+        {formatClock(entry.createdAt)}
+      </span>
+      <span className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-lg', category.className)}>
+        <category.icon className="h-3.5 w-3.5" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm leading-6 text-muted-foreground">
+          <Actor entry={entry} /> {verb}
+          {needsResource && resourceName && (
+            <>
+              {' '}
+              {route && !deleted ? (
+                <Link href={`/${slug}/dashboard${route}`} className="font-medium text-foreground underline-offset-2 hover:text-primary hover:underline">
+                  {shortHostname(resourceName)}
+                </Link>
+              ) : (
+                <span className="font-medium text-foreground">{shortHostname(resourceName)}</span>
+              )}
+            </>
+          )}
+        </p>
+        {open && <AuditDetails entry={entry} refs={refs} />}
+      </div>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className={cn(
+          'inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-2xs text-muted-foreground transition-opacity hover:bg-surface-2 hover:text-foreground',
+          !open && 'opacity-60 group-hover:opacity-100',
+        )}
+        aria-expanded={open}
+      >
+        Détails
+        <ChevronDown className={cn('h-3 w-3 transition-transform', open && 'rotate-180')} />
+      </button>
+    </li>
+  );
+}
+
+function ExportMenu({ onExport, hint }: { onExport: (format: 'csv' | 'json') => void; hint: string }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="secondary" size="sm" className="gap-1.5">
+          <Download className="h-3.5 w-3.5" />
+          Exporter
+          <ChevronDown className="h-3 w-3" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuLabel className="text-2xs font-normal text-muted-foreground">{hint}</DropdownMenuLabel>
+        <DropdownMenuItem onClick={() => onExport('csv')}>Tableur (CSV)</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onExport('json')}>JSON</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
 function ActionsTab() {
   const params = useParams<{ workspace: string }>();
   const slug = params.workspace;
+  const { data: facets } = usePolling('audit-facets', api.auditLogs.facets, { intervalMs: 120000, redirectOnError: false });
   const [items, setItems] = useState<AuditLogItem[]>([]);
+  const [refs, setRefs] = useState<Record<string, string>>({});
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [filters, setFilters] = useState<AuditFilters>({ q: '', actorUserId: '', action: '', resourceType: '', from: '' });
-  const [exportTo, setExportTo] = useState('');
+  const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [actor, setActor] = useState(ANY);
+  const [resourceType, setResourceType] = useState(ANY);
+  const [period, setPeriod] = useState<Period>('7d');
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const filters = useMemo(
+    () => ({
+      q: debouncedQuery || undefined,
+      actorUserId: actor === ANY ? undefined : actor,
+      resourceType: resourceType === ANY ? undefined : resourceType,
+      from: periodStart(period),
+    }),
+    [debouncedQuery, actor, resourceType, period],
+  );
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     void api.auditLogs
-      .list({
-        q: filters.q || undefined,
-        actorUserId: filters.actorUserId || undefined,
-        action: filters.action || undefined,
-        resourceType: filters.resourceType || undefined,
-        from: filters.from || undefined,
-        limit: 100,
-      })
+      .list({ ...filters, limit: 100 })
       .then((result) => {
         if (cancelled) return;
         setItems(result.items);
+        setRefs(result.refs ?? {});
         setCursor(result.nextCursor);
       })
       .finally(() => {
@@ -119,29 +329,24 @@ function ActionsTab() {
     return () => {
       cancelled = true;
     };
-  }, [filters.q, filters.actorUserId, filters.action, filters.resourceType, filters.from]);
+  }, [filters]);
 
   useLiveSocket((message) => {
     if (message.type !== 'audit.new') return;
     const entry = message.payload as AuditLogItem;
-    if (!matchesAuditFilters(entry, filters)) return;
-    setItems((prev) => [entry, ...prev]);
+    if (filters.actorUserId && entry.actorUserId !== filters.actorUserId) return;
+    if (filters.resourceType && entry.resourceType !== filters.resourceType) return;
+    if (filters.q) return; // can't evaluate the server-side search locally
+    setItems((prev) => (prev.some((item) => item.id === entry.id) ? prev : [entry, ...prev]));
   });
 
   const loadMore = async () => {
     if (!cursor) return;
     setLoadingMore(true);
     try {
-      const result = await api.auditLogs.list({
-        before: cursor,
-        q: filters.q || undefined,
-        actorUserId: filters.actorUserId || undefined,
-        action: filters.action || undefined,
-        resourceType: filters.resourceType || undefined,
-        from: filters.from || undefined,
-        limit: 100,
-      });
+      const result = await api.auditLogs.list({ ...filters, before: cursor, limit: 100 });
       setItems((prev) => [...prev, ...result.items]);
+      setRefs((prev) => ({ ...prev, ...(result.refs ?? {}) }));
       setCursor(result.nextCursor);
     } finally {
       setLoadingMore(false);
@@ -149,204 +354,154 @@ function ActionsTab() {
   };
 
   const openExport = (format: 'csv' | 'json') => {
-    const to = exportTo || new Date().toISOString();
-    const from = filters.from || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    window.open(api.auditLogs.exportUrl({ from, to, format }), '_blank');
+    const from = periodStart(period) ?? new Date(0).toISOString();
+    window.open(api.auditLogs.exportUrl({ from, to: new Date().toISOString(), format }), '_blank');
   };
 
-  return (
-    <Card className="border-border transition-colors hover:border-border">
-      <CardHeader>
-        <CardTitle>
-          <History className="h-4 w-4 text-muted-foreground" />
-          Journal d&apos;actions
-        </CardTitle>
-        <div className="flex flex-wrap items-center gap-2">
-          {!loading && (
-            <span className="tabular text-2xs text-muted-foreground">
-              {items.length} entrée{items.length > 1 ? 's' : ''}
-            </span>
-          )}
-          <Label className="text-2xs text-muted-foreground">Export jusqu&apos;au</Label>
-          <Input type="date" className="h-8 w-36" value={exportTo} onChange={(e) => setExportTo(e.target.value)} />
-          <Button variant="secondary" size="sm" onClick={() => openExport('csv')} className="gap-1.5">
-            <Download className="h-3.5 w-3.5" />
-            CSV
-          </Button>
-          <Button variant="secondary" size="sm" onClick={() => openExport('json')} className="gap-1.5">
-            <Download className="h-3.5 w-3.5" />
-            JSON
-          </Button>
-        </div>
-      </CardHeader>
+  const days = useMemo(() => {
+    const groups: Array<{ label: string; entries: AuditLogItem[] }> = [];
+    for (const entry of items) {
+      const label = dayLabel(entry.createdAt);
+      const last = groups[groups.length - 1];
+      if (last?.label === label) last.entries.push(entry);
+      else groups.push({ label, entries: [entry] });
+    }
+    return groups;
+  }, [items]);
 
-      {/* The filters were a five-column grid in a box of its own, inset a
-          further 12px inside the card's padding. Five evenly-sized fields
-          sitting directly above a five-column table read as column
-          headers, but the table's columns are nothing like even, so every
-          field pointed at the wrong column. They are a toolbar now: one
-          band, sized by what each field holds, visually separate from the
-          header above and the table below. */}
-      <div className="flex flex-wrap items-end gap-2 border-b border-border px-4 py-3 lg:px-5">
-        <div className="min-w-[14rem] flex-1 space-y-1">
-          <Label className="text-2xs text-muted-foreground">Recherche</Label>
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="h-8 pl-8"
-              placeholder="action, ressource…"
-              value={filters.q}
-              onChange={(e) => setFilters((prev) => ({ ...prev, q: e.target.value }))}
-            />
-          </div>
+  const filtersActive = query.trim() !== '' || actor !== ANY || resourceType !== ANY;
+
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 lg:px-5">
+        <div className="relative min-w-[14rem] flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input className="h-8 pl-8" placeholder="Rechercher une personne, une action, une ressource…" value={query} onChange={(event) => setQuery(event.target.value)} />
         </div>
-        <div className="w-44 space-y-1">
-          <Label className="text-2xs text-muted-foreground">Action</Label>
-          <Input
-            className="h-8"
-            placeholder="ex: node.create"
-            value={filters.action}
-            onChange={(e) => setFilters((prev) => ({ ...prev, action: e.target.value }))}
-          />
-        </div>
-        <div className="w-36 space-y-1">
-          <Label className="text-2xs text-muted-foreground">Ressource</Label>
-          <Input
-            className="h-8"
-            placeholder="ex: migration"
-            value={filters.resourceType}
-            onChange={(e) => setFilters((prev) => ({ ...prev, resourceType: e.target.value }))}
-          />
-        </div>
-        <div className="w-44 space-y-1">
-          <Label className="text-2xs text-muted-foreground">Acteur (ID)</Label>
-          <Input
-            className="h-8"
-            value={filters.actorUserId}
-            onChange={(e) => setFilters((prev) => ({ ...prev, actorUserId: e.target.value }))}
-          />
-        </div>
-        <div className="w-36 space-y-1">
-          <Label className="text-2xs text-muted-foreground">Depuis</Label>
-          <Input
-            className="h-8"
-            type="date"
-            value={filters.from}
-            onChange={(e) => setFilters((prev) => ({ ...prev, from: e.target.value }))}
-          />
-        </div>
+        <Select value={actor} onValueChange={setActor}>
+          <SelectTrigger className="h-8 w-44 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ANY}>Toutes les personnes</SelectItem>
+            {(facets?.actors ?? []).map((item) => (
+              <SelectItem key={item.id} value={item.id}>
+                {item.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={resourceType} onValueChange={setResourceType}>
+          <SelectTrigger className="h-8 w-48 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ANY}>Tous les éléments</SelectItem>
+            {(facets?.resourceTypes ?? []).map((type) => (
+              <SelectItem key={type} value={type}>
+                {RESOURCE_FILTER_LABEL[type] ?? type}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={period} onValueChange={(value) => setPeriod(value as Period)}>
+          <SelectTrigger className="h-8 w-44 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {(Object.keys(PERIODS) as Period[]).map((key) => (
+              <SelectItem key={key} value={key}>
+                {PERIODS[key].label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {filtersActive && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1"
+            onClick={() => {
+              setQuery('');
+              setActor(ANY);
+              setResourceType(ANY);
+            }}
+          >
+            <X className="h-3.5 w-3.5" />
+            Effacer
+          </Button>
+        )}
+        <ExportMenu onExport={openExport} hint={`Toutes les actions · ${PERIODS[period].label.toLowerCase()}`} />
       </div>
 
-      <CardContent flush>
-        {loading ? (
-          <div className="p-4 lg:p-5">
-            <ListSkeleton rows={6} />
-          </div>
-        ) : items.length === 0 ? (
-          <p className="py-12 text-center text-sm text-muted-foreground">Aucune action trouvée.</p>
-        ) : (
-          <div className="animate-fade-in">
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Acteur</TableHead>
-                    <TableHead>Action</TableHead>
-                    <TableHead>Ressource</TableHead>
-                    <TableHead className="text-right">Détails</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {items.map((entry) => {
-                    const routeSuffix = RESOURCE_ROUTES[entry.resourceType];
-                    const route = routeSuffix ? `/${slug}/dashboard${routeSuffix}` : null;
-                    return (
-                      <Fragment key={entry.id}>
-                        <TableRow>
-                          <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                            {formatDateTime(entry.createdAt)}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs">
-                            {entry.actorUserId ?? apiKeyActor(entry.details) ?? 'système'}
-                          </TableCell>
-                          <TableCell>
-                            <Badge label={entry.action} type="info" />
-                          </TableCell>
-                          <TableCell>
-                            {route ? (
-                              <Link href={route} className="text-primary underline-offset-2 hover:underline">
-                                {entry.resourceType}
-                                {entry.resourceId ? ` · ${entry.resourceId.slice(0, 8)}` : ''}
-                              </Link>
-                            ) : (
-                              <span>
-                                {entry.resourceType}
-                                {entry.resourceId ? ` · ${entry.resourceId.slice(0, 8)}` : ''}
-                              </span>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {entry.details ? (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setExpandedId((current) => (current === entry.id ? null : entry.id))}
-                              >
-                                {expandedId === entry.id ? 'Masquer' : 'Voir'}
-                              </Button>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">—</span>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                        {expandedId === entry.id && (
-                          <TableRow>
-                            <TableCell colSpan={5} className="bg-surface-2">
-                              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-xs text-zinc-300">
-                                {JSON.stringify(entry.details, null, 2)}
-                              </pre>
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+      {loading ? (
+        <div className="p-4 lg:p-5">
+          <ListSkeleton rows={6} />
+        </div>
+      ) : items.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 px-6 py-16 text-center">
+          <History className="h-6 w-6 text-muted-foreground" />
+          <p className="text-sm font-medium text-foreground">Aucune action sur cette période</p>
+          <p className="text-xs text-muted-foreground">
+            {filtersActive ? 'Essayez d’élargir la recherche ou la période.' : 'Les modifications faites sur la flotte apparaîtront ici, en direct.'}
+          </p>
+        </div>
+      ) : (
+        <div className="animate-fade-in">
+          {days.map((day) => (
+            <section key={day.label}>
+              <h3 className="sticky top-0 z-10 border-b border-border bg-surface-1/95 px-4 py-1.5 text-2xs font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur lg:px-5">
+                {day.label}
+                <span className="ml-2 font-normal normal-case tracking-normal">
+                  {day.entries.length} action{day.entries.length > 1 ? 's' : ''}
+                </span>
+              </h3>
+              <ul className="divide-y divide-border/60">
+                {day.entries.map((entry) => (
+                  <AuditRow key={entry.id} entry={entry} refs={refs} slug={slug} />
+                ))}
+              </ul>
+            </section>
+          ))}
+          {cursor && (
+            <div className="flex justify-center border-t border-border py-3">
+              <Button variant="secondary" size="sm" onClick={() => void loadMore()} disabled={loadingMore} className="gap-1.5">
+                {loadingMore && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}
+                {loadingMore ? 'Chargement…' : 'Afficher les actions plus anciennes'}
+              </Button>
             </div>
-            {cursor && (
-              <div className="flex justify-center border-t border-border bg-surface-2 py-3">
-                <Button variant="secondary" size="sm" onClick={() => void loadMore()} disabled={loadingMore}>
-                  {loadingMore ? 'Chargement…' : 'Charger plus'}
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
-      </CardContent>
+          )}
+        </div>
+      )}
     </Card>
   );
 }
 
 const MAX_LIVE_LINES = 500;
 
+const LEVELS: Record<string, { label: string; badge: string; text: string }> = {
+  critical: { label: 'CRIT', badge: 'bg-[hsl(var(--danger))]/20 text-[hsl(var(--danger))]', text: 'text-[hsl(var(--danger))] font-semibold' },
+  error: { label: 'ERR', badge: 'bg-[hsl(var(--danger))]/15 text-[hsl(var(--danger))]', text: 'text-[hsl(var(--danger))]' },
+  warning: { label: 'WARN', badge: 'bg-[hsl(var(--warn))]/15 text-[hsl(var(--warn))]', text: 'text-[hsl(var(--warn))]' },
+  info: { label: 'INFO', badge: 'bg-surface-3 text-muted-foreground', text: 'text-foreground/85' },
+};
+
 function AgentsTab() {
   const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
   const [nodeFilter, setNodeFilter] = useState('all');
   const [levelFilter, setLevelFilter] = useState('all');
+  const [search, setSearch] = useState('');
   const [lines, setLines] = useState<AgentLogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [paused, setPaused] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
-  const [exportFrom, setExportFrom] = useState('');
-  const [exportTo, setExportTo] = useState('');
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pendingLinesRef = useRef<AgentLogItem[]>([]);
   const liveBufferRef = useRef<AgentLogItem[]>([]);
 
-  const nodeName = (nodeId: string) => nodes.find((node) => node.id === nodeId)?.name ?? nodeId;
+  const nodeName = (nodeId: string) => shortHostname(nodes.find((node) => node.id === nodeId)?.name ?? nodeId.slice(0, 8));
+  const sortedNodes = useMemo(() => [...nodes].sort((a, b) => a.name.localeCompare(b.name)), [nodes]);
 
   useEffect(() => {
     let cancelled = false;
@@ -356,11 +511,7 @@ function AgentsTab() {
     pendingLinesRef.current = [];
     liveBufferRef.current = [];
     void api.agentLogs
-      .list({
-        nodeId: nodeFilter === 'all' ? undefined : nodeFilter,
-        level: levelFilter === 'all' ? undefined : levelFilter,
-        limit: 200,
-      })
+      .list({ nodeId: nodeFilter === 'all' ? undefined : nodeFilter, level: levelFilter === 'all' ? undefined : levelFilter, limit: 200 })
       .then((result) => {
         if (cancelled) return;
         setLines(result.items.slice().reverse());
@@ -404,6 +555,16 @@ function AgentsTab() {
     return () => clearInterval(flush);
   }, []);
 
+  const resume = () => {
+    setPaused(false);
+    const pending = pendingLinesRef.current;
+    if (pending.length > 0) {
+      pendingLinesRef.current = [];
+      setLines((prev) => [...prev, ...pending].slice(-MAX_LIVE_LINES));
+    }
+    setPendingCount(0);
+  };
+
   const handleScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -415,22 +576,13 @@ function AgentsTab() {
     }
   };
 
-  const resume = () => {
-    setPaused(false);
-    const pending = pendingLinesRef.current;
-    if (pending.length > 0) {
-      pendingLinesRef.current = [];
-      setLines((prev) => [...prev, ...pending].slice(-MAX_LIVE_LINES));
-    }
-    setPendingCount(0);
-  };
-
   const loadOlder = async () => {
     if (lines.length === 0) return;
     setLoadingOlder(true);
     try {
       const result = await api.agentLogs.list({
         nodeId: nodeFilter === 'all' ? undefined : nodeFilter,
+        level: levelFilter === 'all' ? undefined : levelFilter,
         before: lines[0].createdAt,
         limit: 200,
       });
@@ -440,185 +592,162 @@ function AgentsTab() {
     }
   };
 
-  const openExport = (format: 'csv' | 'json') => {
-    const to = exportTo || new Date().toISOString();
-    const from = exportFrom || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const openExport = (format: 'csv' | 'json', hours: number) => {
+    const from = new Date(Date.now() - hours * 3600e3).toISOString();
     window.open(
-      api.agentLogs.exportUrl({ from, to, format, nodeId: nodeFilter === 'all' ? undefined : nodeFilter }),
+      api.agentLogs.exportUrl({ from, to: new Date().toISOString(), format, nodeId: nodeFilter === 'all' ? undefined : nodeFilter }),
       '_blank',
     );
   };
 
-  return (
-    <Card className="border-border transition-colors hover:border-border">
-      <CardHeader className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <Server className="h-5 w-5 text-muted-foreground" />
-            <CardTitle className="text-base">Logs agents</CardTitle>
-            {!loading && !paused && (
-              <span className="flex items-center gap-1.5 text-xs text-emerald-400">
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-                </span>
-                En direct
-              </span>
-            )}
-            {!loading && <Badge label={`${lines.length} lignes`} type="info" />}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={() => openExport('csv')} className="gap-2">
-              <Download className="h-3.5 w-3.5" />
-              CSV
-            </Button>
-            <Button variant="secondary" size="sm" onClick={() => openExport('json')} className="gap-2">
-              <Download className="h-3.5 w-3.5" />
-              JSON
-            </Button>
-            {paused ? (
-              <Button size="sm" onClick={resume} className="gap-2 bg-violet-600 text-white hover:bg-violet-500">
-                <PlayCircle className="h-3.5 w-3.5" />
-                Reprendre {pendingCount > 0 ? `(${pendingCount} nouvelles lignes)` : ''}
-              </Button>
-            ) : (
-              <Button variant="secondary" size="sm" onClick={() => setPaused(true)} className="gap-2">
-                <PauseCircle className="h-3.5 w-3.5" />
-                Pause
-              </Button>
-            )}
-          </div>
-        </div>
+  const needle = search.trim().toLowerCase();
+  const shown = needle ? lines.filter((line) => line.message.toLowerCase().includes(needle)) : lines;
 
-        <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-surface-2 p-3">
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Nœud</Label>
-            <Select value={nodeFilter} onValueChange={setNodeFilter}>
-              <SelectTrigger className="w-56">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Tous les nœuds</SelectItem>
-                {nodes.map((node) => (
-                  <SelectItem key={node.id} value={node.id}>
-                    {node.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Niveau</Label>
-            <Select value={levelFilter} onValueChange={setLevelFilter}>
-              <SelectTrigger className="w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Tous les niveaux</SelectItem>
-                <SelectItem value="critical">Critique</SelectItem>
-                <SelectItem value="error">Erreur</SelectItem>
-                <SelectItem value="warning">Avertissement</SelectItem>
-                <SelectItem value="info">Info</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Export depuis</Label>
-            <Input type="date" className="w-40" value={exportFrom} onChange={(e) => setExportFrom(e.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Jusqu'au</Label>
-            <Input type="date" className="w-40" value={exportTo} onChange={(e) => setExportTo(e.target.value)} />
-          </div>
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 lg:px-5">
+        <Select value={nodeFilter} onValueChange={setNodeFilter}>
+          <SelectTrigger className="h-8 w-52 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Tous les nœuds</SelectItem>
+            {sortedNodes.map((node) => (
+              <SelectItem key={node.id} value={node.id}>
+                {shortHostname(node.name)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Tabs value={levelFilter} onValueChange={setLevelFilter}>
+          <TabsList variant="segmented" aria-label="Niveau">
+            <TabsTrigger value="all">Tout</TabsTrigger>
+            <TabsTrigger value="error">Erreurs</TabsTrigger>
+            <TabsTrigger value="warning">Avertissements</TabsTrigger>
+            <TabsTrigger value="info">Infos</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <div className="relative min-w-[12rem] flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input className="h-8 pl-8" placeholder="Filtrer les lignes affichées…" value={search} onChange={(event) => setSearch(event.target.value)} />
         </div>
-      </CardHeader>
-      <CardContent>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="secondary" size="sm" className="gap-1.5">
+              <Download className="h-3.5 w-3.5" />
+              Exporter
+              <ChevronDown className="h-3 w-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel className="text-2xs font-normal text-muted-foreground">
+              {nodeFilter === 'all' ? 'Tous les nœuds' : nodeName(nodeFilter)} · CSV
+            </DropdownMenuLabel>
+            <DropdownMenuItem onClick={() => openExport('csv', 1)}>Dernière heure</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => openExport('csv', 24)}>Dernières 24 h</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => openExport('csv', 24 * 7)}>7 derniers jours</DropdownMenuItem>
+            <DropdownMenuLabel className="text-2xs font-normal text-muted-foreground">JSON</DropdownMenuLabel>
+            <DropdownMenuItem onClick={() => openExport('json', 24)}>Dernières 24 h</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      <div className="flex items-center gap-3 border-b border-border bg-surface-2/40 px-4 py-2 text-2xs lg:px-5">
         {loading ? (
-          <ListSkeleton rows={6} />
+          <span className="text-muted-foreground">Chargement…</span>
+        ) : paused ? (
+          <span className="flex items-center gap-1.5 text-[hsl(var(--warn))]">
+            <PauseCircle className="h-3.5 w-3.5" />
+            En pause{pendingCount > 0 ? ` · ${pendingCount} nouvelle${pendingCount > 1 ? 's' : ''} ligne${pendingCount > 1 ? 's' : ''}` : ''}
+          </span>
         ) : (
-          <div className="overflow-hidden rounded-xl border border-border bg-zinc-950/70">
-            <div className="flex items-center gap-3 border-b border-border bg-surface-2 px-3 py-2">
-              <div className="flex gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-full bg-rose-400/70" />
-                <span className="h-2.5 w-2.5 rounded-full bg-amber-400/70" />
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" />
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => void loadOlder()}
-                disabled={loadingOlder}
-                className="ml-auto h-7 text-xs"
-              >
-                {loadingOlder ? 'Chargement…' : "Charger l'historique"}
-              </Button>
-            </div>
-            <div
-              ref={scrollRef}
-              onScroll={handleScroll}
-              className="h-[480px] overflow-y-auto p-3 font-mono text-xs leading-relaxed"
-            >
-              {lines.length === 0 && (
-                <p className="py-8 text-center text-muted-foreground">Aucun log d'agent pour le moment.</p>
-              )}
-              {lines.map((line) => (
-                <div key={line.id} className="flex items-baseline gap-2 whitespace-pre-wrap break-all py-0.5">
-                  <span className="shrink-0 text-muted-foreground">[{formatTime(line.createdAt)}]</span>
-                  <span className="shrink-0 text-primary">[{nodeName(line.nodeId)}]</span>
-                  <Badge
-                    label={LEVEL_LABEL[line.level] ?? line.level.toUpperCase()}
-                    type={LEVEL_BADGE_TYPE[line.level] ?? 'info'}
-                    className="shrink-0 px-1.5 py-0 text-[10px] leading-4"
-                  />
-                  <span className={LEVEL_TEXT_CLASS[line.level] ?? 'text-zinc-300'}>{line.message}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          <span className="flex items-center gap-1.5 text-[hsl(var(--ok))]">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[hsl(var(--ok))] opacity-60" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-[hsl(var(--ok))]" />
+            </span>
+            En direct
+          </span>
         )}
-      </CardContent>
+        <span className="text-muted-foreground">
+          {shown.length} ligne{shown.length > 1 ? 's' : ''}
+          {needle ? ` sur ${lines.length}` : ''}
+        </span>
+        <span className="flex-1" />
+        <Button variant="ghost" size="sm" onClick={() => void loadOlder()} disabled={loadingOlder || lines.length === 0} className="h-7 text-2xs">
+          {loadingOlder ? 'Chargement…' : 'Lignes plus anciennes'}
+        </Button>
+        {paused ? (
+          <Button size="sm" onClick={resume} className="h-7 gap-1.5 text-2xs">
+            <PlayCircle className="h-3.5 w-3.5" />
+            Reprendre le direct
+          </Button>
+        ) : (
+          <Button variant="secondary" size="sm" onClick={() => setPaused(true)} className="h-7 gap-1.5 text-2xs">
+            <PauseCircle className="h-3.5 w-3.5" />
+            Pause
+          </Button>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="p-4">
+          <ListSkeleton rows={8} />
+        </div>
+      ) : (
+        <div ref={scrollRef} onScroll={handleScroll} className="h-[520px] overflow-y-auto bg-background/60 py-2 font-mono text-xs leading-relaxed">
+          {shown.length === 0 && (
+            <p className="flex flex-col items-center gap-2 py-16 text-center font-sans text-sm text-muted-foreground">
+              <Terminal className="h-5 w-5" />
+              {needle ? 'Aucune ligne ne contient ce texte.' : 'Aucun log d’agent pour ces filtres.'}
+            </p>
+          )}
+          {shown.map((line) => {
+            const level = LEVELS[line.level] ?? LEVELS.info;
+            return (
+              <div key={line.id} className="flex items-baseline gap-2 px-4 py-0.5 hover:bg-surface-2/60 lg:px-5">
+                <span className="shrink-0 tabular-nums text-muted-foreground/80" title={new Date(line.createdAt).toLocaleString('fr-FR')}>
+                  {new Date(line.createdAt).toLocaleTimeString('fr-FR', { hour12: false })}
+                </span>
+                <span className={cn('w-11 shrink-0 rounded px-1 text-center text-[10px] font-semibold leading-4', level.badge)}>{level.label}</span>
+                {nodeFilter === 'all' && <span className="w-24 shrink-0 truncate text-primary/90">{nodeName(line.nodeId)}</span>}
+                <span className={cn('min-w-0 whitespace-pre-wrap break-words', level.text)}>{line.message}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </Card>
   );
 }
 
-// Changes made with a workspace API key carry the key in their details.
-function apiKeyActor(details: unknown): string | null {
-  const apiKey = (details as { apiKey?: { name?: string } } | null)?.apiKey;
-  return apiKey?.name ? `clé API · ${apiKey.name}` : null;
-}
-
 export default function LogsPage() {
   return (
-      <div className="space-y-8">
-        <PageHeader
-          title="Journal"
-          description="Actions effectuées sur la flotte et logs bruts des agents, en direct."
-        />
+    <div className="space-y-6">
+      <PageHeader
+        title="Journal"
+        description="Qui a fait quoi sur la flotte, et ce que racontent les agents, en direct."
+      />
 
-        <Tabs defaultValue="actions" className="space-y-4">
-          <TabsList>
-            <TabsTrigger value="actions" className="gap-1.5">
-              <History className="h-3.5 w-3.5" />
-              Actions
-            </TabsTrigger>
-            <TabsTrigger value="agents" className="gap-1.5">
-              <Server className="h-3.5 w-3.5" />
-              Agents
-            </TabsTrigger>
-          </TabsList>
+      <Tabs defaultValue="actions" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="actions" className="gap-1.5">
+            <History className="h-3.5 w-3.5" />
+            Actions de l’équipe
+          </TabsTrigger>
+          <TabsTrigger value="agents" className="gap-1.5">
+            <Terminal className="h-3.5 w-3.5" />
+            Logs des agents
+          </TabsTrigger>
+        </TabsList>
 
-          <TabsContent value="actions">
-            <ActionsTab />
-          </TabsContent>
-
-          <TabsContent value="agents" className="space-y-4">
-            <Callout>
-              Ces logs sont poussés en direct par chaque agent. Utilisez le filtre par nœud pour éviter que
-              plusieurs flux se mélangent.
-            </Callout>
-            <AgentsTab />
-          </TabsContent>
-        </Tabs>
-      </div>
+        <TabsContent value="actions">
+          <ActionsTab />
+        </TabsContent>
+        <TabsContent value="agents">
+          <AgentsTab />
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 }

@@ -21,7 +21,7 @@ import { api, NodeActivityItem, NodeHeartbeatLiveEvent } from '@/lib/api';
 import { usePolling } from '@/lib/hooks/usePolling';
 import { useLiveSocket } from '@/lib/hooks/useLiveSocket';
 import { GeoInfo, getGeoInfo } from '@/lib/geo';
-import { readNodeLabels, writeNodeLabels } from '@/lib/node-labels';
+import { clearLegacyNodeLabels, labelsByNode, readLegacyNodeLabels } from '@/lib/node-labels';
 import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/PageHeader';
 import { Callout } from '@/components/Callout';
@@ -80,7 +80,11 @@ function FilterSelect({
 }
 
 export default function InfrastructurePage() {
-  const { data: nodesRaw, mutate: refreshNodes, isLoading: nodesLoading } = usePolling('activity:1h', () => api.nodes.activity());
+  // Heartbeats patch this list live (see useLiveSocket below); the poll only
+  // refreshes what they don't carry (disks, SMART, DNS state), so it can be slow.
+  const { data: nodesRaw, mutate: refreshNodes, isLoading: nodesLoading } = usePolling('activity:1h', () => api.nodes.activity(), {
+    intervalMs: 30000,
+  });
   const nodes = useMemo(() => nodesRaw ?? [], [nodesRaw]);
   const { data: internalDns, mutate: refreshInternalDns } = usePolling('dns-internal', api.dns.internal.getStatus, {
     intervalMs: 15000,
@@ -120,8 +124,11 @@ export default function InfrastructurePage() {
       return;
     }
     if (message.type === 'dns.internal.status') {
-      const update = message.payload as { status: InternalDnsState['internalDnsStatus'] };
-      void refreshInternalDns((current) => (current ? { ...current, internalDnsStatus: update.status } : current), { revalidate: false });
+      const update = message.payload as { status: InternalDnsState['internalDnsStatus']; error?: string | null };
+      void refreshInternalDns(
+        (current) => (current ? { ...current, internalDnsStatus: update.status, internalDnsError: update.error ?? null } : current),
+        { revalidate: false },
+      );
       return;
     }
     if (message.type === 'dns.internal.forwarder_status') {
@@ -160,11 +167,23 @@ export default function InfrastructurePage() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [dnsBusy, setDnsBusy] = useState(false);
   const [smartBusy, setSmartBusy] = useState(false);
-  const [labels, setLabels] = useState<Record<string, string[]>>({});
   const [geoByIp, setGeoByIp] = useState<Record<string, GeoInfo | null>>({});
 
+  const labels = useMemo(() => labelsByNode(nodes), [nodes]);
+
+  // One-time move of the labels this browser kept locally (before they were
+  // stored by the API) onto nodes that have none yet.
   useEffect(() => {
-    setLabels(readNodeLabels());
+    if (!nodesRaw) return;
+    const legacy = readLegacyNodeLabels();
+    if (!legacy) return;
+    const pending = nodesRaw.filter((node) => (node.labels ?? []).length === 0 && (legacy[node.id] ?? []).length > 0);
+    clearLegacyNodeLabels();
+    if (pending.length === 0) return;
+    void Promise.all(pending.map((node) => api.nodes.update(node.id, { labels: legacy[node.id] }).catch(() => null))).then(() => refreshNodes());
+  }, [nodesRaw, refreshNodes]);
+
+  useEffect(() => {
     try {
       const stored = localStorage.getItem(VIEW_STORAGE_KEY);
       if (stored === 'grid' || stored === 'table') setView(stored);
@@ -375,6 +394,19 @@ export default function InfrastructurePage() {
     }
   };
 
+  const retryDns = async () => {
+    setDnsBusy(true);
+    try {
+      await api.dns.internal.retry();
+      await refreshInternalDns();
+      setNotice({ type: 'success', message: 'Nouvelle tentative d’installation du DNS interne envoyée.' });
+    } catch {
+      setNotice({ type: 'error', message: 'Impossible de relancer l’installation : le nœud DNS est-il en ligne ?' });
+    } finally {
+      setDnsBusy(false);
+    }
+  };
+
   const resolveForwarder = async (node: NodeActivityItem) => {
     setDnsBusy(true);
     try {
@@ -401,12 +433,7 @@ export default function InfrastructurePage() {
   };
 
   const saveNode = async (node: NodeActivityItem, values: { name: string; role: string; labels: string[]; dnsHostname: string | null }) => {
-    await api.nodes.update(node.id, { name: values.name, role: values.role, dnsHostname: values.dnsHostname });
-    setLabels((prev) => {
-      const next = { ...prev, [node.id]: values.labels };
-      writeNodeLabels(next);
-      return next;
-    });
+    await api.nodes.update(node.id, { name: values.name, role: values.role, dnsHostname: values.dnsHostname, labels: values.labels });
     await refreshNodes();
   };
 
@@ -514,7 +541,13 @@ export default function InfrastructurePage() {
         </StatRow>
       )}
 
-      <InternalDnsCard state={internalDns} nodes={nodes} onOpenNode={(node) => setOpenId(node.id)} />
+      <InternalDnsCard
+        state={internalDns}
+        nodes={nodes}
+        onOpenNode={(node) => setOpenId(node.id)}
+        onRetry={() => void retryDns()}
+        retrying={dnsBusy}
+      />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList>
@@ -657,7 +690,7 @@ export default function InfrastructurePage() {
         </TabsContent>
 
         <TabsContent value="performance">
-          {activeTab === 'performance' && <PerformanceTab nodes={nodes} loading={nodesLoading} labels={labels} />}
+          {activeTab === 'performance' && <PerformanceTab nodes={nodes} loading={nodesLoading} labels={labels} onOpenNode={(node) => setOpenId(node.id)} />}
         </TabsContent>
         <TabsContent value="exploration">{activeTab === 'exploration' && <ExplorationTab nodes={nodes} />}</TabsContent>
       </Tabs>
@@ -678,6 +711,7 @@ export default function InfrastructurePage() {
         onToggleSmart={() => opened && void toggleSmart(opened)}
         onDesignateDns={() => opened && void designateDns(opened)}
         onClearDns={() => opened && void clearDns(opened)}
+        onRetryDns={() => void retryDns()}
         onResolveForwarder={() => opened && void resolveForwarder(opened)}
       />
       <EditNodeDialog

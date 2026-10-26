@@ -755,6 +755,52 @@ func parseTracepathOutput(output string) []tracerouteHop {
 	return hops
 }
 
+type pingData struct {
+	TargetIP   string   `json:"targetIp"`
+	Sent       int      `json:"sent"`
+	PacketLoss *float64 `json:"packetLoss,omitempty"`
+	MinMs      *float64 `json:"minMs,omitempty"`
+	AvgMs      *float64 `json:"avgMs,omitempty"`
+	MaxMs      *float64 `json:"maxMs,omitempty"`
+}
+
+// On-demand ping from the Diagnostics tab: 5 probes, 200 ms apart, so the
+// answer comes back in about a second and a half.
+func runPing(payload map[string]interface{}) (pingData, error) {
+	targetIP := strings.TrimSpace(readString(payload, "targetIp"))
+	if net.ParseIP(targetIP) == nil {
+		return pingData{}, errors.New("targetIp is required")
+	}
+	if !commandExists("ping") {
+		return pingData{}, errors.New("ping not found on agent (install iputils-ping)")
+	}
+	const count = 5
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	output, _ := exec.CommandContext(ctx, "ping", "-n", "-c", strconv.Itoa(count), "-i", "0.2", "-W", "1", targetIP).CombinedOutput()
+	data := pingData{TargetIP: targetIP, Sent: count}
+	_, data.PacketLoss = parsePingStats(string(output))
+	for _, line := range strings.Split(string(output), "\n") {
+		if !strings.Contains(line, "min/avg/max") || !strings.Contains(line, "=") {
+			continue
+		}
+		values := strings.Split(strings.Fields(strings.TrimSpace(strings.SplitN(line, "=", 2)[1]))[0], "/")
+		parsed := make([]*float64, 0, 3)
+		for _, raw := range values {
+			if value, err := strconv.ParseFloat(raw, 64); err == nil {
+				parsed = append(parsed, &value)
+			}
+		}
+		if len(parsed) >= 3 {
+			data.MinMs, data.AvgMs, data.MaxMs = parsed[0], parsed[1], parsed[2]
+		}
+	}
+	if data.PacketLoss == nil {
+		return pingData{}, fmt.Errorf("ping vers %s impossible : %s", targetIP, strings.TrimSpace(string(output)))
+	}
+	return data, nil
+}
+
 func runTraceroute(payload map[string]interface{}) (tracerouteData, error) {
 	targetIP := strings.TrimSpace(readString(payload, "targetIp"))
 	if targetIP == "" {
@@ -3840,6 +3886,18 @@ func handleCommand(ctx context.Context, cmd commandPayload, onProgress func(prog
 		} else {
 			result.Data = data
 			result.Message = fmt.Sprintf("%d directories scanned", len(data.Entries))
+		}
+	case "command.run_ping":
+		result.Command = "run_ping"
+		result.ResourceType = "ping"
+		result.ResourceID = readString(cmd.Payload, "requestId")
+		data, err := runPing(cmd.Payload)
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Data = data
+			result.Message = fmt.Sprintf("ping %s: %.0f%% loss", data.TargetIP, *data.PacketLoss)
 		}
 	case "command.run_traceroute":
 		result.Command = "run_traceroute"

@@ -26,7 +26,7 @@ import (
 //   - the client WireGuard interface (tarmacvpn0 by default)
 //   - IPIP tunnels named tvpn<hash> to the other end of each entry/exit pair
 //   - routing tables 21000-28999 and ip rules with priority 20000-20999
-//   - iptables chains TARMAC-VPN-*
+//   - iptables / ip6tables chains TARMAC-VPN-*
 const (
 	vpnRulePrefMesh   = 20000
 	vpnRulePrefClient = 20100
@@ -721,33 +721,36 @@ func syncVpnRules(desired vpnDesired) ([]string, error) {
 	return ips, nil
 }
 
-func iptablesRun(args ...string) error {
-	if out, err := exec.Command("iptables", args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("iptables %s: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+// bin is "iptables" or "ip6tables": the IPv6 chains mirror the IPv4 ones
+// (see syncVpnFirewall6) through the same helpers.
+func iptablesRun(bin string, args ...string) error {
+	if out, err := exec.Command(bin, args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("%s %s: %s", bin, strings.Join(args, " "), strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
-func iptablesChainExists(table, chain string) bool {
-	return exec.Command("iptables", "-t", table, "-n", "-L", chain).Run() == nil
+func iptablesChainExists(bin, table, chain string) bool {
+	return exec.Command(bin, "-t", table, "-n", "-L", chain).Run() == nil
 }
 
-func ensureVpnJump(table, parent, chain string) error {
-	if exec.Command("iptables", "-t", table, "-C", parent, "-j", chain).Run() == nil {
+func ensureVpnJump(bin, table, parent, chain string) error {
+	if exec.Command(bin, "-t", table, "-C", parent, "-j", chain).Run() == nil {
 		return nil
 	}
-	return iptablesRun("-t", table, "-I", parent, "1", "-j", chain)
+	return iptablesRun(bin, "-t", table, "-I", parent, "1", "-j", chain)
 }
 
-func removeVpnJump(table, parent, chain string) {
-	for exec.Command("iptables", "-t", table, "-C", parent, "-j", chain).Run() == nil {
-		if exec.Command("iptables", "-t", table, "-D", parent, "-j", chain).Run() != nil {
+func removeVpnJump(bin, table, parent, chain string) {
+	for exec.Command(bin, "-t", table, "-C", parent, "-j", chain).Run() == nil {
+		if exec.Command(bin, "-t", table, "-D", parent, "-j", chain).Run() != nil {
 			return
 		}
 	}
 }
 
 type vpnChainSpec struct {
+	bin     string
 	table   string
 	chain   string
 	parents []string
@@ -764,8 +767,14 @@ func syncVpnFirewall(desired vpnDesired) error {
 	forwardParents := []string{"FORWARD"}
 	// Docker evaluates DOCKER-USER before its own FORWARD DROP policy and
 	// never rewrites it - same reasoning as applyOverlayForwardFirewallRule.
-	if iptablesChainExists("filter", "DOCKER-USER") {
+	if iptablesChainExists("iptables", "filter", "DOCKER-USER") {
 		forwardParents = append(forwardParents, "DOCKER-USER")
+	}
+
+	// IPv6 never fails the apply: on a host with IPv6 disabled there is
+	// nothing to filter and ip6tables errors out.
+	if err := syncVpnFirewall6(desired); err != nil {
+		log.Printf("vpn: ipv6 firewall: %v", err)
 	}
 
 	entryIface := ""
@@ -773,22 +782,14 @@ func syncVpnFirewall(desired vpnDesired) error {
 		entryIface = desired.entry.iface
 	}
 	specs := []vpnChainSpec{
-		{table: "filter", chain: vpnChainForward, parents: forwardParents},
-		{table: "filter", chain: vpnChainInput, parents: []string{"INPUT"}},
-		{table: "nat", chain: vpnChainNat, parents: []string{"POSTROUTING"}},
-		{table: "mangle", chain: vpnChainMss, parents: []string{"FORWARD"}},
+		{bin: "iptables", table: "filter", chain: vpnChainForward, parents: forwardParents},
+		{bin: "iptables", table: "filter", chain: vpnChainInput, parents: []string{"INPUT"}},
+		{bin: "iptables", table: "nat", chain: vpnChainNat, parents: []string{"POSTROUTING"}},
+		{bin: "iptables", table: "mangle", chain: vpnChainMss, parents: []string{"FORWARD"}},
 	}
 
 	if !desired.active() {
-		for _, spec := range specs {
-			for _, parent := range append(spec.parents, "DOCKER-USER") {
-				removeVpnJump(spec.table, parent, spec.chain)
-			}
-			if iptablesChainExists(spec.table, spec.chain) {
-				_ = exec.Command("iptables", "-t", spec.table, "-F", spec.chain).Run()
-				_ = exec.Command("iptables", "-t", spec.table, "-X", spec.chain).Run()
-			}
-		}
+		removeVpnChains(specs)
 		return nil
 	}
 
@@ -832,9 +833,13 @@ func syncVpnFirewall(desired vpnDesired) error {
 		)
 	}
 
+	return installVpnChains(specs)
+}
+
+func installVpnChains(specs []vpnChainSpec) error {
 	for _, spec := range specs {
-		if !iptablesChainExists(spec.table, spec.chain) {
-			if err := iptablesRun("-t", spec.table, "-N", spec.chain); err != nil {
+		if !iptablesChainExists(spec.bin, spec.table, spec.chain) {
+			if err := iptablesRun(spec.bin, "-t", spec.table, "-N", spec.chain); err != nil {
 				return err
 			}
 		}
@@ -842,12 +847,59 @@ func syncVpnFirewall(desired vpnDesired) error {
 			return err
 		}
 		for _, parent := range spec.parents {
-			if err := ensureVpnJump(spec.table, parent, spec.chain); err != nil {
+			if err := ensureVpnJump(spec.bin, spec.table, parent, spec.chain); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+func removeVpnChains(specs []vpnChainSpec) {
+	for _, spec := range specs {
+		for _, parent := range append(spec.parents, "DOCKER-USER") {
+			removeVpnJump(spec.bin, spec.table, parent, spec.chain)
+		}
+		if iptablesChainExists(spec.bin, spec.table, spec.chain) {
+			_ = exec.Command(spec.bin, "-t", spec.table, "-F", spec.chain).Run()
+			_ = exec.Command(spec.bin, "-t", spec.table, "-X", spec.chain).Run()
+		}
+	}
+}
+
+// The client VPN is IPv4-only: clients get a /32, tunnels are IPIP, and a
+// full-mode config captures ::/0 precisely so IPv6 goes nowhere. WireGuard
+// already refuses IPv6 from a peer whose allowed-ips are IPv4, so these
+// chains are defence in depth: whatever IPv6 reaches the client interface
+// or the tunnels - a future allowed-ips change, a host route, a forwarding
+// sysctl turned on by something else - is dropped instead of being routed
+// into the fleet or out to the internet.
+func syncVpnFirewall6(desired vpnDesired) error {
+	if !commandExists("ip6tables") {
+		return nil
+	}
+	forwardParents := []string{"FORWARD"}
+	if iptablesChainExists("ip6tables", "filter", "DOCKER-USER") {
+		forwardParents = append(forwardParents, "DOCKER-USER")
+	}
+	specs := []vpnChainSpec{
+		{bin: "ip6tables", table: "filter", chain: vpnChainForward, parents: forwardParents},
+		{bin: "ip6tables", table: "filter", chain: vpnChainInput, parents: []string{"INPUT"}},
+	}
+	if !desired.active() {
+		removeVpnChains(specs)
+		return nil
+	}
+
+	tunnels := vpnTunnelPrefix + "+"
+	specs[0].rules = [][]string{{"-i", tunnels, "-j", "DROP"}, {"-o", tunnels, "-j", "DROP"}}
+	specs[1].rules = [][]string{{"-i", tunnels, "-j", "DROP"}}
+	if desired.entry != nil {
+		iface := desired.entry.iface
+		specs[0].rules = append(specs[0].rules, []string{"-i", iface, "-j", "DROP"}, []string{"-o", iface, "-j", "DROP"})
+		specs[1].rules = append(specs[1].rules, []string{"-i", iface, "-j", "DROP"})
+	}
+	return installVpnChains(specs)
 }
 
 func vpnClientForwardRules(desired vpnDesired) [][]string {
@@ -900,7 +952,7 @@ func vpnClientInputRules(desired vpnDesired) [][]string {
 // with the chain half-filled in between), rule by rule otherwise.
 func fillVpnChain(spec vpnChainSpec) error {
 	comment := []string{"-m", "comment", "--comment", "tarmac-vpn"}
-	if commandExists("iptables-restore") {
+	if commandExists(spec.bin + "-restore") {
 		var script strings.Builder
 		fmt.Fprintf(&script, "*%s\n:%s - [0:0]\n", spec.table, spec.chain)
 		for _, rule := range spec.rules {
@@ -909,19 +961,19 @@ func fillVpnChain(spec vpnChainSpec) error {
 		script.WriteString("COMMIT\n")
 		// --noflush keeps every other chain of the table; declaring ours
 		// flushes just this one.
-		cmd := exec.Command("iptables-restore", "--noflush")
+		cmd := exec.Command(spec.bin+"-restore", "--noflush")
 		cmd.Stdin = strings.NewReader(script.String())
 		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("iptables-restore %s/%s: %s", spec.table, spec.chain, strings.TrimSpace(string(out)))
+			return fmt.Errorf("%s-restore %s/%s: %s", spec.bin, spec.table, spec.chain, strings.TrimSpace(string(out)))
 		}
 		return nil
 	}
-	if err := iptablesRun("-t", spec.table, "-F", spec.chain); err != nil {
+	if err := iptablesRun(spec.bin, "-t", spec.table, "-F", spec.chain); err != nil {
 		return err
 	}
 	for _, rule := range spec.rules {
 		args := append([]string{"-t", spec.table, "-A", spec.chain}, rule...)
-		if err := iptablesRun(append(args, comment...)...); err != nil {
+		if err := iptablesRun(spec.bin, append(args, comment...)...); err != nil {
 			return err
 		}
 	}

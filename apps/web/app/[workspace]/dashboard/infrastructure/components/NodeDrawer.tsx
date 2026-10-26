@@ -14,6 +14,7 @@ import {
   LoaderCircle,
   Pencil,
   RefreshCcw,
+  RotateCcw,
   Thermometer,
   Trash2,
 } from 'lucide-react';
@@ -75,6 +76,7 @@ export function NodeDrawer({
   onToggleSmart,
   onDesignateDns,
   onClearDns,
+  onRetryDns,
   onResolveForwarder,
 }: {
   node: NodeActivityItem | null;
@@ -93,6 +95,7 @@ export function NodeDrawer({
   onToggleSmart: () => void;
   onDesignateDns: () => void;
   onClearDns: () => void;
+  onRetryDns: () => void;
   onResolveForwarder: () => void;
 }) {
   const [tab, setTab] = useState<Tab>(initialTab);
@@ -348,8 +351,21 @@ export function NodeDrawer({
                       </div>
                       {internalDns.internalDnsStatus === 'error' && (
                         <Callout variant="danger">
-                          L’agent n’a pas pu installer le serveur DNS. Le Journal de ce nœud donne le détail ; retirez puis redésignez le nœud
-                          pour réessayer.
+                          <span className="block space-y-2">
+                            <span className="block font-medium">L’agent n’a pas pu installer le serveur DNS.</span>
+                            {internalDns.internalDnsError ? (
+                              <span className="block break-words rounded-md bg-background/60 px-2 py-1.5 font-mono text-2xs leading-relaxed">
+                                {internalDns.internalDnsError}
+                              </span>
+                            ) : (
+                              <span className="block text-xs">Le détail est dans le Journal de ce nœud.</span>
+                            )}
+                            <span className="block text-xs">Une nouvelle tentative part automatiquement toutes les 5 minutes.</span>
+                            <Button size="sm" variant="secondary" onClick={onRetryDns} disabled={dnsBusy || offline} className="gap-1.5">
+                              {dnsBusy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                              Réessayer maintenant
+                            </Button>
+                          </span>
                         </Callout>
                       )}
                       {offline && <Callout variant="danger">Ce nœud est hors ligne : la résolution des noms internes est interrompue.</Callout>}

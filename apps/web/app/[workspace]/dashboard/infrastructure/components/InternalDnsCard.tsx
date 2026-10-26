@@ -1,6 +1,6 @@
 'use client';
 
-import { Globe, LoaderCircle } from 'lucide-react';
+import { Globe, LoaderCircle, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { StatusDot } from '@/components/ui/status';
 import type { NodeActivityItem } from '@/lib/api';
@@ -16,10 +16,14 @@ export function InternalDnsCard({
   state,
   nodes,
   onOpenNode,
+  onRetry,
+  retrying,
 }: {
   state: InternalDnsState | undefined;
   nodes: NodeActivityItem[];
   onOpenNode: (node: NodeActivityItem) => void;
+  onRetry: () => void;
+  retrying: boolean;
 }) {
   if (!state) return null;
   const node = nodes.find((item) => item.id === state.internalDnsNodeId) ?? null;
@@ -44,7 +48,9 @@ export function InternalDnsCard({
     } else if (state.internalDnsStatus === 'error') {
       tone = 'danger';
       title = `Échec de l’installation du DNS interne sur ${node.name}`;
-      detail = 'Consultez le Journal (agent de ce nœud) pour le détail, puis retirez et redésignez le nœud.';
+      detail = state.internalDnsError
+        ? `${state.internalDnsError} — nouvelle tentative automatique toutes les 5 minutes.`
+        : 'Le détail est dans le Journal de ce nœud. Nouvelle tentative automatique toutes les 5 minutes.';
     } else {
       tone = 'warn';
       title = `Installation du DNS interne sur ${node.name}…`;
@@ -70,11 +76,17 @@ export function InternalDnsCard({
           <StatusDot tone={tone} pulse={tone === 'ok'} />
           {title}
         </p>
-        <p className="mt-0.5 text-xs text-muted-foreground">
+        <p className="mt-0.5 break-words text-xs text-muted-foreground">
           {detail}
           {conflicts > 0 && ` ${conflicts} nœud(s) signalent un conflit de port pour le résolveur local.`}
         </p>
       </div>
+      {node && state.internalDnsStatus === 'error' && node.status !== 'offline' && (
+        <Button size="sm" onClick={onRetry} disabled={retrying} className="gap-1.5">
+          {retrying ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+          Réessayer
+        </Button>
+      )}
       {node && (
         <Button variant="secondary" size="sm" onClick={() => onOpenNode(node)}>
           Voir le nœud

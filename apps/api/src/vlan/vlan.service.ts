@@ -185,7 +185,7 @@ export class VlanService implements OnModuleInit {
     const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
     const vlanIp = node?.vlanIp || this.generateDeterministicVlanIp(nodeId, vlan.subnetCidr);
     const vlanMac = node?.vlanMac || this.generateVlanMac(nodeId);
-    this.logger.error(`joinVlan: creating member vlanId=${vlan.id} vlanIp=${vlanIp} vlanMac=${vlanMac}`);
+    this.logger.debug(`joinVlan: creating member vlanId=${vlan.id} vlanIp=${vlanIp} vlanMac=${vlanMac}`);
 
     let member;
     try {
@@ -197,18 +197,20 @@ export class VlanService implements OnModuleInit {
           vlanMac,
         },
       });
-      this.logger.error(`joinVlan: member CREATED ${member.id}`);
+      this.logger.log(`Node ${nodeId} joined VLAN ${vlan.id} as ${vlanIp}`);
     } catch (error) {
-      this.logger.error(`joinVlan: create ERROR ${error instanceof Error ? error.message : error}`);
+      // A concurrent join (two heartbeats racing) loses on the unique index:
+      // expected, the winner's row is reused below.
       if (this.isUniqueConstraintError(error)) {
         const existing = await this.prisma.vlanMember.findFirst({
           where: { nodeId, vlanId: vlan.id },
         });
         if (existing) {
-          this.logger.error(`joinVlan: recovered existing member ${existing.id}`);
+          this.logger.debug(`joinVlan: concurrent join, reusing member ${existing.id}`);
           return existing;
         }
       }
+      this.logger.error(`joinVlan: cannot create member for node ${nodeId}: ${error instanceof Error ? error.message : error}`);
       throw error;
     }
 
@@ -445,75 +447,6 @@ export class VlanService implements OnModuleInit {
     });
   }
 
-  async recordConnectionTest(
-    vlanIdOrName: string,
-    initiatorNodeId: string,
-    targetNodeId: string,
-    testType: 'ping' | 'traceroute',
-    result: {
-      status: 'success' | 'failed' | 'timeout';
-      latencyMs?: number;
-      packetLoss?: number;
-      message?: string;
-      hops?: Array<{ hop: number; ip: string | null; latencyMs: number | null }>;
-    },
-  ): Promise<any> {
-    // Resolve VLAN name alias to ID
-    const vlanLookup = await this.prisma.vlan.findFirst({
-      where: {
-        OR: [
-          { id: vlanIdOrName },
-          { name: vlanIdOrName }
-        ]
-      }
-    });
-
-    if (!vlanLookup) {
-      throw new Error(`VLAN not found: ${vlanIdOrName}`);
-    }
-
-    return this.prisma.vlanConnectionTest.create({
-      data: {
-        vlanId: vlanLookup.id,
-        initiatorNodeId,
-        targetNodeId,
-        testType,
-        status: result.status,
-        resultCode: result.status === 'success' ? 0 : 1,
-        resultMessage: result.message,
-        latencyMs: result.latencyMs,
-        packetLoss: result.packetLoss,
-        hops: result.hops,
-        completedAt: new Date(),
-      },
-    });
-  }
-
-  async getRecentConnectionTests(vlanIdOrName: string, limit: number = 50): Promise<any> {
-    // Resolve VLAN name alias to ID
-    const vlanLookup = await this.prisma.vlan.findFirst({
-      where: {
-        OR: [
-          { id: vlanIdOrName },
-          { name: vlanIdOrName }
-        ]
-      }
-    });
-
-    if (!vlanLookup) {
-      throw new Error(`VLAN not found: ${vlanIdOrName}`);
-    }
-
-    return this.prisma.vlanConnectionTest.findMany({
-      where: { vlanId: vlanLookup.id },
-      include: {
-        initiatorNode: { select: { id: true, name: true, vlanIp: true } },
-      },
-      orderBy: { startedAt: 'desc' },
-      take: limit,
-    });
-  }
-
   async getConnectionHistory(
     vlanIdOrName: string,
     sourceNodeId: string,
@@ -630,7 +563,7 @@ export class VlanService implements OnModuleInit {
     // Freshness is maintained by the 10s refreshAllVlanConnections cron — refreshing again
     // inline here duplicated that work on every poll from every open dashboard tab.
 
-    const [vlan, members, connections, failedTests] = await Promise.all([
+    const [vlan, members, connections] = await Promise.all([
       this.prisma.vlan.findUnique({
         where: { id: vlanId },
         include: { members: { include: { node: true } } }
@@ -639,10 +572,6 @@ export class VlanService implements OnModuleInit {
       this.prisma.vlanConnection.findMany({
         where: { vlanId },
         select: { status: true },
-      }),
-      this.prisma.vlanConnectionTest.findMany({
-        where: { vlanId, status: 'failed' },
-        take: 10,
       }),
     ]);
 
@@ -663,7 +592,6 @@ export class VlanService implements OnModuleInit {
         degraded: degradedConnections,
         offline: offlineConnections,
       },
-      recentFailures: failedTests,
     };
   }
 

@@ -45,6 +45,8 @@ export type NodeItem = {
   // Custom <dnsHostname>.tarmac.local label - see InternalDnsService on the
   // API side. Null means a slug derived from `name` is used instead.
   dnsHostname?: string | null;
+  // Shared labels (Node.labels on the API side).
+  labels?: string[];
   // Status of this node's own local fallback resolver for *.tarmac.local
   // (only relevant on nodes that can't use systemd-resolved's split-DNS
   // routing) - null means never attempted / not applicable.
@@ -200,6 +202,10 @@ export type AlertItem = {
   status: 'open' | 'acknowledged' | 'resolved';
   nodeId?: string | null;
   triggeredAt: string;
+  acknowledgedAt?: string | null;
+  resolvedAt?: string | null;
+  node?: { id: string; name: string } | null;
+  rule?: { id: string; name: string; metric: string; threshold: number } | null;
 };
 
 export type SyncJobItem = {
@@ -272,6 +278,16 @@ export type Forecast = {
     daysToFull: number | null;
     projectedFullDate: string | null;
   };
+};
+
+export type NodeSeriesPoint = { t: string; cpu: number; ram: number; disk: number; networkRx: number; networkTx: number };
+
+// Every node's metrics over a range, pre-averaged into ~60 buckets.
+export type NodeActivitySeries = {
+  range: '1h' | '6h' | '24h';
+  bucketSeconds: number;
+  start: string;
+  series: Record<string, NodeSeriesPoint[]>;
 };
 
 export type NodeMetricSample = {
@@ -402,21 +418,26 @@ export type VlanConnection = {
 
 export type VlanTraceHop = { hop: number; ip: string | null; latencyMs: number | null };
 
+// Result of an on-demand ping/traceroute from the Diagnostics tab. Not
+// stored by the API: it lives only in the page that ran it.
 export type VlanConnectionTest = {
   id: string;
   vlanId: string;
   initiatorNodeId: string;
   targetNodeId: string;
   testType: 'ping' | 'traceroute';
-  status: 'pending' | 'success' | 'failed' | 'timeout';
-  resultCode?: number | null;
+  status: 'success' | 'failed';
   resultMessage?: string | null;
   latencyMs?: number | null;
+  minMs?: number | null;
+  maxMs?: number | null;
   packetLoss?: number | null;
   hops?: VlanTraceHop[] | null;
   startedAt: string;
   completedAt?: string | null;
+  durationMs?: number;
   initiatorNode?: { id: string; name: string; vlanIp: string };
+  targetNode?: { id: string; name: string; vlanIp: string };
 };
 
 export type VlanConnectionSample = {
@@ -457,7 +478,6 @@ export type VlanStatus = {
     degraded: number;
     offline: number;
   };
-  recentFailures: VlanConnectionTest[];
 };
 
 export type VpnNodeRef = {
@@ -586,9 +606,12 @@ export type ApiKeyItem = {
   createdAt: string;
 };
 
+export type AuditActor = { id: string; name: string; email: string };
+
 export type AuditLogItem = {
   id: string;
   actorUserId?: string | null;
+  actor?: AuditActor | null;
   action: string;
   resourceType: string;
   resourceId?: string | null;
@@ -766,6 +789,8 @@ export const api = {
     list: () => request<NodeItem[]>('/api/v1/nodes'),
     activity: (range: '1h' | '6h' | '24h' = '1h') =>
       request<NodeActivityItem[]>(`/api/v1/nodes/activity?range=${range}`),
+    activitySeries: (range: '1h' | '6h' | '24h' = '1h') =>
+      request<NodeActivitySeries>(`/api/v1/nodes/activity/series?range=${range}`),
     metrics: (id: string, range: '1h' | '6h' | '24h' = '1h') =>
       request<NodeMetricSample[]>(`/api/v1/nodes/${id}/metrics?range=${range}`),
     create: (payload: { name: string; role: string }) =>
@@ -794,6 +819,7 @@ export const api = {
         graphY?: number | null;
         dnsHostname?: string | null;
         smartMonitoringEnabled?: boolean;
+        labels?: string[];
       },
     ) =>
       request<NodeItem>(`/api/v1/nodes/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
@@ -922,8 +948,10 @@ export const api = {
         request<{
           internalDnsNodeId: string | null;
           internalDnsStatus: 'pending' | 'active' | 'error';
+          internalDnsError: string | null;
           records: Array<{ name: string; content: string }>;
         }>('/api/v1/dns/internal'),
+      retry: () => request<{ sent: boolean }>('/api/v1/dns/internal/retry', { method: 'POST' }),
       designate: (nodeId: string) =>
         request<{ nodeId: string; applySent: boolean }>(`/api/v1/dns/internal/${nodeId}`, { method: 'POST' }),
       clear: () => request<{ cleanupSent: boolean }>('/api/v1/dns/internal', { method: 'DELETE' }),
@@ -1070,8 +1098,6 @@ export const api = {
       request<{ connections: VlanConnection[] }>(`/api/v1/vlan/${vlanId}/connections`),
     getStatus: (vlanId: string) =>
       request<VlanStatus>(`/api/v1/vlan/${vlanId}/status`),
-    getTests: (vlanId: string) =>
-      request<{ tests: VlanConnectionTest[] }>(`/api/v1/vlan/${vlanId}/tests`),
     getHistory: (vlanId: string, sourceNodeId: string, targetNodeId: string, range: '1h' | '24h' | '7d' = '1h') =>
       request<VlanConnectionHistory>(
         `/api/v1/vlan/${vlanId}/history?source=${encodeURIComponent(sourceNodeId)}&target=${encodeURIComponent(targetNodeId)}&range=${range}`,
@@ -1114,8 +1140,9 @@ export const api = {
       if (params.action) query.set('action', params.action);
       if (params.resourceType) query.set('resourceType', params.resourceType);
       if (params.q) query.set('q', params.q);
-      return request<PagedResult<AuditLogItem>>(`/api/v1/audit-logs?${query.toString()}`);
+      return request<PagedResult<AuditLogItem> & { refs?: Record<string, string> }>(`/api/v1/audit-logs?${query.toString()}`);
     },
+    facets: () => request<{ actions: string[]; resourceTypes: string[]; actors: AuditActor[] }>('/api/v1/audit-logs/facets'),
     exportUrl: (params: { from: string; to: string; format: 'csv' | 'json' }) =>
       `${API_BASE}/api/v1/audit-logs/export?${new URLSearchParams(params).toString()}`,
   },

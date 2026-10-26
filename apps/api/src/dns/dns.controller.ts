@@ -176,6 +176,12 @@ export class DnsController {
     return this.internalDnsService.getStatus(scope);
   }
 
+  // Before internal/:nodeId, which would otherwise take "retry" for an id.
+  @Post('internal/retry')
+  retryInternal(@CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.internalDnsService.retry(scope, req.user?.userId);
+  }
+
   @Post('internal/:nodeId')
   setInternalDnsNode(
     @Param('nodeId') nodeId: string,

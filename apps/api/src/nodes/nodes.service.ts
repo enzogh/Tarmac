@@ -30,6 +30,7 @@ type ActivityNode = {
   locationLng: number | null;
   vlanIp: string | null;
   dnsHostname: string | null;
+  labels: string[];
   internalDnsForwarderStatus: string | null;
   internalDnsForwarderConflict: unknown;
 };
@@ -137,6 +138,7 @@ export class NodesService implements OnModuleInit {
       // this value flows directly into a DNS record name.
       ...(dto.dnsHostname !== undefined ? { dnsHostname: dto.dnsHostname ? slugify(dto.dnsHostname) || null : null } : {}),
       ...(dto.smartMonitoringEnabled !== undefined ? { smartMonitoringEnabled: dto.smartMonitoringEnabled } : {}),
+      ...(dto.labels !== undefined ? { labels: normalizeLabels(dto.labels) } : {}),
     };
 
     const updated = await this.prisma.node.update({ where: { id }, data });
@@ -365,6 +367,7 @@ export class NodesService implements OnModuleInit {
         smartMonitoringEnabled: node.smartMonitoringEnabled,
         vlanIp: node.vlanIp,
         dnsHostname: node.dnsHostname,
+        labels: node.labels,
         internalDnsForwarderStatus: node.internalDnsForwarderStatus,
         internalDnsForwarderConflict: node.internalDnsForwarderConflict,
         controlVersion,
@@ -465,7 +468,46 @@ export class NodesService implements OnModuleInit {
   // - so 6h/24h charts were frozen on data up to hours stale even though
   // fresh samples were being written every 5s.
   private static readonly METRICS_TARGET_POINTS = 180;
+  private static readonly SERIES_POINTS = 60;
   private static readonly METRICS_FETCH_CAP = 2000;
+
+  // Every node's metrics over the range, averaged in SERIES_POINTS buckets by
+  // PostgreSQL: the Performance tab draws the whole fleet from one request
+  // instead of pulling each node's raw samples (thousands per node at 24 h).
+  async activitySeries(range: string, scope: WorkspaceScope) {
+    const ranges: Record<string, number> = { '1h': 3_600, '6h': 21_600, '24h': 86_400 };
+    const rangeSeconds = ranges[range] ?? ranges['1h'];
+    const bucketSeconds = rangeSeconds / NodesService.SERIES_POINTS;
+    const now = Math.floor(Date.now() / 1000);
+    const start = now - rangeSeconds;
+    const rows = await this.prisma.$queryRaw<
+      Array<{ nodeId: string; bucket: number; cpu: number; ram: number; disk: number; networkRx: number; networkTx: number }>
+    >`
+      SELECT s."nodeId",
+        floor((extract(epoch from s."createdAt") - ${start}) / ${bucketSeconds})::int AS bucket,
+        avg(s."cpu")::float8 AS cpu, avg(s."ram")::float8 AS ram, avg(s."disk")::float8 AS disk,
+        avg(s."networkRx")::float8 AS "networkRx", avg(s."networkTx")::float8 AS "networkTx"
+      FROM "MetricSample" s
+      JOIN "Node" n ON n."id" = s."nodeId"
+      WHERE n."workspaceId" = ${scope.workspaceId as string}
+        AND s."createdAt" >= to_timestamp(${start}) AT TIME ZONE 'UTC'
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+    `;
+    const series: Record<string, Array<{ t: string; cpu: number; ram: number; disk: number; networkRx: number; networkTx: number }>> = {};
+    for (const row of rows) {
+      if (row.bucket < 0 || row.bucket >= NodesService.SERIES_POINTS) continue;
+      (series[row.nodeId] ??= []).push({
+        t: new Date((start + (row.bucket + 0.5) * bucketSeconds) * 1000).toISOString(),
+        cpu: row.cpu,
+        ram: row.ram,
+        disk: row.disk,
+        networkRx: row.networkRx,
+        networkTx: row.networkTx,
+      });
+    }
+    return { range: range in ranges ? range : '1h', bucketSeconds, start: new Date(start * 1000).toISOString(), series };
+  }
 
   async metrics(id: string, range: string, scope: WorkspaceScope) {
     await this.assertOwned(id, scope);
@@ -564,4 +606,13 @@ export class NodesService implements OnModuleInit {
       this.logger.error(`Initial metric sample prune failed: ${String(error)}`),
     );
   }
+}
+
+function normalizeLabels(labels: string[]): string[] {
+  const seen = new Map<string, string>();
+  for (const raw of labels) {
+    const label = raw.trim();
+    if (label && !seen.has(label.toLowerCase())) seen.set(label.toLowerCase(), label);
+  }
+  return [...seen.values()].sort((a, b) => a.localeCompare(b, 'fr'));
 }

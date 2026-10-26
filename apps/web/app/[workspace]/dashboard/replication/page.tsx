@@ -47,7 +47,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '../../../../components/ui/dialog';
-import { readNodeLabels } from '../../../../lib/node-labels';
+import { useNodeLabels } from '../../../../lib/node-labels';
 
 const STATUS_BADGE: Record<string, { label: string; type: 'success' | 'warning' | 'error' | 'info' }> = {
   success: { label: 'Réussi', type: 'success' },
@@ -64,7 +64,7 @@ export default function ReplicationPage() {
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
   const [runsByJob, setRunsByJob] = useState<Record<string, SyncJobRunItem[]>>({});
-  const [nodeLabels, setNodeLabels] = useState<Record<string, string[]>>({});
+  const nodeLabels = useNodeLabels();
   const [revealSecret, setRevealSecret] = useState<{ job: SyncJobItem; token: string } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [sshEditJob, setSshEditJob] = useState<SyncJobItem | null>(null);
@@ -84,9 +84,6 @@ export default function ReplicationPage() {
     sourceSshPort: '',
   });
 
-  useEffect(() => {
-    setNodeLabels(readNodeLabels());
-  }, []);
 
   const resetForm = () =>
     setFormData({ name: '', nodeId: '', sourcePath: '', targetPath: '', sourceHost: '', sourceUser: '', sourceSshPort: '' });

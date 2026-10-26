@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { AgentsService } from '../agents/agents.service';
+import { openSecret } from '../common/secret-box';
 import { DnsGroupsService } from '../dns/dns-groups.service';
 import { DnsZonesService } from '../dns/dns-zones.service';
 import { MountsService } from '../mounts/mounts.service';
@@ -129,7 +130,7 @@ export class ReconciliationService implements OnModuleInit {
           role: member.role,
           groupMemberVlanIps: siblings.map((sibling) => sibling.node.vlanIp).filter(Boolean),
           ...(member.role === 'secondary'
-            ? { primaryVlanIp: primaryMember?.node.vlanIp ?? null, tsigKeySecret: member.group.tsigKeySecret }
+            ? { primaryVlanIp: primaryMember?.node.vlanIp ?? null, tsigKeySecret: openSecret(member.group.tsigKeySecret) }
             : {}),
         },
       });

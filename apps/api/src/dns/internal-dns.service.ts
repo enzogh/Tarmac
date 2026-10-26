@@ -9,6 +9,9 @@ import { PrismaService } from '../prisma/prisma.service';
 const SYNC_INTERVAL_MS = 30_000;
 const INTERNAL_DNS_PORT = 5300;
 const INTERNAL_DNS_API_PORT = 8090;
+// A failed install is retried on its own at this pace (port freed, package
+// mirror back...), on top of the manual "Réessayer".
+const ERROR_RETRY_MS = 5 * 60_000;
 
 type InternalDnsRecord = { name: string; content: string };
 
@@ -26,6 +29,7 @@ export class InternalDnsService implements OnModuleInit {
   // changed (new/removed node, edited hostname, changed VLAN IP) instead of
   // re-pushing an identical snapshot every cycle.
   private readonly lastPushedSignature = new Map<string, string>();
+  private readonly lastErrorRetryAt = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -54,7 +58,10 @@ export class InternalDnsService implements OnModuleInit {
     await this.prisma.workspace.update({
       where: { id: scope.workspaceId as string },
       // Whatever the previous node reported says nothing about this one.
-      data: { internalDnsNodeId: nodeId, ...(workspace?.internalDnsNodeId !== nodeId ? { internalDnsStatus: 'pending' } : {}) },
+      data: {
+        internalDnsNodeId: nodeId,
+        ...(workspace?.internalDnsNodeId !== nodeId ? { internalDnsStatus: 'pending', internalDnsError: null } : {}),
+      },
     });
     this.lastPushedSignature.delete(scope.workspaceId as string);
     const cleanupSent = await this.pushToNode(nodeId, scope.workspaceId as string);
@@ -82,7 +89,7 @@ export class InternalDnsService implements OnModuleInit {
 
     await this.prisma.workspace.update({
       where: { id: scope.workspaceId as string },
-      data: { internalDnsNodeId: null },
+      data: { internalDnsNodeId: null, internalDnsError: null },
     });
     this.lastPushedSignature.delete(scope.workspaceId as string);
     await this.pushRouteToFleet(scope.workspaceId as string, null);
@@ -103,6 +110,7 @@ export class InternalDnsService implements OnModuleInit {
     return {
       internalDnsNodeId: workspace?.internalDnsNodeId ?? null,
       internalDnsStatus: workspace?.internalDnsStatus ?? 'pending',
+      internalDnsError: workspace?.internalDnsStatus === 'error' ? (workspace.internalDnsError ?? null) : null,
       records,
     };
   }
@@ -111,8 +119,35 @@ export class InternalDnsService implements OnModuleInit {
   // reports back whether command.setup_internal_dns actually succeeded -
   // this is what lets the Nodes panel icon go from "pending" (just
   // requested) to a real "active"/"error" confirmation.
-  setStatus(workspaceId: string, status: 'active' | 'error') {
-    return this.prisma.workspace.update({ where: { id: workspaceId }, data: { internalDnsStatus: status } });
+  setStatus(workspaceId: string, status: 'active' | 'error', error?: string | null) {
+    if (status === 'error') {
+      // Without this the next sync would skip the push (records unchanged).
+      this.lastPushedSignature.delete(workspaceId);
+      this.lastErrorRetryAt.set(workspaceId, Date.now());
+    }
+    return this.prisma.workspace.update({
+      where: { id: workspaceId },
+      data: { internalDnsStatus: status, internalDnsError: status === 'error' ? (error ?? null)?.slice(0, 1000) ?? null : null },
+    });
+  }
+
+  // "Réessayer" on the Nodes page: re-sends the install to the same node.
+  async retry(scope: WorkspaceScope, actorUserId?: string) {
+    const workspaceId = scope.workspaceId as string;
+    const workspace = await this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { internalDnsNodeId: true } });
+    if (!workspace?.internalDnsNodeId) throw new NotFoundException('no internal DNS node configured for this workspace');
+    await this.prisma.workspace.update({ where: { id: workspaceId }, data: { internalDnsStatus: 'pending', internalDnsError: null } });
+    this.lastPushedSignature.delete(workspaceId);
+    const sent = await this.pushToNode(workspace.internalDnsNodeId, workspaceId);
+    if (!sent) throw new NotFoundException('node is offline');
+    await this.auditLogsService.log({
+      workspaceId,
+      actorUserId,
+      action: 'dns.internal.retry',
+      resourceType: 'node',
+      resourceId: workspace.internalDnsNodeId,
+    });
+    return { sent };
   }
 
   // Sent when the user picks "kill the process and retry" on a node's
@@ -147,10 +182,20 @@ export class InternalDnsService implements OnModuleInit {
   private async tick() {
     const workspaces = await this.prisma.workspace.findMany({
       where: { internalDnsNodeId: { not: null } },
-      select: { id: true, internalDnsNodeId: true },
+      select: { id: true, internalDnsNodeId: true, internalDnsStatus: true },
     });
     for (const workspace of workspaces) {
       if (!workspace.internalDnsNodeId) continue;
+      if (workspace.internalDnsStatus === 'error') {
+        // Back off between automatic attempts: each one reinstalls and
+        // restarts the instance.
+        if (Date.now() - (this.lastErrorRetryAt.get(workspace.id) ?? 0) < ERROR_RETRY_MS) {
+          this.lastPushedSignature.set(workspace.id, JSON.stringify(await this.desiredRecords(workspace.id)));
+        } else {
+          this.lastPushedSignature.delete(workspace.id);
+          this.lastErrorRetryAt.set(workspace.id, Date.now());
+        }
+      }
       try {
         await this.pushToNode(workspace.internalDnsNodeId, workspace.id);
         const node = await this.prisma.node.findUnique({

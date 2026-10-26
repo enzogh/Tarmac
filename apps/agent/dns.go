@@ -197,8 +197,15 @@ func probePortBinding(port int, protocol string) *dnsPortConflict {
 // scans /proc/*/fd for a symlink to that inode. Deliberately avoids
 // shelling out to lsof/ss, which may not be installed on a minimal node.
 func findProcessOnPort(port int, protocol string) (int, string) {
-	data, err := os.ReadFile(fmt.Sprintf("/proc/net/%s", protocol))
-	if err != nil {
+	// A dual-stack socket (bound to ":port") is only listed in the "6" file.
+	var data []byte
+	for _, file := range []string{protocol, protocol + "6"} {
+		if content, err := os.ReadFile(fmt.Sprintf("/proc/net/%s", file)); err == nil {
+			data = append(data, content...)
+			data = append(data, '\n')
+		}
+	}
+	if len(data) == 0 {
 		return 0, ""
 	}
 
@@ -1626,9 +1633,11 @@ func ensureInternalPdnsSystemdUnit(ctx context.Context) error {
 	return nil
 }
 
-func writeInternalPdnsConfig(apiKey string, port, apiPort int) error {
+// writeInternalPdnsConfig reports whether the file actually changed, so the
+// instance is only restarted when its configuration did.
+func writeInternalPdnsConfig(apiKey string, port, apiPort int) (bool, error) {
 	if err := os.MkdirAll(filepath.Dir(internalPdnsConfigPath), 0o755); err != nil {
-		return fmt.Errorf("cannot create powerdns config dir: %w", err)
+		return false, fmt.Errorf("cannot create powerdns config dir: %w", err)
 	}
 	lines := []string{
 		"launch=gsqlite3",
@@ -1647,42 +1656,199 @@ func writeInternalPdnsConfig(apiKey string, port, apiPort int) error {
 		// deliberately not replicated like DnsServerGroup's public zones).
 	}
 	content := strings.Join(lines, "\n") + "\n"
-	return os.WriteFile(internalPdnsConfigPath, []byte(content), 0o644)
+	if current, err := os.ReadFile(internalPdnsConfigPath); err == nil && string(current) == content {
+		return false, nil
+	}
+	return true, os.WriteFile(internalPdnsConfigPath, []byte(content), 0o644)
+}
+
+// internalPdnsConfiguredPort reads a port setting back from the instance's
+// current config file (0 when absent).
+func internalPdnsConfiguredPort(key string) int {
+	data, err := os.ReadFile(internalPdnsConfigPath)
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, key+"=") {
+			port, _ := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, key+"=")))
+			return port
+		}
+	}
+	return 0
+}
+
+func internalPdnsActive(ctx context.Context) bool {
+	return commandExists("systemctl") && exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", internalPdnsSystemdUnit).Run() == nil
+}
+
+// A port bound by pdns_server while pdns-internal runs with that very port
+// in its config is our own listener, not a conflict.
+func heldByOurInstance(ctx context.Context, conflict *dnsPortConflict, key string, port int) bool {
+	return conflict != nil && strings.HasPrefix(conflict.ProcessName, "pdns") &&
+		internalPdnsConfiguredPort(key) == port && internalPdnsActive(ctx)
+}
+
+func describePortHolder(conflict *dnsPortConflict) string {
+	if conflict.ProcessName == "" {
+		return "un autre processus"
+	}
+	if conflict.PID != nil {
+		return fmt.Sprintf("%s (pid %d)", conflict.ProcessName, *conflict.PID)
+	}
+	return conflict.ProcessName
+}
+
+// pickInternalPdnsApiPort keeps the control plane's port when it is free.
+// The API port is only ever reached by this agent on 127.0.0.1, so when
+// another service already listens there the next free port is used instead
+// of failing: that collision is what left pdns-internal unable to start
+// (webserver bind error) while the agent talked to the other service and
+// got back a 404 that wasn't PowerDNS's.
+func pickInternalPdnsApiPort(ctx context.Context, preferred int) (int, error) {
+	for offset := 0; offset <= 20; offset++ {
+		candidate := preferred + offset
+		conflict := probePortBinding(candidate, "tcp")
+		if conflict == nil || heldByOurInstance(ctx, conflict, "webserver-port", candidate) {
+			if offset > 0 {
+				log.Printf("dns: internal PowerDNS API port %d is taken by %s, using %d", preferred, describePortHolder(probePortBinding(preferred, "tcp")), candidate)
+			}
+			return candidate, nil
+		}
+	}
+	return 0, fmt.Errorf("aucun port libre pour l'API PowerDNS interne entre %d et %d", preferred, preferred+20)
+}
+
+// The DNS port is the one every node of the fleet forwards to, so unlike
+// the API port it can't move: report who holds it.
+func checkInternalPdnsDnsPort(ctx context.Context, port int) error {
+	for _, protocol := range []string{"udp", "tcp"} {
+		conflict := probePortBinding(port, protocol)
+		if conflict == nil || heldByOurInstance(ctx, conflict, "local-port", port) {
+			continue
+		}
+		return fmt.Errorf("le port DNS %d/%s est déjà utilisé par %s : libérez-le puis relancez l'installation", port, protocol, describePortHolder(conflict))
+	}
+	return nil
+}
+
+// internalPdnsJournalTail returns the instance's last log lines, appended
+// to a start failure so the Journal says why instead of "see journalctl".
+func internalPdnsJournalTail(ctx context.Context) string {
+	if !commandExists("journalctl") {
+		return ""
+	}
+	out, err := exec.CommandContext(ctx, "journalctl", "-u", internalPdnsSystemdUnit, "-n", "8", "--no-pager", "-o", "cat").Output()
+	if err != nil {
+		return ""
+	}
+	lines := []string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return " — journal pdns-internal : " + strings.Join(lines, " / ")
+}
+
+// waitInternalPdnsApi waits for the freshly (re)started instance to answer,
+// and checks that what answers really is PowerDNS.
+func waitInternalPdnsApi(ctx context.Context, client *pdnsClient) error {
+	deadline := time.Now().Add(15 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		body, status, err := client.request(ctx, http.MethodGet, "", nil)
+		if err == nil {
+			// Until it is up, PowerDNS doesn't accept connections at all:
+			// any HTTP answer is final.
+			var server struct {
+				DaemonType string `json:"daemon_type"`
+				Error      string `json:"error"`
+			}
+			_ = json.Unmarshal(body, &server)
+			switch {
+			case status == http.StatusOK && server.DaemonType != "":
+				return nil
+			case server.Error != "":
+				return fmt.Errorf("l'API PowerDNS interne refuse la requête (HTTP %d : %s)", status, server.Error)
+			default:
+				return fmt.Errorf("le port de l'API PowerDNS interne est occupé par un autre service (HTTP %d : %s)", status, truncate(strings.TrimSpace(string(body)), 160))
+			}
+		}
+		lastErr = err
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("l'API PowerDNS interne ne répond pas après 15 s (%v)%s", lastErr, internalPdnsJournalTail(ctx))
 }
 
 // installInternalPdns brings up the dedicated internal PowerDNS instance if
 // it isn't already running - idempotent, safe to call on every sync tick
 // (which is exactly how the control plane drives it: command.setup_internal_dns
-// doubles as both first-install and every subsequent record sync).
-func installInternalPdns(ctx context.Context, port, apiPort int) (string, error) {
+// doubles as both first-install and every subsequent record sync). Returns
+// the API key and the API port actually used (see pickInternalPdnsApiPort).
+func installInternalPdns(ctx context.Context, port, apiPort int) (string, int, error) {
 	if _, err := ensureAgentSystemPackages(ctx, []string{"pdns-server", "pdns-backend-sqlite3"}); err != nil {
-		return "", fmt.Errorf("cannot install PowerDNS: %w", err)
+		return "", 0, fmt.Errorf("cannot install PowerDNS: %w", err)
 	}
 	if err := ensureSqliteDatabaseAt(ctx, internalPdnsSqliteDbPath); err != nil {
-		return "", err
+		return "", 0, err
 	}
 	apiKey, err := ensureApiKeyAt(internalPdnsApiKeyPath)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	if err := writeInternalPdnsConfig(apiKey, port, apiPort); err != nil {
-		return "", err
+	if err := checkInternalPdnsDnsPort(ctx, port); err != nil {
+		return "", 0, err
+	}
+	apiPort, err = pickInternalPdnsApiPort(ctx, apiPort)
+	if err != nil {
+		return "", 0, err
+	}
+	changed, err := writeInternalPdnsConfig(apiKey, port, apiPort)
+	if err != nil {
+		return "", 0, err
 	}
 	if err := ensureInternalPdnsSystemdUnit(ctx); err != nil {
-		return "", err
+		return "", 0, err
 	}
 	if commandExists("systemctl") {
-		if out, err := exec.CommandContext(ctx, "systemctl", "enable", "--now", internalPdnsSystemdUnit).CombinedOutput(); err != nil {
-			return "", fmt.Errorf("cannot enable/start %s: %s", internalPdnsSystemdUnit, strings.TrimSpace(string(out)))
+		if out, err := exec.CommandContext(ctx, "systemctl", "enable", internalPdnsSystemdUnit).CombinedOutput(); err != nil {
+			return "", 0, fmt.Errorf("cannot enable %s: %s", internalPdnsSystemdUnit, strings.TrimSpace(string(out)))
 		}
-		if out, err := exec.CommandContext(ctx, "systemctl", "restart", internalPdnsSystemdUnit).CombinedOutput(); err != nil {
-			return "", fmt.Errorf("cannot restart %s: %s", internalPdnsSystemdUnit, strings.TrimSpace(string(out)))
+		// Restarting on every sync tick would drop queries for nothing.
+		if changed || !internalPdnsActive(ctx) {
+			if out, err := exec.CommandContext(ctx, "systemctl", "restart", internalPdnsSystemdUnit).CombinedOutput(); err != nil {
+				return "", 0, fmt.Errorf("cannot start %s: %s%s", internalPdnsSystemdUnit, firstLine(string(out)), internalPdnsJournalTail(ctx))
+			}
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(internalDnsMarkerPath), 0o755); err == nil {
 		_ = os.WriteFile(internalDnsMarkerPath, []byte("enabled\n"), 0o600)
 	}
-	return apiKey, nil
+	return apiKey, apiPort, nil
+}
+
+func truncate(value string, max int) string {
+	if len(value) <= max {
+		return value
+	}
+	return value[:max] + "…"
+}
+
+func firstLine(value string) string {
+	line := strings.TrimSpace(value)
+	if index := strings.IndexByte(line, '\n'); index >= 0 {
+		line = line[:index]
+	}
+	return line
 }
 
 // applyInternalDnsRecords installs (if needed) and (re)applies the full A
@@ -1693,12 +1859,14 @@ func applyInternalDnsRecords(ctx context.Context, payload map[string]interface{}
 	port := readInt(payload, "port", 5300)
 	apiPort := readInt(payload, "apiPort", 8090)
 
-	apiKey, err := installInternalPdns(ctx, port, apiPort)
+	apiKey, apiPort, err := installInternalPdns(ctx, port, apiPort)
 	if err != nil {
 		return "", err
 	}
-
 	client := &pdnsClient{apiKey: apiKey, baseURL: fmt.Sprintf("http://127.0.0.1:%d/api/v1/servers/localhost", apiPort)}
+	if err := waitInternalPdnsApi(ctx, client); err != nil {
+		return "", err
+	}
 	if !client.zoneExists(ctx, internalDnsZoneName) {
 		if err := client.createZone(ctx, internalDnsZoneName); err != nil {
 			return "", err

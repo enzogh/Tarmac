@@ -59,11 +59,12 @@ et les vues topologiques.
 - Maillage WireGuard entre nœuds, clés et endpoints gérés par l'agent
 - Segmentation régionale : au-delà de deux régions, un nœud « passerelle » par région relie les régions entre elles, le maillage complet restant intra-région
 - Métriques par lien : débit, âge du dernier handshake, latence, perte de paquets
-- Tests à la demande, `ping` comme `traceroute`, exécutés en direct sur l'agent
+- Tests à la demande, `ping` comme `traceroute`, exécutés en direct sur l'agent ; les résultats ne sont pas conservés (l'historique des liens l'est)
 - Historique des liens sur 1 h / 24 h / 7 j avec pourcentage de disponibilité, purgé après 30 jours
 - Alerte « Lien VLAN hors ligne » seulement si le lien reste coupé 90 s, avec 3 min de grâce après chaque démarrage de l'API : un redéploiement ou une reconnexion d'agent n'en déclenche plus
 - Graphe topologique et carte du monde, positions de nœuds déplaçables et mémorisées
-- Page Nœuds pensée pour des dizaines de serveurs : tableau triable ou grille compacte, filtres (état, pays, rôle, libellé, « à surveiller »), actions groupées, panneau de détail (charge, disques/SMART, DNS) et état du DNS interne affiché en tête de page
+- Page Nœuds pensée pour des dizaines de serveurs : tableau triable ou grille compacte, filtres (état, pays, rôle, libellé, « à surveiller »), actions groupées, panneau de détail (charge, disques/SMART, DNS) et état du DNS interne affiché en tête de page, avec le message d'erreur de l'agent et une relance en un clic
+- Libellés de nœuds enregistrés côté serveur, partagés par toute l'équipe
 
 **DNS**
 - Zones autoritaires servies par PowerDNS, maîtres comme esclaves (AXFR, TSIG)
@@ -177,6 +178,7 @@ Après `npm run seed` :
 | `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/tarmac` |
 | `JWT_SECRET` | `change-me` |
 | `AGENT_SHARED_TOKEN` | `agent-secret` |
+| `TARMAC_SECRETS_KEY` | `openssl rand -base64 32` (chiffre au repos les clés VPN et secrets TSIG ; obligatoire en Docker) |
 | `PORT` | `3001` |
 | `VPN_LISTEN_PORT` | `51821` (optionnel, port UDP des nœuds d'entrée VPN) |
 
@@ -300,6 +302,20 @@ la première initialisation, le volume garde l'ancien mot de passe : le wrapper
 `docker/postgres-entrypoint-tarmac.sh` réapplique celui configuré au
 redémarrage, ce qui évite les `password authentication failed for user
 "postgres"` côté Prisma.
+
+**Secrets au repos.** Les clés privées et prépartagées des profils VPN et les
+secrets TSIG des groupes DNS sont chiffrés (AES-256-GCM) avec
+`TARMAC_SECRETS_KEY`, qui vit dans `docker/.env` et jamais en base. `deploy.sh`
+la génère au premier déploiement ; les valeurs déjà en clair sont chiffrées au
+démarrage suivant de l'API. Gardez-en une copie hors de l'hôte : sans elle, les
+profils VPN existants doivent être régénérés.
+
+**Sauvegardes.** La base tourne sur un nœud de la flotte : `docker/backup-db.sh`
+en fait un dump chiffré (gpg) envoyé par rclone hors de l'hôte, purge au-delà
+de `BACKUP_RETENTION_DAYS`, et avec `--verify` le restaure aussitôt dans un
+Postgres jetable pour vérifier qu'il est exploitable (`docker/restore-test.sh`,
+utilisable seul sur n'importe quelle sauvegarde). Variables `BACKUP_*` dans
+[`docker/.env.example`](docker/.env.example), cron conseillé en tête du script.
 
 ## Développement
 

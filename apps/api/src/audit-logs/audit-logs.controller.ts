@@ -36,6 +36,11 @@ export class AuditLogsController {
     );
   }
 
+  @Get('facets')
+  facets(@CurrentWorkspace() scope: WorkspaceScope) {
+    return this.auditLogsService.facets(scope);
+  }
+
   @Get('export')
   async export(
     @Res({ passthrough: true }) res: Response,

@@ -48,6 +48,20 @@ type PendingTracerouteRequest = {
   reject: (reason: Error) => void;
   timeout: NodeJS.Timeout;
 };
+export type PingResult = {
+  targetIp: string;
+  sent: number;
+  packetLoss: number;
+  minMs: number | null;
+  avgMs: number | null;
+  maxMs: number | null;
+};
+type PendingPingRequest = {
+  nodeId: string;
+  resolve: (value: PingResult) => void;
+  reject: (reason: Error) => void;
+  timeout: NodeJS.Timeout;
+};
 type PendingDnsZoneKeysRequest = {
   nodeId: string;
   resolve: (value: { dsRecords: string[]; dnskeyRecords: string[] }) => void;
@@ -100,6 +114,7 @@ export class AgentsService implements OnModuleInit {
   private readonly pendingDirectoryRequests = new Map<string, PendingDirectoryRequest>();
   private readonly pendingDirectoryScanRequests = new Map<string, PendingDirectoryScanRequest>();
   private readonly pendingTracerouteRequests = new Map<string, PendingTracerouteRequest>();
+  private readonly pendingPingRequests = new Map<string, PendingPingRequest>();
   private readonly pendingDnsZoneKeysRequests = new Map<string, PendingDnsZoneKeysRequest>();
   private readonly smartAlertAt = new Map<string, number>();
 
@@ -348,6 +363,12 @@ export class AgentsService implements OnModuleInit {
       clearTimeout(request.timeout);
       request.reject(new Error(`node ${nodeId} disconnected`));
       this.pendingTracerouteRequests.delete(requestId);
+    }
+    for (const [requestId, request] of this.pendingPingRequests.entries()) {
+      if (request.nodeId !== nodeId) continue;
+      clearTimeout(request.timeout);
+      request.reject(new Error(`node ${nodeId} disconnected`));
+      this.pendingPingRequests.delete(requestId);
     }
     for (const [requestId, request] of this.pendingDnsZoneKeysRequests.entries()) {
       if (request.nodeId !== nodeId) continue;
@@ -863,8 +884,9 @@ export class AgentsService implements OnModuleInit {
       if (workspace?.internalDnsNodeId !== nodeId) return;
 
       const internalDnsStatus = result.success ? 'active' : 'error';
-      await this.internalDnsService.setStatus(callingWorkspaceId, internalDnsStatus);
-      this.live.broadcast('dns.internal.status', { status: internalDnsStatus }, callingWorkspaceId);
+      const internalDnsError = result.success ? null : this.normalizeFailureMessage(result.message);
+      await this.internalDnsService.setStatus(callingWorkspaceId, internalDnsStatus, internalDnsError);
+      this.live.broadcast('dns.internal.status', { status: internalDnsStatus, error: internalDnsError }, callingWorkspaceId);
       if (!result.success) {
         this.logger.error(`Internal DNS setup on node ${nodeId} failed: ${this.normalizeFailureMessage(result.message)}`);
       }
@@ -1045,6 +1067,43 @@ export class AgentsService implements OnModuleInit {
           : [],
         truncated: Boolean(payload?.truncated),
       });
+      return;
+    }
+
+    if (result.resourceType === 'ping') {
+      const pending = this.pendingPingRequests.get(result.resourceId);
+      if (!pending || pending.nodeId !== nodeId) {
+        if (pending) this.logCrossWorkspaceAttempt(nodeId, result.resourceType, result.resourceId);
+        return;
+      }
+      clearTimeout(pending.timeout);
+      this.pendingPingRequests.delete(result.resourceId);
+      if (!result.success) {
+        pending.reject(new Error(result.message ?? 'ping failed'));
+        return;
+      }
+      const payload = result.data as Partial<PingResult> | undefined;
+      const number = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+      pending.resolve({
+        targetIp: payload?.targetIp ?? '',
+        sent: number(payload?.sent) ?? 0,
+        packetLoss: number(payload?.packetLoss) ?? 100,
+        minMs: number(payload?.minMs),
+        avgMs: number(payload?.avgMs),
+        maxMs: number(payload?.maxMs),
+      });
+      return;
+    }
+
+    // An agent that predates on-demand ping answers with a bare "unknown
+    // command": fail its pending pings now instead of after the timeout.
+    if (!result.success && result.message?.includes('unknown command command.run_ping')) {
+      for (const [requestId, request] of this.pendingPingRequests.entries()) {
+        if (request.nodeId !== nodeId) continue;
+        clearTimeout(request.timeout);
+        request.reject(new Error("Agent trop ancien pour le ping à la demande : mettez-le à jour depuis la page Nœuds."));
+        this.pendingPingRequests.delete(requestId);
+      }
       return;
     }
 
@@ -1387,6 +1446,23 @@ export class AgentsService implements OnModuleInit {
       if (!sent) {
         clearTimeout(timeout);
         this.pendingTracerouteRequests.delete(requestId);
+        reject(new Error(`node ${nodeId} is offline`));
+      }
+    });
+  }
+
+  requestPing(nodeId: string, targetIp: string, timeoutMs = 12000): Promise<PingResult> {
+    const requestId = `ping:${nodeId}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingPingRequests.delete(requestId);
+        reject(new Error("l'agent n'a pas répondu à temps"));
+      }, timeoutMs);
+      this.pendingPingRequests.set(requestId, { nodeId, resolve, reject, timeout });
+      const sent = this.sendCommand(nodeId, { type: 'command.run_ping', payload: { requestId, targetIp } });
+      if (!sent) {
+        clearTimeout(timeout);
+        this.pendingPingRequests.delete(requestId);
         reject(new Error(`node ${nodeId} is offline`));
       }
     });
