@@ -13,6 +13,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -208,6 +209,56 @@ func syncCatalogProducer(ctx context.Context, client *pdnsClient, groupID string
 	return nil
 }
 
+// inferPrimaryFromSlaveZones returns the primary every secondary zone on
+// this server transfers from, when they all agree on one.
+func inferPrimaryFromSlaveZones(ctx context.Context, client *pdnsClient) (string, error) {
+	zones, err := client.listZones(ctx)
+	if err != nil {
+		return "", err
+	}
+	primary := ""
+	for _, zone := range zones {
+		if !strings.EqualFold(zone.Kind, "Slave") || len(zone.Masters) != 1 {
+			continue
+		}
+		if primary != "" && !sameDnsServer(zone.Masters[0], primary) {
+			return "", errors.New("primary address unknown: secondary zones disagree on their primary")
+		}
+		primary = zone.Masters[0]
+	}
+	if primary == "" {
+		return "", errors.New("primary address unknown: no secondary zone to learn it from yet")
+	}
+	return primary, nil
+}
+
+// sameDnsServer compares two primary addresses, PowerDNS writing the
+// default port out or not depending on the version.
+func sameDnsServer(a, b string) bool {
+	return strings.TrimSuffix(a, ":53") == strings.TrimSuffix(b, ":53")
+}
+
+// rememberPrimaryVlanIP records the group primary's address in
+// dnsMarkerPath, for the catalog consumer.
+func rememberPrimaryVlanIP(ip string) {
+	data, err := os.ReadFile(dnsMarkerPath)
+	if err != nil || ip == "" {
+		return
+	}
+	lines := []string{}
+	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		if strings.HasPrefix(line, "primaryVlanIp=") {
+			if line == "primaryVlanIp="+ip {
+				return
+			}
+			continue
+		}
+		lines = append(lines, line)
+	}
+	lines = append(lines, "primaryVlanIp="+ip)
+	_ = os.WriteFile(dnsMarkerPath, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
+}
+
 // catalogMembers reads the member zone names out of a catalog zone held on
 // this server (PTR records under zones.<catalog>).
 func catalogMembers(zone *pdnsZoneDetail) map[string]bool {
@@ -230,7 +281,14 @@ func catalogMembers(zone *pdnsZoneDetail) map[string]bool {
 // the group's TSIG key - zones the consumer creates on its own don't.
 func syncCatalogConsumer(ctx context.Context, client *pdnsClient, role dnsRole) error {
 	if role.primaryVlanIP == "" {
-		return errors.New("primary address unknown")
+		// Nodes set up before the marker recorded it: the zones this
+		// secondary already holds name their primary.
+		inferred, err := inferPrimaryFromSlaveZones(ctx, client)
+		if err != nil {
+			return err
+		}
+		role.primaryVlanIP = strings.TrimSuffix(inferred, ":53")
+		rememberPrimaryVlanIP(role.primaryVlanIP)
 	}
 	catalog := catalogZoneName(role.groupID)
 	key := tsigKeyName(role.groupID)
@@ -256,7 +314,7 @@ func syncCatalogConsumer(ctx context.Context, client *pdnsClient, role dnsRole) 
 		// Adoption waits for the catalog's content, on the next pass.
 		return nil
 	}
-	if len(consumer.Masters) != 1 || consumer.Masters[0] != role.primaryVlanIP {
+	if len(consumer.Masters) != 1 || !sameDnsServer(consumer.Masters[0], role.primaryVlanIP) {
 		if err := client.putZone(ctx, catalog, map[string]interface{}{"masters": []string{role.primaryVlanIP}}); err != nil {
 			return err
 		}
@@ -363,6 +421,18 @@ func reconcileDnsGroupRole(ctx context.Context) {
 
 var lastCatalogError = "unset"
 
+// catalogWorking: the last catalog sync went through. Until then this node
+// doesn't claim catalog support in its heartbeat, so the control plane keeps
+// sending each zone to secondaries itself rather than relying on a catalog
+// that doesn't work yet.
+func catalogWorking() bool {
+	catalogStateMu.Lock()
+	defer catalogStateMu.Unlock()
+	return lastCatalogError == ""
+}
+
+var catalogStateMu sync.Mutex
+
 // logCatalogStateOnce reports the catalog's state when it changes, not on
 // every tick.
 func logCatalogStateOnce(err error) {
@@ -370,10 +440,13 @@ func logCatalogStateOnce(err error) {
 	if err != nil {
 		message = err.Error()
 	}
-	if message == lastCatalogError {
+	catalogStateMu.Lock()
+	changed := message != lastCatalogError
+	lastCatalogError = message
+	catalogStateMu.Unlock()
+	if !changed {
 		return
 	}
-	lastCatalogError = message
 	if err != nil {
 		log.Printf("dns: catalog zone sync failed: %v", err)
 	} else {
@@ -525,7 +598,7 @@ func currentDnsServerReport() *dnsServerReport {
 	report := &dnsServerReport{
 		PdnsVersion: pdnsInstalledVersion(),
 		Backend:     readPdnsBackend(),
-		Catalog:     pdnsSupportsCatalog(),
+		Catalog:     pdnsSupportsCatalog() && catalogWorking(),
 		MaxAttempts: pdnsMaintenanceMaxAttempts,
 		Tasks:       map[string]pdnsTaskReport{},
 	}

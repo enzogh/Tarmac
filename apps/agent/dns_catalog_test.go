@@ -84,3 +84,9 @@ func TestAptFailureSummary(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestSameDnsServer(t *testing.T) {
+	if !sameDnsServer("10.255.0.196:53", "10.255.0.196") || sameDnsServer("10.255.0.196", "10.255.0.197") {
+		t.Fatal("port 53 must be ignored, addresses compared")
+	}
+}

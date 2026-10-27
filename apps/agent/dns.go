@@ -1717,6 +1717,7 @@ func applyDnsZoneSlave(payload map[string]interface{}) (string, error) {
 			return "", err
 		}
 	}
+	rememberPrimaryVlanIP(primaryVlanIp)
 
 	if groupID != "" {
 		if err := client.setZoneTsigKeys(ctx, fqdn, "slave_tsig_key_ids", []string{tsigKeyName(groupID)}); err != nil {
