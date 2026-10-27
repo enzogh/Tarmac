@@ -41,7 +41,7 @@ import { NODE_STATUS, SEVERITY, StatusDot, StatusPill, describe, type StatusTone
 import { Progress } from '../../../components/ui/progress';
 import { BannerSkeleton, ChartCardSkeleton, ListSkeleton, StatCardSkeleton } from '../../../components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '../../../components/ui/tabs';
-import { MiniMeter, SwapLine } from './infrastructure/components/node-ui';
+import { MiniMeter } from './infrastructure/components/node-ui';
 
 type Range = '1h' | '6h' | '24h';
 const RANGE_LABEL: Record<Range, string> = { '1h': '1 h', '6h': '6 h', '24h': '24 h' };
@@ -617,7 +617,6 @@ export default function OverviewPage() {
                             <>
                               <MiniMeter value={node.metrics.ram} className="w-28" />
                               {memory && <span className="mt-0.5 block whitespace-nowrap text-2xs tabular-nums text-muted-foreground">{memory.label}</span>}
-                              <SwapLine info={node.systemInfo} className="mt-0.5" />
                             </>
                           )}
                         </td>

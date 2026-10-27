@@ -29,7 +29,7 @@ export class DnsGroupsService {
       orderBy: { createdAt: 'desc' },
       include: {
         members: { include: { node: true }, orderBy: { createdAt: 'asc' } },
-        zones: { select: { id: true, name: true, status: true } },
+        zones: { select: { id: true, name: true, status: true, syncCheckedAt: true, syncDetail: true } },
       },
     });
   }

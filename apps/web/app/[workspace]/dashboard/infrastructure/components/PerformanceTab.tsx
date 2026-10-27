@@ -16,7 +16,7 @@ import { formatRelative, formatThroughput, shortHostname } from '@/lib/format';
 import { usePolling } from '@/lib/hooks/usePolling';
 import { cn } from '@/lib/utils';
 import { cpuShape, memoryUsage } from '@/lib/system-info';
-import { MiniMeter, SwapLine } from './node-ui';
+import { MiniMeter } from './node-ui';
 
 type MetricKey = 'cpu' | 'ram' | 'disk' | 'network';
 type Range = '1h' | '6h' | '24h';
@@ -451,7 +451,6 @@ export function PerformanceTab({
                           {memoryUsage(node.systemInfo, node.metrics.ram)!.label}
                         </span>
                       )}
-                      <SwapLine info={node.systemInfo} className="mt-0.5" />
                     </td>
                     <td className="px-3 py-2.5">
                       <MiniMeter value={node.storage.usageRatio * 100} className="w-28" />

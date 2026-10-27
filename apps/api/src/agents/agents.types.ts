@@ -1,6 +1,9 @@
 export interface HeartbeatPayload {
   nodeId: string;
   version?: string;
+  // Per kind of ticked desired state, the stateHash the agent last applied
+  // successfully (see AgentsService.appliedStateHash).
+  appliedState?: Record<string, string>;
   system?: Record<string, unknown>;
   metrics: {
     cpu: number;

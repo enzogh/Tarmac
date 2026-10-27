@@ -3,6 +3,8 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
+import { chainSegments, LinkHistoryPoint, relayGateways, uptimePercent } from './link-history';
+import { activeGateways } from './overlay-topology';
 import { Region, resolveRegion } from './region';
 
 // The Default workspace permanently keeps this exact range - it's what every
@@ -62,12 +64,35 @@ const CONNECTION_ALERT_STARTUP_GRACE_MS = 3 * 60_000;
 // makes VlanConnectionSample grow O(pairs × 1/5s), which is O(N²) in fleet size. Every real
 // status transition is still recorded immediately regardless of this throttle.
 const CONNECTION_SAMPLE_THROTTLE_MS = 30_000;
-const CONNECTION_SAMPLE_RETENTION_DAYS = 30;
-const HISTORY_RANGE_MS: Record<string, number> = {
-  '1h': 60 * 60 * 1000,
-  '24h': 24 * 60 * 60 * 1000,
-  '7d': 7 * 24 * 60 * 60 * 1000,
+const HOUR_MS = 60 * 60 * 1000;
+// Raw samples are O(pairs) every 30 s: kept 48 h for the detailed views, the
+// longer history lives on as hourly VlanConnectionRollup rows.
+const RAW_SAMPLE_RETENTION_MS = 48 * HOUR_MS;
+const CONNECTION_ROLLUP_RETENTION_DAYS = 30;
+// bucketMs 0 = raw samples. Longer ranges are averaged per bucket instead of
+// truncated, so the chart always spans the whole range.
+const HISTORY_RESOLUTION: Record<string, { rangeMs: number; bucketMs: number }> = {
+  '1h': { rangeMs: HOUR_MS, bucketMs: 0 },
+  '24h': { rangeMs: 24 * HOUR_MS, bucketMs: 5 * 60 * 1000 },
+  '7d': { rangeMs: 7 * 24 * HOUR_MS, bucketMs: HOUR_MS },
 };
+const SEVERITY_STATUS = ['healthy', 'unknown', 'degraded', 'offline'];
+const SEVERITY_SQL = Prisma.sql`CASE "status" WHEN 'healthy' THEN 1 WHEN 'unknown' THEN 2 WHEN 'degraded' THEN 3 ELSE 4 END`;
+
+export type GatewayRole = 'primary' | 'backup';
+
+type BucketRow = {
+  createdAt: Date;
+  total: number;
+  healthy: number;
+  severity: number;
+  latencyMs: number | null;
+  packetLoss: number | null;
+  bandwidth: number | null;
+};
+
+const floorTo = (ms: number, step: number) => Math.floor(ms / step) * step;
+const floorToDate = (date: Date, step: number) => new Date(floorTo(date.getTime(), step));
 
 @Injectable()
 export class VlanService implements OnModuleInit {
@@ -452,7 +477,7 @@ export class VlanService implements OnModuleInit {
     sourceNodeId: string,
     targetNodeId: string,
     range: string = '1h',
-  ): Promise<{ samples: any[]; uptimePercent: number }> {
+  ): Promise<{ samples: any[]; uptimePercent: number | null; via: Array<{ id: string; name: string }> }> {
     const vlanLookup = await this.prisma.vlan.findFirst({
       where: {
         OR: [{ id: vlanIdOrName }, { name: vlanIdOrName }],
@@ -463,47 +488,198 @@ export class VlanService implements OnModuleInit {
       throw new Error(`VLAN not found: ${vlanIdOrName}`);
     }
 
-    const ms = HISTORY_RANGE_MS[range] ?? HISTORY_RANGE_MS['1h'];
-    const samples = await this.prisma.vlanConnectionSample.findMany({
-      where: {
-        vlanId: vlanLookup.id,
-        sourceNodeId,
-        targetNodeId,
-        createdAt: { gte: new Date(Date.now() - ms) },
+    const resolution = HISTORY_RESOLUTION[range] ?? HISTORY_RESOLUTION['1h'];
+    const since = new Date(Date.now() - resolution.rangeMs);
+    const members = await this.prisma.vlanMember.findMany({
+      where: { vlanId: vlanLookup.id },
+      select: {
+        node: {
+          select: { id: true, name: true, overlayIsGateway: true, overlayIsBackupGateway: true, locationCountryCode: true },
+        },
       },
-      orderBy: { createdAt: 'asc' },
-      take: 500,
     });
+    const nodes = members.map((member) => member.node);
+    const via = relayGateways(nodes, this.activeGatewaysFor(vlanLookup.id, nodes), sourceNodeId, targetNodeId).map(
+      ({ id, name }) => ({ id, name }),
+    );
 
-    const uptimePercent =
-      samples.length > 0
-        ? Math.round((samples.filter((sample) => sample.status === 'healthy').length / samples.length) * 100)
-        : 100;
+    let points: LinkHistoryPoint[];
+    if (via.length === 0) {
+      points = await this.pairHistory(vlanLookup.id, sourceNodeId, targetNodeId, since, resolution.bucketMs);
+    } else {
+      // Segmented cross-region pair: no tunnel and no probe exist between
+      // the two ends, the traffic goes through the regional gateways. Its
+      // history is the chain of the hops it actually crosses.
+      const hops = [sourceNodeId, ...via.map((gateway) => gateway.id), targetNodeId];
+      const segments = await Promise.all(
+        hops
+          .slice(1)
+          .map((nodeId, index) => this.pairHistory(vlanLookup.id, hops[index], nodeId, since, resolution.bucketMs)),
+      );
+      points = chainSegments(segments, resolution.bucketMs || 60_000);
+    }
 
-    return { samples, uptimePercent };
+    return {
+      samples: points.map(({ createdAt, status, latencyMs, packetLoss, bandwidth }) => ({
+        createdAt,
+        status,
+        latencyMs,
+        packetLoss,
+        bandwidth,
+      })),
+      uptimePercent: uptimePercent(points),
+      via,
+    };
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  /**
+   * A pair's history at the requested resolution (bucketMs 0 = raw samples).
+   * Samples are throttled per unordered pair (recordConnectionTransition), so
+   * a link's history lands under whichever direction reported first: both
+   * directions are read as one series. Raw samples only live
+   * RAW_SAMPLE_RETENTION_MS, older hours come from VlanConnectionRollup.
+   */
+  private async pairHistory(
+    vlanId: string,
+    a: string,
+    b: string,
+    since: Date,
+    bucketMs: number,
+  ): Promise<LinkHistoryPoint[]> {
+    const pairWhere = Prisma.sql`"vlanId" = ${vlanId} AND (("sourceNodeId" = ${a} AND "targetNodeId" = ${b}) OR ("sourceNodeId" = ${b} AND "targetNodeId" = ${a}))`;
+    if (bucketMs === 0) {
+      const samples = await this.prisma.vlanConnectionSample.findMany({
+        where: {
+          vlanId,
+          createdAt: { gte: since },
+          OR: [
+            { sourceNodeId: a, targetNodeId: b },
+            { sourceNodeId: b, targetNodeId: a },
+          ],
+        },
+        // Newest first so a burst of transitions can never push the latest
+        // samples out of the window.
+        orderBy: { createdAt: 'desc' },
+        take: 1000,
+      });
+      return samples.reverse().map((sample) => ({
+        createdAt: sample.createdAt,
+        status: sample.status,
+        latencyMs: sample.latencyMs,
+        packetLoss: sample.packetLoss,
+        bandwidth: sample.bandwidth,
+        total: 1,
+        healthy: sample.status === 'healthy' ? 1 : 0,
+      }));
+    }
+
+    // Raw samples cover the recent part, rollups (whole past hours) the rest.
+    const rawFrom = new Date(
+      Math.max(since.getTime(), floorTo(Date.now() - RAW_SAMPLE_RETENTION_MS, HOUR_MS) + HOUR_MS),
+    );
+    const bucket = Prisma.sql`date_bin(make_interval(secs => ${bucketMs / 1000}), "createdAt", TIMESTAMP '2000-01-01')`;
+    const raw = await this.prisma.$queryRaw<BucketRow[]>`
+      SELECT ${bucket} AS "createdAt",
+             count(*)::int AS "total",
+             (count(*) FILTER (WHERE "status" = 'healthy'))::int AS "healthy",
+             max(${SEVERITY_SQL}) AS "severity",
+             avg("latencyMs") AS "latencyMs",
+             avg("packetLoss") AS "packetLoss",
+             avg("bandwidth") AS "bandwidth"
+      FROM "VlanConnectionSample"
+      WHERE ${pairWhere} AND "createdAt" >= ${rawFrom}
+      GROUP BY 1
+      ORDER BY 1`;
+    const rolled =
+      rawFrom.getTime() > since.getTime()
+        ? await this.prisma.$queryRaw<BucketRow[]>`
+            SELECT date_bin(make_interval(secs => ${bucketMs / 1000}), "bucketStart", TIMESTAMP '2000-01-01') AS "createdAt",
+                   sum("sampleCount")::int AS "total",
+                   sum("healthyCount")::int AS "healthy",
+                   max(CASE "worstStatus" WHEN 'healthy' THEN 1 WHEN 'unknown' THEN 2 WHEN 'degraded' THEN 3 ELSE 4 END) AS "severity",
+                   sum("latencyMs" * "sampleCount") / NULLIF(sum("sampleCount") FILTER (WHERE "latencyMs" IS NOT NULL), 0) AS "latencyMs",
+                   sum("packetLoss" * "sampleCount") / NULLIF(sum("sampleCount") FILTER (WHERE "packetLoss" IS NOT NULL), 0) AS "packetLoss",
+                   avg("bandwidth") AS "bandwidth"
+            FROM "VlanConnectionRollup"
+            WHERE "vlanId" = ${vlanId} AND "sourceNodeId" = ${a < b ? a : b} AND "targetNodeId" = ${a < b ? b : a}
+              AND "bucketStart" >= ${floorToDate(since, HOUR_MS)} AND "bucketStart" < ${rawFrom}
+            GROUP BY 1
+            ORDER BY 1`
+        : [];
+    return [...rolled, ...raw].map((row) => ({
+      createdAt: row.createdAt,
+      status: SEVERITY_STATUS[Number(row.severity) - 1] ?? 'unknown',
+      latencyMs: row.latencyMs == null ? null : Math.round(Number(row.latencyMs) * 100) / 100,
+      packetLoss: row.packetLoss == null ? null : Math.round(Number(row.packetLoss) * 100) / 100,
+      bandwidth: row.bandwidth == null ? null : Math.round(Number(row.bandwidth) * 100) / 100,
+      total: row.total,
+      healthy: row.healthy,
+    }));
+  }
+
+  /**
+   * Folds raw samples into hourly VlanConnectionRollup rows. Recomputes every
+   * completed hour still covered by raw samples, so a missed run or a late
+   * sample is simply caught up next time (upsert, idempotent).
+   */
+  @Cron('5 * * * *')
+  async rollUpConnectionSamples() {
+    const until = floorToDate(new Date(), HOUR_MS);
+    const from = new Date(until.getTime() - RAW_SAMPLE_RETENTION_MS);
+    await this.prisma.$executeRaw`
+      INSERT INTO "VlanConnectionRollup" ("id", "vlanId", "sourceNodeId", "targetNodeId", "bucketStart", "sampleCount", "healthyCount", "worstStatus", "latencyMs", "packetLoss", "bandwidth")
+      SELECT gen_random_uuid()::text,
+             "vlanId",
+             LEAST("sourceNodeId", "targetNodeId"),
+             GREATEST("sourceNodeId", "targetNodeId"),
+             date_trunc('hour', "createdAt"),
+             count(*)::int,
+             (count(*) FILTER (WHERE "status" = 'healthy'))::int,
+             (ARRAY['healthy', 'unknown', 'degraded', 'offline'])[max(${SEVERITY_SQL})]::"VlanConnectionStatus",
+             avg("latencyMs"),
+             avg("packetLoss"),
+             avg("bandwidth")
+      FROM "VlanConnectionSample"
+      WHERE "createdAt" >= ${from} AND "createdAt" < ${until}
+      GROUP BY 2, 3, 4, 5
+      ON CONFLICT ("vlanId", "sourceNodeId", "targetNodeId", "bucketStart") DO UPDATE SET
+        "sampleCount" = EXCLUDED."sampleCount",
+        "healthyCount" = EXCLUDED."healthyCount",
+        "worstStatus" = EXCLUDED."worstStatus",
+        "latencyMs" = EXCLUDED."latencyMs",
+        "packetLoss" = EXCLUDED."packetLoss",
+        "bandwidth" = EXCLUDED."bandwidth"`;
+  }
+
+  // Raw samples go after 48 h (the hourly rollups keep the long history),
+  // rollups after CONNECTION_ROLLUP_RETENTION_DAYS. Runs after the rollup of
+  // the same hour, which has already folded anything about to be deleted.
+  @Cron('15 * * * *')
   async pruneOldConnectionSamples() {
-    const cutoff = new Date(Date.now() - CONNECTION_SAMPLE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
-    const { count } = await this.prisma.vlanConnectionSample.deleteMany({ where: { createdAt: { lt: cutoff } } });
-    if (count > 0) {
-      this.logger.log(`Pruned ${count} VLAN connection sample(s) older than ${CONNECTION_SAMPLE_RETENTION_DAYS} days`);
+    const rawCutoff = new Date(Date.now() - RAW_SAMPLE_RETENTION_MS);
+    const { count } = await this.prisma.vlanConnectionSample.deleteMany({ where: { createdAt: { lt: rawCutoff } } });
+    const rollupCutoff = new Date(Date.now() - CONNECTION_ROLLUP_RETENTION_DAYS * 24 * HOUR_MS);
+    const { count: rollups } = await this.prisma.vlanConnectionRollup.deleteMany({
+      where: { bucketStart: { lt: rollupCutoff } },
+    });
+    if (count > 0 || rollups > 0) {
+      this.logger.log(`Pruned ${count} raw VLAN connection sample(s) and ${rollups} hourly rollup(s)`);
     }
   }
 
   /**
-   * Designates (or clears) a node as the regional gateway used by cross-region
-   * segmentation in AgentsService.reconcileOverlayForVlan. Only one gateway is
-   * allowed per region within a VLAN — enabling one clears any other. Actual
-   * WireGuard reconfiguration is triggered by the caller (AgentsService), not
-   * here, to avoid a hard dependency from VlanService onto AgentsService.
+   * Sets a node's gateway role in its region: 'primary' (used by cross-region
+   * segmentation in planOverlayPeers), 'backup' (takes over while the primary
+   * is offline, see AgentsService.checkGatewayFailover) or null. One node per
+   * role and region within a VLAN - assigning a role takes it from whichever
+   * node held it. Actual WireGuard reconfiguration is triggered by the caller
+   * (AgentsService), not here.
    */
   async setGateway(
     vlanIdOrName: string,
     nodeId: string,
-    enabled: boolean,
-  ): Promise<{ nodeId: string; overlayIsGateway: boolean; region: Region | null }> {
+    role: GatewayRole | null,
+  ): Promise<{ nodeId: string; role: GatewayRole | null; region: Region | null }> {
     const vlan = await this.prisma.vlan.findFirst({
       where: { OR: [{ id: vlanIdOrName }, { name: vlanIdOrName }] },
     });
@@ -520,28 +696,67 @@ export class VlanService implements OnModuleInit {
     }
 
     const region = resolveRegion(membership.node.locationCountryCode);
-    if (enabled && !region) {
+    if (role && !region) {
       throw new Error(
         "Impossible de désigner ce nœud comme passerelle : sa région ne peut pas être déterminée (localisation manquante)",
       );
     }
 
-    if (enabled && region) {
+    if (role && region) {
+      const field = role === 'primary' ? 'overlayIsGateway' : 'overlayIsBackupGateway';
       const otherMembers = await this.prisma.vlanMember.findMany({
         where: { vlanId: vlan.id, nodeId: { not: nodeId } },
         include: { node: true },
       });
       const idsToClear = otherMembers
-        .filter((m) => m.node.overlayIsGateway && resolveRegion(m.node.locationCountryCode) === region)
+        .filter((m) => m.node[field] && resolveRegion(m.node.locationCountryCode) === region)
         .map((m) => m.nodeId);
       if (idsToClear.length > 0) {
-        await this.prisma.node.updateMany({ where: { id: { in: idsToClear } }, data: { overlayIsGateway: false } });
+        await this.prisma.node.updateMany({ where: { id: { in: idsToClear } }, data: { [field]: false } });
       }
     }
 
-    await this.prisma.node.update({ where: { id: nodeId }, data: { overlayIsGateway: enabled } });
+    await this.prisma.node.update({
+      where: { id: nodeId },
+      data: { overlayIsGateway: role === 'primary', overlayIsBackupGateway: role === 'backup' },
+    });
+    // Roles changed under the watcher: start the region from its primary.
+    if (region) this.failedOverRegions.get(vlan.id)?.delete(region);
 
-    return { nodeId, overlayIsGateway: enabled, region };
+    return { nodeId, role, region };
+  }
+
+  /**
+   * Regions currently routed through their backup gateway, per VLAN. Kept in
+   * memory only: after a restart every region starts on its primary and the
+   * watcher fails over again if that primary is still down.
+   */
+  private readonly failedOverRegions = new Map<string, Set<Region>>();
+
+  isFailedOver(vlanId: string, region: Region) {
+    return this.failedOverRegions.get(vlanId)?.has(region) ?? false;
+  }
+
+  setFailedOver(vlanId: string, region: Region, failedOver: boolean) {
+    const regions = this.failedOverRegions.get(vlanId) ?? new Set<Region>();
+    if (failedOver) regions.add(region);
+    else regions.delete(region);
+    this.failedOverRegions.set(vlanId, regions);
+  }
+
+  activeGatewaysFor(
+    vlanId: string,
+    nodes: Array<{ id: string; overlayIsGateway: boolean; overlayIsBackupGateway: boolean; locationCountryCode: string | null }>,
+  ) {
+    return activeGateways(
+      nodes.map((node) => ({
+        nodeId: node.id,
+        region: resolveRegion(node.locationCountryCode),
+        isPrimary: node.overlayIsGateway,
+        isBackup: node.overlayIsBackupGateway,
+      })),
+      this.failedOverRegions.get(vlanId) ?? new Set(),
+    );
   }
 
   async getVlanStatus(vlanIdOrName: string): Promise<any> {
@@ -579,8 +794,15 @@ export class VlanService implements OnModuleInit {
     const degradedConnections = connections.filter((c) => c.status === 'degraded').length;
     const offlineConnections = connections.filter((c) => c.status === 'offline').length;
 
+    const active = vlan ? new Set(this.activeGatewaysFor(vlanId, vlan.members.map((member) => member.node)).values()) : new Set();
     const vlanWithRegions = vlan
-      ? { ...vlan, members: (vlan.members ?? []).map((member: any) => this.withRegion(member)) }
+      ? {
+          ...vlan,
+          members: (vlan.members ?? []).map((member: any) => ({
+            ...this.withRegion(member),
+            gatewayActive: active.has(member.nodeId),
+          })),
+        }
       : vlan;
 
     return {

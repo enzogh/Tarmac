@@ -388,6 +388,9 @@ model Node {
   overlaySshPublicKey    String?
   overlaySshUser         String?
   overlayIsGateway       Boolean                @default(false)
+  // Takes over the region's gateway role while the primary is offline (see
+  // AgentsService.checkGatewayFailover).
+  overlayIsBackupGateway Boolean                @default(false)
   agentVersion           String?
   agentVersionAt         DateTime?
   agentTokenHash         String?
@@ -684,6 +687,11 @@ model DnsZone {
   delegationCheckedAt DateTime?
   // Per-nameserver breakdown: [{ host, expectedIp, nsVisible, resolvedIp, matches, ok }]
   delegationDetail    Json?
+  // Zone transfer health (see DnsSyncCheckService): each member's SOA
+  // serial compared with the primary's.
+  // [{ nodeId, role, serial, ok, behindSince, error }]
+  syncCheckedAt       DateTime?
+  syncDetail          Json?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   records       DnsRecord[]
@@ -919,6 +927,7 @@ model Vlan {
   members           VlanMember[]
   connections       VlanConnection[]
   connectionSamples VlanConnectionSample[]
+  connectionRollups VlanConnectionRollup[]
 
   @@index([workspaceId])
 }
@@ -979,6 +988,27 @@ model VlanConnectionSample {
 
   @@index([vlanId, sourceNodeId, targetNodeId, createdAt])
   @@index([createdAt])
+}
+
+// Hourly aggregate of VlanConnectionSample, kept long after the raw samples
+// are pruned (48 h). One row per unordered pair: sourceNodeId is the smaller
+// id, since samples are throttled per pair whatever their direction.
+model VlanConnectionRollup {
+  id           String               @id @default(cuid())
+  vlanId       String
+  sourceNodeId String
+  targetNodeId String
+  bucketStart  DateTime
+  sampleCount  Int
+  healthyCount Int
+  worstStatus  VlanConnectionStatus
+  latencyMs    Float?
+  packetLoss   Float?
+  bandwidth    Float?
+  vlan         Vlan                 @relation(fields: [vlanId], references: [id], onDelete: Cascade)
+
+  @@unique([vlanId, sourceNodeId, targetNodeId, bucketStart])
+  @@index([bucketStart])
 }
 
 // A WireGuard client profile: one device/person connecting to the fleet.

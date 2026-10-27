@@ -421,14 +421,14 @@ export default function NetworkPage() {
     };
   }, [vlanStatus, mapLocationOverrides]);
 
-  // Mirrors AgentsService.reconcileOverlayForVlan's segmentation rule (apps/api/src/agents/agents.service.ts):
+  // Mirrors planOverlayPeers's segmentation rule (apps/api/src/vlan/overlay-topology.ts):
   // same-region pairs (or unresolved region) stay full-mesh; cross-region pairs are only
-  // physically peered when BOTH regions have a designated gateway, and then only between
+  // physically peered when BOTH regions have an active gateway, and then only between
   // those two gateway nodes — every other cross-region pair has no direct WireGuard peer at all.
   const gatewayNodeIdByRegion = useMemo(() => {
     const map = new Map<string, string>();
     for (const member of vlanStatus?.vlan.members ?? []) {
-      if (member.region && member.node?.overlayIsGateway) {
+      if (member.region && member.gatewayActive) {
         map.set(member.region, member.nodeId);
       }
     }
@@ -726,7 +726,7 @@ export default function NetworkPage() {
     return Array.from(byRegion.entries()).map(([region, group]) => ({
       region,
       members: group,
-      gateway: group.find((m) => m.node?.overlayIsGateway) ?? null,
+      gateway: group.find((m) => m.gatewayActive) ?? group.find((m) => m.node?.overlayIsGateway) ?? null,
     }));
   }, [vlanStatus]);
   const knownRegionSummaries = useMemo(
@@ -833,7 +833,10 @@ export default function NetworkPage() {
 
   const toHistoryChartData = (history: VlanConnectionHistory | null) =>
     (history?.samples ?? []).map((sample) => ({
-      label: new Date(sample.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+      label:
+        historyRange === '7d'
+          ? new Date(sample.createdAt).toLocaleString('fr-FR', { weekday: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+          : new Date(sample.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
       latencyMs: sample.latencyMs ?? null,
       packetLoss: sample.packetLoss ?? null,
     }));
@@ -1073,16 +1076,21 @@ export default function NetworkPage() {
     }
   };
 
-  const handleSetGateway = async (nodeId: string, enabled: boolean) => {
+  const handleSetGateway = async (nodeId: string, role: 'primary' | 'backup' | null, previous: 'primary' | 'backup' | null) => {
     if (!vlanStatus) return;
     setGatewaySavingByNodeId((prev) => ({ ...prev, [nodeId]: true }));
     try {
-      await api.vlan.setGateway(vlanStatus.vlan.id, nodeId, enabled);
+      await api.vlan.setGateway(vlanStatus.vlan.id, nodeId, role);
       setNotice({
         type: 'success',
-        message: enabled
-          ? `${shortName(nodeId)} est maintenant la passerelle de sa région. Le maillage est recalculé sur les nœuds concernés.`
-          : `${shortName(nodeId)} n’est plus passerelle : sa région repasse en maillage complet avec les autres.`,
+        message:
+          role === 'primary'
+            ? `${shortName(nodeId)} est maintenant la passerelle de sa région. Le maillage est recalculé sur les nœuds concernés.`
+            : role === 'backup'
+              ? `${shortName(nodeId)} est la passerelle de secours de sa région : elle prendra le relais si la passerelle tombe.`
+              : previous === 'backup'
+                ? `${shortName(nodeId)} n’est plus passerelle de secours.`
+                : `${shortName(nodeId)} n’est plus passerelle : sa région repasse en maillage complet avec les autres.`,
       });
       const status = await api.vlan.getStatus(vlanStatus.vlan.id);
       setVlanStatus(status);
@@ -1129,7 +1137,7 @@ export default function NetworkPage() {
   const hopLabel = useCallback(
     (ip: string | null) => {
       const member = ip ? memberByVlanIp.get(ip) : undefined;
-      return member ? { name: shortName(member.nodeId), region: member.region ?? null, gateway: Boolean(member.node?.overlayIsGateway) } : null;
+      return member ? { name: shortName(member.nodeId), region: member.region ?? null, gateway: Boolean(member.gatewayActive) } : null;
     },
     [memberByVlanIp, shortName],
   );
@@ -1248,7 +1256,7 @@ export default function NetworkPage() {
             linkBetween={linkBetween}
             name={shortName}
             saving={gatewaySavingByNodeId}
-            onToggleGateway={(nodeId, enabled) => void handleSetGateway(nodeId, enabled)}
+            onSetGatewayRole={(nodeId, role, previous) => void handleSetGateway(nodeId, role, previous)}
             onOpenLocations={() => {
               setLocationsOpen(true);
               requestAnimationFrame(() => document.getElementById('network-locations')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
@@ -1497,8 +1505,8 @@ export default function NetworkPage() {
                         <div className="grid grid-cols-3 gap-2 lg:grid-cols-1">
                           <div className="rounded-lg border border-border bg-surface-2/50 px-3 py-2">
                             <p className="text-2xs text-muted-foreground">Disponibilité · {HISTORY_RANGE_LABELS[historyRange]}</p>
-                            <p className={cn('text-xl font-semibold tabular-nums', history ? uptimeToneClass(history.uptimePercent) : 'text-muted-foreground')}>
-                              {history ? `${history.uptimePercent} %` : '—'}
+                            <p className={cn('text-xl font-semibold tabular-nums', history?.uptimePercent != null ? uptimeToneClass(history.uptimePercent) : 'text-muted-foreground')}>
+                              {history?.uptimePercent != null ? `${history.uptimePercent} %` : '—'}
                             </p>
                           </div>
                           <div className="rounded-lg border border-border bg-surface-2/50 px-3 py-2">

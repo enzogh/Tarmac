@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Every case here is a shape PowerDNS's API rejects outright rather than
 // normalising - and because applyDnsZone PATCHes the whole zone atomically,
@@ -92,5 +95,17 @@ func TestPdnsTypeRouting(t *testing.T) {
 		if pdnsTargetTypes[rrType] || pdnsQuotedTypes[rrType] {
 			t.Errorf("%s content must be passed through untouched", rrType)
 		}
+	}
+}
+
+func TestParseNameserversSkipsLoopbackStubs(t *testing.T) {
+	content := "# generated\nsearch example.net\nnameserver 213.186.33.99\nnameserver 127.0.0.53\nnameserver ::1\nnameserver 2001:41d0:3:163::1\nnameserver bogus\noptions edns0\n"
+	got := parseNameservers(content)
+	want := []string{"213.186.33.99", "2001:41d0:3:163::1"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("parseNameservers = %v, want %v", got, want)
+	}
+	if len(parseNameservers("nameserver 127.0.0.1\n")) != 0 {
+		t.Fatal("a forwarder-only resolv.conf must yield no upstream")
 	}
 }

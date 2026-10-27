@@ -9,6 +9,7 @@ import {
   CircleSlash,
   Crown,
   History,
+  LifeBuoy,
   LoaderCircle,
   MapPin,
   Play,
@@ -73,20 +74,41 @@ export type LinkSummary = {
 // --- Segmentation -------------------------------------------------------
 
 export type RegionSummary = { region: string; members: VlanMember[]; gateway: VlanMember | null };
+type GatewayRole = 'primary' | 'backup';
+
+const gatewayRoleOf = (member: VlanMember): GatewayRole | null =>
+  member.node?.overlayIsGateway ? 'primary' : member.node?.overlayIsBackupGateway ? 'backup' : null;
+
+/** The node carrying a region on a cross-region bridge; amber while it's the backup standing in. */
+function BridgeGateway({ member, name }: { member: VlanMember; name: string }) {
+  const standIn = gatewayRoleOf(member) === 'backup';
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 font-medium text-foreground',
+        standIn ? 'border-[hsl(var(--warn))]/40 bg-[hsl(var(--warn))]/10' : 'border-primary/30 bg-primary/10',
+      )}
+      title={standIn ? 'Passerelle de secours en service : la passerelle principale est injoignable' : undefined}
+    >
+      {standIn ? <LifeBuoy className="h-3 w-3 text-[hsl(var(--warn))]" /> : <Crown className="h-3 w-3 text-primary" />}
+      {name}
+    </span>
+  );
+}
 
 export function SegmentationCard({
   regions,
   linkBetween,
   name,
   saving,
-  onToggleGateway,
+  onSetGatewayRole,
   onOpenLocations,
 }: {
   regions: RegionSummary[];
   linkBetween: (aId: string, bId: string) => LinkSummary | undefined;
   name: (nodeId: string) => string;
   saving: Record<string, boolean>;
-  onToggleGateway: (nodeId: string, enabled: boolean) => void;
+  onSetGatewayRole: (nodeId: string, role: GatewayRole | null, previous: GatewayRole | null) => void;
   onOpenLocations: () => void;
 }) {
   const { readOnly } = useReadOnly();
@@ -141,10 +163,7 @@ export function SegmentationCard({
                 >
                   <span className="flex items-center gap-2">
                     <span className="text-xs text-muted-foreground">{regionLabel(a.region)}</span>
-                    <span className="inline-flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-2 py-0.5 font-medium text-foreground">
-                      <Crown className="h-3 w-3 text-primary" />
-                      {name(a.gateway!.nodeId)}
-                    </span>
+                    <BridgeGateway member={a.gateway!} name={name(a.gateway!.nodeId)} />
                   </span>
                   <span className="flex flex-1 items-center gap-2 text-muted-foreground">
                     <span className="h-px min-w-[1.5rem] flex-1 bg-border" />
@@ -156,10 +175,7 @@ export function SegmentationCard({
                     <span className="h-px min-w-[1.5rem] flex-1 bg-border" />
                   </span>
                   <span className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-2 py-0.5 font-medium text-foreground">
-                      <Crown className="h-3 w-3 text-primary" />
-                      {name(b.gateway!.nodeId)}
-                    </span>
+                    <BridgeGateway member={b.gateway!} name={name(b.gateway!.nodeId)} />
                     <span className="text-xs text-muted-foreground">{regionLabel(b.region)}</span>
                   </span>
                 </div>
@@ -179,44 +195,80 @@ export function SegmentationCard({
               </div>
               <ul className="p-1.5">
                 {summary.members.map((member) => {
-                  const isGateway = Boolean(member.node?.overlayIsGateway);
+                  const role = gatewayRoleOf(member);
+                  const inService = Boolean(member.gatewayActive);
+                  const hasPrimary = summary.members.some((m) => gatewayRoleOf(m) === 'primary');
                   const busy = saving[member.nodeId];
+                  const chip =
+                    role === 'primary'
+                      ? {
+                          icon: Crown,
+                          label: inService ? 'Passerelle' : 'Passerelle · injoignable',
+                          className: inService
+                            ? 'border-primary/30 bg-primary/10 text-primary'
+                            : 'border-[hsl(var(--danger))]/30 bg-[hsl(var(--danger))]/10 text-[hsl(var(--danger))]',
+                          hint: inService ? 'Cliquer pour retirer ce rôle' : 'Le secours assure le relais. Cliquer pour retirer ce rôle',
+                        }
+                      : role === 'backup'
+                        ? {
+                            icon: LifeBuoy,
+                            label: inService ? 'Secours · en service' : 'Secours',
+                            className: inService
+                              ? 'border-[hsl(var(--warn))]/40 bg-[hsl(var(--warn))]/10 text-[hsl(var(--warn))]'
+                              : 'border-border bg-surface-2 text-muted-foreground',
+                            hint: inService
+                              ? 'Remplace la passerelle injoignable. Cliquer pour retirer ce rôle'
+                              : 'Prend le relais si la passerelle tombe. Cliquer pour retirer ce rôle',
+                          }
+                        : null;
                   return (
                     <li key={member.nodeId} className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-surface-2">
                       <StatusDot tone={member.node?.status === 'online' ? 'ok' : member.node?.status === 'degraded' ? 'warn' : 'danger'} />
-                      <span className={cn('min-w-0 flex-1 truncate text-sm', isGateway ? 'font-medium text-foreground' : 'text-foreground/85')} title={member.node?.name}>
+                      <span className={cn('min-w-0 flex-1 truncate text-sm', role ? 'font-medium text-foreground' : 'text-foreground/85')} title={member.node?.name}>
                         {name(member.nodeId)}
                       </span>
                       {busy ? (
                         <LoaderCircle className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                      ) : isGateway && readOnly ? (
-                        <span className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-2xs font-medium text-primary">
-                          <Crown className="h-3 w-3" />
-                          Passerelle
+                      ) : chip && readOnly ? (
+                        <span className={cn('inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-1.5 py-0.5 text-2xs font-medium', chip.className)}>
+                          <chip.icon className="h-3 w-3" />
+                          {chip.label}
                         </span>
-                      ) : isGateway ? (
+                      ) : chip ? (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <button
                               type="button"
-                              onClick={() => onToggleGateway(member.nodeId, false)}
-                              className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-2xs font-medium text-primary hover:bg-primary/20"
+                              onClick={() => onSetGatewayRole(member.nodeId, null, role)}
+                              className={cn('inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-1.5 py-0.5 text-2xs font-medium hover:brightness-125', chip.className)}
                             >
-                              <Crown className="h-3 w-3" />
-                              Passerelle
+                              <chip.icon className="h-3 w-3" />
+                              {chip.label}
                             </button>
                           </TooltipTrigger>
-                          <TooltipContent>Cliquer pour retirer ce rôle</TooltipContent>
+                          <TooltipContent>{chip.hint}</TooltipContent>
                         </Tooltip>
                       ) : (
-                        known.length > 1 && !readOnly && (
-                          <button
-                            type="button"
-                            onClick={() => onToggleGateway(member.nodeId, true)}
-                            className="rounded-md px-1.5 py-0.5 text-2xs text-muted-foreground opacity-0 transition-opacity hover:bg-surface-3 hover:text-foreground focus:opacity-100 group-hover:opacity-100"
-                          >
-                            {summary.gateway ? 'En faire la passerelle' : 'Choisir comme passerelle'}
-                          </button>
+                        known.length > 1 &&
+                        !readOnly && (
+                          <span className="flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                            <button
+                              type="button"
+                              onClick={() => onSetGatewayRole(member.nodeId, 'primary', null)}
+                              className="whitespace-nowrap rounded-md px-1.5 py-0.5 text-2xs text-muted-foreground hover:bg-surface-3 hover:text-foreground"
+                            >
+                              {summary.gateway ? 'En faire la passerelle' : 'Choisir comme passerelle'}
+                            </button>
+                            {hasPrimary && (
+                              <button
+                                type="button"
+                                onClick={() => onSetGatewayRole(member.nodeId, 'backup', null)}
+                                className="whitespace-nowrap rounded-md px-1.5 py-0.5 text-2xs text-muted-foreground hover:bg-surface-3 hover:text-foreground"
+                              >
+                                Secours
+                              </button>
+                            )}
+                          </span>
                         )
                       )}
                     </li>

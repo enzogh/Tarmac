@@ -2147,8 +2147,12 @@ func handleRemoveInternalDnsCommand(ctx context.Context, cmd commandPayload, res
 const (
 	internalDnsForwarderMarkerPath = "/etc/tarmac-agent/internal-dns-forwarder-enabled"
 	internalDnsDnsmasqConfigPath   = "/etc/dnsmasq.d/tarmac-internal.conf"
-	internalDnsHostsBeginMarker    = "# BEGIN TARMAC INTERNAL DNS (tarmac.local) - managed by tarmac-agent, do not edit"
-	internalDnsHostsEndMarker      = "# END TARMAC INTERNAL DNS"
+	// The node's own resolvers, saved before resolv.conf is pointed at the
+	// local forwarder: dnsmasq forwards to them, and they're put back when
+	// the forwarder is removed.
+	internalDnsUpstreamsPath    = "/etc/tarmac-agent/internal-dns-upstreams"
+	internalDnsHostsBeginMarker = "# BEGIN TARMAC INTERNAL DNS (tarmac.local) - managed by tarmac-agent, do not edit"
+	internalDnsHostsEndMarker   = "# END TARMAC INTERNAL DNS"
 )
 
 // hostsPath is a var (not const) so tests can point it at a temp file
@@ -2221,8 +2225,22 @@ func ensureInternalDnsSplitRoute(ctx context.Context, ip string, port int, recor
 	return result
 }
 
+// lastInternalDnsRouteMode remembers which fallback path the last tick took,
+// so the 30 s reconciliation only explains it when it changes instead of
+// repeating the same line in the node's log twice a minute forever.
+var lastInternalDnsRouteMode string
+
+func logInternalDnsRouteModeOnce(mode, message string) {
+	if lastInternalDnsRouteMode == mode {
+		return
+	}
+	lastInternalDnsRouteMode = mode
+	log.Printf("%s", message)
+}
+
 func applyInternalDnsSplitRoute(ctx context.Context, ip string, port int, records []internalDnsHostRecord) internalDnsRouteResultData {
 	if ip == "" {
+		lastInternalDnsRouteMode = ""
 		if commandExists("resolvectl") {
 			if out, err := exec.CommandContext(ctx, "resolvectl", "domain", "tarmacwg0", "").CombinedOutput(); err != nil {
 				log.Printf("dns: could not clear tarmac.local routing domain (continuing): %s", strings.TrimSpace(string(out)))
@@ -2241,6 +2259,7 @@ func applyInternalDnsSplitRoute(ctx context.Context, ip string, port int, record
 		_, dnsErr := exec.CommandContext(ctx, "resolvectl", "dns", "tarmacwg0", fmt.Sprintf("%s:%d", ip, port)).CombinedOutput()
 		_, domainErr := exec.CommandContext(ctx, "resolvectl", "domain", "tarmacwg0", "~tarmac.local").CombinedOutput()
 		if dnsErr == nil && domainErr == nil {
+			lastInternalDnsRouteMode = ""
 			// resolvectl works now - clean up anything a previous, less
 			// capable state left behind (a dnsmasq forwarder installed while
 			// resolvectl was broken, or a static /etc/hosts block from
@@ -2255,9 +2274,9 @@ func applyInternalDnsSplitRoute(ctx context.Context, ip string, port int, record
 			}
 			return internalDnsRouteResultData{Status: "active"}
 		}
-		log.Printf("dns: resolvectl present but not usable on this node (systemd-resolved not running?), trying local dnsmasq forwarder fallback")
+		logInternalDnsRouteModeOnce("resolvectl-unusable", "dns: resolvectl present but not usable on this node (systemd-resolved not running?), using local forwarder fallback")
 	} else {
-		log.Printf("dns: resolvectl not installed, trying local dnsmasq forwarder fallback")
+		logInternalDnsRouteModeOnce("resolvectl-missing", "dns: resolvectl not installed, using local forwarder fallback")
 	}
 
 	status, conflict, err := ensureInternalDnsForwarder(ctx, ip, port, records)
@@ -2304,16 +2323,25 @@ func ensureInternalDnsForwarder(ctx context.Context, ip string, port int, record
 		}
 	}
 
-	if err := writeInternalDnsmasqConfig(ip, port); err != nil {
+	configChanged, err := writeInternalDnsmasqConfig(ip, port, internalDnsUpstreams())
+	if err != nil {
 		return "", nil, err
 	}
 
+	// This runs on every 30 s tick: restarting dnsmasq each time flushed its
+	// cache and briefly dropped all DNS on the node. Only restart when the
+	// config actually changed or the service isn't running.
 	if commandExists("systemctl") {
-		if out, err := exec.CommandContext(ctx, "systemctl", "enable", "--now", "dnsmasq").CombinedOutput(); err != nil {
-			return "", nil, fmt.Errorf("cannot enable/start dnsmasq: %s", strings.TrimSpace(string(out)))
+		running := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", "dnsmasq").Run() == nil
+		if !running {
+			if out, err := exec.CommandContext(ctx, "systemctl", "enable", "--now", "dnsmasq").CombinedOutput(); err != nil {
+				return "", nil, fmt.Errorf("cannot enable/start dnsmasq: %s", strings.TrimSpace(string(out)))
+			}
 		}
-		if out, err := exec.CommandContext(ctx, "systemctl", "restart", "dnsmasq").CombinedOutput(); err != nil {
-			return "", nil, fmt.Errorf("cannot restart dnsmasq: %s", strings.TrimSpace(string(out)))
+		if configChanged || !running {
+			if out, err := exec.CommandContext(ctx, "systemctl", "restart", "dnsmasq").CombinedOutput(); err != nil {
+				return "", nil, fmt.Errorf("cannot restart dnsmasq: %s", strings.TrimSpace(string(out)))
+			}
 		}
 	}
 
@@ -2335,24 +2363,85 @@ func ensureInternalDnsForwarder(ctx context.Context, ip string, port int, record
 	return "active", nil, nil
 }
 
-func writeInternalDnsmasqConfig(ip string, port int) error {
+// publicFallbackResolvers are only used when the node had no resolver of its
+// own to inherit (or only loopback ones, e.g. a stopped systemd-resolved).
+var publicFallbackResolvers = []string{"1.1.1.1", "9.9.9.9"}
+
+// parseNameservers returns the non-loopback nameserver addresses of a
+// resolv.conf - loopback ones point at a local stub (systemd-resolved, or
+// this forwarder itself) and would loop.
+func parseNameservers(content string) []string {
+	var servers []string
+	for _, line := range strings.Split(content, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "nameserver" {
+			continue
+		}
+		addr := net.ParseIP(fields[1])
+		if addr == nil || addr.IsLoopback() {
+			continue
+		}
+		servers = append(servers, addr.String())
+	}
+	return servers
+}
+
+// internalDnsUpstreams is where dnsmasq forwards everything but
+// *.tarmac.local: the resolvers the node used before the forwarder took over
+// (the hosting provider's, usually closer and sometimes the only ones its
+// network allows). Read once and saved, since resolv.conf points at the
+// forwarder afterwards.
+func internalDnsUpstreams() []string {
+	if data, err := os.ReadFile(internalDnsUpstreamsPath); err == nil {
+		if saved := parseNameservers(string(data)); len(saved) > 0 {
+			return saved
+		}
+	}
+	var servers []string
+	for _, path := range []string{resolvConfPath, "/run/systemd/resolve/resolv.conf"} {
+		if data, err := os.ReadFile(path); err == nil {
+			if servers = parseNameservers(string(data)); len(servers) > 0 {
+				break
+			}
+		}
+	}
+	if len(servers) == 0 {
+		return publicFallbackResolvers
+	}
+	var saved strings.Builder
+	for _, server := range servers {
+		saved.WriteString("nameserver " + server + "\n")
+	}
+	if err := os.MkdirAll(filepath.Dir(internalDnsUpstreamsPath), 0o755); err == nil {
+		_ = os.WriteFile(internalDnsUpstreamsPath, []byte(saved.String()), 0o644)
+	}
+	return servers
+}
+
+// writeInternalDnsmasqConfig reports whether the file content changed, so
+// the caller only restarts dnsmasq when it has something new to load.
+func writeInternalDnsmasqConfig(ip string, port int, upstreams []string) (bool, error) {
 	if err := os.MkdirAll(filepath.Dir(internalDnsDnsmasqConfigPath), 0o755); err != nil {
-		return fmt.Errorf("cannot create dnsmasq config dir: %w", err)
+		return false, fmt.Errorf("cannot create dnsmasq config dir: %w", err)
 	}
 	lines := []string{
 		"port=53",
 		"bind-interfaces",
 		"listen-address=127.0.0.1",
 		fmt.Sprintf("server=/tarmac.local/%s#%d", ip, port),
-		"server=1.1.1.1",
-		"server=9.9.9.9",
-		"no-resolv",
 	}
+	for _, upstream := range upstreams {
+		lines = append(lines, "server="+upstream)
+	}
+	lines = append(lines, "no-resolv")
 	content := strings.Join(lines, "\n") + "\n"
-	if err := os.WriteFile(internalDnsDnsmasqConfigPath, []byte(content), 0o644); err != nil {
-		return fmt.Errorf("cannot write dnsmasq config: %w", err)
+	if existing, err := os.ReadFile(internalDnsDnsmasqConfigPath); err == nil && string(existing) == content {
+		return false, nil
 	}
-	return nil
+	if err := os.WriteFile(internalDnsDnsmasqConfigPath, []byte(content), 0o644); err != nil {
+		return false, fmt.Errorf("cannot write dnsmasq config: %w", err)
+	}
+	return true, nil
 }
 
 type internalDnsHostRecord struct {
@@ -2501,9 +2590,12 @@ func pointResolvConfAtLocalhost() error {
 			return fmt.Errorf("cannot remove existing resolv.conf symlink: %w", err)
 		}
 	}
-	content := "# Written by tarmac-agent - local dnsmasq forwarder handles *.tarmac.local\n" +
-		"# and forwards everything else to public resolvers.\n" +
+	content := forwarderResolvConfHeader +
+		"# and forwards everything else to this node's own resolvers.\n" +
 		"nameserver 127.0.0.1\n"
+	if existing, err := os.ReadFile(resolvConfPath); err == nil && string(existing) == content {
+		return nil
+	}
 	if err := os.WriteFile(resolvConfPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("cannot write resolv.conf: %w", err)
 	}
@@ -2526,6 +2618,29 @@ func removeInternalDnsForwarder(ctx context.Context) error {
 	}
 	_ = os.Remove(internalDnsDnsmasqConfigPath)
 	_ = os.Remove(internalDnsForwarderMarkerPath)
+	// With dnsmasq gone, a resolv.conf still pointing at 127.0.0.1 would
+	// leave the node without any DNS: give it its own resolvers back.
+	if err := restoreResolvConfFromForwarder(); err != nil {
+		log.Printf("dns: could not restore resolv.conf after removing the internal DNS forwarder: %v", err)
+	}
+	return nil
+}
+
+const forwarderResolvConfHeader = "# Written by tarmac-agent - local dnsmasq forwarder handles *.tarmac.local\n"
+
+func restoreResolvConfFromForwarder() error {
+	current, err := os.ReadFile(resolvConfPath)
+	if err != nil || !strings.HasPrefix(string(current), forwarderResolvConfHeader) {
+		return nil // not ours anymore: leave it alone
+	}
+	content := "# Restored by tarmac-agent after removing its internal DNS forwarder.\n"
+	for _, server := range internalDnsUpstreams() {
+		content += "nameserver " + server + "\n"
+	}
+	if err := os.WriteFile(resolvConfPath, []byte(content), 0o644); err != nil {
+		return err
+	}
+	_ = os.Remove(internalDnsUpstreamsPath)
 	return nil
 }
 
@@ -2587,9 +2702,11 @@ func handleEnsureInternalDnsRouteCommand(ctx context.Context, cmd commandPayload
 		records = append(records, internalDnsHostRecord{Name: name, Content: content})
 	}
 	data := ensureInternalDnsSplitRoute(ctx, ip, port, records)
-	// This 30 s tick also reaches the node serving the zone: the firewall
-	// rule isn't persistent, so it is restored here after a reboot or an
-	// iptables reload instead of waiting for the next record change.
+	// This periodic push also reaches the node serving the zone: the firewall
+	// rule isn't persistent, so it is restored here after a reboot (the agent
+	// then reports no applied state, so it's re-sent at once) or an iptables
+	// reload (within the control plane's refresh interval) instead of waiting
+	// for the next record change.
 	if _, err := os.Stat(internalDnsMarkerPath); err == nil {
 		if err := setInternalDnsFirewall(true, internalPdnsConfiguredPort("local-port")); err != nil {
 			log.Printf("dns: %v", err)
@@ -2598,6 +2715,13 @@ func handleEnsureInternalDnsRouteCommand(ctx context.Context, cmd commandPayload
 	result.Data = data
 	if data.Status == "conflict" {
 		result.Success = false
+	}
+	// Only a fully working route counts as applied: anything else must keep
+	// being re-sent so it's retried and its status stays current.
+	if data.Status == "active" || data.Status == "cleared" {
+		setAppliedState("internal_dns_route", readString(cmd.Payload, "stateHash"))
+	} else {
+		setAppliedState("internal_dns_route", "")
 	}
 	if ip == "" {
 		result.Message = "tarmac.local split-DNS route cleared"

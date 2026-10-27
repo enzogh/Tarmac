@@ -1,4 +1,5 @@
 import { forwardRef, Inject, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
@@ -12,6 +13,10 @@ const INTERNAL_DNS_API_PORT = 8090;
 // A failed install is retried on its own at this pace (port freed, package
 // mirror back...), on top of the manual "Réessayer".
 const ERROR_RETRY_MS = 5 * 60_000;
+// A node that reports the route as applied still gets it re-sent this often:
+// re-checks local drift (resolv.conf rewritten, dnsmasq stopped) and keeps
+// its reachability status fresh.
+const ROUTE_REFRESH_MS = 5 * 60_000;
 
 type InternalDnsRecord = { name: string; content: string };
 
@@ -30,6 +35,8 @@ export class InternalDnsService implements OnModuleInit {
   // re-pushing an identical snapshot every cycle.
   private readonly lastPushedSignature = new Map<string, string>();
   private readonly lastErrorRetryAt = new Map<string, number>();
+  // nodeId -> when the route command was last sent to it.
+  private readonly lastRoutePushAt = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -225,11 +232,23 @@ export class InternalDnsService implements OnModuleInit {
     // see dnsMarkerPath in the agent) can still resolve *.tarmac.local
     // locally via a static /etc/hosts block - see ensureInternalDnsForwarder.
     const records = ip ? await this.desiredRecords(workspaceId) : [];
+    const stateHash = createHash('sha256')
+      .update(JSON.stringify({ ip, port: INTERNAL_DNS_PORT, records }))
+      .digest('hex')
+      .slice(0, 16);
+    const now = Date.now();
     for (const node of nodes) {
-      this.agentsService.sendCommand(node.id, {
-        type: 'command.ensure_internal_dns_route',
-        payload: { ip, port: INTERNAL_DNS_PORT, records },
-      });
+      // Skip nodes that already run this exact route, unless due a refresh.
+      const upToDate = this.agentsService.appliedStateHash(node.id, 'internal_dns_route') === stateHash;
+      if (upToDate && now - (this.lastRoutePushAt.get(node.id) ?? 0) < ROUTE_REFRESH_MS) continue;
+      if (
+        this.agentsService.sendCommand(node.id, {
+          type: 'command.ensure_internal_dns_route',
+          payload: { ip, port: INTERNAL_DNS_PORT, records, stateHash },
+        })
+      ) {
+        this.lastRoutePushAt.set(node.id, now);
+      }
     }
   }
 

@@ -79,39 +79,6 @@ export function MiniMeter({ value, title, className }: { value: number; title?: 
   );
 }
 
-/**
- * One line under the RAM meter: how much swap is in use. Stays quiet while
- * it's low, turns amber past half and red once (nearly) full - the point at
- * which the host is paging and everything on it slows down.
- */
-export function SwapLine({ info, className }: { info?: NodeSystemInfo | null; className?: string }) {
-  const swap = swapUsage(info);
-  if (!info?.memTotalBytes) return null;
-  if (!swap) {
-    return <span className={cn('block whitespace-nowrap text-2xs text-muted-foreground/70', className)}>Pas de swap</span>;
-  }
-  const full = swap.percent >= SWAP_FULL_PERCENT;
-  const busy = swap.percent >= 50;
-  return (
-    <span
-      className={cn(
-        'flex items-center gap-1.5 whitespace-nowrap text-2xs tabular-nums',
-        full ? 'font-medium text-[hsl(var(--danger))]' : busy ? 'text-[hsl(var(--warn))]' : 'text-muted-foreground',
-        className,
-      )}
-      title={`Swap : ${swap.label}${full ? ' — saturé, la machine manque de RAM' : ''}`}
-    >
-      <span className="relative h-1 w-6 overflow-hidden rounded-full bg-surface-3" aria-hidden>
-        <span
-          className={cn('absolute inset-y-0 left-0 rounded-full', full ? 'bg-[hsl(var(--danger))]' : busy ? 'bg-[hsl(var(--warn))]' : 'bg-muted-foreground/50')}
-          style={{ width: `${Math.max(swap.percent, swap.percent > 0 ? 8 : 0)}%` }}
-        />
-      </span>
-      Swap {Math.round(swap.percent)} %
-    </span>
-  );
-}
-
 const DNS_TONE = {
   active: { label: 'DNS interne actif', className: 'border-[hsl(var(--ok))]/30 bg-[hsl(var(--ok))]/10 text-[hsl(var(--ok))]' },
   pending: { label: 'DNS interne : installation…', className: 'border-[hsl(var(--warn))]/30 bg-[hsl(var(--warn))]/10 text-[hsl(var(--warn))]' },

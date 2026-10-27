@@ -2,14 +2,15 @@
 
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { AlertTriangle, ChevronDown, Copy, Crown, Server, ScrollText, Trash2, Waves } from 'lucide-react';
-import { api, DnsServerGroupItem, NodeItem, VlanConnectionHistory } from '@/lib/api';
+import { AlertTriangle, CheckCircle2, ChevronDown, Copy, Crown, Server, ScrollText, Trash2, Waves } from 'lucide-react';
+import { api, DnsServerGroupItem, DnsZoneSyncMember, NodeItem, VlanConnectionHistory } from '@/lib/api';
 import { SectionLabel } from '@/components/SectionLabel';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CardListSkeleton } from '@/components/ui/skeleton';
+import { StatusDot } from '@/components/ui/status';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { HelpText } from '@/components/ui/wizard';
 import { ConnectionHistoryChart } from '@/components/dashboard-charts';
@@ -36,32 +37,23 @@ function GroupLinkLatency({
   sourceLabel: string;
   targetLabel: string;
 }) {
-  // Only the node that actively runs the WireGuard latency/loss probe gets
-  // latencyMs/packetLoss written for its direction - the mirrored reverse
-  // direction only ever gets `status` + rx bandwidth, latency stays null
-  // forever for that direction even though the link is genuinely healthy
-  // (see agents.service.ts's link-metric ingestion). A fixed
-  // source->target query can land on the unmeasured direction and render a
-  // silently blank chart under a correct-looking uptime % - fetch both
-  // directions and show whichever one actually has data.
-  const [forward, setForward] = useState<VlanConnectionHistory | null>(null);
-  const [reverse, setReverse] = useState<VlanConnectionHistory | null>(null);
+  // The API reads both directions of the pair as one series and, for a
+  // cross-region pair routed through the gateways, chains the hops.
+  const [history, setHistory] = useState<VlanConnectionHistory | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    Promise.all([
-      api.vlan.getHistory(vlanId, sourceNodeId, targetNodeId, '1h').catch(() => null),
-      api.vlan.getHistory(vlanId, targetNodeId, sourceNodeId, '1h').catch(() => null),
-    ]).then(([f, r]) => {
-      if (!cancelled) {
-        setForward(f);
-        setReverse(r);
-      }
-    }).finally(() => {
-      if (!cancelled) setLoading(false);
-    });
+    api.vlan
+      .getHistory(vlanId, sourceNodeId, targetNodeId, '1h')
+      .catch(() => null)
+      .then((result) => {
+        if (!cancelled) setHistory(result);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -71,29 +63,79 @@ function GroupLinkLatency({
     return <p className="text-xs text-muted-foreground">Chargement de la liaison…</p>;
   }
 
-  const hasMeasuredLatency = (h: VlanConnectionHistory | null) => (h?.samples ?? []).some((s) => s.latencyMs != null);
-  const useReverse = !hasMeasuredLatency(forward) && hasMeasuredLatency(reverse);
-  const chosen = useReverse ? reverse : forward;
-  const chosenLabel = useReverse ? `${targetLabel} → ${sourceLabel}` : `${sourceLabel} → ${targetLabel}`;
-
-  const chartData = (chosen?.samples ?? []).map((sample) => ({
+  const samples = history?.samples ?? [];
+  const chartData = samples.map((sample) => ({
     label: new Date(sample.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
     latencyMs: sample.latencyMs ?? null,
     packetLoss: sample.packetLoss ?? null,
   }));
-  const noMeasurementsYet = !!chosen && chosen.samples.length > 0 && !hasMeasuredLatency(chosen);
+  const noMeasurementsYet = samples.length > 0 && !samples.some((sample) => sample.latencyMs != null);
+  const via = history?.via ?? [];
 
   return (
     <div className="space-y-1 rounded-xl border border-border bg-black/10 p-3">
       <p className="font-mono text-xs text-muted-foreground">
-        {chosenLabel}
-        {chosen ? ` · ${chosen.uptimePercent}% uptime (1h)` : ''}
+        {sourceLabel} → {targetLabel}
+        {history?.uptimePercent != null ? ` · ${history.uptimePercent}% uptime (1h)` : ''}
       </p>
+      {via.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          Routée via {via.length > 1 ? 'les passerelles' : 'la passerelle'} {via.map((gateway) => gateway.name).join(' et ')} : latence cumulée des tronçons.
+        </p>
+      )}
       {noMeasurementsYet ? (
         <p className="text-xs text-muted-foreground">Lien actif, pas encore de mesure de latence (sondage à venir).</p>
       ) : (
         <ConnectionHistoryChart data={chartData} />
       )}
+    </div>
+  );
+}
+
+const minutesSince = (iso: string) => Math.max(1, Math.round((Date.now() - new Date(iso).getTime()) / 60_000));
+
+/**
+ * Whether each secondary actually serves the primary's version of a zone
+ * (SOA serial checked every 2 min by the API) - the proof that AXFR/IXFR
+ * transfers go through, which the link quality below can't give.
+ */
+function ZoneSync({ zone, nodeName }: { zone: NonNullable<DnsServerGroupItem['zones']>[number]; nodeName: (nodeId: string) => string }) {
+  const detail = zone.syncDetail ?? [];
+  const primary = detail.find((entry) => entry.role === 'primary');
+  const secondaries = detail.filter((entry) => entry.role === 'secondary');
+  if (!zone.syncCheckedAt || secondaries.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        <span className="font-mono">{zone.name}</span> · vérification en attente
+      </p>
+    );
+  }
+  const describe = (entry: DnsZoneSyncMember) => {
+    if (entry.ok) return { tone: 'ok' as const, text: 'à jour' };
+    const lag = entry.behindSince ? ` depuis ${minutesSince(entry.behindSince)} min` : '';
+    if (entry.error) return { tone: 'danger' as const, text: `${entry.error}${lag}` };
+    return { tone: 'warn' as const, text: `en retard (serial ${entry.serial})${lag}` };
+  };
+  return (
+    <div className="space-y-1">
+      <p className="text-xs text-muted-foreground">
+        <span className="font-mono text-foreground/85">{zone.name}</span>
+        {primary?.serial != null ? ` · serial ${primary.serial} sur le primaire` : primary?.error ? ` · primaire : ${primary.error}` : ''}
+      </p>
+      <ul className="space-y-0.5">
+        {secondaries.map((entry) => {
+          const state = describe(entry);
+          return (
+            <li key={entry.nodeId} className="flex items-center gap-2 text-xs">
+              <StatusDot tone={state.tone} />
+              <span className="truncate text-foreground/85">{nodeName(entry.nodeId)}</span>
+              <span className={state.tone === 'ok' ? 'text-muted-foreground' : state.tone === 'warn' ? 'text-[hsl(var(--warn))]' : 'text-[hsl(var(--danger))]'}>
+                {state.text}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
@@ -367,6 +409,22 @@ export function GroupsSection({
                         {group.zones.map((zone) => (
                           <Badge key={zone.id} label={zone.name} type={zone.status === 'active' ? 'success' : 'warning'} />
                         ))}
+                      </div>
+                    )}
+                    {group.members.some((m) => m.role === 'secondary') && !!group.zones?.some((zone) => zone.status === 'active') && (
+                      <div className="space-y-2 pt-1">
+                        <div className="flex items-center gap-1.5">
+                          <CheckCircle2 className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="text-xs font-medium text-zinc-300">Synchronisation des zones</span>
+                          <HelpText text="Le serial SOA de chaque zone est comparé toutes les 2 minutes entre le primaire et chaque secondaire. Un secondaire en retard ne reçoit plus les transferts de zone (AXFR/IXFR) : une alerte est levée au-delà de 30 minutes." />
+                        </div>
+                        <div className="space-y-2 rounded-xl border border-border bg-black/10 p-3">
+                          {group.zones
+                            .filter((zone) => zone.status === 'active')
+                            .map((zone) => (
+                              <ZoneSync key={zone.id} zone={zone} nodeName={nodeName} />
+                            ))}
+                        </div>
                       </div>
                     )}
                     {vlanId && group.members.length >= 2 && (

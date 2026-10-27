@@ -13,6 +13,8 @@ import { SharesService } from '../shares/shares.service';
 import { VlanService } from '../vlan/vlan.service';
 import { VpnService } from '../vpn/vpn.service';
 import { Region, resolveRegion } from '../vlan/region';
+import { classifyLink } from '../vlan/link-status';
+import { planOverlayPeers, shouldUseBackup } from '../vlan/overlay-topology';
 import { AgentLogsService } from '../agent-logs/agent-logs.service';
 import { LiveWsServer } from '../live/live.ws';
 import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
@@ -73,15 +75,9 @@ type PendingDnsZoneKeysRequest = {
 
 // Node is considered offline if no heartbeat received within this time
 const NODE_HEARTBEAT_TIMEOUT_MS = 60 * 1000; // 60 seconds
-const LINK_OFFLINE_HANDSHAKE_SEC = 600;
-const LINK_DEGRADED_HANDSHAKE_SEC = 240;
-// A link between two nodes in the same region is expected to stay well under
-// this; a link crossing regions (e.g. an intercontinental gateway backbone)
-// has a much higher physical floor (~80-120ms for a transatlantic hop) that
-// isn't itself a sign of trouble, so it gets a separate, higher bar.
-const LINK_DEGRADED_LATENCY_MS = 180;
-const LINK_DEGRADED_LATENCY_CROSS_REGION_MS = 300;
-
+// Every node is marked offline at boot until its agent reconnects: gateway
+// failover waits this long so a slow-reconnecting primary isn't taken for dead.
+const GATEWAY_FAILOVER_STARTUP_GRACE_MS = 3 * 60_000;
 // Retry config for deadlock handling
 const MAX_DEADLOCK_RETRIES = 5;
 const INITIAL_RETRY_DELAY_MS = 100;
@@ -371,6 +367,7 @@ export class AgentsService implements OnModuleInit {
   unregister(nodeId: string, send?: SendFn) {
     if (send && this.senders.get(nodeId) !== send) return;
     this.senders.delete(nodeId);
+    this.appliedStates.delete(nodeId);
     for (const [requestId, request] of this.pendingDirectoryRequests.entries()) {
       if (request.nodeId !== nodeId) continue;
       clearTimeout(request.timeout);
@@ -457,6 +454,86 @@ export class AgentsService implements OnModuleInit {
     }
   }
 
+  // When each gateway was last seen coming back up, for the failback delay.
+  private readonly gatewayUpSince = new Map<string, number>();
+  private readonly bootedAt = Date.now();
+
+  /**
+   * Hands a region's gateway role to its backup while the primary is down,
+   * and back once the primary has been stable for a while (shouldUseBackup).
+   * Skipped right after boot: every node starts offline until its agent
+   * reconnects, which would otherwise look like a dead primary.
+   */
+  @Cron(CronExpression.EVERY_30_SECONDS)
+  async checkGatewayFailover() {
+    if (Date.now() - this.bootedAt < GATEWAY_FAILOVER_STARTUP_GRACE_MS) return;
+    try {
+      const members = await this.prisma.vlanMember.findMany({
+        where: { OR: [{ node: { overlayIsGateway: true } }, { node: { overlayIsBackupGateway: true } }] },
+        select: {
+          vlanId: true,
+          node: {
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              workspaceId: true,
+              locationCountryCode: true,
+              overlayIsGateway: true,
+              overlayIsBackupGateway: true,
+            },
+          },
+        },
+      });
+      const now = Date.now();
+      const isUp = (node: { status: string }) => node.status !== 'offline';
+      for (const { node } of members) {
+        if (!isUp(node)) this.gatewayUpSince.delete(node.id);
+        else if (!this.gatewayUpSince.has(node.id)) this.gatewayUpSince.set(node.id, now);
+      }
+
+      const byRegion = new Map<string, { vlanId: string; region: Region; primary?: (typeof members)[number]['node']; backup?: (typeof members)[number]['node'] }>();
+      for (const { vlanId, node } of members) {
+        const region = resolveRegion(node.locationCountryCode);
+        if (!region) continue;
+        const key = `${vlanId}:${region}`;
+        const entry = byRegion.get(key) ?? { vlanId, region };
+        if (node.overlayIsGateway) entry.primary = node;
+        if (node.overlayIsBackupGateway) entry.backup = node;
+        byRegion.set(key, entry);
+      }
+
+      const changedVlans = new Set<string>();
+      for (const { vlanId, region, primary, backup } of byRegion.values()) {
+        const usingBackup = this.vlanService.isFailedOver(vlanId, region);
+        const next =
+          primary && backup
+            ? shouldUseBackup(usingBackup, isUp(primary), isUp(backup), now - (this.gatewayUpSince.get(primary.id) ?? now))
+            : false;
+        if (next === usingBackup) continue;
+        this.vlanService.setFailedOver(vlanId, region, next);
+        changedVlans.add(vlanId);
+        const message = next
+          ? `Passerelle ${primary!.name} injoignable : ${backup!.name} prend le relais pour sa région`
+          : `Passerelle ${primary?.name ?? ''} de retour : elle reprend le relais${backup ? ` de ${backup.name}` : ''}`;
+        this.logger.warn(message);
+        await this.prisma.alert.create({
+          data: {
+            workspaceId: (primary ?? backup)!.workspaceId,
+            nodeId: (primary ?? backup)!.id,
+            severity: next ? 'high' : 'medium',
+            message,
+          },
+        });
+      }
+      for (const vlanId of changedVlans) {
+        await this.reconcileOverlayForVlan(vlanId);
+      }
+    } catch (error) {
+      this.logger.error('Gateway failover check failed:', error);
+    }
+  }
+
   // `nodeId` is the identity the WebSocket connection authenticated as
   // (verified against that node's own token at handshake time - see
   // AgentsWsServer.attachClient) - NOT payload.nodeId, which is attacker-
@@ -476,8 +553,25 @@ export class AgentsService implements OnModuleInit {
     });
   }
 
+  // nodeId -> kind -> stateHash, as last reported in the node's heartbeat.
+  private readonly appliedStates = new Map<string, Record<string, string>>();
+
+  /**
+   * Hash of the desired state of `kind` this node reports as applied, so a
+   * ticked push can skip nodes already there. Undefined until the node's
+   * first heartbeat after connecting (and for agents that predate it).
+   */
+  appliedStateHash(nodeId: string, kind: string): string | undefined {
+    return this.appliedStates.get(nodeId)?.[kind];
+  }
+
   async onHeartbeat(nodeId: string, payload: HeartbeatPayload) {
     const { metrics, overlay, linkMetrics, vpnPeers, version, system } = payload;
+    if (payload.appliedState && typeof payload.appliedState === 'object') {
+      this.appliedStates.set(nodeId, payload.appliedState);
+    } else {
+      this.appliedStates.delete(nodeId);
+    }
     const systemInfo = sanitizeSystemInfo(system);
     const now = new Date();
     const versionFields = version ? { agentVersion: version, agentVersionAt: now } : {};
@@ -758,7 +852,25 @@ export class AgentsService implements OnModuleInit {
     );
   }
 
+  private async isUnchangedInternalDnsRoute(nodeId: string, result: CommandResultPayload): Promise<boolean> {
+    if (result.resourceType !== 'internal_dns_route' || !result.success || result.resourceId !== nodeId) {
+      return false;
+    }
+    const status = (result.data as { status?: string } | undefined)?.status;
+    if (!status) return false;
+    const node = await this.prisma.node.findUnique({
+      where: { id: nodeId },
+      select: { internalDnsForwarderStatus: true },
+    });
+    return node?.internalDnsForwarderStatus === status;
+  }
+
   async onCommandResult(nodeId: string, result: CommandResultPayload) {
+    if (await this.isUnchangedInternalDnsRoute(nodeId, result)) {
+      // Re-sent to every node on InternalDnsService's 30 s self-heal tick:
+      // an identical outcome is neither news for the node's log nor the UI.
+      return;
+    }
     this.logger.log(
       `Command result ${result.command} ${result.resourceId}: ${result.success}${
         result.success ? '' : ` (${result.message ?? 'no message'})`
@@ -1702,16 +1814,10 @@ export class AgentsService implements OnModuleInit {
   }
 
   /**
-   * Computes and pushes WireGuard peer config for every member of a VLAN.
-   *
-   * Members in the same region (or where region can't be resolved on either
-   * side) stay fully meshed — direct /32 peers, exactly like before regional
-   * segmentation existed. A cross-region pair is only routed through
-   * gateways when BOTH regions have one designated (Node.overlayIsGateway);
-   * otherwise it also falls back to a direct peer. This means: with no
-   * gateway designated anywhere (today's state for an all-France fleet),
-   * every pair takes the direct-peer path and output is identical to the
-   * pre-segmentation implementation.
+   * Computes and pushes WireGuard peer config for every member of a VLAN -
+   * see planOverlayPeers for the segmentation rules. Each region is carried
+   * by its active gateway: the designated primary, or its backup while
+   * checkGatewayFailover has failed the region over.
    */
   async reconcileOverlayForVlan(vlanId: string): Promise<void> {
     try {
@@ -1720,104 +1826,23 @@ export class AgentsService implements OnModuleInit {
         include: { node: true },
       });
 
-      const regionByNodeId = new Map<string, Region | null>();
-      for (const member of members) {
-        regionByNodeId.set(member.nodeId, resolveRegion(member.node.locationCountryCode));
-      }
+      const gatewayByRegion = this.vlanService.activeGatewaysFor(
+        vlanId,
+        members.map((member) => member.node),
+      );
+      const plans = planOverlayPeers(
+        members.map((member) => ({
+          nodeId: member.nodeId,
+          region: resolveRegion(member.node.locationCountryCode),
+          vlanIp: member.node.vlanIp,
+          overlayPublicKey: member.node.overlayPublicKey,
+          overlayEndpoint: member.node.overlayEndpoint,
+        })),
+        gatewayByRegion,
+      );
 
-      const gatewayByRegion = new Map<Region, (typeof members)[number]>();
-      for (const member of members) {
-        const region = regionByNodeId.get(member.nodeId);
-        if (region && member.node.overlayIsGateway) {
-          gatewayByRegion.set(region, member);
-        }
-      }
-
-      for (const member of members) {
-        if (!member.node.vlanIp || !member.node.overlayPublicKey) {
-          continue;
-        }
-
-        const region = regionByNodeId.get(member.nodeId) ?? null;
-        const localGateway = region ? gatewayByRegion.get(region) : undefined;
-        const isGateway = Boolean(localGateway && localGateway.nodeId === member.nodeId);
-
-        const eligibleCandidates = members.filter(
-          (candidate) =>
-            candidate.nodeId !== member.nodeId &&
-            Boolean(candidate.node.vlanIp) &&
-            Boolean(candidate.node.overlayPublicKey) &&
-            Boolean(candidate.node.overlayEndpoint),
-        );
-
-        type Peer = {
-          nodeId: string;
-          publicKey: string;
-          endpoint: string;
-          allowedIps: string[];
-          persistentKeepalive: number;
-        };
-        const peers: Peer[] = [];
-        const peerByNodeId = new Map<string, Peer>();
-
-        for (const candidate of eligibleCandidates) {
-          const candidateRegion = regionByNodeId.get(candidate.nodeId) ?? null;
-          const sameRegion = !region || !candidateRegion || region === candidateRegion;
-          const remoteGateway = sameRegion ? undefined : gatewayByRegion.get(candidateRegion as Region);
-          const segmented = !sameRegion && Boolean(localGateway) && Boolean(remoteGateway);
-
-          if (!segmented || !remoteGateway) {
-            // Same region, or cross-region without a gateway on both sides yet: unchanged full-mesh behavior.
-            const peer: Peer = {
-              nodeId: candidate.nodeId,
-              publicKey: candidate.node.overlayPublicKey as string,
-              endpoint: candidate.node.overlayEndpoint as string,
-              allowedIps: [`${candidate.node.vlanIp}/32`],
-              persistentKeepalive: 25,
-            };
-            peers.push(peer);
-            peerByNodeId.set(candidate.nodeId, peer);
-            continue;
-          }
-
-          if (isGateway) {
-            // Only a single peer to the remote gateway, carrying the whole remote region's hosts.
-            if (candidate.nodeId === remoteGateway.nodeId) {
-              const remoteRegionIps = members
-                .filter((m) => regionByNodeId.get(m.nodeId) === candidateRegion && m.node.vlanIp)
-                .map((m) => `${m.node.vlanIp}/32`);
-              const peer: Peer = {
-                nodeId: candidate.nodeId,
-                publicKey: candidate.node.overlayPublicKey as string,
-                endpoint: candidate.node.overlayEndpoint as string,
-                allowedIps: remoteRegionIps,
-                persistentKeepalive: 25,
-              };
-              peers.push(peer);
-              peerByNodeId.set(candidate.nodeId, peer);
-            }
-            // Individual remote members are reached via the remote gateway peer above, not directly.
-            continue;
-          }
-          // Not a gateway: no direct peer into the other region at all — routed via the local
-          // gateway peer entry instead (augmented below).
-        }
-
-        if (!isGateway && localGateway) {
-          const localGatewayPeer = peerByNodeId.get(localGateway.nodeId);
-          if (localGatewayPeer) {
-            for (const otherRegion of gatewayByRegion.keys()) {
-              if (otherRegion === region) continue;
-              const remoteRegionIps = members
-                .filter((m) => regionByNodeId.get(m.nodeId) === otherRegion && m.node.vlanIp)
-                .map((m) => `${m.node.vlanIp}/32`);
-              if (remoteRegionIps.length > 0) {
-                localGatewayPeer.allowedIps.push(...remoteRegionIps);
-              }
-            }
-          }
-        }
-
+      for (const { nodeId, peers, ipForward } of plans) {
+        const member = members.find((candidate) => candidate.nodeId === nodeId)!;
         const authorizedKeys = members
           .filter((candidate) => candidate.nodeId !== member.nodeId && Boolean(candidate.node.overlaySshPublicKey))
           .map((candidate) => candidate.node.overlaySshPublicKey as string);
@@ -1829,7 +1854,7 @@ export class AgentsService implements OnModuleInit {
             addressCidr: `${member.node.vlanIp}/24`,
             listenPort: member.node.overlayListenPort ?? 51820,
             peers,
-            ipForward: isGateway,
+            ipForward,
           },
         };
 
@@ -1941,41 +1966,13 @@ export class AgentsService implements OnModuleInit {
 
       const txMbps = metric.txMbps ?? 0;
       const rxMbps = metric.rxMbps ?? 0;
-      const handshakeAgeSec = metric.handshakeAgeSec;
-
-      const hasTraffic = txMbps > 0 || rxMbps > 0;
-      const hasUsableProbe =
-        metric.packetLoss !== undefined ||
-        (metric.latencyMs !== undefined && metric.latencyMs > 0);
-      const handshakeUnknown = handshakeAgeSec === undefined || handshakeAgeSec < 0;
-      const handshakeOffline = handshakeAgeSec !== undefined && handshakeAgeSec >= LINK_OFFLINE_HANDSHAKE_SEC;
-      const handshakeDegraded =
-        handshakeAgeSec !== undefined &&
-        handshakeAgeSec >= LINK_DEGRADED_HANDSHAKE_SEC &&
-        handshakeAgeSec < LINK_OFFLINE_HANDSHAKE_SEC;
-      const peerReportedOffline = target.status !== 'online';
-
-      // A link crossing regions (e.g. the France <-> Canada gateway backbone)
-      // has a much higher latency floor than an intra-region link purely from
-      // physical distance — don't flag that baseline as degraded.
       const targetRegion = resolveRegion(target.locationCountryCode);
-      const isCrossRegionLink = Boolean(sourceRegion && targetRegion && sourceRegion !== targetRegion);
-      const latencyDegradedThresholdMs = isCrossRegionLink
-        ? LINK_DEGRADED_LATENCY_CROSS_REGION_MS
-        : LINK_DEGRADED_LATENCY_MS;
-
-      const status: 'healthy' | 'degraded' | 'offline' =
-        // Only classify as offline from hard link telemetry signals.
-        // Node status can be stale while tunnel traffic/probes are actually healthy.
-        (handshakeOffline && !hasTraffic && !hasUsableProbe)
-          ? 'offline'
-          : peerReportedOffline ||
-              (handshakeUnknown && !hasTraffic && !hasUsableProbe) ||
-              (handshakeDegraded && !hasTraffic && !hasUsableProbe) ||
-              (metric.packetLoss ?? 0) >= 8 ||
-              (metric.latencyMs ?? 0) >= latencyDegradedThresholdMs
-            ? 'degraded'
-            : 'healthy';
+      const status = classifyLink(metric, {
+        peerOnline: target.status === 'online',
+        // A link crossing regions (e.g. the France <-> Canada gateway
+        // backbone) has a much higher latency floor from distance alone.
+        crossRegion: Boolean(sourceRegion && targetRegion && sourceRegion !== targetRegion),
+      });
 
       const commonData = {
         status,

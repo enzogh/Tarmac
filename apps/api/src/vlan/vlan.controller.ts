@@ -235,12 +235,14 @@ export class VlanController {
   async setGateway(
     @Param('vlanId') vlanId: string,
     @Param('nodeId') nodeId: string,
-    @Body() body: { enabled: boolean },
+    @Body() body: { role?: 'primary' | 'backup' | null; enabled?: boolean },
     @CurrentWorkspace() scope: WorkspaceScope,
   ) {
     await this.assertVlanInScope(vlanId, scope);
     try {
-      const result = await this.vlanService.setGateway(vlanId, nodeId, Boolean(body.enabled));
+      // `enabled` is the original primary-only form of this endpoint.
+      const role = body.role === 'primary' || body.role === 'backup' ? body.role : body.enabled ? 'primary' : null;
+      const result = await this.vlanService.setGateway(vlanId, nodeId, role);
       await this.agentsService.reconcileOverlayForVlan(vlanId);
       return { success: true, ...result };
     } catch (error) {

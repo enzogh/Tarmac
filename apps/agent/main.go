@@ -43,6 +43,42 @@ type heartbeat struct {
 	LinkMetrics []overlayLinkMetric `json:"linkMetrics,omitempty"`
 	VpnPeers    []vpnPeerStat       `json:"vpnPeers,omitempty"`
 	System      *systemInfo         `json:"system,omitempty"`
+	// Hash of the desired state last applied successfully, per kind (see
+	// appliedStates). Lets the control plane skip re-sending a command whose
+	// state this node already has.
+	AppliedState map[string]string `json:"appliedState,omitempty"`
+}
+
+// appliedStates holds, per kind of desired state the control plane pushes on
+// a tick, the stateHash of the last payload applied successfully. In memory
+// only: after a restart nothing is reported, so the control plane re-sends
+// and the node converges again.
+var appliedStates = struct {
+	sync.Mutex
+	hashes map[string]string
+}{hashes: map[string]string{}}
+
+func setAppliedState(kind, hash string) {
+	appliedStates.Lock()
+	defer appliedStates.Unlock()
+	if hash == "" {
+		delete(appliedStates.hashes, kind)
+		return
+	}
+	appliedStates.hashes[kind] = hash
+}
+
+func appliedStateSnapshot() map[string]string {
+	appliedStates.Lock()
+	defer appliedStates.Unlock()
+	if len(appliedStates.hashes) == 0 {
+		return nil
+	}
+	snapshot := make(map[string]string, len(appliedStates.hashes))
+	for kind, hash := range appliedStates.hashes {
+		snapshot[kind] = hash
+	}
+	return snapshot
 }
 
 type overlayState struct {
@@ -665,12 +701,10 @@ func probeOverlayLatency(iface, targetIP string) (*float64, *float64) {
 		output, err := cmd.CombinedOutput()
 		pingCancel()
 		latencyMs, packetLoss := parsePingStats(string(output))
-		// Ignore pure 100% loss samples without RTT: they are often probe artifacts
-		// and cause false degraded states in the dashboard.
-		if latencyMs == nil && packetLoss != nil && *packetLoss >= 100 {
-			packetLoss = nil
-		}
-
+		// A 100% loss result is kept and reported: dropping it used to hide
+		// dead links, which then stayed "healthy" on handshake/tx alone. The
+		// control plane only treats it as down when nothing comes back from
+		// the peer either.
 		if err == nil {
 			return latencyMs, packetLoss
 		}
@@ -1019,35 +1053,39 @@ func (c *collector) collectOverlayLinkMetrics(iface string) []overlayLinkMetric 
 		}
 		cacheKey := cacheKeys[i]
 		latencyMs, packetLoss := results[i].latencyMs, results[i].packetLoss
-		if latencyMs != nil || packetLoss != nil {
-			if latencyMs != nil {
-				metrics[i].LatencyMs = latencyMs
-			}
-			if packetLoss != nil {
-				metrics[i].PacketLoss = packetLoss
-			}
-			cachedLatency := 0.0
-			if metrics[i].LatencyMs != nil {
-				cachedLatency = *metrics[i].LatencyMs
-			}
-			cachedLoss := 0.0
-			if metrics[i].PacketLoss != nil {
-				cachedLoss = *metrics[i].PacketLoss
-			}
-			c.lastOverlayRtt[cacheKey] = overlayProbeSnapshot{
-				latencyMs:           cachedLatency,
-				packetLoss:          cachedLoss,
-				hasLatency:          metrics[i].LatencyMs != nil,
-				hasLoss:             metrics[i].PacketLoss != nil,
-				at:                  now,
-				consecutiveFailures: 0,
-			}
-		} else {
+		if latencyMs == nil && packetLoss == nil {
 			next := c.lastOverlayRtt[cacheKey]
 			next.consecutiveFailures++
 			next.at = now
 			c.lastOverlayRtt[cacheKey] = next
+			continue
 		}
+		// Only a reply counts as success: a 100% loss reading is reported
+		// (without the cached latency of an earlier, answered probe) but
+		// still backs off like any other failed probe.
+		failures := 0
+		if latencyMs == nil {
+			metrics[i].LatencyMs = nil
+			failures = c.lastOverlayRtt[cacheKey].consecutiveFailures + 1
+		} else {
+			metrics[i].LatencyMs = latencyMs
+		}
+		if packetLoss != nil {
+			metrics[i].PacketLoss = packetLoss
+		}
+		snapshot := overlayProbeSnapshot{
+			hasLatency:          metrics[i].LatencyMs != nil,
+			hasLoss:             metrics[i].PacketLoss != nil,
+			at:                  now,
+			consecutiveFailures: failures,
+		}
+		if snapshot.hasLatency {
+			snapshot.latencyMs = *metrics[i].LatencyMs
+		}
+		if snapshot.hasLoss {
+			snapshot.packetLoss = *metrics[i].PacketLoss
+		}
+		c.lastOverlayRtt[cacheKey] = snapshot
 	}
 
 	return metrics
@@ -4007,6 +4045,29 @@ func handleCommand(ctx context.Context, cmd commandPayload, onProgress func(prog
 	return result
 }
 
+// routineCommands are re-sent by the control plane on a fixed tick to
+// self-heal drift. Logging every one buried the node's log under identical
+// "received/ok" pairs twice a minute, so they're only logged when their
+// outcome changes.
+var routineCommands = map[string]bool{
+	"command.ensure_internal_dns_route": true,
+}
+
+var (
+	routineResultsMu sync.Mutex
+	routineResults   = map[string]string{}
+)
+
+func routineResultChanged(commandType, resultMsg string) bool {
+	routineResultsMu.Lock()
+	defer routineResultsMu.Unlock()
+	if routineResults[commandType] == resultMsg {
+		return false
+	}
+	routineResults[commandType] = resultMsg
+	return true
+}
+
 // redactedURL strips query parameters (which carry the agent auth token)
 // before a URL is logged, so the token never lands in journalctl, the
 // agent-log stream, or the AgentLog table.
@@ -4072,7 +4133,10 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 			}
 			command := cmd
 			go func() {
-				log.Printf("command received: %s", command.Type)
+				routine := routineCommands[command.Type]
+				if !routine {
+					log.Printf("command received: %s", command.Type)
+				}
 				result := handleCommand(sessionCtx, command, func(progress commandProgress) {
 					if err := client.send(envelope{Type: "command_progress", Payload: progress}); err != nil {
 						log.Printf("failed to send command_progress: %v", err)
@@ -4086,7 +4150,9 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 				if result.Message != "" {
 					resultMsg += ": " + result.Message
 				}
-				log.Printf("%s", resultMsg)
+				if !routine || routineResultChanged(command.Type, resultMsg) {
+					log.Printf("%s", resultMsg)
+				}
 				if err := client.send(envelope{Type: "command_result", Payload: result}); err != nil {
 					select {
 					case readDone <- err:
@@ -4156,13 +4222,14 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 			if err := client.send(envelope{
 				Type: "agent.heartbeat",
 				Payload: heartbeat{
-					NodeID:      nodeID,
-					Version:     agentVersion,
-					Metrics:     metrics,
-					Overlay:     overlay,
-					LinkMetrics: linkMetrics,
-					VpnPeers:    collectVpnPeerStats(),
-					System:      &system,
+					NodeID:       nodeID,
+					Version:      agentVersion,
+					Metrics:      metrics,
+					Overlay:      overlay,
+					LinkMetrics:  linkMetrics,
+					VpnPeers:     collectVpnPeerStats(),
+					System:       &system,
+					AppliedState: appliedStateSnapshot(),
 				},
 			}); err != nil {
 				return err

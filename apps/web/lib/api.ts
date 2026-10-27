@@ -43,6 +43,8 @@ export type NodeItem = {
   // storage) and its operator has opted out of disk alerts for it.
   smartMonitoringEnabled?: boolean;
   overlayIsGateway?: boolean;
+  // Takes over the region's gateway role while the primary is offline.
+  overlayIsBackupGateway?: boolean;
   vlanIp?: string | null;
   // Custom <dnsHostname>.tarmac.local label - see InternalDnsService on the
   // API side. Null means a slug derived from `name` is used instead.
@@ -158,7 +160,23 @@ export type DnsServerGroupItem = {
   name: string;
   status: 'pending' | 'active' | 'error';
   members: DnsServerGroupMemberItem[];
-  zones?: Array<{ id: string; name: string; status: 'pending' | 'active' | 'error' }>;
+  zones?: Array<{
+    id: string;
+    name: string;
+    status: 'pending' | 'active' | 'error';
+    syncCheckedAt?: string | null;
+    syncDetail?: DnsZoneSyncMember[] | null;
+  }>;
+};
+
+// One group member's view of a zone, from the API's periodic SOA check.
+export type DnsZoneSyncMember = {
+  nodeId: string;
+  role: 'primary' | 'secondary';
+  serial: number | null;
+  ok: boolean;
+  behindSince: string | null;
+  error: string | null;
 };
 
 export type DnsRecordType = 'A' | 'AAAA' | 'CNAME' | 'MX' | 'TXT' | 'NS' | 'CAA' | 'SRV' | 'PTR';
@@ -415,6 +433,9 @@ export type VlanMember = {
   lastHeartbeat: string;
   node?: NodeItem;
   region?: VlanRegion | null;
+  // This node currently carries its region's cross-region traffic: the
+  // primary gateway, or its backup while the primary is down.
+  gatewayActive?: boolean;
 };
 
 export type VlanConnection = {
@@ -469,7 +490,11 @@ export type VlanConnectionSample = {
 
 export type VlanConnectionHistory = {
   samples: VlanConnectionSample[];
-  uptimePercent: number;
+  // null when the range holds no sample at all.
+  uptimePercent: number | null;
+  // Regional gateways a segmented cross-region pair is routed through; the
+  // samples are then the chained hops, not a direct tunnel.
+  via?: Array<{ id: string; name: string }>;
 };
 
 export type Vlan = {
@@ -1256,12 +1281,12 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ initiatorNodeId, targetNodeId, testType }),
       }),
-    setGateway: (vlanId: string, nodeId: string, enabled: boolean) =>
-      request<{ success: boolean; nodeId: string; overlayIsGateway: boolean; region: VlanRegion | null }>(
+    setGateway: (vlanId: string, nodeId: string, role: 'primary' | 'backup' | null) =>
+      request<{ success: boolean; nodeId: string; role: 'primary' | 'backup' | null; region: VlanRegion | null }>(
         `/api/v1/vlan/${vlanId}/members/${nodeId}/gateway`,
         {
           method: 'POST',
-          body: JSON.stringify({ enabled }),
+          body: JSON.stringify({ role }),
         },
       ),
     heartbeat: (nodeId: string, vlanId?: string) =>

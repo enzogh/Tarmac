@@ -16,7 +16,7 @@ import { formatCapacity, formatRelative, formatThroughput } from '@/lib/format';
 import { flagFromCountryCode, GeoInfo } from '@/lib/geo';
 import { cn } from '@/lib/utils';
 import { cpuModelShort, cpuShape, memoryUsage } from '@/lib/system-info';
-import { externalIpOf, formatDateTime, InternalDnsBadge, InternalDnsState, isMuted, MiniMeter, smartIssue, SwapLine } from './node-ui';
+import { externalIpOf, formatDateTime, InternalDnsBadge, InternalDnsState, isMuted, MiniMeter, smartIssue } from './node-ui';
 
 export type NodeAction = 'open' | 'edit' | 'update' | 'mute' | 'delete';
 export type NodeSortKey = 'status' | 'name' | 'location' | 'cpu' | 'ram' | 'disk' | 'network' | 'seen';
@@ -77,7 +77,7 @@ export function NodesTable({
           <SortHead label="Localisation" column="location" sort={sort} onSort={onSort} className="hidden lg:table-cell" />
           <TableHead className="hidden 2xl:table-cell">Adresses</TableHead>
           <SortHead label="CPU" column="cpu" sort={sort} onSort={onSort} className="hidden md:table-cell" />
-          <SortHead label="RAM · swap" column="ram" sort={sort} onSort={onSort} className="hidden md:table-cell" />
+          <SortHead label="RAM" column="ram" sort={sort} onSort={onSort} className="hidden md:table-cell" />
           <SortHead label="Disque" column="disk" sort={sort} onSort={onSort} className="hidden md:table-cell" />
           <SortHead label="Réseau" column="network" sort={sort} onSort={onSort} className="hidden min-[1800px]:table-cell" />
           <TableHead className="hidden min-[1440px]:table-cell">Agent</TableHead>
@@ -110,6 +110,11 @@ export function NodesTable({
                   {node.overlayIsGateway && (
                     <span className="rounded border border-border px-1 py-px text-2xs text-muted-foreground" title="Passerelle inter-régions du réseau privé">
                       GW
+                    </span>
+                  )}
+                  {node.overlayIsBackupGateway && (
+                    <span className="rounded border border-border px-1 py-px text-2xs text-muted-foreground" title="Passerelle de secours : prend le relais si la passerelle de sa région tombe">
+                      GW secours
                     </span>
                   )}
                 </div>
@@ -174,10 +179,7 @@ export function NodesTable({
                 {offline ? (
                   <span className="text-2xs text-muted-foreground">—</span>
                 ) : (
-                  <>
-                    <MiniMeter value={node.metrics.ram} title={memoryUsage(node.systemInfo, node.metrics.ram)?.label} />
-                    <SwapLine info={node.systemInfo} className="mt-1" />
-                  </>
+                  <MiniMeter value={node.metrics.ram} title={memoryUsage(node.systemInfo, node.metrics.ram)?.label} />
                 )}
               </TableCell>
               <TableCell className="hidden py-2 md:table-cell">

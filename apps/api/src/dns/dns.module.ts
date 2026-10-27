@@ -7,6 +7,7 @@ import { DnsDelegationCheckService } from './dns-delegation-check.service';
 import { DnsDelegationService } from './dns-delegation.service';
 import { DnsGroupsService } from './dns-groups.service';
 import { DnsRecordsService } from './dns-records.service';
+import { DnsSyncCheckService } from './dns-sync-check.service';
 import { DnsZonesService } from './dns-zones.service';
 import { InternalDnsService } from './internal-dns.service';
 
@@ -19,6 +20,7 @@ import { InternalDnsService } from './internal-dns.service';
     DnsRecordsService,
     DnsDelegationService,
     DnsDelegationCheckService,
+    DnsSyncCheckService,
     InternalDnsService,
   ],
   exports: [
