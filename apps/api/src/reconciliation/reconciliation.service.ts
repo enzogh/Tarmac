@@ -158,6 +158,7 @@ export class ReconciliationService implements OnModuleInit {
         payload: {
           zoneId: zone.id,
           zoneName: zone.name,
+          groupId: zone.groupId,
           dnssecEnabled: zone.dnssecEnabled,
           nameservers,
           nsGlue,

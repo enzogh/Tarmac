@@ -1025,12 +1025,16 @@ func (c *pdnsClient) triggerAxfrRetrieve(ctx context.Context, fqdn string) error
 	return nil
 }
 
-// setZoneMetadata is used to point a slave zone at the TSIG key it should
-// use to authenticate its AXFR pulls (metadata kind "AXFR-MASTER-TSIG"),
-// upgrading transfers from IP-restricted-only to TSIG-signed.
-func (c *pdnsClient) setZoneMetadata(ctx context.Context, fqdn, kind string, values []string) error {
-	body := map[string]interface{}{"kind": kind, "metadata": values}
-	respBody, status, err := c.request(ctx, http.MethodPut, "/zones/"+url.PathEscape(fqdn)+"/metadata/"+kind, body)
+// setZoneTsigKeys points a zone at the TSIG key its transfers are signed
+// with: "master_tsig_key_ids" on the primary (keys allowed to AXFR from it,
+// TSIG-ALLOW-AXFR) and "slave_tsig_key_ids" on a secondary (key it signs its
+// AXFR pulls with, AXFR-MASTER-TSIG). Both have to be set: a primary denies
+// a signed AXFR whose key it wasn't told to accept, even from an IP in
+// allow-axfr-ips. These metadata kinds are protected - the /metadata
+// endpoint answers 422 "Unsupported metadata kind" - so they go through the
+// zone object instead.
+func (c *pdnsClient) setZoneTsigKeys(ctx context.Context, fqdn, field string, keyNames []string) error {
+	respBody, status, err := c.request(ctx, http.MethodPut, "/zones/"+url.PathEscape(fqdn), map[string]interface{}{field: keyNames})
 	if err != nil {
 		return err
 	}
@@ -1448,6 +1452,15 @@ func applyDnsZone(payload map[string]interface{}) (string, error) {
 		}
 	}
 
+	// Accept the group's key for transfers: secondaries sign their AXFR pulls
+	// with it (see applyDnsZoneSlave), and a signed pull is denied unless the
+	// zone lists the key.
+	if groupID := readString(payload, "groupId"); groupID != "" {
+		if err := client.setZoneTsigKeys(ctx, fqdn, "master_tsig_key_ids", []string{tsigKeyName(groupID)}); err != nil {
+			log.Printf("dns: could not allow TSIG-signed transfers of zone %s, secondaries signing their pulls will be refused: %v", zoneName, err)
+		}
+	}
+
 	return fmt.Sprintf("applied %d record(s) to zone %s", len(rrsets), zoneName), nil
 }
 
@@ -1489,7 +1502,7 @@ func applyDnsZoneSlave(payload map[string]interface{}) (string, error) {
 	}
 
 	if groupID != "" {
-		if err := client.setZoneMetadata(ctx, fqdn, "AXFR-MASTER-TSIG", []string{tsigKeyName(groupID)}); err != nil {
+		if err := client.setZoneTsigKeys(ctx, fqdn, "slave_tsig_key_ids", []string{tsigKeyName(groupID)}); err != nil {
 			log.Printf("dns: could not associate TSIG key with slave zone %s, transfer stays IP-restricted via allow-axfr-ips only: %v", zoneName, err)
 		}
 	}
