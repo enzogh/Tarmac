@@ -124,7 +124,7 @@ export function MemberPowerDns({
                   ? ` (${entry.attempts} essais) : l'agent ne réessaiera plus seul.`
                   : ` (essai ${entry.attempts} sur ${state.maxAttempts}) : l'agent réessaiera à son prochain redémarrage.`}{' '}
                 {task === 'upgrade'
-                  ? 'Le serveur a été remis sur sa version précédente, avec ses données : il continue de répondre normalement.'
+                  ? 'Le serveur est resté sur sa version actuelle, avec ses données : il continue de répondre normalement.'
                   : 'Le serveur continue de répondre avec son ancienne base.'}
               </p>
               {entry.error && (

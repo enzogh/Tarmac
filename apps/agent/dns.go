@@ -1172,9 +1172,11 @@ type pdnsTsigKey struct {
 	Key       string `json:"key"`
 }
 
-// fetchTsigKeys returns every TSIG key with its secret: the list endpoint
-// leaves the secret out, each key has to be read on its own for it.
-func (c *pdnsClient) fetchTsigKeys(ctx context.Context) ([]pdnsTsigKey, error) {
+// listTsigKeys returns every TSIG key's id and name, without secrets.
+// Whatever only needs to know which keys exist uses this rather than
+// fetchTsigKeys: on 4.5's lmdb backend a listed key can answer 404 when
+// read on its own, which made the upgrade's inventory fail.
+func (c *pdnsClient) listTsigKeys(ctx context.Context) ([]pdnsTsigKey, error) {
 	body, status, err := c.request(ctx, http.MethodGet, "/tsigkeys", nil)
 	if err != nil {
 		return nil, err
@@ -1183,7 +1185,14 @@ func (c *pdnsClient) fetchTsigKeys(ctx context.Context) ([]pdnsTsigKey, error) {
 		return nil, fmt.Errorf("unexpected status %d: %s", status, strings.TrimSpace(string(body)))
 	}
 	var listed []pdnsTsigKey
-	if err := json.Unmarshal(body, &listed); err != nil {
+	return listed, json.Unmarshal(body, &listed)
+}
+
+// fetchTsigKeys returns every TSIG key with its secret: the list endpoint
+// leaves the secret out, each key has to be read on its own for it.
+func (c *pdnsClient) fetchTsigKeys(ctx context.Context) ([]pdnsTsigKey, error) {
+	listed, err := c.listTsigKeys(ctx)
+	if err != nil {
 		return nil, err
 	}
 	keys := make([]pdnsTsigKey, 0, len(listed))

@@ -138,7 +138,7 @@ func (c *pdnsClient) postZone(ctx context.Context, fields map[string]interface{}
 }
 
 func (c *pdnsClient) hasTsigKey(ctx context.Context, name string) bool {
-	keys, err := c.fetchTsigKeys(ctx)
+	keys, err := c.listTsigKeys(ctx)
 	if err != nil {
 		return false
 	}
@@ -306,7 +306,7 @@ func syncCatalogConsumer(ctx context.Context, client *pdnsClient, role dnsRole) 
 // longer part of. Removing a node from a group stops pdns but leaves its
 // data, so a node that later joins another group kept the old group's key.
 func removeOrphanTsigKeys(ctx context.Context, client *pdnsClient, keep string) error {
-	keys, err := client.fetchTsigKeys(ctx)
+	keys, err := client.listTsigKeys(ctx)
 	if err != nil {
 		return err
 	}
@@ -319,7 +319,12 @@ func removeOrphanTsigKeys(ctx context.Context, client *pdnsClient, keep string) 
 		if err != nil {
 			return err
 		}
-		if status >= 300 && status != http.StatusNotFound {
+		if status == http.StatusNotFound {
+			// Listed but not found by id (seen on 4.5's lmdb backend):
+			// nothing more to do here, and nothing removed to report.
+			continue
+		}
+		if status >= 300 {
 			return fmt.Errorf("cannot delete TSIG key %s: %s", name, strings.TrimSpace(string(body)))
 		}
 		log.Printf("dns: removed TSIG key %s, left over from a DNS group this node no longer belongs to", name)

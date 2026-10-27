@@ -267,7 +267,7 @@ func readPdnsInventory(ctx context.Context, apiKey string) (pdnsInventory, error
 	if err != nil {
 		return pdnsInventory{}, err
 	}
-	keys, err := (&pdnsClient{apiKey: apiKey}).fetchTsigKeys(ctx)
+	keys, err := (&pdnsClient{apiKey: apiKey}).listTsigKeys(ctx)
 	if err != nil {
 		return pdnsInventory{}, err
 	}
