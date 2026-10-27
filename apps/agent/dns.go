@@ -530,6 +530,10 @@ func writePdnsConfig(apiKey string, allowAxfrIps []string, backend string) error
 		"webserver-port=8081",
 		"webserver-allow-from=127.0.0.1",
 		"enable-lua-records=yes",
+		// Answer "version.bind"-style queries without the exact PowerDNS
+		// release: this server is reachable from the whole internet, and
+		// the version only helps someone matching it against known flaws.
+		"version-string=anonymous",
 		// Without these, PowerDNS still accepts API calls to create a
 		// Slave-kind zone and even accepts retrieve requests without
 		// erroring - but the background SlaveCommunicator thread that
