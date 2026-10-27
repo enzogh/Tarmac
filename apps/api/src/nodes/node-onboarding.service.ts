@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { Client, ConnectConfig } from 'ssh2';
 import { AgentTokenService } from '../agents/agent-token.service';
 import { WorkspaceScope } from '../auth/workspace.guard';
+import { GithubDeployKeysService } from '../github/github-deploy-keys.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNodeDto } from './dto/create-node.dto';
 import { StartNodeOnboardingDto } from './dto/start-node-onboarding.dto';
@@ -45,6 +46,7 @@ export class NodeOnboardingService {
     private readonly configService: ConfigService,
     private readonly agentTokenService: AgentTokenService,
     private readonly prisma: PrismaService,
+    private readonly githubDeployKeys: GithubDeployKeysService,
   ) {}
 
   async startOnboarding(dto: StartNodeOnboardingDto, scope: WorkspaceScope, actorUserId?: string) {
@@ -71,6 +73,11 @@ export class NodeOnboardingService {
       sshUsername: dto.sshUsername.trim(),
       sshPassword: dto.sshPassword,
     });
+
+    // Added to the repository's deploy keys right away when the GitHub
+    // integration is set up; otherwise (or if GitHub refuses) the user adds
+    // it by hand, as before.
+    const registration = await this.githubDeployKeys.registerNodeKey(node, deployKeyPublic);
 
     const onboardingId = randomUUID();
     const now = new Date();
@@ -105,6 +112,8 @@ export class NodeOnboardingService {
         title: `tarmac-${node.name}-${node.id.slice(0, 8)}`,
         publicKey: deployKeyPublic,
         repoUrl,
+        registered: registration.registered,
+        registrationError: registration.error,
       },
     };
   }

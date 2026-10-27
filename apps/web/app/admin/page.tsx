@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Crown,
   Gauge,
+  GitBranch,
   History,
   Info,
   LoaderCircle,
@@ -35,6 +36,7 @@ import { formatDateTime, formatRelative } from '../../lib/format';
 import { usePolling } from '../../lib/hooks/usePolling';
 import { cn } from '../../lib/utils';
 import { BrandMark } from '../../components/BrandMark';
+import { GithubPanel } from './GithubPanel';
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -46,7 +48,7 @@ import { Stat, StatRow } from '../../components/ui/stat';
 import { Tabs, TabsCount, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../components/ui/tooltip';
 
-type Tab = 'users' | 'emails' | 'settings';
+type Tab = 'users' | 'emails' | 'github' | 'settings';
 type Filter = 'all' | 'access' | 'none' | 'full' | 'disabled';
 
 const MAX_LIMIT = 100;
@@ -130,7 +132,7 @@ function AdminPageContent() {
   const isSuperuser = profile?.isSuperuser ?? false;
 
   const requested = searchParams.get('tab') as Tab | null;
-  const tab: Tab = requested && ['users', 'emails', 'settings'].includes(requested) ? requested : 'users';
+  const tab: Tab = requested && ['users', 'emails', 'github', 'settings'].includes(requested) ? requested : 'users';
   const selectTab = (next: Tab) => router.replace(`${pathname}?tab=${next}`, { scroll: false });
 
   // The API refuses anyone else anyway; this only keeps them off a page
@@ -176,7 +178,7 @@ function AdminPageContent() {
               Administration de la plateforme
             </h1>
             <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Les comptes, les emails envoyés par Tarmac et les réglages communs à tous les workspaces. Réservé aux administrateurs.
+              Les comptes, les emails envoyés par Tarmac, le dépôt GitHub des nœuds et les réglages communs à tous les workspaces. Réservé aux administrateurs.
             </p>
           </div>
 
@@ -190,6 +192,10 @@ function AdminPageContent() {
                 <Mail className="h-4 w-4" />
                 Emails
               </TabsTrigger>
+              <TabsTrigger value="github" className="gap-1.5">
+                <GitBranch className="h-4 w-4" />
+                GitHub
+              </TabsTrigger>
               <TabsTrigger value="settings" className="gap-1.5">
                 <Settings2 className="h-4 w-4" />
                 Paramètres
@@ -199,6 +205,7 @@ function AdminPageContent() {
 
           {isSuperuser && tab === 'users' && <UsersPanel currentUserId={profile?.id ?? ''} onOpenSettings={() => selectTab('settings')} />}
           {isSuperuser && tab === 'emails' && <EmailsPanel />}
+          {isSuperuser && tab === 'github' && <GithubPanel />}
           {isSuperuser && tab === 'settings' && <SettingsPanel />}
           {!profile && (
             <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">

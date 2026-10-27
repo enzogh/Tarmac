@@ -240,23 +240,31 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
                   Nœud créé: <strong>{onboarding.node.name}</strong> ({onboarding.node.id})
                 </p>
                 <p className="mt-1 text-xs text-emerald-100/80">
-                  Ajoute la clé ci-dessous dans GitHub &gt; Settings &gt; Deploy keys (read-only suffit).
+                  {onboarding.githubDeployKey.registered
+                    ? 'Sa clé de déploiement a été ajoutée automatiquement au dépôt GitHub, en lecture seule. Il ne reste qu’à installer l’agent.'
+                    : 'Ajoute la clé ci-dessous dans GitHub > Settings > Deploy keys (read-only suffit).'}
                 </p>
               </div>
+              {onboarding.githubDeployKey.registrationError && (
+                <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                  L’ajout automatique sur GitHub a échoué : {onboarding.githubDeployKey.registrationError} Ajoute la clé à la main.
+                </p>
+              )}
 
-              <div className="space-y-2 rounded-xl border border-border bg-zinc-900/60 p-4">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-medium text-foreground">Clé publique deploy</p>
-                  <Button type="button" variant="secondary" size="sm" onClick={copyPublicKey}>
-                    {copyState === 'copied' ? (
-                      <>
-                        <Check className="h-3.5 w-3.5" /> Copié
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="h-3.5 w-3.5" /> Copier
-                      </>
-                    )}
+              {!onboarding.githubDeployKey.registered && (
+                <div className="space-y-2 rounded-xl border border-border bg-zinc-900/60 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium text-foreground">Clé publique deploy</p>
+                    <Button type="button" variant="secondary" size="sm" onClick={copyPublicKey}>
+                      {copyState === 'copied' ? (
+                        <>
+                          <Check className="h-3.5 w-3.5" /> Copié
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-3.5 w-3.5" /> Copier
+                        </>
+              )}
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -266,6 +274,7 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
                   {onboarding.githubDeployKey.publicKey}
                 </pre>
               </div>
+              )}
 
               {error && <p className="text-sm text-rose-400">{error}</p>}
 
@@ -274,7 +283,7 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
                   Recommencer
                 </Button>
                 <Button type="button" onClick={handleInstall} disabled={loading}>
-                  J’ai ajouté la clé sur GitHub
+                  {onboarding.githubDeployKey.registered ? 'Installer l’agent' : 'J’ai ajouté la clé sur GitHub'}
                 </Button>
               </DialogFooter>
             </div>

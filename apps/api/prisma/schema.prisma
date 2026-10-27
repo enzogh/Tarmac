@@ -416,6 +416,12 @@ model Node {
   // agent's maintenance tasks (lmdb migration, version upgrade), from the
   // heartbeat - see the agent's dnsServerReport.
   dnsServerState         Json?
+  // Public half of the key the node clones and updates its agent with
+  // ("<type> <base64>"), as its agent reports it - and the id of that key
+  // among the repository's deploy keys on GitHub, once linked. See
+  // GithubDeployKeysService.
+  deployKeyPublic        String?
+  githubDeployKeyId      String?
   // Custom label for <dnsHostname>.tarmac.local when this workspace has a
   // node designated to run the internal DNS zone (see Workspace.
   // internalDnsNode) - null means derive one from `name` instead.

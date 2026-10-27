@@ -4,6 +4,7 @@ import { NodeStatus, Prisma } from '@prisma/client';
 import { AgentTokenService } from '../agents/agent-token.service';
 import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { GithubDeployKeysService } from '../github/github-deploy-keys.service';
 import { scopeWhere, scopeWhereViaNode, WorkspaceScope } from '../auth/workspace.guard';
 import { getControlPlaneVersion, isKnownControlPlaneVersion } from '../common/build-info';
 import { slugify } from '../common/slugify';
@@ -88,6 +89,7 @@ export class NodesService implements OnModuleInit {
     private readonly auditLogsService: AuditLogsService,
     private readonly agentsService: AgentsService,
     private readonly agentTokenService: AgentTokenService,
+    private readonly githubDeployKeys: GithubDeployKeysService,
   ) {}
 
   list(scope: WorkspaceScope) {
@@ -179,6 +181,8 @@ export class NodesService implements OnModuleInit {
   async delete(id: string, scope: WorkspaceScope, actorUserId?: string) {
     await this.assertOwned(id, scope);
     const deleted = await this.prisma.node.delete({ where: { id } });
+    // Its key can't clone the repository anymore once the node is gone.
+    const githubDeployKey = await this.githubDeployKeys.removeNodeKey(deleted);
 
     const uninstall = this.agentsService.triggerAgentUninstall(id);
     if (!uninstall.queued) {
@@ -193,7 +197,7 @@ export class NodesService implements OnModuleInit {
       resourceId: deleted.id,
     });
 
-    return { ...deleted, agentUninstallQueued: uninstall.queued };
+    return { ...deleted, agentUninstallQueued: uninstall.queued, githubDeployKey };
   }
 
   async mute(id: string, minutes: number, scope: WorkspaceScope, actorUserId?: string) {

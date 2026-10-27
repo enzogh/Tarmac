@@ -6,6 +6,8 @@ export interface HeartbeatPayload {
   appliedState?: Record<string, string>;
   system?: Record<string, unknown>;
   dns?: Record<string, unknown>;
+  // Public half of the node's deploy key (see GithubDeployKeysService).
+  deployKey?: string;
   metrics: {
     cpu: number;
     ram: number;

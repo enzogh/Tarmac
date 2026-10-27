@@ -98,7 +98,33 @@ export type NodeOnboardingStartResult = {
     title: string;
     publicKey: string;
     repoUrl: string;
+    // Added to GitHub by Tarmac (GitHub integration set up by a superuser).
+    registered?: boolean;
+    registrationError?: string | null;
   };
+};
+
+export type GithubDeployKeyOverview = {
+  configured: boolean;
+  repository: string | null;
+  tokenHint: string | null;
+  verifiedAt: string | null;
+  lastError: string | null;
+  lastSyncAt: string | null;
+  secretsKeyConfigured: boolean;
+  reachable: boolean;
+  nodes: Array<{
+    id: string;
+    name: string;
+    status: string;
+    workspace: { id: string; name: string };
+    fingerprint: string | null;
+    // unknown: the node's agent hasn't reported its key (older agent, or
+    // a node not set up with a deploy key).
+    keyStatus: 'on_github' | 'missing' | 'unknown';
+    githubKey: { id: string; title: string | null } | null;
+  }>;
+  orphanKeys: Array<{ id: string; title: string; readOnly: boolean; createdAt: string | null; fingerprint: string | null }>;
 };
 
 export type NodeOnboardingInstallResult = {
@@ -1415,6 +1441,12 @@ export const api = {
     emailTemplates: () => request<EmailTemplatePreview[]>('/api/v1/admin/email-templates'),
     sendTestEmail: (id: string) =>
       request<{ sentTo: string }>(`/api/v1/admin/email-templates/${encodeURIComponent(id)}/test`, { method: 'POST' }),
+    github: () => request<GithubDeployKeyOverview>('/api/v1/admin/github'),
+    configureGithub: (payload: { repository: string; token?: string }) =>
+      request<GithubDeployKeyOverview>('/api/v1/admin/github', { method: 'PUT', body: JSON.stringify(payload) }),
+    disconnectGithub: () => request<unknown>('/api/v1/admin/github', { method: 'DELETE' }),
+    deleteGithubKey: (id: string) =>
+      request<GithubDeployKeyOverview>(`/api/v1/admin/github/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     transferWorkspace: (workspaceId: string, userId: string) =>
       request<{ success: boolean }>(`/api/v1/admin/workspaces/${workspaceId}/transfer`, { method: 'POST', body: JSON.stringify({ userId }) }),
   },

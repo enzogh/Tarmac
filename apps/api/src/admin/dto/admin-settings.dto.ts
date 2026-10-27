@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
 export class UpdateAdminSettingsDto {
   // Null goes back to WORKSPACE_CREATION_LIMIT from the environment.
@@ -12,4 +12,16 @@ export class UpdateAdminSettingsDto {
 export class TransferWorkspaceDto {
   @IsString()
   userId!: string;
+}
+
+export class ConfigureGithubDto {
+  @IsString()
+  @MaxLength(200)
+  repository!: string;
+
+  // Omitted: keep the token already saved.
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  token?: string;
 }

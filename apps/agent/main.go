@@ -49,6 +49,8 @@ type heartbeat struct {
 	AppliedState map[string]string `json:"appliedState,omitempty"`
 	// PowerDNS version, backend and maintenance state, on DNS server nodes.
 	Dns *dnsServerReport `json:"dns,omitempty"`
+	// Public half of the deploy key (see deployKeyPublic).
+	DeployKey string `json:"deployKey,omitempty"`
 }
 
 // appliedStates holds, per kind of desired state the control plane pushes on
@@ -1870,9 +1872,7 @@ func updateAgent(payload map[string]interface{}) (string, error) {
 	// commands can't authenticate. Point git at the same deploy key the
 	// onboarding script installs, if present.
 	gitEnv := os.Environ()
-	homeDir, homeErr := os.UserHomeDir()
-	if homeErr == nil {
-		deployKeyPath := envOrDefault("AGENT_DEPLOY_KEY_PATH", filepath.Join(homeDir, ".ssh", "tarmac_deploy_ed25519"))
+	if deployKeyPath := agentDeployKeyPath(); deployKeyPath != "" {
 		if _, statErr := os.Stat(deployKeyPath); statErr == nil {
 			gitEnv = append(gitEnv, fmt.Sprintf(
 				"GIT_SSH_COMMAND=ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new",
@@ -4238,6 +4238,7 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 					System:       &system,
 					AppliedState: appliedStateSnapshot(),
 					Dns:          currentDnsServerReport(),
+					DeployKey:    deployKeyPublic(),
 				},
 			}); err != nil {
 				return err

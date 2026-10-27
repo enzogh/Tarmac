@@ -1,3 +1,4 @@
+import { GithubModule } from '../github/github.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AgentsModule } from '../agents/agents.module';
@@ -7,7 +8,7 @@ import { NodesController } from './nodes.controller';
 import { NodesService } from './nodes.service';
 
 @Module({
-  imports: [AuditLogsModule, ConfigModule, AgentsModule],
+  imports: [AuditLogsModule, ConfigModule, AgentsModule, GithubModule],
   controllers: [NodesController],
   providers: [NodesService, NodeOnboardingService],
   exports: [NodesService],

@@ -1,6 +1,7 @@
 import { forwardRef, Inject, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
+import { normalizePublicKey } from '../github/deploy-key-match';
 import { PrismaService } from '../prisma/prisma.service';
 import { DnsDelegationCheckService } from '../dns/dns-delegation-check.service';
 import { DnsGroupsService } from '../dns/dns-groups.service';
@@ -588,6 +589,7 @@ export class AgentsService implements OnModuleInit {
     }
     const systemInfo = sanitizeSystemInfo(system);
     const dnsServerState = sanitizeDnsServerState(payload.dns);
+    const deployKeyPublic = normalizePublicKey(payload.deployKey);
     if (dnsServerState) await this.alertOnDnsMaintenanceGiveUp(nodeId, dnsServerState);
     const now = new Date();
     const versionFields = version ? { agentVersion: version, agentVersionAt: now } : {};
@@ -606,6 +608,7 @@ export class AgentsService implements OnModuleInit {
           ...versionFields,
           ...(systemInfo ? { systemInfo } : {}),
           dnsServerState: dnsServerState ? (dnsServerState as unknown as Prisma.InputJsonObject) : Prisma.DbNull,
+          ...(deployKeyPublic ? { deployKeyPublic } : {}),
         },
       })
       .catch(async () => {

@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { GithubDeployKeysService } from '../github/github-deploy-keys.service';
 import { AdminService } from './admin.service';
-import { TransferWorkspaceDto, UpdateAdminSettingsDto } from './dto/admin-settings.dto';
+import { ConfigureGithubDto, TransferWorkspaceDto, UpdateAdminSettingsDto } from './dto/admin-settings.dto';
 import { UpdateUserLimitDto } from './dto/update-user-limit.dto';
 
 interface AuthenticatedRequest extends Request {
@@ -12,7 +13,35 @@ interface AuthenticatedRequest extends Request {
 @UseGuards(JwtAuthGuard)
 @Controller('admin')
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly githubDeployKeys: GithubDeployKeysService,
+  ) {}
+
+  // GitHub deploy keys of the nodes (see GithubDeployKeysService).
+  @Get('github')
+  async getGithub(@Req() req: AuthenticatedRequest) {
+    await this.adminService.assertSuperuser(req.user?.userId);
+    return this.githubDeployKeys.sync();
+  }
+
+  @Put('github')
+  async configureGithub(@Body() dto: ConfigureGithubDto, @Req() req: AuthenticatedRequest) {
+    await this.adminService.assertSuperuser(req.user?.userId);
+    return this.githubDeployKeys.configure(dto, req.user?.userId);
+  }
+
+  @Delete('github')
+  async disconnectGithub(@Req() req: AuthenticatedRequest) {
+    await this.adminService.assertSuperuser(req.user?.userId);
+    return this.githubDeployKeys.disconnect(req.user?.userId);
+  }
+
+  @Delete('github/keys/:id')
+  async deleteGithubKey(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    await this.adminService.assertSuperuser(req.user?.userId);
+    return this.githubDeployKeys.deleteOrphanKey(id, req.user?.userId);
+  }
 
   @Get('users')
   async listUsers(@Req() req: AuthenticatedRequest) {
