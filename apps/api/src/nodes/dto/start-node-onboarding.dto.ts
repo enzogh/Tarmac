@@ -6,10 +6,6 @@ export class StartNodeOnboardingDto {
   name!: string;
 
   @IsString()
-  @IsIn(['controller', 'worker'])
-  role!: string;
-
-  @IsString()
   @IsIn(['ovh', 'standard'])
   provider!: 'ovh' | 'standard';
 
@@ -23,16 +19,6 @@ export class StartNodeOnboardingDto {
   @IsString()
   @MinLength(1)
   sshPassword!: string;
-
-  @IsOptional()
-  @IsString()
-  @MinLength(1)
-  repoUrl?: string;
-
-  @IsOptional()
-  @IsString()
-  @MinLength(1)
-  repoRef?: string;
 
   @IsOptional()
   @IsString()

@@ -57,7 +57,8 @@ export class NodeOnboardingService {
 
     const createNodeDto: CreateNodeDto = {
       name: dto.name,
-      role: dto.role,
+      // Onboarded nodes are always workers.
+      role: 'worker',
     };
     const node = await this.nodesService.create(createNodeDto, scope, actorUserId);
 
@@ -82,8 +83,9 @@ export class NodeOnboardingService {
     const onboardingId = randomUUID();
     const now = new Date();
     const expiresAt = new Date(now.getTime() + NodeOnboardingService.ONBOARDING_TTL_MS);
-    const repoUrl = this.normalizeRepoUrl(dto.repoUrl);
-    const repoRef = dto.repoRef?.trim() || 'main';
+    const repoUrl = await this.githubDeployKeys.nodeRepositoryUrl();
+    // Nodes always run main: the branch agent updates follow.
+    const repoRef = 'main';
     this.sessions.set(onboardingId, {
       onboardingId,
       createdAt: now,
@@ -150,16 +152,6 @@ export class NodeOnboardingService {
         this.sessions.delete(sessionId);
       }
     }
-  }
-
-  private normalizeRepoUrl(raw?: string) {
-    const trimmed = raw?.trim();
-    if (!trimmed) return 'git@github.com:enzogh/Tarmac.git';
-    if (trimmed.startsWith('git@')) return trimmed;
-    if (trimmed.startsWith('https://github.com/')) {
-      return `git@github.com:${trimmed.replace('https://github.com/', '').replace(/\.git$/, '')}.git`;
-    }
-    return trimmed;
   }
 
   private toHttpsRepoUrl(repoUrl: string) {

@@ -16,7 +16,6 @@ import {
 } from './ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 
-type NodeRole = 'controller' | 'worker';
 type HostProvider = 'ovh' | 'standard';
 type Step = 'form' | 'deploy-key' | 'installing' | 'done';
 
@@ -29,13 +28,10 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
   const [step, setStep] = useState<Step>('form');
 
   const [name, setName] = useState('storage-1');
-  const [role, setRole] = useState<NodeRole>('worker');
   const [provider, setProvider] = useState<HostProvider>('ovh');
   const [hostIp, setHostIp] = useState('');
   const [sshUsername, setSshUsername] = useState('ubuntu');
   const [sshPassword, setSshPassword] = useState('');
-  const [repoUrl, setRepoUrl] = useState('git@github.com:enzogh/Tarmac.git');
-  const [repoRef, setRepoRef] = useState('main');
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -61,13 +57,10 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
   const reset = () => {
     setStep('form');
     setName('storage-1');
-    setRole('worker');
     setProvider('ovh');
     setHostIp('');
     setSshUsername('ubuntu');
     setSshPassword('');
-    setRepoUrl('git@github.com:enzogh/Tarmac.git');
-    setRepoRef('main');
     setError('');
     setLoading(false);
     setCopyState('idle');
@@ -95,13 +88,10 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
     try {
       const result = await api.nodes.onboardingStart({
         name: name.trim(),
-        role,
         provider,
         hostIp: hostIp.trim(),
         sshUsername: sshUsername.trim(),
         sshPassword,
-        repoUrl: repoUrl.trim(),
-        repoRef: repoRef.trim(),
       });
       setOnboarding(result);
       setStep('deploy-key');
@@ -168,15 +158,7 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="node-role">Rôle</Label>
-                  <Select value={role} onValueChange={(value) => setRole(value as NodeRole)}>
-                    <SelectTrigger id="node-role">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="worker">Worker</SelectItem>
-                      <SelectItem value="controller">Controller</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Input id="node-role" value="Worker" readOnly disabled aria-readonly="true" title="Les nœuds ajoutés ici sont toujours des workers." />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="provider">Hébergeur</Label>
@@ -207,14 +189,6 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
                     onChange={(e) => setSshPassword(e.target.value)}
                     required
                   />
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="repo-url">Repository agent</Label>
-                  <Input id="repo-url" value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)} required />
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="repo-ref">Branch / ref</Label>
-                  <Input id="repo-ref" value={repoRef} onChange={(e) => setRepoRef(e.target.value)} required />
                 </div>
               </div>
 

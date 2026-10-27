@@ -81,13 +81,10 @@ export type SmartHistoryPoint = {
 
 export type NodeOnboardingStartPayload = {
   name: string;
-  role: 'controller' | 'worker';
   provider: 'ovh' | 'standard';
   hostIp: string;
   sshUsername: string;
   sshPassword: string;
-  repoUrl?: string;
-  repoRef?: string;
 };
 
 export type NodeOnboardingStartResult = {

@@ -126,6 +126,14 @@ export class GithubDeployKeysService implements OnModuleInit {
     };
   }
 
+  // The repository nodes clone, over SSH with their deploy key: the one
+  // configured here (where their keys are added), Tarmac's own otherwise.
+  // Never chosen at onboarding time.
+  async nodeRepositoryUrl(): Promise<string> {
+    const config = await this.loadConfig();
+    return `git@github.com:${config?.repository ?? 'enzogh/Tarmac'}.git`;
+  }
+
   // "owner/name", from that or from a GitHub URL (https or ssh).
   static normalizeRepository(raw: string): string | null {
     const trimmed = raw.trim().replace(/\.git$/, '').replace(/\/+$/, '');
