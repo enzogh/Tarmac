@@ -400,6 +400,12 @@ const MODULES: Module[] = [
       },
       { method: 'GET', path: '/dns/zones?groupId=', description: 'Liste les zones, avec leurs enregistrements et les valeurs rattachées à un nœud.' },
       { method: 'POST', path: '/dns/zones', body: 'groupId, name, dnssecEnabled?', description: 'Crée une zone sur le groupe indiqué (DNSSEC activé par défaut).' },
+      {
+        method: 'PATCH',
+        path: '/dns/zones/:id',
+        body: 'dnssecEnabled',
+        description: 'Active ou désactive DNSSEC sur la zone. Désactiver supprime ses clés : retirez d’abord l’enregistrement DS chez le registrar s’il y est publié.',
+      },
       { method: 'POST', path: '/dns/zones/:id/reapply', description: 'Repousse la zone complète sur tous les serveurs du groupe.' },
       { method: 'DELETE', path: '/dns/zones/:id', description: 'Supprime la zone, y compris sur les serveurs secondaires qui en détiennent une copie.' },
       {

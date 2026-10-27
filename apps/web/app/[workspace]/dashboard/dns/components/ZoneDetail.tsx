@@ -191,7 +191,7 @@ export function ZoneDetail({
       <div className="animate-fade-in" key={view}>
         {view === 'records' && <RecordsPanel zone={zone} nodes={nodes} onChanged={onChanged} onNotice={onNotice} />}
         {view === 'nameservers' && <NameserversPanel zone={zone} />}
-        {view === 'dnssec' && <DnssecPanel zone={zone} />}
+        {view === 'dnssec' && <DnssecPanel zone={zone} onChanged={onChanged} onNotice={onNotice} />}
         {view === 'journal' && <ZoneJournal zone={zone} group={group} nodes={nodes} journal={journal} />}
       </div>
     </div>

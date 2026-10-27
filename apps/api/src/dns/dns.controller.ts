@@ -10,6 +10,7 @@ import { DnsZonesService } from './dns-zones.service';
 import { InternalDnsService } from './internal-dns.service';
 import { CreateDnsGroupDto } from './dto/create-dns-group.dto';
 import { CreateDnsZoneDto } from './dto/create-dns-zone.dto';
+import { UpdateDnsZoneDto } from './dto/update-dns-zone.dto';
 import { UpdateDnsGroupDto } from './dto/update-dns-group.dto';
 import { UpsertDnsGroupMemberDto } from './dto/upsert-dns-group-member.dto';
 import { UpsertDnsRecordDto } from './dto/upsert-dns-record.dto';
@@ -118,6 +119,16 @@ export class DnsController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.dnsZonesService.createZone(dto, scope, req.user?.userId);
+  }
+
+  @Patch('zones/:id')
+  updateZone(
+    @Param('id') id: string,
+    @Body() dto: UpdateDnsZoneDto,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.dnsZonesService.updateZone(id, dto, scope, req.user?.userId);
   }
 
   @Post('zones/:id/reapply')

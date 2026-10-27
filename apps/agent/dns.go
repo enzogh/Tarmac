@@ -753,6 +753,29 @@ func migratePdnsBackendToLmdb(ctx context.Context) {
 		log.Printf("dns: lmdb backend migration aborted, cannot read current pdns.conf: %v", err)
 		return
 	}
+	lmdbOnlyConfig, ok := pdnsLmdbOnlyConfig(string(originalConfig))
+	if !ok {
+		if pdnsConfigLaunches(string(originalConfig), "lmdb") {
+			// An earlier migration got all the way through but couldn't
+			// write the marker: pdns already serves from lmdb.
+			if err := writePdnsBackendMarker("lmdb"); err != nil {
+				log.Printf("dns: could not record lmdb backend marker: %v", err)
+			}
+			return
+		}
+		log.Printf("dns: lmdb backend migration aborted, pdns.conf has no \"launch=gsqlite3\" line to replace")
+		return
+	}
+
+	// b2b-migrate moves zones, records, metadata and DNSSEC keys but not
+	// TSIG keys (it reports "Moved 0 TSIG key(s)" with keys present, seen on
+	// 4.5.3): without copying them over, the zone transfers they sign would
+	// all be refused once pdns runs on lmdb.
+	tsigKeys, err := (&pdnsClient{apiKey: apiKey}).fetchTsigKeys(ctx)
+	if err != nil {
+		log.Printf("dns: lmdb backend migration aborted, could not read TSIG keys: %v", err)
+		return
+	}
 
 	restoreOriginalConfig := func(reason string) {
 		log.Printf("dns: lmdb backend migration failed (%s) - rolling back to gsqlite3, no data was touched", reason)
@@ -770,16 +793,21 @@ func migratePdnsBackendToLmdb(ctx context.Context) {
 		return
 	}
 
+	// pdns still runs on gsqlite3 here, so any lmdb file is what an earlier
+	// failed attempt left behind - and b2b-migrate refuses to write into a
+	// backend that already has zones ("Target backend has zone(s), please
+	// clean it first"), which made every later attempt fail the same way.
+	if err := removeLmdbFiles(); err != nil {
+		restoreOriginalConfig(fmt.Sprintf("could not remove the lmdb files of an earlier attempt: %v", err))
+		return
+	}
+
 	// Both backends need to be loaded simultaneously for pdnsutil to read
 	// from one and write into the other - pdns itself stays stopped
 	// throughout, pdnsutil talks to the backend files directly.
 	dualConfig := strings.Replace(
 		string(originalConfig), "launch=gsqlite3", "launch=gsqlite3,lmdb\nlmdb-filename="+pdnsLmdbFilePath, 1,
 	)
-	if dualConfig == string(originalConfig) {
-		restoreOriginalConfig("could not find the expected \"launch=gsqlite3\" line to extend")
-		return
-	}
 	if err := os.WriteFile(pdnsConfigPath, []byte(dualConfig), 0o644); err != nil {
 		restoreOriginalConfig(fmt.Sprintf("could not write dual-backend config: %v", err))
 		return
@@ -790,10 +818,14 @@ func migratePdnsBackendToLmdb(ctx context.Context) {
 		restoreOriginalConfig(fmt.Sprintf("pdnsutil b2b-migrate failed: %s", strings.TrimSpace(string(migrateOut))))
 		return
 	}
+	// pdnsutil ran as root, so it created the lmdb files as root - and
+	// pdns_server runs as pdns (User=pdns in its unit), which needs to open
+	// them read-write.
+	if out, err := exec.CommandContext(ctx, "chown", "-R", "pdns:pdns", filepath.Dir(pdnsLmdbFilePath)).CombinedOutput(); err != nil {
+		restoreOriginalConfig(fmt.Sprintf("could not hand the lmdb files to pdns: %s", strings.TrimSpace(string(out))))
+		return
+	}
 
-	lmdbOnlyConfig := strings.Replace(
-		string(originalConfig), "launch=gsqlite3", "launch=lmdb\nlmdb-filename="+pdnsLmdbFilePath, 1,
-	)
 	if err := os.WriteFile(pdnsConfigPath, []byte(lmdbOnlyConfig), 0o644); err != nil {
 		restoreOriginalConfig(fmt.Sprintf("could not write lmdb-only config: %v", err))
 		return
@@ -813,15 +845,70 @@ func migratePdnsBackendToLmdb(ctx context.Context) {
 		))
 		return
 	}
+	lmdbClient := &pdnsClient{apiKey: apiKey}
+	for _, key := range tsigKeys {
+		if err := lmdbClient.createTsigKey(ctx, key); err != nil {
+			restoreOriginalConfig(fmt.Sprintf("could not copy TSIG key %s: %v", key.Name, err))
+			return
+		}
+	}
 
 	if err := writePdnsBackendMarker("lmdb"); err != nil {
 		log.Printf("dns: migration succeeded but could not persist the lmdb marker, will retry on next restart: %v", err)
 		return
 	}
 	log.Printf(
-		"dns: PowerDNS backend migration to lmdb complete (%d zone(s) verified) - %s is no longer used but was left untouched",
-		len(afterZones), pdnsSqliteDbPath,
+		"dns: PowerDNS backend migration to lmdb complete (%d zone(s) verified, %d TSIG key(s) copied) - %s is no longer used but was left untouched",
+		len(afterZones), len(tsigKeys), pdnsSqliteDbPath,
 	)
+}
+
+// pdnsLmdbOnlyConfig turns a gsqlite3 pdns.conf into its lmdb equivalent.
+// The gsqlite3-* settings have to go with the launch line: pdns refuses to
+// start on a setting of a backend it hasn't loaded ("Fatal error: Trying to
+// set unknown setting 'gsqlite3-database'"), which is what rolled back the
+// first migrations. ok is false without a "launch=gsqlite3" line.
+func pdnsLmdbOnlyConfig(config string) (string, bool) {
+	lines := strings.Split(config, "\n")
+	kept := make([]string, 0, len(lines)+1)
+	ok := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case trimmed == "launch=gsqlite3":
+			kept = append(kept, "launch=lmdb", "lmdb-filename="+pdnsLmdbFilePath)
+			ok = true
+		case strings.HasPrefix(trimmed, "gsqlite3-"):
+		default:
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n"), ok
+}
+
+func pdnsConfigLaunches(config, backend string) bool {
+	for _, line := range strings.Split(config, "\n") {
+		if strings.TrimSpace(line) == "launch="+backend {
+			return true
+		}
+	}
+	return false
+}
+
+// removeLmdbFiles deletes the lmdb database with its shards and lock files
+// (pdns.lmdb, pdns.lmdb-lock, pdns.lmdb-0, pdns.lmdb-0-lock, ...). Only
+// called while pdns is stopped and configured on gsqlite3.
+func removeLmdbFiles() error {
+	matches, err := filepath.Glob(pdnsLmdbFilePath + "*")
+	if err != nil {
+		return err
+	}
+	for _, path := range matches {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 func applyDnsServerGroup(ctx context.Context, payload map[string]interface{}) (string, *dnsServerGroupApplyData, error) {
@@ -973,6 +1060,35 @@ func (c *pdnsClient) request(ctx context.Context, method, path string, body inte
 	return respBody, resp.StatusCode, nil
 }
 
+// zoneSerial is the zone's current SOA serial, 0 when it can't be read.
+func (c *pdnsClient) zoneSerial(ctx context.Context, fqdn string) uint64 {
+	body, status, err := c.request(ctx, http.MethodGet, "/zones/"+url.PathEscape(fqdn)+"?rrsets=false", nil)
+	if err != nil || status != http.StatusOK {
+		return 0
+	}
+	var zone struct {
+		Serial uint64 `json:"serial"`
+	}
+	if json.Unmarshal(body, &zone) != nil {
+		return 0
+	}
+	return zone.Serial
+}
+
+// nextSoaSerial is the serial to write into the SOA applyDnsZone PATCHes.
+// SOA-EDIT-API (DEFAULT) serves max(written + 1, YYYYMMDD01): writing a fixed
+// YYYYMMDD00, as before, pinned the zone at YYYYMMDD01 all day, so no change
+// after the first apply of the day ever reached the secondaries - their
+// serial already matched. Writing the current serial makes every apply bump
+// it, and the NOTIFY that follows has them pull the change.
+func nextSoaSerial(current uint64, now time.Time) uint64 {
+	day, _ := strconv.ParseUint(now.Format("20060102")+"00", 10, 64)
+	if current > day {
+		return current
+	}
+	return day
+}
+
 func (c *pdnsClient) zoneExists(ctx context.Context, fqdn string) bool {
 	_, status, err := c.request(ctx, http.MethodGet, "/zones/"+url.PathEscape(fqdn), nil)
 	return err == nil && status == http.StatusOK
@@ -1039,6 +1155,59 @@ func (c *pdnsClient) setZoneTsigKeys(ctx context.Context, fqdn, field string, ke
 		return err
 	}
 	if status >= 300 {
+		return fmt.Errorf("unexpected status %d: %s", status, strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}
+
+type pdnsTsigKey struct {
+	ID        string `json:"id,omitempty"`
+	Name      string `json:"name"`
+	Algorithm string `json:"algorithm"`
+	Key       string `json:"key"`
+}
+
+// fetchTsigKeys returns every TSIG key with its secret: the list endpoint
+// leaves the secret out, each key has to be read on its own for it.
+func (c *pdnsClient) fetchTsigKeys(ctx context.Context) ([]pdnsTsigKey, error) {
+	body, status, err := c.request(ctx, http.MethodGet, "/tsigkeys", nil)
+	if err != nil {
+		return nil, err
+	}
+	if status >= 300 {
+		return nil, fmt.Errorf("unexpected status %d: %s", status, strings.TrimSpace(string(body)))
+	}
+	var listed []pdnsTsigKey
+	if err := json.Unmarshal(body, &listed); err != nil {
+		return nil, err
+	}
+	keys := make([]pdnsTsigKey, 0, len(listed))
+	for _, entry := range listed {
+		body, status, err := c.request(ctx, http.MethodGet, "/tsigkeys/"+url.PathEscape(entry.ID), nil)
+		if err != nil {
+			return nil, err
+		}
+		if status >= 300 {
+			return nil, fmt.Errorf("reading TSIG key %s: unexpected status %d: %s", entry.Name, status, strings.TrimSpace(string(body)))
+		}
+		var key pdnsTsigKey
+		if err := json.Unmarshal(body, &key); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, nil
+}
+
+// createTsigKey adds a key with its existing secret. A key already there
+// under that name (409) counts as done.
+func (c *pdnsClient) createTsigKey(ctx context.Context, key pdnsTsigKey) error {
+	body := map[string]string{"name": key.Name, "algorithm": key.Algorithm, "key": key.Key}
+	respBody, status, err := c.request(ctx, http.MethodPost, "/tsigkeys", body)
+	if err != nil {
+		return err
+	}
+	if status >= 300 && status != http.StatusConflict {
 		return fmt.Errorf("unexpected status %d: %s", status, strings.TrimSpace(string(respBody)))
 	}
 	return nil
@@ -1133,6 +1302,25 @@ func (c *pdnsClient) enableDnssec(ctx context.Context, fqdn string) error {
 	}
 	if status >= 300 {
 		return fmt.Errorf("%s", strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}
+
+// disableDnssec removes every key of the zone, which makes PowerDNS stop
+// signing it. A no-op on a zone that was never signed.
+func (c *pdnsClient) disableDnssec(ctx context.Context, fqdn string) error {
+	keys, err := c.fetchCryptoKeys(ctx, fqdn)
+	if err != nil {
+		return err
+	}
+	for _, key := range keys {
+		id, ok := key["id"].(float64)
+		if !ok {
+			continue
+		}
+		if err := c.deleteCryptoKey(ctx, fqdn, int(id)); err != nil {
+			return fmt.Errorf("removing key %d: %w", int(id), err)
+		}
 	}
 	return nil
 }
@@ -1344,7 +1532,7 @@ func applyDnsZone(payload map[string]interface{}) (string, error) {
 		"ttl":        3600,
 		"changetype": "REPLACE",
 		"records": []map[string]interface{}{{
-			"content":  fmt.Sprintf("ns1.%s. hostmaster.%s. %s 10800 3600 604800 3600", zoneName, zoneName, time.Now().Format("20060102")+"00"),
+			"content":  fmt.Sprintf("ns1.%s. hostmaster.%s. %d 10800 3600 604800 3600", zoneName, zoneName, nextSoaSerial(client.zoneSerial(ctx, fqdn), time.Now())),
 			"disabled": false,
 		}},
 	}}
@@ -1440,15 +1628,21 @@ func applyDnsZone(payload map[string]interface{}) (string, error) {
 		})
 	}
 
-	if len(rrsets) > 0 {
-		if err := client.patchRrsets(ctx, fqdn, rrsets); err != nil {
-			return "", err
-		}
-	}
-
+	// Keys change before the records: the PATCH below bumps the serial
+	// (SOA-EDIT-API), so secondaries pull the zone again only once it's
+	// signed - or no longer signed - and don't keep serving stale DNSKEY and
+	// RRSIG records from the previous state.
 	if readBool(payload, "dnssecEnabled") {
 		if err := client.enableDnssec(ctx, fqdn); err != nil {
 			log.Printf("dns: enabling DNSSEC for %s failed: %v", zoneName, err)
+		}
+	} else if err := client.disableDnssec(ctx, fqdn); err != nil {
+		log.Printf("dns: disabling DNSSEC for %s failed: %v", zoneName, err)
+	}
+
+	if len(rrsets) > 0 {
+		if err := client.patchRrsets(ctx, fqdn, rrsets); err != nil {
+			return "", err
 		}
 	}
 

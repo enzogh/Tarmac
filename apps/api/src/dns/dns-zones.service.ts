@@ -5,6 +5,7 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDnsZoneDto } from './dto/create-dns-zone.dto';
+import { UpdateDnsZoneDto } from './dto/update-dns-zone.dto';
 import { DnsGroupsService } from './dns-groups.service';
 
 // DNS zones - lifecycle only; record CRUD lives in DnsRecordsService,
@@ -52,6 +53,26 @@ export class DnsZonesService {
       details: dto as unknown as Prisma.InputJsonValue,
     });
     return created;
+  }
+
+  // Turning DNSSEC on or off re-applies the whole zone: the primary signs
+  // it or drops its keys, and secondaries follow on the next transfer.
+  async updateZone(id: string, dto: UpdateDnsZoneDto, scope: WorkspaceScope, actorUserId?: string) {
+    const zone = await this.assertZoneOwned(id, scope);
+    if (dto.dnssecEnabled === undefined || dto.dnssecEnabled === zone.dnssecEnabled) return zone;
+    const updated = await this.prisma.dnsZone.update({
+      where: { id },
+      data: { dnssecEnabled: dto.dnssecEnabled, status: 'pending' },
+    });
+    await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
+      actorUserId,
+      action: dto.dnssecEnabled ? 'dns.zone.dnssec.enable' : 'dns.zone.dnssec.disable',
+      resourceType: 'dns_zone',
+      resourceId: id,
+      details: { name: zone.name },
+    });
+    return updated;
   }
 
   async deleteZone(id: string, scope: WorkspaceScope, actorUserId?: string) {

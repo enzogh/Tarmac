@@ -113,8 +113,8 @@ export function ZoneDialog({
             <span>
               <span className="block text-sm font-medium text-foreground">Signer la zone avec DNSSEC</span>
               <span className="block text-xs text-muted-foreground">
-                Recommandé : protège vos visiteurs contre les réponses DNS falsifiées. Ce choix ne se modifie pas après la
-                création.
+                Recommandé : protège vos visiteurs contre les réponses DNS falsifiées. Demande que votre registrar
+                accepte un enregistrement DS ; modifiable plus tard dans l&apos;onglet DNSSEC du domaine.
               </span>
             </span>
           </label>

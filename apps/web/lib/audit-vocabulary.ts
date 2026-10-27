@@ -119,6 +119,8 @@ const ACTION_VERB: Record<string, string> = {
   'dns.zone.create': 'a créé la zone DNS',
   'dns.zone.delete': 'a supprimé la zone DNS',
   'dns.zone.reapply': 'a redéployé la zone DNS',
+  'dns.zone.dnssec.enable': 'a activé DNSSEC sur la zone DNS',
+  'dns.zone.dnssec.disable': 'a désactivé DNSSEC sur la zone DNS',
   'dns.record.upsert': 'a enregistré l’entrée DNS',
   'dns.record.delete': 'a supprimé l’entrée DNS',
   'migration.create': 'a créé la migration',

@@ -1088,6 +1088,8 @@ export const api = {
         request<DnsZoneItem>('/api/v1/dns/zones', { method: 'POST', body: JSON.stringify(payload) }),
       delete: (id: string) => request<void>(`/api/v1/dns/zones/${id}`, { method: 'DELETE' }),
       reapply: (id: string) => request<DnsZoneItem>(`/api/v1/dns/zones/${id}/reapply`, { method: 'POST' }),
+      update: (id: string, payload: { dnssecEnabled?: boolean }) =>
+        request<DnsZoneItem>(`/api/v1/dns/zones/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
       getDnssecKeys: (zoneId: string) =>
         request<{ dsRecords: string[]; dnskeyRecords: string[] }>(`/api/v1/dns/zones/${zoneId}/dnssec`),
       getDelegation: (zoneId: string) =>
