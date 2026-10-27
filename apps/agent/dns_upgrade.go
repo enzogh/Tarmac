@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -258,10 +259,19 @@ func pdnsSupportsCatalog() bool {
 	return pdnsVersionAtLeast(4, 7)
 }
 
+// pdnsInventory is what an upgrade step must leave intact: the zones and
+// the TSIG keys pdns serves, by name.
 type pdnsInventory struct {
-	zones, tsigKeys int
+	zones, tsigKeys string
+	zoneCount       int
+	tsigKeyCount    int
 }
 
+// readPdnsInventory leaves out the keys of DNS groups this node no longer
+// belongs to: they're cleaned up anyway (removeOrphanTsigKeys), and the
+// lmdb conversion drops one 4.5 lists but can't read (seen in production),
+// which must not fail the upgrade. The group's own key still has to make
+// it through, as every other key.
 func readPdnsInventory(ctx context.Context, apiKey string) (pdnsInventory, error) {
 	zones, err := fetchPdnsZoneNames(ctx, apiKey)
 	if err != nil {
@@ -271,7 +281,24 @@ func readPdnsInventory(ctx context.Context, apiKey string) (pdnsInventory, error
 	if err != nil {
 		return pdnsInventory{}, err
 	}
-	return pdnsInventory{zones: len(zones), tsigKeys: len(keys)}, nil
+	groupKey := ""
+	if role, ok := readDnsRole(); ok {
+		groupKey = tsigKeyName(role.groupID)
+	}
+	keyNames := []string{}
+	for _, key := range keys {
+		name := strings.TrimSuffix(key.Name, ".")
+		if strings.HasPrefix(name, "tarmac-dns-") && name != groupKey {
+			continue
+		}
+		keyNames = append(keyNames, name)
+	}
+	sort.Strings(zones)
+	sort.Strings(keyNames)
+	return pdnsInventory{
+		zones: strings.Join(zones, ","), tsigKeys: strings.Join(keyNames, ","),
+		zoneCount: len(zones), tsigKeyCount: len(keyNames),
+	}, nil
 }
 
 // waitPdnsInventory waits for pdns to answer its API after a (re)start and
@@ -566,7 +593,7 @@ func upgradePdns(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("backup before upgrade failed: %w", err)
 	}
-	log.Printf("dns: upgrading PowerDNS %s to 5.1 (%d zone(s), %d TSIG key(s), backup in %s)", originalVersion, before.zones, before.tsigKeys, backup)
+	log.Printf("dns: upgrading PowerDNS %s to 5.1 (%d zone(s), TSIG key(s) %q, backup in %s)", originalVersion, before.zoneCount, before.tsigKeys, backup)
 
 	// pdns.conf without the settings 4.9 removed: installing a package
 	// restarts pdns with whatever config is in place.
@@ -623,11 +650,11 @@ func upgradePdns(ctx context.Context) error {
 		if err != nil {
 			return rollback(fmt.Errorf("pdns %s does not answer: %w", pdnsInstalledVersion(), err))
 		}
-		if after != before {
-			return rollback(fmt.Errorf("pdns %s serves %d zone(s) and %d TSIG key(s) instead of %d and %d",
+		if after.zones != before.zones || after.tsigKeys != before.tsigKeys {
+			return rollback(fmt.Errorf("pdns %s serves zones [%s] and TSIG keys [%s] instead of [%s] and [%s]",
 				pdnsInstalledVersion(), after.zones, after.tsigKeys, before.zones, before.tsigKeys))
 		}
-		log.Printf("dns: PowerDNS %s running, %d zone(s) and %d TSIG key(s) verified", pdnsInstalledVersion(), after.zones, after.tsigKeys)
+		log.Printf("dns: PowerDNS %s running, %d zone(s) and %d TSIG key(s) verified", pdnsInstalledVersion(), after.zoneCount, after.tsigKeyCount)
 	}
 	return nil
 }
