@@ -5,6 +5,7 @@ export interface HeartbeatPayload {
   // successfully (see AgentsService.appliedStateHash).
   appliedState?: Record<string, string>;
   system?: Record<string, unknown>;
+  dns?: Record<string, unknown>;
   metrics: {
     cpu: number;
     ram: number;
@@ -83,6 +84,8 @@ export interface CommandPayload {
     | 'command.apply_dns_server_group'
     | 'command.apply_dns_zone'
     | 'command.apply_dns_zone_slave'
+    | 'command.dns_zone_fingerprint'
+    | 'command.dns_maintenance'
     | 'command.remove_dns_zone'
     | 'command.uninstall_dns_node'
     | 'command.dns_get_zone_keys'
@@ -141,6 +144,8 @@ export interface CommandResultPayload {
     | 'dns_zone'
     | 'dns_zone_slave'
     | 'dns_zone_keys'
+    | 'dns_zone_fingerprint'
+    | 'dns_maintenance'
     | 'dns_node'
     | 'internal_dns'
     | 'internal_dns_route'

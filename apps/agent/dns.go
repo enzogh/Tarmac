@@ -538,11 +538,12 @@ func writePdnsConfig(apiKey string, allowAxfrIps []string, backend string) error
 		// zero further logging (confirmed in production: a manual `dig
 		// axfr` to the same primary worked instantly, proving the network/
 		// ACL side was always fine - only PowerDNS's own retrieval
-		// mechanism was silently inert). "master"/"slave" is the
-		// terminology that works across all PowerDNS versions in the
-		// field; "primary"/"secondary" are the newer aliases from 4.5+.
-		"master=yes",
-		"slave=yes",
+		// mechanism was silently inert). "primary"/"secondary" rather than
+		// the old "master"/"slave": both work on the distribution's 4.5,
+		// but 4.9 removed the old names, and pdns refuses to start on a
+		// setting it doesn't know.
+		"primary=yes",
+		"secondary=yes",
 		"allow-axfr-ips="+strings.Join(append([]string{"127.0.0.1"}, allowAxfrIps...), ","),
 		// distributor-threads defaults to 3 regardless of the machine's real
 		// core count (confirmed against the actual shipped default via a
@@ -564,6 +565,13 @@ func writePdnsConfig(apiKey string, allowAxfrIps []string, backend string) error
 	)
 	if len(allowAxfrIps) > 0 {
 		lines = append(lines, "also-notify="+strings.Join(allowAxfrIps, ","))
+	}
+	if pdnsVersionAtLeast(5, 1) {
+		// 5.1 refuses LUA records from the API and from zone transfers
+		// unless told otherwise - isGeo records are LUA, written over the
+		// API on the primary and transferred to secondaries. Unknown to
+		// earlier versions, which would refuse to start on it.
+		lines = append(lines, "enable-lua-record-updates=yes")
 	}
 	content := strings.Join(lines, "\n") + "\n"
 	return os.WriteFile(pdnsConfigPath, []byte(content), 0o644)
@@ -715,9 +723,9 @@ func fetchPdnsZoneNames(ctx context.Context, apiKey string) ([]string, error) {
 // on gsqlite3 - so even if pdnsutil's exact behavior here turns out to
 // differ from what's assumed, the worst case is a failed, rolled-back
 // attempt visible in the Journal, not broken DNS.
-func migratePdnsBackendToLmdb(ctx context.Context) {
+func migratePdnsBackendToLmdb(ctx context.Context) error {
 	if readPdnsBackend() != "gsqlite3" {
-		return
+		return nil
 	}
 	if _, err := os.Stat(pdnsSqliteDbPath); err != nil {
 		// Nothing was ever migrated from - either this node was never
@@ -726,32 +734,32 @@ func migratePdnsBackendToLmdb(ctx context.Context) {
 		if err := writePdnsBackendMarker("lmdb"); err != nil {
 			log.Printf("dns: could not record lmdb backend marker: %v", err)
 		}
-		return
+		return nil
 	}
 
 	log.Printf("dns: migrating PowerDNS backend from gsqlite3 to lmdb for better query response time")
 
 	if _, err := ensureAgentSystemPackages(ctx, []string{"pdns-backend-lmdb"}); err != nil {
 		log.Printf("dns: lmdb backend migration aborted, cannot install pdns-backend-lmdb: %v", err)
-		return
+		return fmt.Errorf("cannot install pdns-backend-lmdb: %v", err)
 	}
 
 	apiKey, err := ensurePdnsApiKey()
 	if err != nil {
 		log.Printf("dns: lmdb backend migration aborted: %v", err)
-		return
+		return err
 	}
 
 	beforeZones, err := fetchPdnsZoneNames(ctx, apiKey)
 	if err != nil {
 		log.Printf("dns: lmdb backend migration aborted, could not read current zone list: %v", err)
-		return
+		return fmt.Errorf("could not read current zone list: %v", err)
 	}
 
 	originalConfig, err := os.ReadFile(pdnsConfigPath)
 	if err != nil {
 		log.Printf("dns: lmdb backend migration aborted, cannot read current pdns.conf: %v", err)
-		return
+		return fmt.Errorf("cannot read current pdns.conf: %v", err)
 	}
 	lmdbOnlyConfig, ok := pdnsLmdbOnlyConfig(string(originalConfig))
 	if !ok {
@@ -761,10 +769,10 @@ func migratePdnsBackendToLmdb(ctx context.Context) {
 			if err := writePdnsBackendMarker("lmdb"); err != nil {
 				log.Printf("dns: could not record lmdb backend marker: %v", err)
 			}
-			return
+			return nil
 		}
 		log.Printf("dns: lmdb backend migration aborted, pdns.conf has no \"launch=gsqlite3\" line to replace")
-		return
+		return fmt.Errorf("pdns.conf has no \"launch=gsqlite3\" line to replace")
 	}
 
 	// b2b-migrate moves zones, records, metadata and DNSSEC keys but not
@@ -774,23 +782,22 @@ func migratePdnsBackendToLmdb(ctx context.Context) {
 	tsigKeys, err := (&pdnsClient{apiKey: apiKey}).fetchTsigKeys(ctx)
 	if err != nil {
 		log.Printf("dns: lmdb backend migration aborted, could not read TSIG keys: %v", err)
-		return
+		return fmt.Errorf("could not read TSIG keys: %v", err)
 	}
 
-	restoreOriginalConfig := func(reason string) {
+	restoreOriginalConfig := func(reason string) error {
 		log.Printf("dns: lmdb backend migration failed (%s) - rolling back to gsqlite3, no data was touched", reason)
 		if err := os.WriteFile(pdnsConfigPath, originalConfig, 0o644); err != nil {
 			log.Printf("dns: could not restore original pdns.conf during rollback: %v", err)
-			return
-		}
-		if out, err := exec.CommandContext(ctx, "systemctl", "restart", "pdns").CombinedOutput(); err != nil {
+		} else if out, err := exec.CommandContext(ctx, "systemctl", "restart", "pdns").CombinedOutput(); err != nil {
 			log.Printf("dns: could not restart pdns after rollback: %s", strings.TrimSpace(string(out)))
 		}
+		return errors.New(reason)
 	}
 
 	if out, err := exec.CommandContext(ctx, "systemctl", "stop", "pdns").CombinedOutput(); err != nil {
 		log.Printf("dns: lmdb backend migration aborted, cannot stop pdns: %s", strings.TrimSpace(string(out)))
-		return
+		return fmt.Errorf("cannot stop pdns: %s", strings.TrimSpace(string(out)))
 	}
 
 	// pdns still runs on gsqlite3 here, so any lmdb file is what an earlier
@@ -798,8 +805,7 @@ func migratePdnsBackendToLmdb(ctx context.Context) {
 	// backend that already has zones ("Target backend has zone(s), please
 	// clean it first"), which made every later attempt fail the same way.
 	if err := removeLmdbFiles(); err != nil {
-		restoreOriginalConfig(fmt.Sprintf("could not remove the lmdb files of an earlier attempt: %v", err))
-		return
+		return restoreOriginalConfig(fmt.Sprintf("could not remove the lmdb files of an earlier attempt: %v", err))
 	}
 
 	// Both backends need to be loaded simultaneously for pdnsutil to read
@@ -809,58 +815,52 @@ func migratePdnsBackendToLmdb(ctx context.Context) {
 		string(originalConfig), "launch=gsqlite3", "launch=gsqlite3,lmdb\nlmdb-filename="+pdnsLmdbFilePath, 1,
 	)
 	if err := os.WriteFile(pdnsConfigPath, []byte(dualConfig), 0o644); err != nil {
-		restoreOriginalConfig(fmt.Sprintf("could not write dual-backend config: %v", err))
-		return
+		return restoreOriginalConfig(fmt.Sprintf("could not write dual-backend config: %v", err))
 	}
 
 	migrateOut, migrateErr := exec.CommandContext(ctx, "pdnsutil", "b2b-migrate", "gsqlite3", "lmdb").CombinedOutput()
 	if migrateErr != nil || strings.Contains(strings.ToLower(string(migrateOut)), "error") {
-		restoreOriginalConfig(fmt.Sprintf("pdnsutil b2b-migrate failed: %s", strings.TrimSpace(string(migrateOut))))
-		return
+		return restoreOriginalConfig(fmt.Sprintf("pdnsutil b2b-migrate failed: %s", strings.TrimSpace(string(migrateOut))))
 	}
 	// pdnsutil ran as root, so it created the lmdb files as root - and
 	// pdns_server runs as pdns (User=pdns in its unit), which needs to open
 	// them read-write.
 	if out, err := exec.CommandContext(ctx, "chown", "-R", "pdns:pdns", filepath.Dir(pdnsLmdbFilePath)).CombinedOutput(); err != nil {
-		restoreOriginalConfig(fmt.Sprintf("could not hand the lmdb files to pdns: %s", strings.TrimSpace(string(out))))
-		return
+		return restoreOriginalConfig(fmt.Sprintf("could not hand the lmdb files to pdns: %s", strings.TrimSpace(string(out))))
 	}
 
 	if err := os.WriteFile(pdnsConfigPath, []byte(lmdbOnlyConfig), 0o644); err != nil {
-		restoreOriginalConfig(fmt.Sprintf("could not write lmdb-only config: %v", err))
-		return
+		return restoreOriginalConfig(fmt.Sprintf("could not write lmdb-only config: %v", err))
 	}
 
 	if out, err := exec.CommandContext(ctx, "systemctl", "restart", "pdns").CombinedOutput(); err != nil {
-		restoreOriginalConfig(fmt.Sprintf("pdns would not start on lmdb: %s", strings.TrimSpace(string(out))))
-		return
+		return restoreOriginalConfig(fmt.Sprintf("pdns would not start on lmdb: %s", strings.TrimSpace(string(out))))
 	}
 
 	// Give pdns a moment to come fully up before hitting its API.
 	time.Sleep(2 * time.Second)
 	afterZones, err := fetchPdnsZoneNames(ctx, apiKey)
 	if err != nil || len(afterZones) != len(beforeZones) {
-		restoreOriginalConfig(fmt.Sprintf(
+		return restoreOriginalConfig(fmt.Sprintf(
 			"post-migration zone count mismatch (before=%d, after=%d, err=%v)", len(beforeZones), len(afterZones), err,
 		))
-		return
 	}
 	lmdbClient := &pdnsClient{apiKey: apiKey}
 	for _, key := range tsigKeys {
 		if err := lmdbClient.createTsigKey(ctx, key); err != nil {
-			restoreOriginalConfig(fmt.Sprintf("could not copy TSIG key %s: %v", key.Name, err))
-			return
+			return restoreOriginalConfig(fmt.Sprintf("could not copy TSIG key %s: %v", key.Name, err))
 		}
 	}
 
 	if err := writePdnsBackendMarker("lmdb"); err != nil {
 		log.Printf("dns: migration succeeded but could not persist the lmdb marker, will retry on next restart: %v", err)
-		return
+		return nil
 	}
 	log.Printf(
 		"dns: PowerDNS backend migration to lmdb complete (%d zone(s) verified, %d TSIG key(s) copied) - %s is no longer used but was left untouched",
 		len(afterZones), len(tsigKeys), pdnsSqliteDbPath,
 	)
+	return nil
 }
 
 // pdnsLmdbOnlyConfig turns a gsqlite3 pdns.conf into its lmdb equivalent.
@@ -1016,8 +1016,13 @@ func applyDnsServerGroup(ctx context.Context, payload map[string]interface{}) (s
 	}
 
 	if err := os.MkdirAll(filepath.Dir(dnsMarkerPath), 0o755); err == nil {
-		_ = os.WriteFile(dnsMarkerPath, []byte(fmt.Sprintf("groupId=%s\nnodeId=%s\nrole=%s\n", groupID, dnsNodeID, role)), 0o600)
+		marker := fmt.Sprintf("groupId=%s\nnodeId=%s\nrole=%s\n", groupID, dnsNodeID, role)
+		if role != "primary" {
+			marker += "primaryVlanIp=" + readString(payload, "primaryVlanIp") + "\n"
+		}
+		_ = os.WriteFile(dnsMarkerPath, []byte(marker), 0o600)
 	}
+	reconcileDnsGroupRole(ctx)
 
 	return fmt.Sprintf("PowerDNS configured as %s for group %s", role, groupID), data, nil
 }
@@ -1652,6 +1657,15 @@ func applyDnsZone(payload map[string]interface{}) (string, error) {
 	if groupID := readString(payload, "groupId"); groupID != "" {
 		if err := client.setZoneTsigKeys(ctx, fqdn, "master_tsig_key_ids", []string{tsigKeyName(groupID)}); err != nil {
 			log.Printf("dns: could not allow TSIG-signed transfers of zone %s, secondaries signing their pulls will be refused: %v", zoneName, err)
+		}
+		// Listed in the group's catalog, secondaries create the zone on
+		// their own (see dns_catalog.go).
+		if pdnsSupportsCatalog() {
+			if catalog, err := client.ensureCatalogProducer(ctx, groupID); err != nil {
+				log.Printf("dns: could not set up the catalog zone: %v", err)
+			} else if err := client.putZone(ctx, fqdn, map[string]interface{}{"catalog": catalog}); err != nil {
+				log.Printf("dns: could not list zone %s in the catalog: %v", zoneName, err)
+			}
 		}
 	}
 
@@ -3003,12 +3017,13 @@ func runDnsStartupRecheck() {
 	installCancel()
 
 	// Runs on every restart (including the one an agent update triggers),
-	// so a still-on-gsqlite3 node gets migrated to lmdb for better query
-	// response time automatically, with no separate command needed - see
-	// migratePdnsBackendToLmdb for the safety net.
-	migrateCtx, migrateCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	migratePdnsBackendToLmdb(migrateCtx)
-	migrateCancel()
+	// so a still-on-gsqlite3 node gets migrated to lmdb, then upgraded to
+	// the PowerDNS release this agent targets, with no separate command
+	// needed - see migratePdnsBackendToLmdb and upgradePdns for the safety
+	// nets, and runPdnsTask for the attempt budget.
+	maintenanceCtx, maintenanceCancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	runPdnsMaintenance(maintenanceCtx)
+	maintenanceCancel()
 
 	// Same reasoning: a pdns.conf-affecting agent update (new static
 	// setting, e.g. a backend-specific dnssec flag) must take effect on its
@@ -3026,4 +3041,9 @@ func runDnsStartupRecheck() {
 	ensureGeoipMmdbFresh(geoipCtx)
 	geoipCancel()
 	startGeoipMmdbRefreshTicker(context.Background())
+
+	roleCtx, roleCancel := context.WithTimeout(context.Background(), time.Minute)
+	reconcileDnsGroupRole(roleCtx)
+	roleCancel()
+	startDnsGroupRoleTicker(context.Background())
 }

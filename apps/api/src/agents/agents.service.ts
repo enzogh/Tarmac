@@ -66,6 +66,13 @@ type PendingPingRequest = {
   reject: (reason: Error) => void;
   timeout: NodeJS.Timeout;
 };
+export type DnsZoneFingerprint = { serial: number; fingerprint: string; records: number };
+type PendingDnsZoneFingerprintRequest = {
+  nodeId: string;
+  resolve: (value: DnsZoneFingerprint) => void;
+  reject: (reason: Error) => void;
+  timeout: NodeJS.Timeout;
+};
 type PendingDnsZoneKeysRequest = {
   nodeId: string;
   resolve: (value: { dsRecords: string[]; dnskeyRecords: string[] }) => void;
@@ -119,6 +126,7 @@ export class AgentsService implements OnModuleInit {
   private readonly pendingTracerouteRequests = new Map<string, PendingTracerouteRequest>();
   private readonly pendingPingRequests = new Map<string, PendingPingRequest>();
   private readonly pendingDnsZoneKeysRequests = new Map<string, PendingDnsZoneKeysRequest>();
+  private readonly pendingDnsZoneFingerprintRequests = new Map<string, PendingDnsZoneFingerprintRequest>();
   private readonly smartAlertAt = new Map<string, number>();
 
   private normalizeFailureMessage(message?: string | null) {
@@ -398,6 +406,12 @@ export class AgentsService implements OnModuleInit {
       request.reject(new Error(`node ${nodeId} disconnected`));
       this.pendingDnsZoneKeysRequests.delete(requestId);
     }
+    for (const [requestId, request] of this.pendingDnsZoneFingerprintRequests.entries()) {
+      if (request.nodeId !== nodeId) continue;
+      clearTimeout(request.timeout);
+      request.reject(new Error(`node ${nodeId} disconnected`));
+      this.pendingDnsZoneFingerprintRequests.delete(requestId);
+    }
   }
 
   isConnected(nodeId?: string | null) {
@@ -573,6 +587,8 @@ export class AgentsService implements OnModuleInit {
       this.appliedStates.delete(nodeId);
     }
     const systemInfo = sanitizeSystemInfo(system);
+    const dnsServerState = sanitizeDnsServerState(payload.dns);
+    if (dnsServerState) await this.alertOnDnsMaintenanceGiveUp(nodeId, dnsServerState);
     const now = new Date();
     const versionFields = version ? { agentVersion: version, agentVersionAt: now } : {};
 
@@ -589,6 +605,7 @@ export class AgentsService implements OnModuleInit {
           overlaySshUser: overlay?.sshUser,
           ...versionFields,
           ...(systemInfo ? { systemInfo } : {}),
+          dnsServerState: dnsServerState ? (dnsServerState as unknown as Prisma.InputJsonObject) : Prisma.DbNull,
         },
       })
       .catch(async () => {
@@ -1102,6 +1119,27 @@ export class AgentsService implements OnModuleInit {
         // fail this command-result handler.
         void this.dnsDelegationCheckService.checkZoneUnscoped(result.resourceId);
       }
+      return;
+    }
+
+    if (result.resourceType === 'dns_zone_fingerprint') {
+      const pending = this.pendingDnsZoneFingerprintRequests.get(result.resourceId);
+      if (!pending || pending.nodeId !== nodeId) {
+        if (pending) this.logCrossWorkspaceAttempt(nodeId, result.resourceType, result.resourceId);
+        return;
+      }
+      clearTimeout(pending.timeout);
+      this.pendingDnsZoneFingerprintRequests.delete(result.resourceId);
+      const data = result.data as { serial?: unknown; fingerprint?: unknown; records?: unknown } | undefined;
+      if (!result.success || typeof data?.fingerprint !== 'string') {
+        pending.reject(new Error(result.message ?? 'failed to fingerprint zone'));
+        return;
+      }
+      pending.resolve({
+        serial: typeof data.serial === 'number' ? data.serial : 0,
+        fingerprint: data.fingerprint,
+        records: typeof data.records === 'number' ? data.records : 0,
+      });
       return;
     }
 
@@ -1771,6 +1809,64 @@ export class AgentsService implements OnModuleInit {
     });
   }
 
+  // The zone's content as one server holds it, hashed by its agent - lets
+  // the sync check compare primary and secondaries beyond the SOA serial.
+  requestDnsZoneFingerprint(nodeId: string, zoneName: string, timeoutMs = 15000): Promise<DnsZoneFingerprint> {
+    const requestId = `dns-fp:${nodeId}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingDnsZoneFingerprintRequests.delete(requestId);
+        reject(new Error('zone fingerprint timeout'));
+      }, timeoutMs);
+
+      this.pendingDnsZoneFingerprintRequests.set(requestId, { nodeId, resolve, reject, timeout });
+
+      const sent = this.sendCommand(nodeId, {
+        type: 'command.dns_zone_fingerprint',
+        payload: { requestId, zoneName },
+      });
+
+      if (!sent) {
+        clearTimeout(timeout);
+        this.pendingDnsZoneFingerprintRequests.delete(requestId);
+        reject(new Error(`node ${nodeId} is offline`));
+      }
+    });
+  }
+
+  // One alert when the agent stops retrying a PowerDNS maintenance task on
+  // its own - from then on nothing happens until someone retries it.
+  private async alertOnDnsMaintenanceGiveUp(nodeId: string, state: DnsServerState) {
+    const gaveUp = (s: DnsServerState | null, task: string) => {
+      const entry = s?.tasks[task];
+      return !!entry && entry.status === 'failed' && entry.attempts >= s!.maxAttempts;
+    };
+    const tasks = Object.keys(state.tasks).filter((task) => gaveUp(state, task));
+    if (tasks.length === 0) return;
+    const node = await this.prisma.node.findUnique({ where: { id: nodeId }, select: { name: true, workspaceId: true, dnsServerState: true } });
+    if (!node) return;
+    const previous = node.dnsServerState as DnsServerState | null;
+    for (const task of tasks) {
+      if (gaveUp(previous, task)) continue;
+      const label = task === 'upgrade' ? 'La mise à jour de PowerDNS' : 'La migration de la base PowerDNS vers lmdb';
+      await this.prisma.alert.create({
+        data: {
+          workspaceId: node.workspaceId,
+          nodeId,
+          severity: 'high',
+          message: `${label} a échoué ${state.maxAttempts} fois sur ${node.name} : l'agent ne réessaiera plus seul. Dernière erreur : ${state.tasks[task].error ?? 'inconnue'}`,
+        },
+      });
+    }
+  }
+
+  // Runs the node's PowerDNS maintenance now: the version upgrade when
+  // asked, or a retry of a task the agent gave up on.
+  requestDnsMaintenance(nodeId: string, upgrade: boolean) {
+    return this.sendCommand(nodeId, { type: 'command.dns_maintenance', payload: { upgrade } });
+  }
+
   async handleAgentUninstall(nodeId: string) {
     const memberships = await this.prisma.vlanMember.findMany({
       where: { nodeId },
@@ -2095,6 +2191,42 @@ export class AgentsService implements OnModuleInit {
 
 // Keeps only the known fields, with the expected types: this lands in the
 // database and in every dashboard as-is.
+export type DnsServerTask = { status: string; attempts: number; error: string | null; updatedAt: string | null };
+export type DnsServerState = {
+  pdnsVersion: string;
+  backend: string;
+  catalog: boolean;
+  maxAttempts: number;
+  tasks: Record<string, DnsServerTask>;
+};
+
+function sanitizeDnsServerState(raw: unknown): DnsServerState | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const source = raw as Record<string, unknown>;
+  const text = (value: unknown, max: number) => (typeof value === 'string' ? value.slice(0, max) : '');
+  const tasks: Record<string, DnsServerTask> = {};
+  if (source.tasks && typeof source.tasks === 'object') {
+    for (const name of ['lmdb', 'upgrade']) {
+      const task = (source.tasks as Record<string, unknown>)[name];
+      if (!task || typeof task !== 'object') continue;
+      const entry = task as Record<string, unknown>;
+      tasks[name] = {
+        status: text(entry.status, 20),
+        attempts: typeof entry.attempts === 'number' && entry.attempts >= 0 ? entry.attempts : 0,
+        error: text(entry.error, 600) || null,
+        updatedAt: text(entry.updatedAt, 40) || null,
+      };
+    }
+  }
+  return {
+    pdnsVersion: text(source.pdnsVersion, 60),
+    backend: text(source.backend, 20),
+    catalog: source.catalog === true,
+    maxAttempts: typeof source.maxAttempts === 'number' && source.maxAttempts > 0 ? source.maxAttempts : 3,
+    tasks,
+  };
+}
+
 function sanitizeSystemInfo(raw: unknown): Prisma.InputJsonObject | null {
   if (!raw || typeof raw !== 'object') return null;
   const source = raw as Record<string, unknown>;

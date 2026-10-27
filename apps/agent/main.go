@@ -47,6 +47,8 @@ type heartbeat struct {
 	// appliedStates). Lets the control plane skip re-sending a command whose
 	// state this node already has.
 	AppliedState map[string]string `json:"appliedState,omitempty"`
+	// PowerDNS version, backend and maintenance state, on DNS server nodes.
+	Dns *dnsServerReport `json:"dns,omitempty"`
 }
 
 // appliedStates holds, per kind of desired state the control plane pushes on
@@ -2107,6 +2109,7 @@ func ensureAgentSystemPackages(ctx context.Context, packages []string) ([]string
 		"smartmontools":        func() bool { return commandExists("smartctl") },
 		"pdns-server":          func() bool { return commandExists("pdns_server") },
 		"pdns-backend-sqlite3": func() bool { return pdnsSqliteBackendInstalled() },
+		"sqlite3":              func() bool { return commandExists("sqlite3") },
 	}
 
 	for _, pkg := range packages {
@@ -4036,6 +4039,10 @@ func handleCommand(ctx context.Context, cmd commandPayload, onProgress func(prog
 		handleResolveInternalDnsForwarderConflictCommand(ctx, cmd, &result)
 	case "command.dns_get_zone_keys":
 		handleDnsGetZoneKeysCommand(cmd, &result)
+	case "command.dns_zone_fingerprint":
+		handleDnsZoneFingerprintCommand(ctx, cmd, &result)
+	case "command.dns_maintenance":
+		handleDnsMaintenanceCommand(cmd, &result)
 	case "command.dns_resolve_port_conflict":
 		handleDnsResolvePortConflictCommand(ctx, cmd, &result)
 	default:
@@ -4230,6 +4237,7 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 					VpnPeers:     collectVpnPeerStats(),
 					System:       &system,
 					AppliedState: appliedStateSnapshot(),
+					Dns:          currentDnsServerReport(),
 				},
 			}); err != nil {
 				return err

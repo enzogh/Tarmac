@@ -11,6 +11,7 @@ import { InternalDnsService } from './internal-dns.service';
 import { CreateDnsGroupDto } from './dto/create-dns-group.dto';
 import { CreateDnsZoneDto } from './dto/create-dns-zone.dto';
 import { UpdateDnsZoneDto } from './dto/update-dns-zone.dto';
+import { RunDnsMaintenanceDto } from './dto/run-dns-maintenance.dto';
 import { UpdateDnsGroupDto } from './dto/update-dns-group.dto';
 import { UpsertDnsGroupMemberDto } from './dto/upsert-dns-group-member.dto';
 import { UpsertDnsRecordDto } from './dto/upsert-dns-record.dto';
@@ -95,6 +96,17 @@ export class DnsController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.dnsGroupsService.removeGroupMember(id, nodeId, scope, req.user?.userId);
+  }
+
+  @Post('groups/:id/members/:nodeId/maintenance')
+  runMemberMaintenance(
+    @Param('id') id: string,
+    @Param('nodeId') nodeId: string,
+    @Body() dto: RunDnsMaintenanceDto,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.dnsGroupsService.runMemberMaintenance(id, nodeId, dto.upgrade === true, scope, req.user?.userId);
   }
 
   @Post('groups/:id/members/:nodeId/resolve-port-conflict')

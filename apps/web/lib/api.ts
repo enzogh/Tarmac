@@ -148,11 +148,28 @@ export type DnsPortConflict = {
   processName: string | null;
 };
 
+export type DnsServerTask = {
+  status: 'requested' | 'running' | 'done' | 'failed' | string;
+  attempts: number;
+  error: string | null;
+  updatedAt: string | null;
+};
+
+// A DNS server node's PowerDNS, as its agent reports it in each heartbeat.
+export type DnsServerState = {
+  pdnsVersion: string;
+  backend: 'lmdb' | 'gsqlite3' | string;
+  catalog: boolean;
+  maxAttempts: number;
+  tasks: Partial<Record<'lmdb' | 'upgrade', DnsServerTask>>;
+};
+
 export type DnsServerGroupMemberItem = {
   nodeId: string;
   role: 'primary' | 'secondary';
   status: 'pending' | 'active' | 'error';
   conflictDetail?: DnsPortConflict | null;
+  node?: { dnsServerState?: DnsServerState | null };
 };
 
 export type DnsServerGroupItem = {
@@ -174,6 +191,9 @@ export type DnsZoneSyncMember = {
   nodeId: string;
   role: 'primary' | 'secondary';
   serial: number | null;
+  fingerprint?: string | null;
+  // Same content as the primary; null when either agent couldn't be asked.
+  contentMatches?: boolean | null;
   ok: boolean;
   behindSince: string | null;
   error: string | null;
@@ -1076,6 +1096,11 @@ export const api = {
         }),
       removeMember: (groupId: string, nodeId: string) =>
         request<{ cleanupSent: boolean }>(`/api/v1/dns/groups/${groupId}/members/${nodeId}`, { method: 'DELETE' }),
+      runMaintenance: (groupId: string, nodeId: string, payload: { upgrade?: boolean }) =>
+        request<{ sent: boolean }>(`/api/v1/dns/groups/${groupId}/members/${nodeId}/maintenance`, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        }),
       resolvePortConflict: (groupId: string, nodeId: string) =>
         request<DnsServerGroupMemberItem>(`/api/v1/dns/groups/${groupId}/members/${nodeId}/resolve-port-conflict`, {
           method: 'POST',

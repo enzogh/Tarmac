@@ -116,6 +116,8 @@ const ACTION_VERB: Record<string, string> = {
   'dns.group_member.upsert': 'a ajouté ou modifié un membre du groupe DNS',
   'dns.group_member.delete': 'a retiré un membre du groupe DNS',
   'dns.group_member.resolve_port_conflict': 'a libéré le port 53 pour un membre du groupe DNS',
+  'dns.group_member.upgrade_pdns': 'a lancé la mise à jour de PowerDNS sur un serveur du groupe DNS',
+  'dns.group_member.retry_maintenance': 'a relancé la maintenance PowerDNS sur un serveur du groupe DNS',
   'dns.zone.create': 'a créé la zone DNS',
   'dns.zone.delete': 'a supprimé la zone DNS',
   'dns.zone.reapply': 'a redéployé la zone DNS',

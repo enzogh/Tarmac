@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { HelpText } from '@/components/ui/wizard';
 import { ConnectionHistoryChart } from '@/components/dashboard-charts';
 import { JournalLogPanel } from './JournalLogPanel';
+import { MemberPowerDns } from './MemberPowerDns';
 import { StatusIndicator } from './StatusIndicator';
 import { useCollapsibleCards } from './useCollapsibleCards';
 import { DnsJournalState, DnsNotice } from './useDnsPageState';
@@ -114,6 +115,9 @@ function ZoneSync({ zone, nodeName }: { zone: NonNullable<DnsServerGroupItem['zo
     if (entry.ok) return { tone: 'ok' as const, text: 'à jour' };
     const lag = entry.behindSince ? ` depuis ${minutesSince(entry.behindSince)} min` : '';
     if (entry.error) return { tone: 'danger' as const, text: `${entry.error}${lag}` };
+    if (entry.contentMatches === false && entry.serial === primary?.serial) {
+      return { tone: 'warn' as const, text: `contenu différent du primaire, même serial${lag}` };
+    }
     return { tone: 'warn' as const, text: `en retard (serial ${entry.serial})${lag}` };
   };
   return (
@@ -350,6 +354,14 @@ export function GroupsSection({
                               </Tooltip>
                             </div>
                           </div>
+                          <MemberPowerDns
+                            groupId={group.id}
+                            member={member}
+                            nodeName={nodeName(member.nodeId)}
+                            primaryState={group.members.find((m) => m.role === 'primary')?.node?.dnsServerState}
+                            setNotice={setNotice}
+                            refreshGroups={refreshGroups}
+                          />
                           <JournalLogPanel journal={journal} panelKey={key} nodeId={member.nodeId} />
                           {member.conflictDetail && (
                             <Alert variant="destructive" className="ml-1">
@@ -416,7 +428,7 @@ export function GroupsSection({
                         <div className="flex items-center gap-1.5">
                           <CheckCircle2 className="h-3.5 w-3.5 text-muted-foreground" />
                           <span className="text-xs font-medium text-zinc-300">Synchronisation des zones</span>
-                          <HelpText text="Le serial SOA de chaque zone est comparé toutes les 2 minutes entre le primaire et chaque secondaire. Un secondaire en retard ne reçoit plus les transferts de zone (AXFR/IXFR) : une alerte est levée au-delà de 30 minutes." />
+                          <HelpText text="Toutes les 2 minutes, le serial SOA et le contenu de chaque zone sont comparés entre le primaire et chaque secondaire. Un secondaire en retard ou au contenu différent ne reçoit plus les transferts de zone (AXFR/IXFR) : une alerte est levée au-delà de 30 minutes." />
                         </div>
                         <div className="space-y-2 rounded-xl border border-border bg-black/10 p-3">
                           {group.zones

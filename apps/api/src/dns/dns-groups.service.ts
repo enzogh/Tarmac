@@ -147,6 +147,35 @@ export class DnsGroupsService {
     return { ...deleted, cleanupSent };
   }
 
+  // The member's PowerDNS maintenance, from the UI: the upgrade to the
+  // release the agent targets (one server at a time, when the user
+  // chooses), or a retry of a task the agent gave up on. Marks the task
+  // requested right away, so the UI shows it before the next heartbeat.
+  async runMemberMaintenance(groupId: string, nodeId: string, upgrade: boolean, scope: WorkspaceScope, actorUserId?: string) {
+    await this.assertGroupOwned(groupId, scope);
+    const member = await this.prisma.dnsServerGroupMember.findUnique({
+      where: { groupId_nodeId: { groupId, nodeId } },
+      include: { node: { select: { dnsServerState: true } } },
+    });
+    if (!member) throw new NotFoundException('dns server group member not found');
+    if (!this.agentsService.requestDnsMaintenance(nodeId, upgrade)) throw new NotFoundException('node is offline');
+
+    const state = (member.node.dnsServerState as { tasks?: Record<string, unknown> } | null) ?? null;
+    if (state && upgrade) {
+      const tasks = { ...(state.tasks ?? {}), upgrade: { status: 'requested', attempts: 0, error: null, updatedAt: new Date().toISOString() } };
+      await this.prisma.node.update({ where: { id: nodeId }, data: { dnsServerState: { ...state, tasks } as Prisma.InputJsonObject } });
+    }
+    await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
+      actorUserId,
+      action: upgrade ? 'dns.group_member.upgrade_pdns' : 'dns.group_member.retry_maintenance',
+      resourceType: 'dns_server_group_member',
+      resourceId: member.id,
+      details: { groupId, nodeId },
+    });
+    return { sent: true };
+  }
+
   // Sent when the user picks "kill the process and retry" on a port-conflict
   // banner. Marks the member pending immediately (optimistic - clears the
   // conflict from the UI right away) and lets the agent's command result

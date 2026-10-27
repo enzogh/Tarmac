@@ -1,5 +1,6 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { promises as dnsPromises } from 'node:dns';
+import { AgentsService } from '../agents/agents.service';
 import { LiveWsServer } from '../live/live.ws';
 import { extractExternalIp } from '../nodes/extract-external-ip';
 import { PrismaService } from '../prisma/prisma.service';
@@ -15,7 +16,16 @@ export type DnsZoneSyncMember = {
   nodeId: string;
   role: 'primary' | 'secondary';
   serial: number | null;
-  // Secondary serving the primary's serial. Always true for the primary.
+  // Hash of the zone's content as this server holds it (from its agent,
+  // DNSSEC records and SOA left out), null when the agent couldn't be
+  // asked. The serial alone hid content that differed: an apply that
+  // didn't move it never reached the secondaries.
+  fingerprint: string | null;
+  // Secondary holding the same content as the primary (null when either
+  // fingerprint is unknown). Always true for the primary.
+  contentMatches: boolean | null;
+  // Secondary serving the primary's serial and content. Always true for
+  // the primary.
   ok: boolean;
   // When this secondary was first seen behind (or unreachable), kept across
   // checks so the lag duration and the alert are measured from the start.
@@ -44,6 +54,8 @@ export class DnsSyncCheckService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly live: LiveWsServer,
+    @Inject(forwardRef(() => AgentsService))
+    private readonly agentsService: AgentsService,
   ) {}
 
   onModuleInit() {
@@ -97,20 +109,42 @@ export class DnsSyncCheckService implements OnModuleInit {
       }),
     );
 
+    const fingerprints = await Promise.all(
+      members.map((member) =>
+        this.agentsService.isConnected(member.nodeId)
+          ? this.agentsService
+              .requestDnsZoneFingerprint(member.nodeId, zone.name)
+              .then((result) => result.fingerprint)
+              .catch(() => null)
+          : Promise.resolve(null),
+      ),
+    );
+
     const primaryIndex = members.findIndex((member) => member.role === 'primary');
     const primarySerial = primaryIndex >= 0 ? serials[primaryIndex].serial : null;
+    const primaryFingerprint = primaryIndex >= 0 ? fingerprints[primaryIndex] : null;
     const now = new Date();
     const detail: DnsZoneSyncMember[] = members.map((member, index) => {
       const { serial, error } = serials[index];
+      const fingerprint = fingerprints[index];
       const isPrimary = member.role === 'primary';
       // Without the primary's serial there is nothing to compare against:
       // a secondary is only judged behind against a known reference.
-      const ok = isPrimary || primarySerial === null || serial === primarySerial;
+      const serialOk = isPrimary || primarySerial === null || serial === primarySerial;
+      // Same for content, which also needs both agents to have answered.
+      const contentMatches = isPrimary
+        ? true
+        : fingerprint === null || primaryFingerprint === null
+          ? null
+          : fingerprint === primaryFingerprint;
+      const ok = serialOk && contentMatches !== false;
       const before = previous.get(member.nodeId);
       return {
         nodeId: member.nodeId,
         role: member.role,
         serial,
+        fingerprint,
+        contentMatches,
         ok: ok && (isPrimary || serial !== null),
         behindSince: ok && serial !== null ? null : (before?.behindSince ?? now.toISOString()),
         error,
@@ -133,7 +167,9 @@ export class DnsSyncCheckService implements OnModuleInit {
           severity: 'high',
           message: entry.error
             ? `Zone ${zone.name} : le secondaire ${member.node.name} ${entry.error} depuis ${minutes} min`
-            : `Zone ${zone.name} : le secondaire ${member.node.name} sert le serial ${entry.serial} au lieu de ${primarySerial} depuis ${minutes} min (transfert AXFR bloqué ?)`,
+            : entry.serial === primarySerial
+              ? `Zone ${zone.name} : le secondaire ${member.node.name} sert le même serial (${entry.serial}) que le primaire mais un contenu différent depuis ${minutes} min (modification appliquée sans incrément du serial ?)`
+              : `Zone ${zone.name} : le secondaire ${member.node.name} sert le serial ${entry.serial} au lieu de ${primarySerial} depuis ${minutes} min (transfert AXFR bloqué ?)`,
         },
       });
     }

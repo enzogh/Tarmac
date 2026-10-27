@@ -394,6 +394,13 @@ const MODULES: Module[] = [
       { method: 'DELETE', path: '/dns/groups/:id/members/:nodeId', description: 'Retire un serveur du groupe et nettoie sa configuration DNS.' },
       {
         method: 'POST',
+        path: '/dns/groups/:id/members/:nodeId/maintenance',
+        body: 'upgrade?',
+        description:
+          "Met à jour PowerDNS sur ce serveur (upgrade: true), avec sauvegarde et retour automatique à la version actuelle en cas d'échec, ou relance une maintenance que l'agent a abandonnée.",
+      },
+      {
+        method: 'POST',
         path: '/dns/groups/:id/members/:nodeId/resolve-port-conflict',
         description:
 "Demande au nœud de libérer le port 53 occupé par un autre résolveur (systemd-resolved, PowerDNS installé hors Tarmac…), puis relance le provisionnement.",

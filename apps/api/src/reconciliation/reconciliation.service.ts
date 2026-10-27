@@ -190,8 +190,15 @@ export class ReconciliationService implements OnModuleInit {
         );
         continue;
       }
+      // Members on PowerDNS 4.7+ get the group's zones through its catalog
+      // zone (see the agent's dns_catalog.go): the primary lists them, the
+      // secondary creates them on its own. Only a member still on an older
+      // PowerDNS - or paired with one - is told about each zone.
+      const supportsCatalog = (node: { dnsServerState: unknown }) =>
+        (node.dnsServerState as { catalog?: boolean } | null)?.catalog === true;
       for (const secondary of zone.group.members) {
         if (secondary.role === 'primary') continue;
+        if (supportsCatalog(primary.node) && supportsCatalog(secondary.node)) continue;
         if (!this.agentsService.isConnected(secondary.nodeId)) {
           this.logger.warn(
             `Skipping DNS zone slave dispatch for zone ${zone.id}: secondary node ${secondary.nodeId} is not connected`,
