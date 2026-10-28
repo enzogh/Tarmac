@@ -84,8 +84,10 @@ export type NodeOnboardingStartPayload = {
   provider: 'ovh' | 'standard';
   hostIp: string;
   sshUsername: string;
-  sshPassword: string;
-};
+} & (
+  | { authMethod: 'password'; sshPassword: string }
+  | { authMethod: 'key'; sshPrivateKey: string; sshKeyPassphrase?: string; sudoPassword?: string }
+);
 
 export type NodeOnboardingStartResult = {
   onboardingId: string;

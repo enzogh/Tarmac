@@ -197,7 +197,7 @@ const MODULES: Module[] = [
     endpoints: [
       { method: 'GET', path: '/nodes', description: 'Liste tous les nœuds.' },
       { method: 'POST', path: '/nodes', body: 'name, role, status?', description: 'Enregistre un nœud manuellement (sans onboarding SSH).' },
-      { method: 'POST', path: '/nodes/onboarding/start', body: 'name, role, provider, hostIp, sshUsername, sshPassword, repoUrl?, repoRef?', description: "Démarre l'onboarding guidé : connexion SSH et préparation de la clé de déploiement." },
+      { method: 'POST', path: '/nodes/onboarding/start', body: 'name, provider, hostIp, sshUsername, authMethod? (password | key), sshPassword | sshPrivateKey, sshKeyPassphrase?, sudoPassword?', description: "Démarre l'onboarding guidé : connexion SSH et préparation de la clé de déploiement." },
       { method: 'POST', path: '/nodes/onboarding/:id/install', body: 'deployKeyConfirmed', description: "Finalise l'onboarding une fois la clé de déploiement confirmée." },
       {
         method: 'PATCH',

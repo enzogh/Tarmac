@@ -4,8 +4,20 @@ declare module 'ssh2' {
     port?: number;
     username?: string;
     password?: string;
+    privateKey?: string | Buffer;
+    passphrase?: string;
     readyTimeout?: number;
     tryKeyboard?: boolean;
+  };
+
+  export type ParsedKey = {
+    type: string;
+    comment: string;
+    isPrivateKey(): boolean;
+  };
+
+  export const utils: {
+    parseKey(data: string | Buffer, passphrase?: string | Buffer): ParsedKey | ParsedKey[] | Error;
   };
 
   export class Client {

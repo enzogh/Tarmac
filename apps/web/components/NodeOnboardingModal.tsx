@@ -1,11 +1,12 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Check, CheckCircle, Copy, Loader2, Plus } from 'lucide-react';
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, Check, CheckCircle, Copy, FileKey, KeyRound, Loader2, Plus, Upload } from 'lucide-react';
 import { api, NodeOnboardingInstallResult, NodeOnboardingStartResult } from '../lib/api';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { Tabs, TabsList, TabsTrigger } from './ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import {
   Dialog,
@@ -17,6 +18,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 
 type HostProvider = 'ovh' | 'standard';
+type AuthMethod = 'password' | 'key';
 type Step = 'form' | 'deploy-key' | 'installing' | 'done';
 
 interface NodeOnboardingModalProps {
@@ -31,7 +33,13 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
   const [provider, setProvider] = useState<HostProvider>('ovh');
   const [hostIp, setHostIp] = useState('');
   const [sshUsername, setSshUsername] = useState('ubuntu');
+  const [authMethod, setAuthMethod] = useState<AuthMethod>('password');
   const [sshPassword, setSshPassword] = useState('');
+  const [sshPrivateKey, setSshPrivateKey] = useState('');
+  const [keyFileName, setKeyFileName] = useState('');
+  const [sshKeyPassphrase, setSshKeyPassphrase] = useState('');
+  const [sudoPassword, setSudoPassword] = useState('');
+  const keyFileInput = useRef<HTMLInputElement>(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -60,7 +68,12 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
     setProvider('ovh');
     setHostIp('');
     setSshUsername('ubuntu');
+    setAuthMethod('password');
     setSshPassword('');
+    setSshPrivateKey('');
+    setKeyFileName('');
+    setSshKeyPassphrase('');
+    setSudoPassword('');
     setError('');
     setLoading(false);
     setCopyState('idle');
@@ -81,6 +94,19 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
     [provider],
   );
 
+  const handleKeyFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (file.size > 64 * 1024) {
+      setError('Ce fichier est trop volumineux pour être une clé SSH.');
+      return;
+    }
+    setError('');
+    setSshPrivateKey(await file.text());
+    setKeyFileName(file.name);
+  };
+
   const handleStart = async (event: FormEvent) => {
     event.preventDefault();
     setLoading(true);
@@ -91,7 +117,14 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
         provider,
         hostIp: hostIp.trim(),
         sshUsername: sshUsername.trim(),
-        sshPassword,
+        ...(authMethod === 'password'
+          ? { authMethod, sshPassword }
+          : {
+              authMethod,
+              sshPrivateKey,
+              sshKeyPassphrase: sshKeyPassphrase || undefined,
+              sudoPassword: provider === 'ovh' && sudoPassword ? sudoPassword : undefined,
+            }),
       });
       setOnboarding(result);
       setStep('deploy-key');
@@ -176,20 +209,119 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
                   <Label htmlFor="host-ip">IP serveur</Label>
                   <Input id="host-ip" value={hostIp} onChange={(e) => setHostIp(e.target.value)} placeholder="10.0.0.10" required />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="ssh-user">Utilisateur SSH</Label>
-                  <Input id="ssh-user" value={sshUsername} onChange={(e) => setSshUsername(e.target.value)} required />
+              </div>
+
+              <div className="space-y-3 rounded-xl border border-border bg-zinc-900/40 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-medium text-foreground">Authentification SSH</p>
+                  <Tabs value={authMethod} onValueChange={(value) => setAuthMethod(value as AuthMethod)}>
+                    <TabsList variant="segmented" aria-label="Méthode d’authentification SSH">
+                      <TabsTrigger value="password">
+                        <KeyRound className="h-3.5 w-3.5" /> Mot de passe
+                      </TabsTrigger>
+                      <TabsTrigger value="key">
+                        <FileKey className="h-3.5 w-3.5" /> Clé SSH
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="ssh-password">Mot de passe SSH</Label>
-                  <Input
-                    id="ssh-password"
-                    type="password"
-                    value={sshPassword}
-                    onChange={(e) => setSshPassword(e.target.value)}
-                    required
-                  />
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="ssh-user">Utilisateur SSH</Label>
+                    <Input id="ssh-user" value={sshUsername} onChange={(e) => setSshUsername(e.target.value)} required />
+                  </div>
+                  {authMethod === 'password' ? (
+                    <div className="space-y-2">
+                      <Label htmlFor="ssh-password">Mot de passe SSH</Label>
+                      <Input
+                        id="ssh-password"
+                        type="password"
+                        autoComplete="off"
+                        value={sshPassword}
+                        onChange={(e) => setSshPassword(e.target.value)}
+                        required
+                      />
+                      {provider === 'ovh' && (
+                        <p className="text-xs text-muted-foreground">Utilisé aussi pour sudo.</p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Label htmlFor="ssh-key-passphrase">
+                        Phrase de passe <span className="font-normal text-muted-foreground">(si la clé est chiffrée)</span>
+                      </Label>
+                      <Input
+                        id="ssh-key-passphrase"
+                        type="password"
+                        autoComplete="off"
+                        value={sshKeyPassphrase}
+                        onChange={(e) => setSshKeyPassphrase(e.target.value)}
+                      />
+                    </div>
+                  )}
                 </div>
+
+                {authMethod === 'key' && (
+                  <>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <Label htmlFor="ssh-private-key">Clé privée</Label>
+                        <input
+                          ref={keyFileInput}
+                          type="file"
+                          className="hidden"
+                          onChange={handleKeyFile}
+                        />
+                        <Button type="button" variant="secondary" size="sm" onClick={() => keyFileInput.current?.click()}>
+                          <Upload className="h-3.5 w-3.5" /> Importer un fichier
+                        </Button>
+                      </div>
+                      <textarea
+                        id="ssh-private-key"
+                        value={sshPrivateKey}
+                        onChange={(e) => {
+                          setSshPrivateKey(e.target.value);
+                          setKeyFileName('');
+                        }}
+                        placeholder={'-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----'}
+                        spellCheck={false}
+                        autoComplete="off"
+                        required
+                        rows={5}
+                        className="flex w-full resize-y rounded-lg border border-border bg-zinc-950/70 px-3 py-2 font-mono text-xs text-foreground shadow-insetSoft transition-colors placeholder:text-muted-foreground focus-visible:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {keyFileName
+                          ? <>Clé chargée depuis <code>{keyFileName}</code>.</>
+                          : <>Collez la clé privée (par exemple <code>~/.ssh/id_ed25519</code>), pas le fichier <code>.pub</code>. Sa clé publique doit figurer dans <code>authorized_keys</code> sur le serveur.</>}
+                      </p>
+                    </div>
+                    {provider === 'ovh' && (
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="sudo-password">
+                            Mot de passe sudo <span className="font-normal text-muted-foreground">(facultatif)</span>
+                          </Label>
+                          <Input
+                            id="sudo-password"
+                            type="password"
+                            autoComplete="off"
+                            value={sudoPassword}
+                            onChange={(e) => setSudoPassword(e.target.value)}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            À laisser vide si {sshUsername.trim() || 'l’utilisateur'} peut utiliser sudo sans mot de passe.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <p className="text-xs text-muted-foreground">
+                  Ces identifiants servent uniquement à l’installation et ne sont jamais enregistrés.
+                </p>
               </div>
 
               <p className="text-xs text-muted-foreground">{effectiveProviderLabel}</p>

@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
-import { Client, ConnectConfig } from 'ssh2';
+import { Client, ConnectConfig, utils as sshUtils } from 'ssh2';
 import { AgentTokenService } from '../agents/agent-token.service';
 import { WorkspaceScope } from '../auth/workspace.guard';
 import { GithubDeployKeysService } from '../github/github-deploy-keys.service';
@@ -12,17 +12,25 @@ import { NodesService } from './nodes.service';
 
 type OnboardingProvider = 'ovh' | 'standard';
 
-type NodeOnboardingSession = {
+type SshCredentials = {
+  provider: OnboardingProvider;
+  hostIp: string;
+  sshUsername: string;
+  authMethod: 'password' | 'key';
+  sshPassword?: string;
+  sshPrivateKey?: string;
+  sshKeyPassphrase?: string;
+  // Fed to `sudo -S` on OVH hosts; absent means sudo must not prompt.
+  sudoPassword?: string;
+};
+
+type NodeOnboardingSession = SshCredentials & {
   onboardingId: string;
   createdAt: Date;
   expiresAt: Date;
   nodeId: string;
   nodeName: string;
   role: string;
-  provider: OnboardingProvider;
-  hostIp: string;
-  sshUsername: string;
-  sshPassword: string;
   repoUrl: string;
   repoRef: string;
   controlPlaneWs: string;
@@ -55,6 +63,8 @@ export class NodeOnboardingService {
       throw new BadRequestException('controlPlaneWs manquant');
     }
 
+    const credentials = this.credentialsFrom(dto);
+
     const createNodeDto: CreateNodeDto = {
       name: dto.name,
       // Onboarded nodes are always workers.
@@ -68,12 +78,7 @@ export class NodeOnboardingService {
       data: { agentTokenHash: this.agentTokenService.hash(agentToken), agentTokenRotatedAt: new Date() },
     });
 
-    const deployKeyPublic = await this.ensureRemoteDeployKey({
-      provider: dto.provider,
-      hostIp: dto.hostIp.trim(),
-      sshUsername: dto.sshUsername.trim(),
-      sshPassword: dto.sshPassword,
-    });
+    const deployKeyPublic = await this.ensureRemoteDeployKey(credentials);
 
     // Added to the repository's deploy keys right away when the GitHub
     // integration is set up; otherwise (or if GitHub refuses) the user adds
@@ -93,10 +98,7 @@ export class NodeOnboardingService {
       nodeId: node.id,
       nodeName: node.name,
       role: node.role,
-      provider: dto.provider,
-      hostIp: dto.hostIp.trim(),
-      sshUsername: dto.sshUsername.trim(),
-      sshPassword: dto.sshPassword,
+      ...credentials,
       repoUrl,
       repoRef,
       controlPlaneWs,
@@ -145,6 +147,50 @@ export class NodeOnboardingService {
     }
   }
 
+  private credentialsFrom(dto: StartNodeOnboardingDto): SshCredentials {
+    const base = {
+      provider: dto.provider,
+      hostIp: dto.hostIp.trim(),
+      sshUsername: dto.sshUsername.trim(),
+    };
+    if (dto.authMethod !== 'key') {
+      if (!dto.sshPassword) {
+        throw new BadRequestException('Mot de passe SSH manquant');
+      }
+      return { ...base, authMethod: 'password', sshPassword: dto.sshPassword, sudoPassword: dto.sshPassword };
+    }
+
+    // Keys pasted from a Windows editor or a web form may carry CRLF line
+    // endings or surrounding blank lines, which ssh2 rejects.
+    const sshPrivateKey = (dto.sshPrivateKey ?? '').replace(/\r\n?/g, '\n').trim() + '\n';
+    const sshKeyPassphrase = dto.sshKeyPassphrase || undefined;
+    const parsed = sshUtils.parseKey(sshPrivateKey, sshKeyPassphrase);
+    if (parsed instanceof Error) {
+      const message = parsed.message.toLowerCase();
+      if (message.includes('passphrase') || message.includes('decrypt') || message.includes('bad decrypt')) {
+        throw new BadRequestException(
+          sshKeyPassphrase
+            ? 'La phrase de passe ne permet pas de déchiffrer la clé privée.'
+            : 'Cette clé privée est protégée par une phrase de passe : renseignez-la.',
+        );
+      }
+      throw new BadRequestException(
+        'Clé privée illisible. Collez la clé privée complète (bloc BEGIN … PRIVATE KEY), pas la clé publique.',
+      );
+    }
+    const key = Array.isArray(parsed) ? parsed[0] : parsed;
+    if (!key?.isPrivateKey()) {
+      throw new BadRequestException('Il faut la clé privée, pas la clé publique (.pub).');
+    }
+    return {
+      ...base,
+      authMethod: 'key',
+      sshPrivateKey,
+      sshKeyPassphrase,
+      sudoPassword: dto.sudoPassword || undefined,
+    };
+  }
+
   private cleanupExpiredSessions() {
     const now = Date.now();
     for (const [sessionId, session] of this.sessions.entries()) {
@@ -174,32 +220,36 @@ export class NodeOnboardingService {
     return `'${value.replace(/'/g, `'\"'\"'`)}'`;
   }
 
-  private buildRemoteCommand(session: NodeOnboardingSession, script: string): string {
-    if (session.provider !== 'ovh') {
+  private buildRemoteCommand(credentials: SshCredentials, script: string): string {
+    if (credentials.provider !== 'ovh') {
       return `bash -lc ${this.shellQuote(script)}`;
     }
-    const escapedPassword = this.shellQuote(session.sshPassword);
+    if (!credentials.sudoPassword) {
+      // Key-only access: typical cloud images grant passwordless sudo.
+      return `sudo -n bash -lc ${this.shellQuote(script)}`;
+    }
+    const escapedPassword = this.shellQuote(credentials.sudoPassword);
     return `printf '%s\\n' ${escapedPassword} | sudo -S -p '' bash -lc ${this.shellQuote(script)}`;
   }
 
-  private async ensureRemoteDeployKey(input: {
-    provider: OnboardingProvider;
-    hostIp: string;
-    sshUsername: string;
-    sshPassword: string;
-  }): Promise<string> {
-    const ephemeralSession = {
-      provider: input.provider,
-      hostIp: input.hostIp,
-      sshUsername: input.sshUsername,
-      sshPassword: input.sshPassword,
-    } as NodeOnboardingSession;
-    const client = await this.openSshConnection(ephemeralSession);
+  // Turns the raw sudo refusal into something the user can act on.
+  private describeRemoteFailure(credentials: SshCredentials, output: string): string {
+    const trimmed = output.trim();
+    if (credentials.provider === 'ovh' && /sudo: (a password is required|.*incorrect password)/i.test(trimmed)) {
+      return credentials.sudoPassword
+        ? `Le mot de passe sudo de ${credentials.sshUsername} a été refusé.`
+        : `sudo demande un mot de passe pour ${credentials.sshUsername} : renseignez le mot de passe sudo.`;
+    }
+    return trimmed;
+  }
+
+  private async ensureRemoteDeployKey(credentials: SshCredentials): Promise<string> {
+    const client = await this.openSshConnection(credentials);
     try {
       const result = await this.execRemote(
         client,
         this.buildRemoteCommand(
-          ephemeralSession,
+          credentials,
           [
             'set -euo pipefail',
             'mkdir -p "$HOME/.ssh" "$HOME/.apps"',
@@ -218,7 +268,10 @@ export class NodeOnboardingService {
         ),
       );
       if (result.code !== 0) {
-        throw new Error((result.stderr || result.stdout || '').trim() || 'failed to generate deploy key');
+        throw new BadRequestException(
+          this.describeRemoteFailure(credentials, result.stderr || result.stdout || '') ||
+            'Impossible de générer la clé de déploiement sur le serveur.',
+        );
       }
       const publicKey = (result.stdout || '').trim();
       if (!publicKey.startsWith('ssh-ed25519 ')) {
@@ -315,7 +368,7 @@ export class NodeOnboardingService {
         const result = await this.execRemote(client, this.buildRemoteCommand(session, step.script));
         if (result.code !== 0) {
           throw new Error(
-            `${step.label} failed (${result.code}): ${(result.stderr || result.stdout || '').trim()}`.trim(),
+            `${step.label} failed (${result.code}): ${this.describeRemoteFailure(session, result.stderr || result.stdout || '')}`.trim(),
           );
         }
         const compactOutput = (result.stdout || result.stderr).trim();
@@ -331,20 +384,34 @@ export class NodeOnboardingService {
     return logs.join('\n');
   }
 
-  private openSshConnection(session: NodeOnboardingSession): Promise<Client> {
+  private openSshConnection(credentials: SshCredentials): Promise<Client> {
     const config: ConnectConfig = {
-      host: session.hostIp,
+      host: credentials.hostIp,
       port: 22,
-      username: session.sshUsername,
-      password: session.sshPassword,
+      username: credentials.sshUsername,
       readyTimeout: 25_000,
       tryKeyboard: false,
+      ...(credentials.authMethod === 'key'
+        ? { privateKey: credentials.sshPrivateKey, passphrase: credentials.sshKeyPassphrase }
+        : { password: credentials.sshPassword }),
     };
     return new Promise((resolve, reject) => {
       const client = new Client();
       client
         .on('ready', () => resolve(client))
-        .on('error', (error: Error) => reject(error))
+        .on('error', (error: Error & { level?: string }) => {
+          if (error.level === 'client-authentication') {
+            reject(
+              new BadRequestException(
+                credentials.authMethod === 'key'
+                  ? `Le serveur refuse cette clé pour ${credentials.sshUsername}. Vérifiez que sa clé publique figure dans ~/.ssh/authorized_keys.`
+                  : `Identifiants SSH refusés pour ${credentials.sshUsername}.`,
+              ),
+            );
+            return;
+          }
+          reject(error);
+        })
         .connect(config);
     });
   }
