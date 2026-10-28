@@ -1664,6 +1664,14 @@ func ensureOverlayIdentity() (*overlayIdentity, error) {
 		ipOut, ipErr := ipCmd.Output()
 		if ipErr == nil {
 			ipValue := strings.TrimSpace(string(ipOut))
+			// Behind NAT (e.g. a cloud VPS with a private interface address)
+			// the route source is unreachable from other nodes: report the
+			// public address seen from outside instead, when it can be found.
+			if isNonPublicIP(ipValue) {
+				if publicIP := lookupPublicIPv4(); publicIP != "" {
+					ipValue = publicIP
+				}
+			}
 			if ipValue != "" {
 				endpoint = fmt.Sprintf("%s:%d", ipValue, listenPort)
 			}

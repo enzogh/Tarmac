@@ -38,7 +38,7 @@ Comportement:
 
 Variables optionnelles:
 - `AGENT_OVERLAY_PORT` (défaut: `51820`)
-- `AGENT_OVERLAY_ENDPOINT` (défaut: auto-détection `IP:PORT`)
+- `AGENT_OVERLAY_ENDPOINT` (défaut: auto-détection `IP:PORT` ; derrière un NAT, l'IP publique est demandée à api.ipify.org / icanhazip / ifconfig.me)
 - `AGENT_OVERLAY_PRIVATE_KEY_PATH` (défaut: `/var/lib/tarmac-agent/wireguard/privatekey`)
 
 ## 3) Vérification
