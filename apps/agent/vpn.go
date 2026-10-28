@@ -475,7 +475,7 @@ func syncVpnEntryInterface(entry *vpnEntry) error {
 			return err
 		}
 	}
-	if out, err := exec.Command("wg", "set", iface, "private-key", identity.privateKeyPath, "listen-port", strconv.Itoa(entry.listenPort)).CombinedOutput(); err != nil {
+	if out, err := wgSetPrivateKey(iface, identity, entry.listenPort); err != nil {
 		return fmt.Errorf("cannot configure %s: %s", iface, strings.TrimSpace(string(out)))
 	}
 

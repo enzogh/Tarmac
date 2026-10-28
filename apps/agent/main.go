@@ -1562,6 +1562,7 @@ type overlayIdentity struct {
 	endpoint       string
 	listenPort     int
 	privateKeyPath string
+	privateKey     string
 }
 
 type sshIdentity struct {
@@ -1683,7 +1684,18 @@ func ensureOverlayIdentity() (*overlayIdentity, error) {
 		endpoint:       endpoint,
 		listenPort:     listenPort,
 		privateKeyPath: privateKeyPath,
+		privateKey:     privateKey,
 	}, nil
+}
+
+// wgSetPrivateKey loads the node's key into iface through stdin rather than
+// by path: Ubuntu 26.04's AppArmor profile for wg only lets it open files
+// under /etc/wireguard ("fopen: Permission denied" otherwise), while pipes
+// stay allowed - wg-quick feeds wg the same way.
+func wgSetPrivateKey(iface string, identity *overlayIdentity, listenPort int) ([]byte, error) {
+	cmd := exec.Command("wg", "set", iface, "private-key", "/dev/stdin", "listen-port", strconv.Itoa(listenPort))
+	cmd.Stdin = strings.NewReader(identity.privateKey + "\n")
+	return cmd.CombinedOutput()
 }
 
 func ensureSSHIdentity() (*sshIdentity, error) {
@@ -2308,8 +2320,7 @@ func applyOverlay(payload map[string]interface{}) (string, error) {
 		}
 	}
 
-	setArgs := []string{"set", iface, "private-key", identity.privateKeyPath, "listen-port", strconv.Itoa(listenPort)}
-	if out, err := exec.Command("wg", setArgs...).CombinedOutput(); err != nil {
+	if out, err := wgSetPrivateKey(iface, identity, listenPort); err != nil {
 		return "", fmt.Errorf("cannot configure wireguard interface: %s", strings.TrimSpace(string(out)))
 	}
 
