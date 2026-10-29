@@ -97,6 +97,8 @@ const ACTION_VERB: Record<string, string> = {
   'firewall_rule.disable': 'a désactivé la règle de pare-feu',
   'firewall_rule.expire': 'a désactivé à expiration la règle de pare-feu',
   'firewall.settings': 'a modifié les réglages du pare-feu',
+  'firewall_event.dismiss': 'a marqué comme vue la connexion',
+  'firewall_event.restore': 'a remis à examiner la connexion',
   'firewall.node_mode': 'a changé le filtrage Internet du nœud',
   'vpn_profile.create': 'a créé le profil VPN',
   'vpn_profile.update': 'a modifié le profil VPN',

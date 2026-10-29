@@ -504,6 +504,7 @@ model Node {
   vpnExitProfiles        VpnProfile[]           @relation("VpnExitNode")
   dailyStats                   NodeDailyStat[]
   firewallEvents               FirewallEvent[]
+  firewallDismissals           FirewallDismissal[]
 
   @@unique([workspaceId, vpnSubnetIndex])
   @@index([workspaceId])
@@ -1215,4 +1216,20 @@ model FirewallEvent {
   @@unique([nodeId, key, bucketStart])
   @@index([workspaceId, lastSeenAt])
   @@index([lastSeenAt])
+}
+
+// A flow someone looked at and decided was fine to leave blocked: its
+// events (same node, same FirewallEvent.key) stop counting as "to review"
+// and are hidden from the Activity by default, for every hour to come.
+model FirewallDismissal {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  nodeId          String
+  node            Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  key             String
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+
+  @@unique([nodeId, key])
+  @@index([workspaceId])
 }

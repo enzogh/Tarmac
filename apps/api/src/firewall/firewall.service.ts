@@ -508,9 +508,20 @@ export class FirewallService {
       where: { workspaceId, lastSeenAt: { gte: since } },
       _sum: { count: true },
     });
+    // Flows someone marked as seen no longer count as "to review".
+    const dismissals = await this.dismissals(workspaceId);
+    const dismissedObserved =
+      dismissals.length === 0
+        ? 0
+        : ((
+            await this.prisma.firewallEvent.aggregate({
+              where: { workspaceId, verdict: 'observed', lastSeenAt: { gte: since }, OR: dismissals },
+              _sum: { count: true },
+            })
+          )._sum.count ?? 0);
     const blockedByNode = new Map<string, number>();
     let blocked24h = 0;
-    let observed24h = 0;
+    let observed24h = -dismissedObserved;
     for (const row of eventTotals) {
       const count = row._sum.count ?? 0;
       if (row.verdict === 'blocked') {
@@ -564,7 +575,7 @@ export class FirewallService {
       labels: [...new Set(nodes.flatMap((node) => node.labels))].sort((a, b) => a.localeCompare(b)),
       stats: {
         blocked24h,
-        observed24h,
+        observed24h: Math.max(0, observed24h),
         rules: rules.filter((rule) => rule.enabled).length,
         protectedNodes: nodeRows.filter((node) => node.apply.status === 'active').length,
       },
@@ -649,6 +660,7 @@ export class FirewallService {
       orderBy: { lastSeenAt: 'desc' },
       take: 500,
     });
+    const dismissed = new Set((await this.dismissals(workspaceId)).map((entry) => `${entry.nodeId}|${entry.key}`));
     // Hourly rows of the same flow are merged into one line.
     const merged = new Map<string, (typeof rows)[number] & { buckets: number }>();
     for (const row of rows) {
@@ -679,7 +691,40 @@ export class FirewallService {
       count: row.count,
       firstSeenAt: row.firstSeenAt.toISOString(),
       lastSeenAt: row.lastSeenAt.toISOString(),
+      dismissed: dismissed.has(`${row.nodeId}|${row.key}`),
     }));
+  }
+
+  private dismissals(workspaceId: string) {
+    return this.prisma.firewallDismissal.findMany({ where: { workspaceId }, select: { nodeId: true, key: true } });
+  }
+
+  /**
+   * "Seen, nothing to do": hides this flow (same server, same signature)
+   * from the review count and the Activity, for every hour to come.
+   */
+  async setDismissed(eventId: string, dismissed: boolean, actor: Actor) {
+    const workspaceId = actor.scope.workspaceId as string;
+    const event = await this.prisma.firewallEvent.findFirst({
+      where: { id: eventId, workspaceId },
+      select: { nodeId: true, key: true, sourceIp: true, protocol: true, port: true, node: { select: { name: true } } },
+    });
+    if (!event) throw new NotFoundException('Connexion introuvable');
+    if (dismissed) {
+      await this.prisma.firewallDismissal.upsert({
+        where: { nodeId_key: { nodeId: event.nodeId, key: event.key } },
+        create: { workspaceId, nodeId: event.nodeId, key: event.key, createdByUserId: actor.userId ?? null },
+        update: {},
+      });
+    } else {
+      await this.prisma.firewallDismissal.deleteMany({ where: { nodeId: event.nodeId, key: event.key } });
+    }
+    await this.audit(actor, dismissed ? 'firewall_event.dismiss' : 'firewall_event.restore', eventId, {
+      nodeId: event.nodeId,
+      name: `${event.sourceIp} → ${event.node.name}${event.port ? ` (${event.protocol}/${event.port})` : ''}`,
+    });
+    this.live.broadcast('firewall.changed', {}, workspaceId);
+    return { success: true };
   }
 
   /** Attempts per hour and verdict, for the Activity chart. */

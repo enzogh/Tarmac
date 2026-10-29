@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { animate, AnimatePresence, motion } from 'framer-motion';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
-import { ArrowRight, Ban, ChevronDown, Container, Eye, Globe2, Network, Radar, Search, ShieldCheck, X } from 'lucide-react';
+import { ArrowRight, Ban, Check, ChevronDown, Container, Eye, EyeOff, Globe2, Network, Radar, RotateCcw, Search, ShieldCheck, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { ChartContainer, ChartTooltip } from '@/components/ui/chart';
@@ -27,7 +27,8 @@ export function useFirewallEvents(params: { hours: number; scope?: FirewallScope
   const key = `firewall-events:${params.hours}:${params.scope ?? ''}:${params.verdict ?? ''}:${params.nodeId ?? ''}`;
   const result = usePolling(key, () => api.firewall.events(params), { intervalMs: 15000 });
   useLiveSocket((message) => {
-    if (message.type === 'firewall.events') void result.mutate();
+    // firewall.changed: a flow was marked as seen (or a rule changed).
+    if (message.type === 'firewall.events' || message.type === 'firewall.changed') void result.mutate();
   });
   return result;
 }
@@ -108,6 +109,7 @@ export function EventRow({
   rules,
   onCreateRule,
   onTest,
+  onDismiss,
   compact,
   index = 0,
   fresh,
@@ -117,6 +119,7 @@ export function EventRow({
   rules: Map<string, FirewallRule>;
   onCreateRule: (draft: RuleDraft) => void;
   onTest?: (preset: TestPreset) => void;
+  onDismiss?: (event: FirewallEvent, dismissed: boolean) => void;
   compact?: boolean;
   index?: number;
   fresh?: boolean;
@@ -172,6 +175,12 @@ export function EventRow({
               <span className="inline-flex items-center gap-1">
                 <Container className="h-3 w-3" />
                 conteneur
+              </span>
+            )}
+            {event.dismissed && (
+              <span className="inline-flex items-center gap-1 rounded bg-surface-3 px-1.5 py-px text-[11px]">
+                <Check className="h-3 w-3" />
+                Vue
               </span>
             )}
           </p>
@@ -252,7 +261,19 @@ export function EventRow({
                     Tester
                   </Button>
                 )}
+                {onDismiss && (
+                  <Button write size="sm" variant="ghost" className="gap-1.5 sm:ml-auto" onClick={() => onDismiss(event, !event.dismissed)}>
+                    {event.dismissed ? <RotateCcw className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" />}
+                    {event.dismissed ? 'Remettre à examiner' : 'Vu, rien à faire'}
+                  </Button>
+                )}
               </div>
+              {onDismiss && !event.dismissed && (
+                <p className="text-xs text-muted-foreground">
+                  « Vu, rien à faire » masque cette connexion, y compris quand elle revient, et ne la compte plus parmi celles à examiner. Elle reste bloquée si
+                  elle l’était.
+                </p>
+              )}
             </div>
           </motion.div>
         )}
@@ -370,8 +391,29 @@ export function ActivityView({
     verdict: verdict === 'all' ? undefined : verdict,
     nodeId: nodeId === ANY ? undefined : nodeId,
   };
-  const { data: events, isLoading } = useFirewallEvents(filters);
+  const { data: events, isLoading, mutate } = useFirewallEvents(filters);
+  const [showSeen, setShowSeen] = useState(false);
+  const [undo, setUndo] = useState<FirewallEvent | null>(null);
+  const [dismissError, setDismissError] = useState<string | null>(null);
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const seenCount = (events ?? []).filter((event) => event.dismissed).length;
+  const onDismiss = async (event: FirewallEvent, dismissed: boolean) => {
+    setDismissError(null);
+    // Optimistic: the row goes (or comes back) at once.
+    void mutate((current) => current?.map((item) => (item.id === event.id ? { ...item, dismissed } : item)), { revalidate: false });
+    clearTimeout(undoTimer.current);
+    setUndo(dismissed ? event : null);
+    if (dismissed) undoTimer.current = setTimeout(() => setUndo(null), 8000);
+    try {
+      await api.firewall.setEventDismissed(event.id, dismissed);
+    } catch (caught) {
+      setUndo(null);
+      setDismissError(caught instanceof Error ? caught.message : 'Le changement n’a pas été enregistré.');
+    }
+    void mutate();
+  };
   useEffect(() => setLimit(PAGE), [scope, verdict, hours, nodeId, query]);
+  useEffect(() => () => clearTimeout(undoTimer.current), []);
 
   // Rows that appear after the first load are flagged as new for a moment.
   const seen = useRef<Set<string> | null>(null);
@@ -398,13 +440,14 @@ export function ActivityView({
   const ruleById = useMemo(() => new Map(rules.map((rule) => [rule.id, rule])), [rules]);
   const shown = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return events ?? [];
-    return (events ?? []).filter((event) =>
+    const visible = (events ?? []).filter((event) => showSeen || !event.dismissed);
+    if (!needle) return visible;
+    return visible.filter((event) =>
       [event.sourceIp, ...event.sources, nodeById.get(event.nodeId)?.name, event.sourceNodeId ? nodeById.get(event.sourceNodeId)?.name : '', event.service, String(event.port ?? '')]
         .filter(Boolean)
         .some((value) => (value as string).toLowerCase().includes(needle)),
     );
-  }, [events, query, nodeById]);
+  }, [events, query, nodeById, showSeen]);
 
   const sum = (kind: 'blocked' | 'observed') => shown.filter((event) => event.verdict === kind).reduce((total, event) => total + event.count, 0);
   const tally = (key: (event: FirewallEvent) => string) => {
@@ -488,6 +531,12 @@ export function ActivityView({
           <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Serveur, IP ou port…" className="h-8 pl-8" />
         </div>
+        {(seenCount > 0 || showSeen) && (
+          <Button variant={showSeen ? 'secondary' : 'ghost'} size="sm" className="gap-1.5" onClick={() => setShowSeen(!showSeen)} aria-pressed={showSeen}>
+            {showSeen ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+            {showSeen ? 'Masquer les vues' : `Vues (${seenCount})`}
+          </Button>
+        )}
         {filtered && (
           <Button variant="ghost" size="sm" className="gap-1" onClick={reset}>
             <X className="h-3.5 w-3.5" />
@@ -502,6 +551,35 @@ export function ActivityView({
           En direct
         </span>
       </div>
+
+      <AnimatePresence>
+        {(undo || dismissError) && (
+          <motion.div
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.25, ease: EASE }}
+            role="status"
+            className={cn(
+              'flex flex-wrap items-center gap-3 rounded-xl border px-4 py-2.5 text-sm',
+              dismissError ? 'border-[hsl(var(--danger))]/30 bg-[hsl(var(--danger))]/10 text-foreground' : 'border-border bg-surface-2 text-foreground',
+            )}
+          >
+            {dismissError ? (
+              <span>{dismissError}</span>
+            ) : (
+              <>
+                <Check className="h-4 w-4 text-[hsl(var(--ok))]" />
+                <span className="flex-1">Connexion marquée comme vue : elle ne sera plus comptée parmi celles à examiner.</span>
+                <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => undo && void onDismiss(undo, false)}>
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Annuler
+                </Button>
+              </>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="relative overflow-hidden p-5 lg:col-span-2">
@@ -546,7 +624,9 @@ export function ActivityView({
           >
             <ShieldCheck className="h-6 w-6 text-[hsl(var(--ok))]" />
           </motion.span>
-          <p className="text-sm font-medium text-foreground">{filtered ? 'Rien ne correspond à ces filtres' : 'Calme plat sur cette période'}</p>
+          <p className="text-sm font-medium text-foreground">
+            {filtered ? 'Rien ne correspond à ces filtres' : seenCount > 0 ? 'Tout a été examiné' : 'Calme plat sur cette période'}
+          </p>
           <p className="max-w-md text-xs text-muted-foreground">
             Les tentatives refusées par vos règles, et en mode observation celles qui le seraient, s’affichent ici en direct.
           </p>
@@ -572,6 +652,7 @@ export function ActivityView({
                         rules={ruleById}
                         onCreateRule={onCreateRule}
                         onTest={onTest}
+                        onDismiss={onDismiss}
                         index={rowIndex++}
                         fresh={fresh.has(event.id)}
                       />

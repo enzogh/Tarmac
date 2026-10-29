@@ -797,6 +797,8 @@ export type FirewallEvent = {
   count: number;
   firstSeenAt: string;
   lastSeenAt: string;
+  // Marked "seen, nothing to do": hidden by default, not counted as to review.
+  dismissed: boolean;
 };
 
 export type FirewallTestRequest = {
@@ -1568,6 +1570,8 @@ export const api = {
       ).toString();
       return request<FirewallEvent[]>(`/api/v1/firewall/events${query ? `?${query}` : ''}`);
     },
+    setEventDismissed: (id: string, dismissed: boolean) =>
+      request<{ success: boolean }>(`/api/v1/firewall/events/${id}/dismiss`, { method: dismissed ? 'POST' : 'DELETE' }),
     timeline: (params: { hours?: number; scope?: FirewallScope; nodeId?: string } = {}) => {
       const query = new URLSearchParams(
         Object.entries(params).filter(([, value]) => value !== undefined && value !== '').map(([key, value]) => [key, String(value)]),

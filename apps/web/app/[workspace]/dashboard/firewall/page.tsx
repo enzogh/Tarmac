@@ -83,6 +83,7 @@ export default function FirewallOverviewPage() {
   const { data, openRule, replace, notify, fail } = useFirewall();
   const [busy, setBusy] = useState(false);
   const { data: events } = useFirewallEvents({ hours: 24 });
+  const recent = events?.filter((event) => !event.dismissed);
   const nodeById = useMemo(() => new Map(data.nodes.map((node) => [node.id, node])), [data.nodes]);
   const ruleById = useMemo(() => new Map(data.rules.map((rule) => [rule.id, rule])), [data.rules]);
 
@@ -257,11 +258,11 @@ export default function FirewallOverviewPage() {
             }
           >
             <Card className="overflow-hidden">
-              {!events || events.length === 0 ? (
+              {!recent || recent.length === 0 ? (
                 <p className="px-4 py-8 text-center text-sm text-muted-foreground">Aucune connexion bloquée ces dernières 24 heures.</p>
               ) : (
                 <ul className="divide-y divide-border">
-                  {events.slice(0, 5).map((event) => (
+                  {recent.slice(0, 5).map((event) => (
                     <EventRow key={event.id} event={event} nodes={nodeById} rules={ruleById} onCreateRule={(draft) => openRule({ draft })} compact />
                   ))}
                 </ul>

@@ -41,6 +41,17 @@ export class FirewallController {
     return this.firewallService.events(scope, query);
   }
 
+  // "Seen, nothing to do" on a flow of the Activity, and its undo.
+  @Post('events/:id/dismiss')
+  dismissEvent(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.firewallService.setDismissed(id, true, { scope, userId: req.user?.userId });
+  }
+
+  @Delete('events/:id/dismiss')
+  restoreEvent(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.firewallService.setDismissed(id, false, { scope, userId: req.user?.userId });
+  }
+
   // Read-only "would this connection get through?" - a POST for its body.
   @Post('test')
   @RequireApiScope('firewall:read')
