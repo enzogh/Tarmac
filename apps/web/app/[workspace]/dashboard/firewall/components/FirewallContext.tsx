@@ -43,7 +43,7 @@ export function FirewallProvider({ children }: { children: ReactNode }) {
   const [testPreset, setTestPreset] = useState<TestPreset | null>(null);
   const [testOpen, setTestOpen] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout>>();
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const notify = (next: Notice) => {
     setNotice(next);

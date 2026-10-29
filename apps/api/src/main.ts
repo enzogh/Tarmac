@@ -5,6 +5,7 @@ import { PrismaClient } from '@prisma/client';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 import { allowedOrigins } from './common/allowed-origins';
+import { trustedProxies } from './common/trusted-proxies';
 import { requestContext } from './common/request-context';
 import { DEFAULT_WORKSPACE_ID } from './workspaces/default-workspace';
 
@@ -57,7 +58,11 @@ function securityHeaders(_req: unknown, res: { setHeader(name: string, value: st
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.getHttpAdapter().getInstance().disable('x-powered-by');
+  const http = app.getHttpAdapter().getInstance();
+  http.disable('x-powered-by');
+  // The real client address (rate limiting, API key "last used from") rather
+  // than the reverse proxy's, see common/trusted-proxies.ts.
+  http.set('trust proxy', trustedProxies());
   app.use(securityHeaders);
   app.enableCors({ origin: allowedOrigins(), credentials: true });
   app.use(cookieParser());

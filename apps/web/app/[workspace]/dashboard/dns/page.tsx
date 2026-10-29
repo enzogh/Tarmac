@@ -89,7 +89,7 @@ function DnsPageContent() {
 
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [zoneDialogOpen, setZoneDialogOpen] = useState(false);
-  const noticeTimer = useRef<ReturnType<typeof setTimeout>>();
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Navigation lives in the URL (?tab=, ?zone=, ?view=) so a domain can be
   // linked to, reloaded, and left with the browser's back button.

@@ -25,8 +25,8 @@ const nextConfig = {
   // A self-contained server with only the files the app uses (see the web
   // Dockerfile), traced from the monorepo root so workspace packages resolve.
   output: 'standalone',
+  outputFileTracingRoot: monorepoRoot,
   experimental: {
-    outputFileTracingRoot: monorepoRoot,
     // These four are the app's heavy client dependencies and every one of them
     // is imported by name (`import { Server, Cpu } from 'lucide-react'`), which
     // without this pulls the whole barrel file into the route's chunk. Letting

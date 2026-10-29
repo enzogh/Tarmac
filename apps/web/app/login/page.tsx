@@ -22,6 +22,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   discovery_failed: "Impossible de joindre le fournisseur d'identité Authentik.",
   callback_failed: 'La connexion via Authentik a échoué.',
   no_email_claim: "Le compte Authentik n'expose pas d'adresse email.",
+  account_link_refused:
+    'Un compte administrateur Tarmac utilise déjà cette adresse e-mail. Par sécurité, il n’est pas relié automatiquement à votre compte Authentik : contactez l’administrateur de la plateforme.',
   state_missing: 'Session de connexion expirée, réessayez.',
 };
 

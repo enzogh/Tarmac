@@ -628,13 +628,15 @@ model Pool {
   id          String       @id @default(cuid())
   workspaceId String
   workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  name        String       @unique
+  name        String
   strategy    String
   status      PoolStatus   @default(pending)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   members     PoolMember[]
 
+  // Names are per workspace: two clients may each have a "media" pool.
+  @@unique([workspaceId, name])
   @@index([workspaceId])
 }
 

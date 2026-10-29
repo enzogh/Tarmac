@@ -1,10 +1,11 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 
 // Encryption at rest for the few secrets the control plane must hand back
-// verbatim (VPN client private/preshared keys, DNS group TSIG secrets), so
-// they can't be one-way hashed. The key lives outside the database
-// (TARMAC_SECRETS_KEY, base64 of 32 bytes, see docker/.env): a dump or an
-// off-site backup of Postgres alone no longer exposes them.
+// verbatim (VPN client private/preshared keys, DNS group TSIG secrets,
+// migration seedbox passwords), so they can't be one-way hashed. The key
+// lives outside the database (TARMAC_SECRETS_KEY, base64 of 32 bytes, see
+// docker/.env): a dump or an off-site backup of Postgres alone no longer
+// exposes them.
 //
 // Format: enc:v1:<iv>:<tag>:<ciphertext>, all base64. Values without the
 // prefix are legacy plaintext and are returned as-is by openSecret(); the

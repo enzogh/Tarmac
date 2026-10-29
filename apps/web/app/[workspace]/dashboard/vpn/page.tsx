@@ -163,7 +163,7 @@ export default function VpnProfilesPage() {
   const [flash, setFlash] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<Notice | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
-  const noticeTimer = useRef<ReturnType<typeof setTimeout>>();
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const showNotice = (next: Notice) => {
     setNotice(next);

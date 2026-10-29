@@ -28,6 +28,10 @@ interface JwtPayload {
   email: string;
 }
 
+// Thrown when an SSO login would take over an existing privileged account
+// only because the e-mail addresses match (see findOrCreateSsoUser).
+export class SsoAccountLinkRefused extends Error {}
+
 @Injectable()
 export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
@@ -125,6 +129,7 @@ export class AuthService implements OnModuleInit {
     avatarUrl?: string | null;
     isSuperuser: boolean;
     canCreateWorkspaces: boolean;
+    emailVerified?: boolean;
   }): Promise<{ user: User; alertAddressChanged: boolean }> {
     const email = claims.email.trim().toLowerCase();
     const internalEmail = claims.internalEmail?.trim().toLowerCase() || null;
@@ -151,6 +156,12 @@ export class AuthService implements OnModuleInit {
 
     const existingByEmail = await this.prisma.user.findUnique({ where: { email } });
     if (existingByEmail) {
+      // A matching address alone must not hand an SSO identity a platform
+      // admin or a local password account (the bootstrap admin): that link
+      // needs the IdP to vouch for the address, or an admin to do it.
+      if ((existingByEmail.isSuperuser || existingByEmail.passwordHash) && claims.emailVerified !== true) {
+        throw new SsoAccountLinkRefused(`existing privileged account ${existingByEmail.id} not linked to SSO subject ${claims.sub}`);
+      }
       const updated = await this.prisma.user.update({
         where: { id: existingByEmail.id },
         data: {

@@ -12,6 +12,7 @@ import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
 import { assertNodesInWorkspace, assertShareInWorkspace } from '../common/workspace-ownership';
+import { openSecret, sealSecret } from '../common/secret-box';
 import { PrismaService } from '../prisma/prisma.service';
 import { alertWorkspaceId } from '../alerts/alert-workspace';
 import { CreateMigrationDto } from './dto/create-migration.dto';
@@ -128,7 +129,7 @@ export class MigrationsService {
           typeof parsed.sourceSeedboxUser === 'string' ? parsed.sourceSeedboxUser : undefined,
         sourceSeedboxPassword:
           includeSecrets && typeof parsed.sourceSeedboxPassword === 'string'
-            ? parsed.sourceSeedboxPassword
+            ? openSecret(parsed.sourceSeedboxPassword)
             : undefined,
         sourceSeedboxPort:
           typeof parsed.sourceSeedboxPort === 'number' ? parsed.sourceSeedboxPort : undefined,
@@ -138,7 +139,7 @@ export class MigrationsService {
           typeof parsed.targetSeedboxUser === 'string' ? parsed.targetSeedboxUser : undefined,
         targetSeedboxPassword:
           includeSecrets && typeof parsed.targetSeedboxPassword === 'string'
-            ? parsed.targetSeedboxPassword
+            ? openSecret(parsed.targetSeedboxPassword)
             : undefined,
         targetSeedboxPort:
           typeof parsed.targetSeedboxPort === 'number' ? parsed.targetSeedboxPort : undefined,
@@ -179,11 +180,12 @@ export class MigrationsService {
       targetKind: dto.targetKind ?? null,
       sourceSeedboxHost: dto.sourceSeedboxHost ?? null,
       sourceSeedboxUser: dto.sourceSeedboxUser ?? null,
-      sourceSeedboxPassword: dto.sourceSeedboxPassword ?? null,
+      // Encrypted at rest (TARMAC_SECRETS_KEY), like VPN keys and TSIG secrets.
+      sourceSeedboxPassword: dto.sourceSeedboxPassword ? sealSecret(dto.sourceSeedboxPassword) : null,
       sourceSeedboxPort: Number.isFinite(sourceSeedboxPort) ? sourceSeedboxPort : null,
       targetSeedboxHost: dto.targetSeedboxHost ?? null,
       targetSeedboxUser: dto.targetSeedboxUser ?? null,
-      targetSeedboxPassword: dto.targetSeedboxPassword ?? null,
+      targetSeedboxPassword: dto.targetSeedboxPassword ? sealSecret(dto.targetSeedboxPassword) : null,
       targetSeedboxPort: Number.isFinite(targetSeedboxPort) ? targetSeedboxPort : null,
     });
   }

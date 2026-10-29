@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PoolMemberStatus, Prisma } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
@@ -28,8 +28,20 @@ export class PoolsService {
     if (!pool) throw new NotFoundException('pool not found');
   }
 
+  // A duplicate name in the same workspace is a user mistake, not a 500.
+  private async withNameCheck<T>(write: () => Promise<T>): Promise<T> {
+    try {
+      return await write();
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('Un pool porte déjà ce nom dans ce workspace.');
+      }
+      throw error;
+    }
+  }
+
   async create(dto: CreatePoolDto, scope: WorkspaceScope, actorUserId?: string) {
-    const created = await this.prisma.pool.create({ data: { ...dto, workspaceId: scope.workspaceId as string } });
+    const created = await this.withNameCheck(() => this.prisma.pool.create({ data: { ...dto, workspaceId: scope.workspaceId as string } }));
     await this.auditLogsService.log({
       workspaceId: scope.workspaceId as string,
       actorUserId,
@@ -43,7 +55,7 @@ export class PoolsService {
 
   async update(id: string, dto: UpdatePoolDto, scope: WorkspaceScope, actorUserId?: string) {
     await this.assertOwned(id, scope);
-    const updated = await this.prisma.pool.update({ where: { id }, data: dto });
+    const updated = await this.withNameCheck(() => this.prisma.pool.update({ where: { id }, data: dto }));
     await this.auditLogsService.log({
       workspaceId: scope.workspaceId as string,
       actorUserId,

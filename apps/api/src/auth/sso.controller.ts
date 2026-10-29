@@ -6,7 +6,7 @@ import type { Client, TokenSet } from 'openid-client';
 import { findInternalEmail } from '../mail/alert-recipients';
 import { AUTH_COOKIE_MAX_AGE_MS, AUTH_COOKIE_NAME, authCookieOptions } from './auth-cookie';
 import { AuthentikService } from './authentik.service';
-import { AuthService } from './auth.service';
+import { AuthService, SsoAccountLinkRefused } from './auth.service';
 import { SessionValidityService } from './session-validity.service';
 
 const SSO_STATE_COOKIE = 'tarmac_sso_state';
@@ -117,6 +117,7 @@ export class SsoController {
         avatarUrl: typeof claims.picture === 'string' ? claims.picture : null,
         isSuperuser: claims.is_superuser === true,
         canCreateWorkspaces: groups.includes(this.accessGroup()),
+        emailVerified: claims.email_verified === true,
       });
 
       this.sessionValidity.forget(user.id);
@@ -153,6 +154,10 @@ export class SsoController {
         ? res.redirect(this.loginRedirect({ sso: 'ready' }))
         : res.redirect(`${this.frontendUrl()}/workspaces`);
     } catch (error) {
+      if (error instanceof SsoAccountLinkRefused) {
+        this.logger.warn(`SSO login refused: ${error.message}`);
+        return res.redirect(this.loginRedirect({ sso: 'error', reason: 'account_link_refused' }));
+      }
       this.logger.warn(`Authentik SSO callback failed: ${error instanceof Error ? error.message : error}`);
       return res.redirect(this.loginRedirect({ sso: 'error', reason: 'callback_failed' }));
     }

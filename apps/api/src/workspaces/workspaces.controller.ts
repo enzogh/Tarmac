@@ -38,9 +38,10 @@ export class WorkspacesController {
     return this.workspacesService.create(dto, req.user?.userId);
   }
 
-  // name and ssoGroupClaim (the Authentik group that auto-grants membership
-  // on SSO login) only - see WorkspacesService.update for what's deliberately
-  // not editable here. Owner-or-platform-admin, enforced inside the service.
+  // name, slug, weekly report and ssoGroupClaim (the Authentik group that
+  // auto-grants membership on SSO login) only - see WorkspacesService.update.
+  // Owner-or-platform-admin, and ssoGroupClaim platform-admin only, both
+  // enforced inside the service.
   @Patch(':id')
   update(
     @Param('id') id: string,

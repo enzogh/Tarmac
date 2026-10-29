@@ -7,6 +7,7 @@ import { AdminProfile, api, WorkspaceDetail, WorkspaceListItem } from '../../../
 import { API_KEY_RESOURCES, scopesToPermissions } from '../../../../lib/api-key-permissions';
 import { usePolling } from '../../../../lib/hooks/usePolling';
 import { cn } from '../../../../lib/utils';
+import { useWorkspace } from '../../../../lib/workspace-context';
 import { PageHeader } from '../../../../components/PageHeader';
 import { Card, CardContent } from '../../../../components/ui/card';
 import { Button } from '../../../../components/ui/button';
@@ -455,6 +456,9 @@ function toSlug(value: string) {
 const NOTICE_KEY = 'tarmac.settings.notice';
 
 function GeneralCard({ workspace, onSaved }: { workspace: WorkspaceListItem; onSaved: (updated: WorkspaceDetail) => void }) {
+  // Linking an Authentik group grants membership to everyone in it: a
+  // platform-wide decision, so only platform admins can change it.
+  const { isPlatformAdmin } = useWorkspace();
   const [name, setName] = useState(workspace.name);
   const [slug, setSlug] = useState(workspace.slug);
   const [ssoGroup, setSsoGroup] = useState(workspace.ssoGroupClaim ?? '');
@@ -543,21 +547,26 @@ function GeneralCard({ workspace, onSaved }: { workspace: WorkspaceListItem; onS
               </p>
             </div>
           </div>
-          <div className="space-y-2 sm:w-1/2 sm:pr-2">
-            <Label htmlFor="workspace-sso-group">Groupe Authentik</Label>
-            <Input
-              id="workspace-sso-group"
-              value={ssoGroup}
-              onChange={(e) => setSsoGroup(e.target.value)}
-              placeholder="Aucun"
-              maxLength={200}
-              spellCheck={false}
-              className="font-mono"
-            />
-            <p className="text-xs text-muted-foreground">
-              Toute personne membre de ce groupe dans Authentik devient membre à sa prochaine connexion.
-            </p>
-          </div>
+          {(isPlatformAdmin || workspace.ssoGroupClaim) && (
+            <div className="space-y-2 sm:w-1/2 sm:pr-2">
+              <Label htmlFor="workspace-sso-group">Groupe Authentik</Label>
+              <Input
+                id="workspace-sso-group"
+                value={ssoGroup}
+                onChange={(e) => setSsoGroup(e.target.value)}
+                placeholder="Aucun"
+                maxLength={200}
+                spellCheck={false}
+                disabled={!isPlatformAdmin}
+                className="font-mono"
+              />
+              <p className="text-xs text-muted-foreground">
+                {isPlatformAdmin
+                  ? 'Toute personne membre de ce groupe dans Authentik devient membre à sa prochaine connexion.'
+                  : 'Les membres de ce groupe Authentik rejoignent ce workspace à leur connexion. Seul un administrateur de la plateforme peut le modifier.'}
+              </p>
+            </div>
+          )}
           {slugChanged && !slugInvalid && (
             <Alert variant="info">
               <AlertDescription>

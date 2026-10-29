@@ -12,7 +12,7 @@ export class SecretsAtRestService implements OnApplicationBootstrap {
 
   async onApplicationBootstrap() {
     if (!secretsKeyConfigured()) {
-      this.logger.warn('TARMAC_SECRETS_KEY absent : les clés VPN et secrets TSIG restent en clair en base');
+      this.logger.warn('TARMAC_SECRETS_KEY absent : les clés VPN, secrets TSIG et mots de passe seedbox restent en clair en base');
       return;
     }
 
@@ -45,8 +45,37 @@ export class SecretsAtRestService implements OnApplicationBootstrap {
       sealedGroups++;
     }
 
-    if (sealedProfiles || sealedGroups) {
-      this.logger.log(`Secrets chiffrés au repos : ${sealedProfiles} profil(s) VPN, ${sealedGroups} groupe(s) DNS`);
+    // Seedbox / storage box passwords of migrations live in the notes JSON.
+    const migrations = await this.prisma.migrationTask.findMany({
+      where: { notes: { contains: 'SeedboxPassword' } },
+      select: { id: true, notes: true },
+    });
+    let sealedMigrations = 0;
+    for (const migration of migrations) {
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(migration.notes ?? '');
+      } catch {
+        continue;
+      }
+      if (typeof parsed !== 'object' || parsed === null) continue;
+      let changed = false;
+      for (const field of ['sourceSeedboxPassword', 'targetSeedboxPassword']) {
+        const value = parsed[field];
+        if (typeof value === 'string' && value && !isSealed(value)) {
+          parsed[field] = sealSecret(value);
+          changed = true;
+        }
+      }
+      if (!changed) continue;
+      await this.prisma.migrationTask.update({ where: { id: migration.id }, data: { notes: JSON.stringify(parsed) } });
+      sealedMigrations++;
+    }
+
+    if (sealedProfiles || sealedGroups || sealedMigrations) {
+      this.logger.log(
+        `Secrets chiffrés au repos : ${sealedProfiles} profil(s) VPN, ${sealedGroups} groupe(s) DNS, ${sealedMigrations} migration(s)`,
+      );
     }
   }
 }

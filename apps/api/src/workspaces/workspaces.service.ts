@@ -225,6 +225,12 @@ export class WorkspacesService {
   async update(workspaceId: string, dto: UpdateWorkspaceDto, scope: WorkspaceScope, actorUserId?: string) {
     const workspace = await this.assertExists(workspaceId);
     await this.assertCanManageMembers(workspaceId, scope, actorUserId);
+    // Linking an Authentik group makes everyone in it a member at their next
+    // login: a workspace owner could otherwise pull the whole access group
+    // (or any group) into their workspace.
+    if (dto.ssoGroupClaim !== undefined && !scope.isPlatformAdmin) {
+      throw new ForbiddenException('Seul un administrateur de la plateforme peut lier un groupe Authentik à un workspace.');
+    }
     if (dto.name === undefined && dto.ssoGroupClaim === undefined && dto.slug === undefined && dto.weeklyReportEnabled === undefined) {
       throw new BadRequestException('Nothing to update');
     }
