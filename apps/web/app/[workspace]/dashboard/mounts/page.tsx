@@ -17,14 +17,15 @@ import {
   Check,
   KeyRound,
   Settings2,
+  FolderOpen,
 } from 'lucide-react';
 import { api, MountItem, NodeItem, VlanMember } from '../../../../lib/api';
 import { usePolling } from '../../../../lib/hooks/usePolling';
 import { PageHeader } from '../../../../components/PageHeader';
 import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
-import { RainbowButton } from '../../../../components/ui/rainbow-button';
 import { Card, CardContent } from '../../../../components/ui/card';
 import { Button } from '../../../../components/ui/button';
+import { EmptyState } from '../../../../components/ui/empty-state';
 import { Alert, AlertDescription } from '../../../../components/ui/alert';
 import { Input } from '../../../../components/ui/input';
 import { Label } from '../../../../components/ui/label';
@@ -1106,10 +1107,10 @@ export default function MountsPage() {
                 <HardDrive className="h-4 w-4" />
                 Monter un partage
               </Button>
-              <RainbowButton onClick={() => openWizard('create-share')} className="gap-2">
+              <Button write onClick={() => openWizard('create-share')} className="gap-2">
                 <Network className="h-4 w-4" />
                 Nouveau partage NFS
-              </RainbowButton>
+              </Button>
             </>
           }
         />
@@ -1146,21 +1147,18 @@ export default function MountsPage() {
         {mountsLoading ? (
           <CardListSkeleton cards={3} />
         ) : mounts.length === 0 ? (
-          <Card className="border-border bg-surface-1 backdrop-blur">
-            <CardContent className="py-16 text-center">
-              <div className="mb-4 text-5xl">📂</div>
-              <p className="font-medium text-muted-foreground">Aucun montage configuré</p>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Créez votre premier partage NFS en cliquant sur{' '}
-                <button
-                  className="text-muted-foreground underline hover:text-primary"
-                  onClick={() => openWizard('create-share')}
-                >
-                  Nouveau partage NFS
-                </button>
-                .
-              </p>
-            </CardContent>
+          <Card>
+            <EmptyState
+              icon={FolderOpen}
+              title="Aucun montage configuré"
+              description="Un partage NFS rend un dossier d'un nœud accessible depuis vos autres serveurs, comme s'il était local."
+              action={
+                <Button write onClick={() => openWizard('create-share')}>
+                  <Network className="h-4 w-4" />
+                  Créer mon premier partage
+                </Button>
+              }
+            />
           </Card>
         ) : (
           /* One row per mount instead of a card each. The card repeated the

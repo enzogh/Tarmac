@@ -24,7 +24,6 @@ import { api, API_BASE, NodeItem, SyncJobItem, SyncJobRunItem } from '../../../.
 import { usePolling } from '../../../../lib/hooks/usePolling';
 import { PageHeader } from '../../../../components/PageHeader';
 import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
-import { RainbowButton } from '../../../../components/ui/rainbow-button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../../components/ui/card';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
@@ -415,10 +414,10 @@ export default function ReplicationPage() {
           title="Réplication"
           description="Copiez des dossiers entre nœuds via rsync, à la demande."
           actions={
-            <RainbowButton onClick={() => setWizardOpen(true)} className="gap-2">
-              <Plus className="w-5 h-5" />
+            <Button write onClick={() => setWizardOpen(true)} className="gap-2">
+              <Plus className="h-4 w-4" />
               Nouvelle réplication
-            </RainbowButton>
+            </Button>
           }
         />
 

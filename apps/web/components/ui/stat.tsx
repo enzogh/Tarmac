@@ -14,12 +14,23 @@ const TONE_TEXT: Record<StatTone, string> = {
   info: 'text-[hsl(var(--info))]',
 };
 
-const TONE_RAIL: Record<StatTone, string> = {
-  neutral: 'bg-border',
-  ok: 'bg-[hsl(var(--ok))]',
+// The icon sits in a small chip tinted with the tile's tone: a quiet way to
+// say "this one needs a look" that still reads in a row of five.
+const TONE_CHIP: Record<StatTone, string> = {
+  neutral: 'border-white/[0.06] bg-white/[0.03] text-muted-foreground',
+  ok: 'border-[hsl(var(--ok))]/20 bg-[hsl(var(--ok))]/10 text-[hsl(var(--ok))]',
+  warn: 'border-[hsl(var(--warn))]/20 bg-[hsl(var(--warn))]/10 text-[hsl(var(--warn))]',
+  danger: 'border-[hsl(var(--danger))]/25 bg-[hsl(var(--danger))]/10 text-[hsl(var(--danger))]',
+  info: 'border-[hsl(var(--info))]/20 bg-[hsl(var(--info))]/10 text-[hsl(var(--info))]',
+};
+
+// A faint wash of the tone in the tile's corner, only when it carries news.
+const TONE_GLOW: Record<StatTone, string | null> = {
+  neutral: null,
+  ok: null,
   warn: 'bg-[hsl(var(--warn))]',
   danger: 'bg-[hsl(var(--danger))]',
-  info: 'bg-[hsl(var(--info))]',
+  info: null,
 };
 
 export type StatProps = {
@@ -49,39 +60,39 @@ export function Stat({ label, value, unit, hint, icon: Icon, iconNode, tone = 'n
   return (
     <div
       className={cn(
-        'relative flex min-w-0 flex-col justify-between gap-3 overflow-hidden rounded-xl border border-border bg-surface-1 [background-image:linear-gradient(180deg,rgba(255,255,255,0.025),transparent_40%)] p-4 transition-[border-color,background-color] duration-300 hover:border-white/[0.12] hover:bg-surface-1/80',
+        'group relative flex min-w-0 flex-col justify-between gap-4 overflow-hidden rounded-xl border border-border bg-surface-1 [background-image:linear-gradient(180deg,rgba(255,255,255,0.03),transparent_45%)] p-4 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)] transition-[border-color,transform] duration-300 hover:border-white/[0.12]',
         className,
       )}
     >
-      <span className={cn('absolute inset-y-0 left-0 w-px', TONE_RAIL[tone])} aria-hidden />
-      <div className="flex items-start justify-between gap-3">
+      {TONE_GLOW[tone] && (
+        <span className={cn('pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full opacity-[0.12] blur-2xl', TONE_GLOW[tone])} aria-hidden />
+      )}
+      <div className="relative flex items-start justify-between gap-3">
         {/* No reserved second line here: the tiles sit in a grid, so they
-            already stretch to a common height, and `justify-between` already
-            drops every value to the bottom of that height - the figures line
-            up across the row whether or not one label wraps. The reserved
-            line only ever added 16px of dead air between a one-line label and
-            its figure, which is the usual case. */}
-        <p className="text-2xs font-medium uppercase leading-4 tracking-wider text-muted-foreground">
-          {label}
-        </p>
-        {Icon ? (
-          <Icon className="h-4 w-4 shrink-0 text-muted-foreground/60" aria-hidden />
-        ) : (
-          iconNode && (
-            <span className="shrink-0 text-muted-foreground/60 [&>svg]:h-4 [&>svg]:w-4" aria-hidden>
-              {iconNode}
-            </span>
-          )
+            already stretch to a common height, and `justify-between` drops
+            every value to the bottom of that height - the figures line up
+            across the row whether or not one label wraps. */}
+        <p className="pt-1 text-[13px] font-medium leading-4 text-muted-foreground">{label}</p>
+        {(Icon || iconNode) && (
+          <span
+            className={cn(
+              'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border [&>svg]:h-3.5 [&>svg]:w-3.5',
+              TONE_CHIP[tone],
+            )}
+            aria-hidden
+          >
+            {Icon ? <Icon /> : iconNode}
+          </span>
         )}
       </div>
-      <div className="min-w-0">
+      <div className="relative min-w-0">
         <p className="flex items-baseline gap-1.5 truncate">
           <span className={cn('tabular text-[1.75rem] font-semibold leading-none tracking-tight', TONE_TEXT[tone])}>
             {value}
           </span>
           {unit && <span className="text-sm font-medium text-muted-foreground">{unit}</span>}
         </p>
-        {hint && <p className="mt-1.5 truncate text-xs text-muted-foreground">{hint}</p>}
+        {hint && <p className="mt-2 truncate text-xs text-muted-foreground">{hint}</p>}
       </div>
     </div>
   );
@@ -90,6 +101,6 @@ export function Stat({ label, value, unit, hint, icon: Icon, iconNode, tone = 'n
 /** A row of Stat tiles that keeps the same rhythm on every page. */
 export function StatRow({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn('stagger-in grid gap-3 sm:grid-cols-2 xl:grid-cols-4', className)}>{children}</div>
+    <div className={cn('stagger-in grid grid-cols-2 gap-3 xl:grid-cols-4', className)}>{children}</div>
   );
 }

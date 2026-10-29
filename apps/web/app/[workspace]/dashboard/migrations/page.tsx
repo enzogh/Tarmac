@@ -23,7 +23,6 @@ import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger } from '../../../..
 import { PageHeader } from '../../../../components/PageHeader';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../../../components/ui/dropdown-menu';
 import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
-import { RainbowButton } from '../../../../components/ui/rainbow-button';
 import { SectionLabel } from '../../../../components/SectionLabel';
 import { Callout } from '../../../../components/Callout';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../../components/ui/card';
@@ -891,10 +890,10 @@ export default function MigrationsPage() {
           title="Migrations"
           description="Déplacez des volumes de stockage entre nœuds, seedboxes ou Storage Boxes, avec suivi en direct."
           actions={
-            <RainbowButton onClick={() => setWizardOpen(true)} className="gap-2">
-              <Plus className="h-5 w-5" />
+            <Button write onClick={() => setWizardOpen(true)} className="gap-2">
+              <Plus className="h-4 w-4" />
               Nouvelle migration
-            </RainbowButton>
+            </Button>
           }
         />
 

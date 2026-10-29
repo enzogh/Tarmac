@@ -30,15 +30,15 @@ export function PageHeader({ title, description, actions, meta, className, actio
   const readOnly = area !== null && access.ready && isRestrictedToRead(area, access.level(area));
   if (readOnly && !actionsReadOnlySafe) actions = undefined;
   return (
-    <header className={cn('flex flex-wrap items-start justify-between gap-x-6 gap-y-3 pb-1', className)}>
-      <div className="min-w-0">
+    <header className={cn('flex flex-col gap-4 pb-1 lg:flex-row lg:items-end lg:justify-between lg:gap-8', className)}>
+      <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-          <h1 className="truncate text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+          <h1 className="truncate text-[1.625rem] font-semibold leading-tight tracking-[-0.02em] text-foreground">{title}</h1>
           {meta}
         </div>
         {description && <p className="mt-1.5 max-w-3xl text-sm leading-relaxed text-muted-foreground">{description}</p>}
       </div>
-      {actions && <div className="flex max-w-full flex-wrap items-center gap-2">{actions}</div>}
+      {actions && <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">{actions}</div>}
     </header>
   );
 }

@@ -89,8 +89,8 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
   const effectiveProviderLabel = useMemo(
     () =>
       provider === 'ovh'
-        ? 'OVH: connexion SSH user + élévation root via sudo'
-        : 'Standard: exécution directe avec l’utilisateur SSH fourni',
+        ? 'OVH : connexion avec un utilisateur classique, Tarmac passe administrateur via sudo.'
+        : 'Standard : Tarmac agit directement avec l’utilisateur SSH indiqué.',
     [provider],
   );
 
@@ -130,7 +130,7 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
       setStep('deploy-key');
       onCreated?.();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Impossible de démarrer l’onboarding.');
+      setError(caught instanceof Error ? caught.message : 'Impossible d’ajouter ce nœud pour le moment.');
     } finally {
       setLoading(false);
     }
@@ -170,16 +170,16 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
         <TooltipTrigger asChild>
           <Button write onClick={() => setOpen(true)}>
             <Plus className="h-4 w-4" />
-            Onboarder un nœud
+            Ajouter un nœud
           </Button>
         </TooltipTrigger>
-        <TooltipContent>Onboarding auto: SSH + clé GitHub + install agent</TooltipContent>
+        <TooltipContent className="max-w-xs">Donnez l’adresse et un accès SSH : Tarmac installe et connecte l’agent pour vous.</TooltipContent>
       </Tooltip>
 
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Onboarding automatisé d’un nœud</DialogTitle>
+            <DialogTitle>Ajouter un nœud</DialogTitle>
           </DialogHeader>
 
           {step === 'form' && (
@@ -333,7 +333,7 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
                   Annuler
                 </Button>
                 <Button type="submit" disabled={loading}>
-                  {loading ? 'Initialisation…' : 'Démarrer onboarding'}
+                  {loading ? 'Connexion au serveur…' : 'Ajouter le nœud'}
                 </Button>
               </DialogFooter>
             </form>
@@ -343,7 +343,7 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
             <div className="space-y-4">
               <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
                 <p className="text-sm font-medium text-emerald-200">
-                  Nœud créé: <strong>{onboarding.node.name}</strong> ({onboarding.node.id})
+                  Nœud créé : <strong>{onboarding.node.name}</strong> ({onboarding.node.id})
                 </p>
                 <p className="mt-1 text-xs text-emerald-100/80">
                   {onboarding.githubDeployKey.registered
@@ -374,7 +374,7 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Titre suggéré: <code>{onboarding.githubDeployKey.title}</code>
+                  Titre suggéré : <code>{onboarding.githubDeployKey.title}</code>
                 </p>
                 <pre className="code-block whitespace-pre-wrap break-all">
                   {onboarding.githubDeployKey.publicKey}

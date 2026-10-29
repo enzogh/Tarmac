@@ -6,6 +6,7 @@ import Link from 'next/link';
 import {
   ArrowRight,
   BellRing,
+  BookOpen,
   Crown,
   Layers,
   LogOut,
@@ -18,6 +19,7 @@ import {
 } from 'lucide-react';
 import { api, ApiError, setCurrentWorkspaceId, WorkspaceHealth, WorkspaceListItem } from '../../lib/api';
 import { BrandMark } from '../../components/BrandMark';
+import { WorkspaceTile } from '../../components/WorkspaceSwitcher';
 import { usePolling } from '../../lib/hooks/usePolling';
 import { cn } from '../../lib/utils';
 import { Button } from '../../components/ui/button';
@@ -35,18 +37,6 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 // the first letter of each of the first two words ("Acme Corp" -> "AC");
 // a single-word name falls back to its own first two letters ("Intraced" ->
 // "IN") instead of just "I".
-function initials(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length >= 2) {
-    return (words[0][0] + words[1][0]).toUpperCase();
-  }
-  if (words.length === 1) {
-    const word = words[0];
-    return word.length >= 2 ? word.slice(0, 2).toUpperCase() : (word[0] + word[0]).toUpperCase();
-  }
-  return '??';
-}
-
 const HEALTH: Record<WorkspaceHealth['status'], { label: string; dot: string; pill: string }> = {
   ok: { label: 'Opérationnel', dot: 'bg-[hsl(var(--ok))]', pill: 'border-[hsl(var(--ok))]/25 bg-[hsl(var(--ok))]/10 text-[hsl(var(--ok))]' },
   warning: { label: 'À surveiller', dot: 'bg-[hsl(var(--warn))]', pill: 'border-[hsl(var(--warn))]/25 bg-[hsl(var(--warn))]/10 text-[hsl(var(--warn))]' },
@@ -111,14 +101,24 @@ export default function WorkspacesHomePage() {
   // A single column of rows reads the same at one workspace as at twenty;
   // each row says at a glance whether that fleet needs attention.
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      <header className="border-b border-border">
-        <div className="mx-auto flex w-full max-w-4xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
-          <span className="flex items-center gap-2">
-            <BrandMark />
-            <span className="text-sm font-semibold tracking-tight text-foreground">Tarmac</span>
+    <div className="relative flex min-h-screen flex-col bg-background">
+      <div
+        className="pointer-events-none absolute inset-x-0 top-0 h-[480px] bg-[radial-gradient(ellipse_60%_60%_at_50%_-10%,hsl(var(--primary)/0.12),transparent_70%)]"
+        aria-hidden
+      />
+      <header className="sticky top-0 z-10 border-b border-white/[0.06] bg-background/60 backdrop-blur-xl backdrop-saturate-150">
+        <div className="mx-auto flex w-full max-w-4xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
+          <span className="flex items-center gap-2.5">
+            <BrandMark size="md" />
+            <span className="text-[15px] font-semibold tracking-tight text-foreground">Tarmac</span>
           </span>
           <span className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" asChild className="gap-2">
+              <Link href="/docs">
+                <BookOpen className="h-4 w-4" />
+                <span className="hidden sm:inline">Documentation</span>
+              </Link>
+            </Button>
             {isSuperuser && (
               <Button variant="ghost" size="sm" asChild className="gap-2">
                 <Link href="/admin">
@@ -135,11 +135,11 @@ export default function WorkspacesHomePage() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-4xl flex-1 space-y-6 px-4 py-8 sm:px-6 sm:py-10">
+      <main className="relative mx-auto w-full max-w-4xl flex-1 space-y-6 px-4 py-8 sm:px-6 sm:py-12">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div className="min-w-0">
             <p className="text-sm text-muted-foreground">{firstName ? `Bonjour ${firstName}` : 'Bienvenue'}</p>
-            <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-foreground">Mes workspaces</h1>
+            <h1 className="mt-1 text-[1.625rem] font-semibold leading-tight tracking-[-0.02em] text-foreground">Mes workspaces</h1>
             <p className="mt-1 text-sm text-muted-foreground">Chaque workspace regroupe sa propre flotte de nœuds, ses partages et ses alertes.</p>
           </div>
           {canCreate && (
@@ -220,7 +220,7 @@ export default function WorkspacesHomePage() {
           )}
 
           {!isLoading && filtered.length > 0 && (
-            <ul className="animate-fade-in divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface-1">
+            <ul className="animate-fade-in divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface-1 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04),0_1px_2px_0_rgba(0,0,0,0.3)]">
               {filtered.map((workspace) => (
                 <li key={workspace.id}>
                   <WorkspaceRow workspace={workspace} isSuperuser={isSuperuser} onEnter={() => enterWorkspace(workspace)} />
@@ -258,11 +258,20 @@ function QuotaTile({ used, limit }: { used: number; limit: number }) {
   const reached = used >= limit;
   const remaining = Math.max(0, limit - used);
   return (
-    <div className="relative flex min-w-0 flex-col justify-between gap-3 overflow-hidden rounded-xl border border-border bg-surface-1 p-4">
-      <span className={cn('absolute inset-y-0 left-0 w-px', reached ? 'bg-[hsl(var(--warn))]' : 'bg-[hsl(var(--info))]')} aria-hidden />
+    <div className="relative flex min-w-0 flex-col justify-between gap-4 overflow-hidden rounded-xl border border-border bg-surface-1 [background-image:linear-gradient(180deg,rgba(255,255,255,0.03),transparent_45%)] p-4 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]">
       <div className="flex items-start justify-between gap-3">
-        <p className="text-2xs font-medium uppercase leading-4 tracking-wider text-muted-foreground">Mes créations</p>
-        <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground/60" aria-hidden />
+        <p className="pt-1 text-[13px] font-medium leading-4 text-muted-foreground">Mes créations</p>
+        <span
+          className={cn(
+            'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border',
+            reached
+              ? 'border-[hsl(var(--warn))]/20 bg-[hsl(var(--warn))]/10 text-[hsl(var(--warn))]'
+              : 'border-[hsl(var(--info))]/20 bg-[hsl(var(--info))]/10 text-[hsl(var(--info))]',
+          )}
+          aria-hidden
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+        </span>
       </div>
       <div className="min-w-0">
         <p className="flex items-baseline gap-1.5">
@@ -291,9 +300,7 @@ function WorkspaceRow({ workspace, isSuperuser, onEnter }: { workspace: Workspac
     // doesn't need a separate button for it.
     <button type="button" onClick={onEnter} className="group flex w-full items-center gap-4 px-4 py-4 text-left transition-colors hover:bg-surface-2">
       <span className="relative shrink-0">
-        <span className="flex h-11 w-11 items-center justify-center rounded-lg border border-border bg-surface-2 text-xs font-semibold text-foreground">
-          {initials(workspace.name)}
-        </span>
+        <WorkspaceTile name={workspace.name} seed={workspace.id} className="h-11 w-11 rounded-xl text-xs" />
         <span className={cn('absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full ring-2 ring-surface-1', meta.dot)} aria-hidden />
       </span>
 

@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/PageHeader';
 import { Callout } from '@/components/Callout';
 import { NodeOnboardingModal } from '@/components/NodeOnboardingModal';
+import { EmptyState } from '@/components/ui/empty-state';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -629,7 +630,14 @@ export default function InfrastructurePage() {
               <NodesTableSkeleton />
             </Card>
           ) : nodes.length === 0 ? (
-            <Card className="py-12 text-center text-sm text-muted-foreground">Aucun nœud enregistré. Cliquez sur « Onboarder un nœud » pour commencer.</Card>
+            <Card>
+              <EmptyState
+                icon={Server}
+                title="Aucun nœud pour l’instant"
+                description="Un nœud est l’un de vos serveurs. Donnez son adresse et un accès SSH : Tarmac installe l’agent et le relie au réseau privé tout seul."
+                action={<NodeOnboardingModal onCreated={refreshNodes} />}
+              />
+            </Card>
           ) : visible.length === 0 ? (
             <Card className="flex flex-col items-center gap-2 py-12 text-center">
               <p className="text-sm text-muted-foreground">Aucun nœud ne correspond à ces filtres.</p>

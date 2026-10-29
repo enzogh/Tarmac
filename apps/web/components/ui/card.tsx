@@ -10,7 +10,7 @@ const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElemen
   ({ className, ...props }, ref) => (
     <div
       ref={ref}
-      className={cn('relative rounded-xl border border-border bg-surface-1 [background-image:linear-gradient(180deg,rgba(255,255,255,0.025),transparent_40%)] shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset] transition-[border-color] duration-300', className)}
+      className={cn('relative rounded-xl border border-border bg-surface-1 [background-image:linear-gradient(180deg,rgba(255,255,255,0.025),transparent_40%)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04),0_1px_2px_0_rgba(0,0,0,0.3)] transition-[border-color] duration-300', className)}
       {...props}
     />
   ),

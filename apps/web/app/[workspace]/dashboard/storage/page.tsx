@@ -20,9 +20,9 @@ import { api, NodeItem, PoolItem } from '../../../../lib/api';
 import { usePolling } from '../../../../lib/hooks/usePolling';
 import { PageHeader } from '../../../../components/PageHeader';
 import { AnimatedGradientText } from '../../../../components/ui/animated-gradient-text';
-import { RainbowButton } from '../../../../components/ui/rainbow-button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../../components/ui/card';
 import { Button } from '../../../../components/ui/button';
+import { EmptyState } from '../../../../components/ui/empty-state';
 import { Alert, AlertDescription } from '../../../../components/ui/alert';
 import { Badge, NodeLabelBadges, StatCard } from '../../../../components/ui';
 import { CardListSkeleton, StatCardSkeleton } from '../../../../components/ui/skeleton';
@@ -278,10 +278,10 @@ export default function StoragePage() {
           title="Stockage"
           description="Regroupez des nœuds en pools selon une stratégie de redondance."
           actions={
-            <RainbowButton onClick={() => setWizardOpen(true)} className="gap-2">
-              <Plus className="w-5 h-5" />
+            <Button write onClick={() => setWizardOpen(true)} className="gap-2">
+              <Plus className="h-4 w-4" />
               Nouveau pool
-            </RainbowButton>
+            </Button>
           }
         />
 
@@ -345,12 +345,18 @@ export default function StoragePage() {
         {poolsLoading ? (
           <CardListSkeleton cards={2} />
         ) : pools.length === 0 ? (
-          <Card className="border-border bg-surface-1 backdrop-blur">
-            <CardContent className="pt-12 pb-12 text-center">
-              <HardDrive className="mx-auto mb-4 h-12 w-12 text-muted-foreground/50" />
-              <p className="font-medium text-muted-foreground">Aucun pool créé</p>
-              <p className="mt-2 text-sm text-muted-foreground">Cliquez sur « Nouveau pool » pour en créer un.</p>
-            </CardContent>
+          <Card>
+            <EmptyState
+              icon={HardDrive}
+              title="Aucun pool créé"
+              description="Un pool regroupe les disques de plusieurs nœuds en un seul espace, avec la protection de votre choix."
+              action={
+                <Button write onClick={() => setWizardOpen(true)}>
+                  <Plus className="h-4 w-4" />
+                  Créer un pool
+                </Button>
+              }
+            />
           </Card>
         ) : (
           <div className="grid gap-4 animate-fade-in">

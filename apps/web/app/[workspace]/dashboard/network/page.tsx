@@ -1331,7 +1331,7 @@ export default function NetworkPage() {
                         {countryBubbles.map((bubble) => (
                           <g key={bubble.id}>
                             <circle cx={bubble.x} cy={bubble.y} r={bubble.r} fill="rgba(59,130,246,0.04)" stroke="rgba(59,130,246,0.18)" strokeWidth={1.5} />
-                            <text x={bubble.x} y={bubble.y - bubble.r + 18} textAnchor="middle" fill="rgba(191,219,254,0.85)" fontSize={11} fontFamily="ui-sans-serif, system-ui, sans-serif">
+                            <text x={bubble.x} y={bubble.y - bubble.r + 18} textAnchor="middle" fill="rgba(191,219,254,0.85)" fontSize={11}>
                               {bubble.label}
                             </text>
                           </g>
@@ -1339,7 +1339,7 @@ export default function NetworkPage() {
                         {cityBubbles.map((bubble) => (
                           <g key={bubble.id}>
                             <circle cx={bubble.x} cy={bubble.y} r={bubble.r} fill="rgba(139,92,246,0.04)" stroke="rgba(139,92,246,0.2)" strokeWidth={1} />
-                            <text x={bubble.x} y={bubble.y - bubble.r + 14} textAnchor="middle" fill="rgba(221,214,254,0.75)" fontSize={10} fontFamily="ui-sans-serif, system-ui, sans-serif">
+                            <text x={bubble.x} y={bubble.y - bubble.r + 14} textAnchor="middle" fill="rgba(221,214,254,0.75)" fontSize={10}>
                               {bubble.label}
                             </text>
                           </g>
@@ -1396,10 +1396,10 @@ export default function NetworkPage() {
                               <circle cx={node.x} cy={node.y} r={26} fill="rgba(9,9,11,0.95)" stroke={nodeFill(node.status)} strokeWidth={2.5} />
                               <circle cx={node.x} cy={node.y} r={10} fill={nodeFill(node.status)} />
                               <rect x={node.x - labelWidth / 2} y={node.y + 40} width={labelWidth} height={42} rx={8} fill="rgba(9,9,11,0.85)" />
-                              <text x={node.x} y={node.y + 54} textAnchor="middle" fill="rgba(244,244,245,0.94)" fontSize={13} fontFamily="ui-sans-serif, system-ui, sans-serif">
+                              <text x={node.x} y={node.y + 54} textAnchor="middle" fill="rgba(244,244,245,0.94)" fontSize={13}>
                                 {nameLine}
                               </text>
-                              <text x={node.x} y={node.y + 74} textAnchor="middle" fill="rgba(161,161,170,0.95)" fontSize={11} fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace">
+                              <text x={node.x} y={node.y + 74} textAnchor="middle" fill="rgba(161,161,170,0.95)" fontSize={11} className="font-mono">
                                 {detailLine}
                               </text>
                             </g>

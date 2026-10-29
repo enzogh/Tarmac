@@ -1,13 +1,16 @@
 'use client';
 
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from 'react';
-import { api, getCurrentWorkspaceId, setCurrentWorkspaceId, WorkspaceSummary } from './api';
+import { useParams } from 'next/navigation';
+import { AdminProfile, api, getCurrentWorkspaceId, setCurrentWorkspaceId, WorkspaceSummary } from './api';
 
 type WorkspaceContextValue = {
   workspaces: WorkspaceSummary[];
   currentWorkspaceId: string | null;
   currentWorkspace: WorkspaceSummary | null;
   isPlatformAdmin: boolean;
+  /** The signed-in account, for the user menu. Null until loaded. */
+  user: Pick<AdminProfile, 'id' | 'email' | 'name' | 'avatarUrl'> | null;
   isLoading: boolean;
   // Switching workspace changes what every API call returns - since this app
   // has no shared query cache to invalidate, the simplest correct way to get
@@ -23,7 +26,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [currentWorkspaceId, setCurrentWorkspaceIdState] = useState<string | null>(null);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  const [user, setUser] = useState<WorkspaceContextValue['user']>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // The URL is the source of truth for which workspace is open: on a deep
+  // link the stored id still points at the last workspace visited until the
+  // [workspace] layout catches up, and the switcher showed that one instead.
+  const slug = useParams<{ workspace?: string }>()?.workspace;
 
   useEffect(() => {
     let cancelled = false;
@@ -33,9 +41,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         setWorkspaces(profile.workspaces);
         setIsPlatformAdmin(profile.isSuperuser);
+        setUser({ id: profile.id, email: profile.email, name: profile.name, avatarUrl: profile.avatarUrl });
 
         const stored = getCurrentWorkspaceId();
+        const fromUrl = slug ? profile.workspaces.find((w) => w.slug === slug || w.id === slug)?.id : undefined;
         const resolved =
+          fromUrl ??
           (stored && profile.workspaces.some((w) => w.id === stored) ? stored : null) ??
           profile.workspaces.find((w) => w.isDefault)?.id ??
           profile.workspaces[0]?.id ??
@@ -61,6 +72,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       currentWorkspaceId,
       currentWorkspace: workspaces.find((w) => w.id === currentWorkspaceId) ?? null,
       isPlatformAdmin,
+      user,
       isLoading,
       switchWorkspace: (workspaceId: string) => {
         if (workspaceId === currentWorkspaceId) return;
@@ -69,7 +81,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         window.location.href = target ? `/${target.slug}/dashboard` : '/workspaces';
       },
     }),
-    [workspaces, currentWorkspaceId, isPlatformAdmin, isLoading],
+    [workspaces, currentWorkspaceId, isPlatformAdmin, user, isLoading],
   );
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

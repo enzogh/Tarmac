@@ -184,7 +184,7 @@
    default light UI. Scoped to .tarmac-map so it can't leak elsewhere. */
 .tarmac-map .leaflet-container {
   background: #09090b;
-  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
 }
 
 .tarmac-map .leaflet-control-zoom {

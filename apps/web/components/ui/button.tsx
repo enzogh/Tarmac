@@ -7,25 +7,25 @@ import { readOnlyMessage, useReadOnly } from '@/lib/read-only';
 import { Tooltip, TooltipContent, TooltipTrigger } from './tooltip';
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-[background-color,color,border-color,box-shadow,transform] duration-200 active:scale-[0.97] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium transition-[background-color,color,border-color,box-shadow,transform] duration-200 active:scale-[0.97] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
   {
     variants: {
       variant: {
         default:
-          'bg-primary text-primary-foreground shadow-[0_1px_0_0_rgba(255,255,255,0.12)_inset] hover:bg-primary/90 hover:shadow-[0_0_0_1px_hsl(var(--primary)/0.4),0_6px_20px_-6px_hsl(var(--primary)/0.6)]',
+          'bg-primary bg-[linear-gradient(180deg,rgba(255,255,255,0.12),transparent)] text-primary-foreground shadow-[inset_0_1px_0_0_rgba(255,255,255,0.18),0_1px_2px_0_rgba(0,0,0,0.4)] hover:bg-primary/90 hover:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.18),0_0_0_1px_hsl(var(--primary)/0.4),0_6px_20px_-6px_hsl(var(--primary)/0.6)]',
         destructive:
           'bg-destructive text-destructive-foreground hover:bg-destructive/90',
         outline:
-          'border border-border bg-surface-2 text-foreground hover:bg-surface-3',
+          'border border-white/[0.08] bg-white/[0.03] text-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.3)] hover:border-white/[0.14] hover:bg-white/[0.06]',
         secondary:
-          'border border-border bg-surface-2 text-foreground hover:bg-surface-3',
+          'border border-white/[0.08] bg-surface-2 text-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.3)] hover:border-white/[0.14] hover:bg-surface-3',
         ghost:
           'text-muted-foreground hover:bg-surface-2 hover:text-foreground',
         link: 'text-primary underline-offset-4 hover:underline',
       },
       size: {
-        default: 'h-8 px-3',
-        sm: 'h-8 rounded-md px-3 text-xs',
+        default: 'h-9 px-3.5',
+        sm: 'h-8 px-3 text-xs',
         lg: 'h-11 rounded-lg px-8',
         icon: 'h-8 w-8',
       },

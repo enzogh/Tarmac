@@ -1,6 +1,8 @@
 'use client';
 
 import Link from 'next/link';
+import { GettingStarted } from '../../../components/GettingStarted';
+import { useWorkspace } from '../../../lib/workspace-context';
 import { useParams } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import {
@@ -212,6 +214,7 @@ function ActivityLine({ entry, refs }: { entry: AuditLogItem; refs: Record<strin
 }
 
 export default function OverviewPage() {
+  const { currentWorkspace } = useWorkspace();
   const params = useParams<{ workspace: string }>();
   const base = `/${params.workspace}/dashboard`;
   const [range, setRange] = useState<Range>('24h');
@@ -447,6 +450,10 @@ export default function OverviewPage() {
 
       <HealthBanner issues={issues} loading={nodesLoading || alertsLoading} />
 
+      {!nodesLoading && nodes.length === 0 ? (
+        <GettingStarted base={base} workspaceName={currentWorkspace?.name} onCreated={() => void mutateActivities()} />
+      ) : (
+      <>
       {nodesLoading ? (
         <StatRow className="xl:grid-cols-5">
           {Array.from({ length: 5 }).map((_, index) => (
@@ -733,6 +740,8 @@ export default function OverviewPage() {
           <CheckCircle2 className="h-3 w-3 text-[hsl(var(--ok))]" />
           Mis à jour en direct · {online.length} agent{online.length > 1 ? 's' : ''} connecté{online.length > 1 ? 's' : ''}
         </p>
+      )}
+      </>
       )}
     </div>
   );
