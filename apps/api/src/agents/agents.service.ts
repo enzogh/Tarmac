@@ -13,6 +13,7 @@ import { PoolsService } from '../pools/pools.service';
 import { SharesService } from '../shares/shares.service';
 import { VlanService } from '../vlan/vlan.service';
 import { VpnService } from '../vpn/vpn.service';
+import { FirewallService } from '../firewall/firewall.service';
 import { Region, resolveRegion } from '../vlan/region';
 import { classifyLink } from '../vlan/link-status';
 import { planOverlayPeers, shouldUseBackup } from '../vlan/overlay-topology';
@@ -357,6 +358,8 @@ export class AgentsService implements OnModuleInit {
     private readonly live: LiveWsServer,
     @Inject(forwardRef(() => VpnService))
     private readonly vpnService: VpnService,
+    @Inject(forwardRef(() => FirewallService))
+    private readonly firewallService: FirewallService,
   ) {}
 
   onModuleInit() {
@@ -367,6 +370,7 @@ export class AgentsService implements OnModuleInit {
   register(nodeId: string, send: SendFn) {
     this.senders.set(nodeId, send);
     void this.vpnService.onAgentConnected(nodeId);
+    void this.firewallService.onAgentConnected(nodeId);
   }
 
   // A reconnecting agent registers its new socket before the old one's close
@@ -717,6 +721,15 @@ export class AgentsService implements OnModuleInit {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.warn(`Failed to ingest link metrics for node ${nodeId}: ${message}`, error);
+      }
+    }
+
+    if (payload.firewall && typeof payload.firewall === 'object') {
+      try {
+        await this.firewallService.ingestReport(nodeId, node.workspaceId, payload.firewall);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(`Failed to ingest firewall report for node ${nodeId}: ${message}`);
       }
     }
 
@@ -1388,6 +1401,26 @@ export class AgentsService implements OnModuleInit {
         revision: new Date().toISOString(),
         success: false,
         message: "Agent trop ancien pour le VPN : mettez à jour l'agent de ce nœud depuis la page Nœuds.",
+      });
+      return;
+    }
+
+    // Same for agents predating the firewall.
+    if (!result.success && result.message?.includes('unknown command command.apply_firewall')) {
+      await this.firewallService.onApplyResult(nodeId, callingWorkspaceId, {
+        revision: new Date().toISOString(),
+        success: false,
+        outdated: true,
+      });
+      return;
+    }
+
+    if (result.resourceType === 'firewall') {
+      await this.firewallService.onApplyResult(nodeId, callingWorkspaceId, {
+        revision: result.resourceId,
+        success: result.success,
+        message: result.message,
+        active: result.data?.firewallActive,
       });
       return;
     }

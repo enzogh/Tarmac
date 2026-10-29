@@ -15,6 +15,7 @@ import {
   KeyRound,
   RadioTower,
   SlidersHorizontal,
+  BrickWallFire,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -48,6 +49,7 @@ export function buildNavGroups(slug: string): NavGroup[] {
       items: [
         { href: `${base}/infrastructure`, label: 'Nœuds', icon: Server },
         { href: `${base}/network`, label: 'Réseau privé', icon: Network },
+        { href: `${base}/firewall`, label: 'Pare-feu', icon: BrickWallFire },
         { href: `${base}/dns`, label: 'DNS', icon: Globe },
       ],
     },

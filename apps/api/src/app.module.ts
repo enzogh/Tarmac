@@ -11,6 +11,7 @@ import { ApiKeysModule } from './api-keys/api-keys.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { AuthModule } from './auth/auth.module';
 import { DnsModule } from './dns/dns.module';
+import { FirewallModule } from './firewall/firewall.module';
 import { LiveModule } from './live/live.module';
 import { MailModule } from './mail/mail.module';
 import { MigrationsModule } from './migrations/migrations.module';
@@ -65,6 +66,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     ReportsModule,
     VlanModule,
     VpnModule,
+    FirewallModule,
     ApiKeysModule,
     WorkspacesModule,
     SystemModule,

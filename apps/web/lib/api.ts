@@ -674,6 +674,143 @@ export type VpnStatsLiveEvent = {
 };
 
 // Mirrors API_KEY_RESOURCES in apps/api/src/api-keys/api-key-token.ts.
+// --- Firewall ---------------------------------------------------------
+export type FirewallMode = 'open' | 'observe' | 'enforce';
+export type FirewallScope = 'mesh' | 'public';
+export type FirewallProtocol = 'any' | 'tcp' | 'udp' | 'tcpudp' | 'icmp';
+export type FirewallVerdict = 'allowed' | 'blocked' | 'observed';
+export type FirewallExposure = 'public' | 'restricted' | 'closed' | 'observed' | 'local';
+export type FirewallApplyStatus = 'off' | 'pending' | 'active' | 'error' | 'outdated' | 'offline';
+
+export type FirewallListen = {
+  protocol: 'tcp' | 'udp';
+  port: number;
+  addresses: string[];
+  processes: string[];
+  service: string | null;
+  exposure: FirewallExposure;
+  exposureIfEnforced: FirewallExposure;
+  // Tarmac flow keeping it open (WireGuard, SSH guard, VPN, DNS), if any.
+  managedBy: string | null;
+};
+
+export type FirewallNode = {
+  id: string;
+  name: string;
+  status: 'online' | 'offline' | 'degraded';
+  vlanIp: string | null;
+  labels: string[];
+  locationCountryCode: string | null;
+  locationCity: string | null;
+  publicMode: FirewallMode;
+  apply: { status: FirewallApplyStatus; message: string | null };
+  blocked24h: number;
+  report: {
+    uplinks: string[];
+    docker: boolean;
+    logging: boolean;
+    reportedAt: string;
+    listening: FirewallListen[];
+  } | null;
+};
+
+export type FirewallRule = {
+  id: string;
+  scope: FirewallScope;
+  action: 'allow' | 'deny';
+  name: string;
+  description: string | null;
+  enabled: boolean;
+  expired: boolean;
+  inert: boolean;
+  sourceKind: 'any' | 'nodes' | 'labels' | 'cidrs';
+  sourceNodeIds: string[];
+  sourceLabels: string[];
+  sourceCidrs: string[];
+  targetKind: 'any' | 'nodes' | 'labels';
+  targetNodeIds: string[];
+  targetLabels: string[];
+  protocol: FirewallProtocol;
+  ports: string[];
+  service: string;
+  expiresAt: string | null;
+  hitCount: number;
+  lastHitAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FirewallRulePayload = Omit<
+  FirewallRule,
+  'id' | 'expired' | 'inert' | 'service' | 'hitCount' | 'lastHitAt' | 'createdAt' | 'updatedAt' | 'enabled' | 'description' | 'expiresAt'
+> & { enabled?: boolean; description?: string | null; expiresAt?: string | null };
+
+export type FirewallSystemFlow = {
+  id: string;
+  scope: FirewallScope;
+  kind: 'supervision' | 'dns' | 'nfs' | 'ssh' | 'vpn' | 'wireguard' | 'ssh-guard';
+  label: string;
+  detail: string;
+  sourceNodeIds: string[] | 'all';
+  targetNodeId: string;
+  protocol: FirewallProtocol;
+  ports: string[];
+  service: string;
+};
+
+export type FirewallMatrixCell = {
+  sourceNodeId: string;
+  targetNodeId: string;
+  status: 'open' | 'partial' | 'blocked' | 'observed';
+  allowed: string[];
+  blocked: string[];
+};
+
+export type FirewallOverview = {
+  settings: { meshMode: FirewallMode; publicPing: boolean; sshGuard: boolean };
+  nodes: FirewallNode[];
+  rules: FirewallRule[];
+  system: FirewallSystemFlow[];
+  matrix: FirewallMatrixCell[];
+  labels: string[];
+  stats: { blocked24h: number; observed24h: number; rules: number; protectedNodes: number };
+};
+
+export type FirewallEvent = {
+  id: string;
+  nodeId: string;
+  scope: FirewallScope;
+  verdict: 'blocked' | 'observed';
+  sourceIp: string;
+  sourceNodeId: string | null;
+  sources: string[];
+  protocol: string;
+  port: number | null;
+  service: string | null;
+  docker: boolean;
+  ruleId: string | null;
+  count: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+};
+
+export type FirewallTestRequest = {
+  scope: FirewallScope;
+  targetNodeId: string;
+  sourceNodeId?: string;
+  sourceIp?: string;
+  protocol: 'tcp' | 'udp' | 'icmp';
+  port?: number;
+};
+
+export type FirewallEvaluation = {
+  verdict: FirewallVerdict;
+  reason: string;
+  match: { type: 'rule' | 'system' | 'mode' | 'infrastructure'; id?: string; name?: string };
+};
+
+export type FirewallTestResult = FirewallEvaluation & { mode: FirewallMode; ifEnforced: FirewallEvaluation | null };
+
 export type ApiKeyResource = 'nodes' | 'storage' | 'network' | 'dns' | 'vpn' | 'alerts' | 'logs';
 export type ApiKeyScope = `${ApiKeyResource}:${'read' | 'write'}`;
 
@@ -1416,6 +1553,27 @@ export const api = {
       }),
     config: (id: string) =>
       request<{ filename: string; config: string; complete: boolean }>(`/api/v1/vpn/profiles/${id}/config`),
+  },
+
+  firewall: {
+    overview: () => request<FirewallOverview>('/api/v1/firewall'),
+    events: (params: { hours?: number; scope?: FirewallScope; verdict?: 'blocked' | 'observed'; nodeId?: string } = {}) => {
+      const query = new URLSearchParams(
+        Object.entries(params).filter(([, value]) => value !== undefined && value !== '').map(([key, value]) => [key, String(value)]),
+      ).toString();
+      return request<FirewallEvent[]>(`/api/v1/firewall/events${query ? `?${query}` : ''}`);
+    },
+    test: (payload: FirewallTestRequest) =>
+      request<FirewallTestResult>('/api/v1/firewall/test', { method: 'POST', body: JSON.stringify(payload) }),
+    updateSettings: (payload: Partial<FirewallOverview['settings']>) =>
+      request<FirewallOverview>('/api/v1/firewall/settings', { method: 'PATCH', body: JSON.stringify(payload) }),
+    setNodesMode: (nodeIds: string[], publicMode: FirewallMode) =>
+      request<FirewallOverview>('/api/v1/firewall/nodes', { method: 'PATCH', body: JSON.stringify({ nodeIds, publicMode }) }),
+    createRule: (payload: FirewallRulePayload) =>
+      request<FirewallRule>('/api/v1/firewall/rules', { method: 'POST', body: JSON.stringify(payload) }),
+    updateRule: (id: string, payload: Partial<FirewallRulePayload>) =>
+      request<FirewallRule>(`/api/v1/firewall/rules/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+    removeRule: (id: string) => request<{ success: boolean }>(`/api/v1/firewall/rules/${id}`, { method: 'DELETE' }),
   },
 
   apiKeys: {

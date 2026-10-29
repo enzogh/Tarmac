@@ -231,6 +231,16 @@ model Workspace {
   // administrators of workspaces that predate it) - see WeeklyReportService.
   weeklyReportEnabled Boolean   @default(true)
   weeklyReportSentAt  DateTime?
+  // Firewall between the workspace's servers (private network): "open"
+  // (only explicit blocks apply), "observe" (would-be blocked traffic is
+  // logged, nothing more) or "enforce" (only what a rule allows gets in).
+  // See FirewallService.
+  firewallMeshMode    String    @default("open")
+  // Internet-facing firewall defaults shared by every node: answer ping,
+  // and keep the SSH ports sshd listens on open whatever the rules say (so
+  // nobody locks themselves out).
+  firewallPublicPing  Boolean   @default(true)
+  firewallSshGuard    Boolean   @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -267,6 +277,7 @@ model Workspace {
   apiKeys              ApiKey[]
   customRoles          WorkspaceCustomRole[]
   invitations          WorkspaceInvitation[]
+  firewallRules        FirewallRule[]
 
   @@index([createdById])
 }
@@ -456,6 +467,18 @@ model Node {
   agentUpdateToVersion         String?
   agentUpdateStartedAt         DateTime?
   agentUpdateFinishedAt        DateTime?
+  // Internet-facing firewall of this node: "open" (only explicit blocks),
+  // "observe" or "enforce" - per node, since every server exposes
+  // different things and filtering is best rolled out one at a time.
+  firewallPublicMode           String    @default("open")
+  // Same contract as vpnAppliedRevision/vpnApplyStatus, for
+  // command.apply_firewall ("active" | "error" | "outdated").
+  firewallAppliedRevision      DateTime?
+  firewallApplyStatus          String?
+  firewallApplyError           String?
+  // Last firewall report from the agent: listening ports, internet
+  // interfaces, Docker, whether blocked connections can be logged.
+  firewallReport               Json?
   createdAt              DateTime               @default(now())
   updatedAt              DateTime               @updatedAt
   metrics                MetricSample[]
@@ -478,6 +501,7 @@ model Node {
   vpnEntryProfiles       VpnProfile[]           @relation("VpnEntryNode")
   vpnExitProfiles        VpnProfile[]           @relation("VpnExitNode")
   dailyStats                   NodeDailyStat[]
+  firewallEvents               FirewallEvent[]
 
   @@unique([workspaceId, vpnSubnetIndex])
   @@index([workspaceId])
@@ -1102,4 +1126,74 @@ model ApiKey {
   updatedAt       DateTime  @updatedAt
 
   @@index([workspaceId])
+}
+
+// One firewall rule of a workspace. `scope` says where it applies: "mesh"
+// (traffic between the workspace's servers over the private network) or
+// "public" (traffic from the internet). Sources are nodes/labels on the mesh
+// and CIDRs on the internet; targets are always this workspace's nodes. An
+// empty `ports` list means every port. Blocks ("deny") always win over
+// allows. Ids of deleted nodes are dropped on the fly.
+model FirewallRule {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  scope           String
+  action          String    @default("allow")
+  name            String
+  description     String?
+  enabled         Boolean   @default(true)
+  // any | nodes | labels (mesh) - any | cidrs (public)
+  sourceKind      String    @default("any")
+  sourceNodeIds   String[]  @default([])
+  sourceLabels    String[]  @default([])
+  sourceCidrs     String[]  @default([])
+  // any | nodes | labels
+  targetKind      String    @default("any")
+  targetNodeIds   String[]  @default([])
+  targetLabels    String[]  @default([])
+  // any | tcp | udp | tcpudp | icmp
+  protocol        String    @default("tcp")
+  ports           String[]  @default([])
+  // Temporary rules (e.g. "SSH from my IP for 2 h") switch themselves off.
+  expiresAt       DateTime?
+  // Packets matched, summed over the nodes' counters - see
+  // FirewallService.ingestReport.
+  hitCount        Float     @default(0)
+  lastHitAt       DateTime?
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([workspaceId])
+}
+
+// Connections a node's firewall blocked (or, in observation mode, would
+// have blocked), aggregated per hour so a scan doesn't turn into millions
+// of rows. On the private network a row is one source; from the internet
+// it is one port, with a sample of the sources seen.
+model FirewallEvent {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  nodeId       String
+  node         Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  scope        String
+  verdict      String
+  // Matching key, see FirewallService.eventKey.
+  key          String
+  sourceIp     String
+  sourceNodeId String?
+  sources      String[] @default([])
+  protocol     String
+  port         Int      @default(0)
+  docker       Boolean  @default(false)
+  ruleId       String?
+  count        Int      @default(0)
+  bucketStart  DateTime
+  firstSeenAt  DateTime
+  lastSeenAt   DateTime
+
+  @@unique([nodeId, key, bucketStart])
+  @@index([workspaceId, lastSeenAt])
+  @@index([lastSeenAt])
 }

@@ -51,6 +51,8 @@ type heartbeat struct {
 	Dns *dnsServerReport `json:"dns,omitempty"`
 	// Public half of the deploy key (see deployKeyPublic).
 	DeployKey string `json:"deployKey,omitempty"`
+	// Firewall: blocked connections, listening ports, rule hit counters.
+	Firewall *fwReport `json:"firewall,omitempty"`
 }
 
 // appliedStates holds, per kind of desired state the control plane pushes on
@@ -3913,6 +3915,19 @@ func handleCommand(ctx context.Context, cmd commandPayload, onProgress func(prog
 		} else {
 			result.Message = message
 		}
+	case "command.apply_firewall":
+		result.Command = "apply_firewall"
+		result.ResourceType = "firewall"
+		// The revision is what the API matches results against.
+		result.ResourceID = readString(cmd.Payload, "revision")
+		message, active, err := applyFirewall(cmd.Payload)
+		result.Data = map[string]bool{"firewallActive": active}
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Message = message
+		}
 	case "command.list_directories":
 		result.Command = "list_directories"
 		result.ResourceType = "directory_list"
@@ -4258,6 +4273,7 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 					AppliedState: appliedStateSnapshot(),
 					Dns:          currentDnsServerReport(),
 					DeployKey:    deployKeyPublic(),
+					Firewall:     collectFirewallReport(withState),
 				},
 			}); err != nil {
 				return err
@@ -4355,6 +4371,11 @@ func main() {
 		// dns.go.
 		runDnsStartupRecheck()
 	}()
+
+	// Before connecting: a rebooted node gets its last firewall rules back
+	// right away instead of staying open until the control plane answers.
+	restoreFirewallAtStartup()
+	startFirewallLogReader()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

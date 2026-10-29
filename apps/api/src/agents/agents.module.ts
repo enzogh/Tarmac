@@ -2,6 +2,7 @@ import { forwardRef, Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AgentLogsModule } from '../agent-logs/agent-logs.module';
 import { DnsModule } from '../dns/dns.module';
+import { FirewallModule } from '../firewall/firewall.module';
 import { LiveModule } from '../live/live.module';
 import { MigrationsModule } from '../migrations/migrations.module';
 import { MountsModule } from '../mounts/mounts.module';
@@ -27,6 +28,7 @@ import { AgentsWsServer } from './agents.ws';
     forwardRef(() => VlanModule),
     forwardRef(() => DnsModule),
     forwardRef(() => VpnModule),
+    forwardRef(() => FirewallModule),
   ],
   controllers: [AgentsController],
   providers: [AgentsGateway, AgentsService, AgentsWsServer, AgentTokenService],

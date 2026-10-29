@@ -15,6 +15,7 @@ export type PageArea = ApiKeyResource | 'manage';
 const AREA_BY_SEGMENT: Record<string, PageArea> = {
   infrastructure: 'nodes',
   network: 'network',
+  firewall: 'network',
   dns: 'dns',
   vpn: 'vpn',
   storage: 'storage',

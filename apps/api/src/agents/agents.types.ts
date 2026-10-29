@@ -41,6 +41,8 @@ export interface HeartbeatPayload {
     rxBytes?: number;
     txBytes?: number;
   }>;
+  // Firewall report (see FirewallService.ingestReport).
+  firewall?: import('../firewall/firewall.service').FirewallReport;
 }
 
 export interface StateReportPayload {
@@ -96,7 +98,8 @@ export interface CommandPayload {
     | 'command.remove_internal_dns'
     | 'command.ensure_internal_dns_route'
     | 'command.resolve_internal_dns_forwarder_conflict'
-    | 'command.apply_vpn';
+    | 'command.apply_vpn'
+    | 'command.apply_firewall';
   payload: Record<string, unknown>;
 }
 
@@ -128,7 +131,8 @@ export interface CommandResultPayload {
     | 'remove_internal_dns'
     | 'ensure_internal_dns_route'
     | 'resolve_internal_dns_forwarder_conflict'
-    | 'apply_vpn';
+    | 'apply_vpn'
+    | 'apply_firewall';
   resourceType:
     | 'share'
     | 'mount'
@@ -151,7 +155,8 @@ export interface CommandResultPayload {
     | 'dns_node'
     | 'internal_dns'
     | 'internal_dns_route'
-    | 'vpn';
+    | 'vpn'
+    | 'firewall';
   resourceId: string;
   success: boolean;
   message?: string;
@@ -189,6 +194,8 @@ export interface CommandResultPayload {
     vpnActive?: boolean;
     // Set by `apply_vpn` on agents that enforce per-client access rules.
     vpnPolicy?: boolean;
+    // Set by `apply_firewall`: false once nothing is filtered any more.
+    firewallActive?: boolean;
   };
 }
 
