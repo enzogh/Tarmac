@@ -6,7 +6,13 @@ Ce guide installe l'agent Tarmac en **service systemd** avec **auto-restart**.
 
 - Un serveur Ubuntu 22.04
 - Un nœud déjà créé dans Tarmac (vous avez son `nodeId`)
-- Le token partagé API (`AGENT_SHARED_TOKEN`)
+- Le jeton **propre à ce nœud** (`AGENT_TOKEN`)
+
+> La voie conseillée est l'ajout depuis l'interface (**Nœuds → Ajouter un nœud**) :
+> Tarmac crée le nœud, génère son jeton et installe l'agent par SSH, sans rien
+> à copier. Le jeton partagé `AGENT_SHARED_TOKEN` n'est plus accepté quand
+> `AGENT_LEGACY_TOKEN=disabled` (cas de la production) : une installation
+> manuelle doit utiliser le jeton du nœud.
 - L'URL WebSocket du control-plane (ex: `ws://IP_API:3001/agents-ws`)
 
 ## 2) Installation en une commande
@@ -15,7 +21,7 @@ Ce guide installe l'agent Tarmac en **service systemd** avec **auto-restart**.
 curl -fsSL https://raw.githubusercontent.com/enzogh/Tarmac/main/apps/agent/scripts/install-agent-service.sh | sudo bash -s -- \
   --node-id "<NODE_ID>" \
   --control-plane-ws "ws://<API_HOST>:3001/agents-ws" \
-  --agent-token "<AGENT_SHARED_TOKEN>"
+  --agent-token "<AGENT_TOKEN_DU_NOEUD>"
 ```
 
 Le script :

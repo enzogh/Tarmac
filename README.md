@@ -238,9 +238,13 @@ sudo -i
 curl -fsSL https://raw.githubusercontent.com/enzogh/Tarmac/main/apps/agent/scripts/install-agent-service.sh | sudo bash -s -- \
   --node-id "<NODE_ID>" \
   --control-plane-ws "ws://<API_HOST>:3001/agents-ws" \
-  --agent-token "<AGENT_SHARED_TOKEN>" \
+  --agent-token "<AGENT_TOKEN_DU_NOEUD>" \
   --ssh-user "ubuntu"
 ```
+
+Le plus simple reste l'ajout depuis l'interface (**Nœuds → Ajouter un nœud**),
+qui génère le jeton du nœud et installe l'agent par SSH. En production, le jeton
+partagé `AGENT_SHARED_TOKEN` est refusé (`AGENT_LEGACY_TOKEN=disabled`).
 
 Le script installe les dépendances (`golang-go`, `nfs-common`, `cifs-utils`,
 `util-linux`), clone le dépôt (avec repli HTTPS si le clone SSH échoue),
