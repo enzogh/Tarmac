@@ -811,7 +811,7 @@ export type FirewallEvaluation = {
 
 export type FirewallTestResult = FirewallEvaluation & { mode: FirewallMode; ifEnforced: FirewallEvaluation | null };
 
-export type ApiKeyResource = 'nodes' | 'storage' | 'network' | 'dns' | 'vpn' | 'alerts' | 'logs';
+export type ApiKeyResource = 'nodes' | 'storage' | 'network' | 'firewall' | 'dns' | 'vpn' | 'alerts' | 'logs';
 export type ApiKeyScope = `${ApiKeyResource}:${'read' | 'write'}`;
 
 export type ApiKeyItem = {

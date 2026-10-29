@@ -1,4 +1,4 @@
-import { Bell, Globe, HardDrive, Network, ScrollText, Server, ShieldCheck, type LucideIcon } from 'lucide-react';
+import { Bell, BrickWallFire, Globe, HardDrive, Network, ScrollText, Server, ShieldCheck, type LucideIcon } from 'lucide-react';
 import type { ApiKeyResource, ApiKeyScope } from './api';
 
 export type AccessLevel = 'none' | 'read' | 'write';
@@ -43,6 +43,15 @@ export const API_KEY_RESOURCES: ApiKeyResourceInfo[] = [
     modules: ['Réseau (VLAN)'],
     read: 'Voir les membres du réseau privé, l’état des liens et leur historique.',
     write: 'Lancer des tests de connectivité, ajouter un nœud au réseau, définir les passerelles.',
+  },
+  {
+    id: 'firewall',
+    label: 'Pare-feu',
+    icon: BrickWallFire,
+    modules: [],
+    read: 'Voir les règles, les modes de filtrage, les ports exposés et le journal des connexions bloquées.',
+    write: 'Créer, modifier ou supprimer des règles et changer le niveau de filtrage des serveurs.',
+    writeWarning: 'Peut couper l’accès aux serveurs, entre eux comme depuis Internet.',
   },
   {
     id: 'dns',

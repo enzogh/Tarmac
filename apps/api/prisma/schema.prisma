@@ -357,7 +357,7 @@ model WorkspaceMembership {
   // Same vocabulary as ApiKey.scopes ("<resource>:read|write", write
   // implying read), enforced by WorkspaceGuard for members. Defaults to
   // everything, which is what a membership meant before roles existed.
-  permissions String[]  @default(["nodes:read", "nodes:write", "storage:read", "storage:write", "network:read", "network:write", "dns:read", "dns:write", "vpn:read", "vpn:write", "alerts:read", "alerts:write", "logs:read"])
+  permissions String[]  @default(["nodes:read", "nodes:write", "storage:read", "storage:write", "network:read", "network:write", "firewall:read", "firewall:write", "dns:read", "dns:write", "vpn:read", "vpn:write", "alerts:read", "alerts:write", "logs:read"])
   // "manual" (platform-admin-granted, incl. the Phase 0 backfill) vs "sso"
   // (granted by an Authentik group claim). Lets a future full add+revoke SSO
   // sync only ever touch rows it itself created.

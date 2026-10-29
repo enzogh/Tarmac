@@ -5,7 +5,7 @@ import * as crypto from 'crypto';
 // ever reaches controllers tagged with @ApiKeyResource or handlers declaring
 // @RequireApiScope - everything else (accounts, workspaces, members, the keys
 // themselves) stays session-only, so a key can never widen its own access.
-export const API_KEY_RESOURCES = ['nodes', 'storage', 'network', 'dns', 'vpn', 'alerts', 'logs'] as const;
+export const API_KEY_RESOURCES = ['nodes', 'storage', 'network', 'firewall', 'dns', 'vpn', 'alerts', 'logs'] as const;
 export type ApiKeyResource = (typeof API_KEY_RESOURCES)[number];
 // Journals are history: there is nothing to write.
 const READ_ONLY_RESOURCES: ReadonlySet<ApiKeyResource> = new Set(['logs']);

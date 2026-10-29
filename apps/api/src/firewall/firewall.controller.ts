@@ -15,10 +15,10 @@ interface AuthenticatedRequest extends Request {
   user?: { userId?: string };
 }
 
-// The firewall is part of the private network area: network:read to look,
-// network:write to change rules and modes.
+// Its own permission area: firewall:read to look, firewall:write to change
+// rules and modes.
 @UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
-@ApiKeyResource('network')
+@ApiKeyResource('firewall')
 @Controller('firewall')
 export class FirewallController {
   constructor(private readonly firewallService: FirewallService) {}
@@ -43,7 +43,7 @@ export class FirewallController {
 
   // Read-only "would this connection get through?" - a POST for its body.
   @Post('test')
-  @RequireApiScope('network:read')
+  @RequireApiScope('firewall:read')
   test(@Body() dto: TestFirewallDto, @CurrentWorkspace() scope: WorkspaceScope) {
     return this.firewallService.test(scope, dto);
   }
