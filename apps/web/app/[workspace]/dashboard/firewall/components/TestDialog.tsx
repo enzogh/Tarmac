@@ -29,14 +29,39 @@ const VERDICT = {
   observed: { icon: Eye, title: 'Elle passe, mais serait bloquée', className: 'border-[hsl(var(--info))]/30 bg-[hsl(var(--info))]/[0.07] text-[hsl(var(--info))]' },
 } as const;
 
-function Verdict({ evaluation, small }: { evaluation: FirewallEvaluation; small?: boolean }) {
+// Conditional wording for the "what if I switch to enforce?" answer, so it
+// can't be read as the current state.
+const HYPOTHETICAL = {
+  allowed: { icon: CircleCheck, title: 'Elle passerait toujours', tone: 'text-[hsl(var(--ok))]' },
+  blocked: { icon: CircleX, title: 'Elle serait bloquée', tone: 'text-[hsl(var(--danger))]' },
+  observed: { icon: Eye, title: 'Elle serait journalisée', tone: 'text-[hsl(var(--info))]' },
+} as const;
+
+function Verdict({ evaluation }: { evaluation: FirewallEvaluation }) {
   const info = VERDICT[evaluation.verdict];
   return (
-    <div className={cn('flex items-start gap-3 rounded-lg border', small ? 'p-3' : 'p-4', info.className)}>
-      <info.icon className={cn('shrink-0', small ? 'mt-0.5 h-4 w-4' : 'h-5 w-5')} />
+    <div className={cn('flex items-start gap-3 rounded-lg border p-4', info.className)}>
+      <info.icon className="h-5 w-5 shrink-0" />
       <div className="min-w-0">
-        <p className={cn('font-medium', small ? 'text-sm' : 'text-base')}>{info.title}</p>
+        <p className="text-2xs font-medium uppercase tracking-wider opacity-80">Maintenant</p>
+        <p className="text-base font-medium">{info.title}</p>
         <p className="mt-0.5 text-sm text-foreground/80">{evaluation.reason}</p>
+      </div>
+    </div>
+  );
+}
+
+function WhatIf({ evaluation, currentMode }: { evaluation: FirewallEvaluation; currentMode: string }) {
+  const info = HYPOTHETICAL[evaluation.verdict];
+  return (
+    <div className="flex items-start gap-3 rounded-lg border border-dashed border-border bg-surface-2/40 p-3">
+      <info.icon className={cn('mt-0.5 h-4 w-4 shrink-0', info.tone)} />
+      <div className="min-w-0">
+        <p className="text-2xs font-medium uppercase tracking-wider text-muted-foreground">
+          Simulation · si vous passez en mode appliqué (actuellement {currentMode})
+        </p>
+        <p className={cn('text-sm font-medium', info.tone)}>{info.title}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">{evaluation.reason}</p>
       </div>
     </div>
   );
@@ -225,13 +250,7 @@ export function TestDialog({
             <div className="space-y-2 animate-fade-in">
               <Verdict evaluation={result} />
               {result.ifEnforced && result.ifEnforced.verdict !== result.verdict && (
-                <div className="space-y-1.5">
-                  <p className="text-xs text-muted-foreground">
-                    Et en mode <span className="font-medium text-foreground">{MODE_INFO.enforce.title.toLowerCase()}</span> (actuellement{' '}
-                    {MODE_INFO[result.mode].title.toLowerCase()}) :
-                  </p>
-                  <Verdict evaluation={result.ifEnforced} small />
-                </div>
+                <WhatIf evaluation={result.ifEnforced} currentMode={MODE_INFO[result.mode].title.toLowerCase()} />
               )}
               <div className="flex flex-wrap gap-2 pt-1">
                 {result.verdict !== 'allowed' || result.ifEnforced?.verdict === 'blocked' ? (
