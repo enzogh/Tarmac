@@ -4,6 +4,7 @@ import {
   buildAgentPayload,
   cidrContains,
   evaluate,
+  isPrivateAddress,
   meshMatrix,
   payloadIsEmpty,
   PolicyContext,
@@ -145,4 +146,31 @@ test('cidrContains', () => {
   assert.equal(cidrContains('0.0.0.0/0', '8.8.8.8'), true);
   assert.equal(cidrContains('198.51.100.7/32', '198.51.100.7'), true);
   assert.equal(cidrContains('198.51.100.7', '198.51.100.8'), false);
+});
+
+test('cidrContains handles IPv6 ranges', () => {
+  assert.equal(cidrContains('2001:db8::/32', '2001:db8:1234::5'), true);
+  assert.equal(cidrContains('2001:db8::/32', '2001:db9::1'), false);
+  assert.equal(cidrContains('2001:DB8::/32', '2001:db8::1'), true);
+  assert.equal(cidrContains('2001:db8::5', '2001:0db8:0:0:0:0:0:5'), true);
+  assert.equal(cidrContains('2001:db8::5', '2001:db8::6'), false);
+  assert.equal(cidrContains('::/0', '2a01:4f8::1'), true);
+  assert.equal(cidrContains('2001:db8:abcd:12::/63', '2001:db8:abcd:13:ffff::1'), true);
+  assert.equal(cidrContains('2001:db8:abcd:12::/63', '2001:db8:abcd:14::1'), false);
+  assert.equal(cidrContains('::ffff:0:0/96', '::ffff:192.0.2.1'), true);
+  assert.equal(cidrContains('fe80::/10', 'fe80::1%eth0'), true);
+  // An IPv4 address never matches an IPv6 range, and garbage never matches.
+  assert.equal(cidrContains('::/0', '8.8.8.8'), false);
+  assert.equal(cidrContains('2001:db8::/32', '2001:db8:::1'), false);
+  assert.equal(cidrContains('2001:db8::/129', '2001:db8::1'), false);
+});
+
+test('isPrivateAddress', () => {
+  assert.equal(isPrivateAddress('10.16.0.5'), true);
+  assert.equal(isPrivateAddress('8.8.8.8'), false);
+  assert.equal(isPrivateAddress('fd12:3456::1'), true);
+  assert.equal(isPrivateAddress('fe80::1%eth0'), true);
+  assert.equal(isPrivateAddress('2a01:4f8::1'), false);
+  assert.equal(isPrivateAddress('::'), false);
+  assert.equal(isPrivateAddress('*'), false);
 });

@@ -215,10 +215,46 @@ function ipToInt(ip: string): number | null {
   return value;
 }
 
-/** IPv4 CIDR or address membership (IPv6 compared literally). */
+/** IPv6 address as a 128-bit integer; null when it isn't one. */
+function ipv6ToBigInt(raw: string): bigint | null {
+  let ip = raw.trim().replace(/^\[|\]$/g, '');
+  const zone = ip.indexOf('%');
+  if (zone !== -1) ip = ip.slice(0, zone);
+  if (!ip.includes(':') || (ip.match(/::/g) ?? []).length > 1) return null;
+  // An IPv4 tail (::ffff:192.0.2.1) counts as the last two groups.
+  const lastColon = ip.lastIndexOf(':');
+  const tail = ip.slice(lastColon + 1);
+  if (tail.includes('.')) {
+    const v4 = ipToInt(tail);
+    if (v4 === null) return null;
+    ip = `${ip.slice(0, lastColon + 1)}${(v4 >>> 16).toString(16)}:${(v4 & 0xffff).toString(16)}`;
+  }
+  const [head, rest] = ip.includes('::') ? ip.split('::') : [ip, null];
+  const left = head ? head.split(':') : [];
+  const right = rest ? rest.split(':') : [];
+  const missing = 8 - left.length - right.length;
+  if (rest === null ? missing !== 0 : missing < 1) return null;
+  const groups = [...left, ...Array<string>(rest === null ? 0 : missing).fill('0'), ...right];
+  let value = 0n;
+  for (const group of groups) {
+    if (!/^[0-9a-f]{1,4}$/i.test(group)) return null;
+    value = (value << 16n) | BigInt(parseInt(group, 16));
+  }
+  return value;
+}
+
+/** Whether `ip` falls inside `cidr` (a bare address counts as a single host), IPv4 or IPv6. */
 export function cidrContains(cidr: string, ip: string): boolean {
-  const [base, lengthRaw] = cidr.split('/');
-  if (ip.includes(':') || base.includes(':')) return base.toLowerCase() === ip.toLowerCase() && (!lengthRaw || lengthRaw === '128');
+  const [base, lengthRaw] = cidr.trim().split('/');
+  if (ip.includes(':') || base.includes(':')) {
+    const baseInt = ipv6ToBigInt(base);
+    const ipInt = ipv6ToBigInt(ip);
+    if (baseInt === null || ipInt === null) return false;
+    const length = lengthRaw === undefined ? 128 : Number(lengthRaw);
+    if (!Number.isInteger(length) || length < 0 || length > 128) return false;
+    const shift = BigInt(128 - length);
+    return baseInt >> shift === ipInt >> shift;
+  }
   const baseInt = ipToInt(base);
   const ipInt = ipToInt(ip);
   if (baseInt === null || ipInt === null) return false;
@@ -449,15 +485,13 @@ export function meshMatrix(ctx: PolicyContext): MatrixCell[] {
 export type Exposure = 'public' | 'restricted' | 'closed' | 'observed' | 'local';
 
 const PRIVATE_V4 = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '100.64.0.0/10', '169.254.0.0/16'];
+// Unique local (fc00::/7) and link-local (fe80::/10).
+const PRIVATE_V6 = ['fc00::/7', 'fe80::/10'];
 
 /** True for an address no internet client can reach directly. */
 export function isPrivateAddress(address: string): boolean {
   if (address === '*') return false;
-  if (address.includes(':')) {
-    const lower = address.toLowerCase();
-    return lower.startsWith('fe80:') || lower.startsWith('fc') || lower.startsWith('fd');
-  }
-  return PRIVATE_V4.some((cidr) => cidrContains(cidr, address));
+  return (address.includes(':') ? PRIVATE_V6 : PRIVATE_V4).some((cidr) => cidrContains(cidr, address));
 }
 
 /**
