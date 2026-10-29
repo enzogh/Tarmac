@@ -6,11 +6,11 @@
 
 **Control plane pour flottes de serveurs Linux.**
 
-Stockage, réseau overlay WireGuard, DNS autoritaire, réplication et supervision —
+Stockage, réseau overlay WireGuard, pare-feu, DNS autoritaire, réplication et supervision —
 pilotés depuis une seule interface, appliqués sur les nœuds par un agent Go.
 
-<img src="https://img.shields.io/badge/Next.js-14-000000?style=flat-square&logo=nextdotjs&logoColor=white" alt="Next.js 14">
-<img src="https://img.shields.io/badge/NestJS-10-E0234E?style=flat-square&logo=nestjs&logoColor=white" alt="NestJS 10">
+<img src="https://img.shields.io/badge/Next.js-15-000000?style=flat-square&logo=nextdotjs&logoColor=white" alt="Next.js 15">
+<img src="https://img.shields.io/badge/NestJS-11-E0234E?style=flat-square&logo=nestjs&logoColor=white" alt="NestJS 11">
 <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.22+">
 <img src="https://img.shields.io/badge/PostgreSQL-Prisma-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL + Prisma">
 
@@ -84,7 +84,18 @@ et les vues topologiques.
 - Canaux de notification configurables et testables
 - Santé SMART par disque, avec les disques virtualisés sans données exploitables classés « inconnu » plutôt que « critique »
 - Journaux d'agent et journal d'audit, les actions faites avec une clé API y étant attribuées à la clé
+- Retour arrière depuis le Journal : « Restaurer » remet dans son état d'avant une règle ou une liste du pare-feu, ses réglages, un enregistrement DNS ou une zone DNS supprimée (avec ses enregistrements)
+- Exports CSV / JSON du Journal, des alertes et de l'activité du pare-feu ; durée de conservation de l'activité du pare-feu et des logs d'agents réglable par workspace (7 à 180 jours)
 - Rapports d'agent tolérants aux listes vides (`null` côté Go) : un agent fraîchement redémarré ne lève plus d'alerte « Invalid agent WS payload », et une telle alerte est limitée à une par nœud toutes les 30 min
+
+**Pare-feu**
+- Trois zones : entre serveurs (réseau privé), depuis Internet et vers Internet, chacune avec les modes ouvert / observation / appliqué ; l'observation journalise ce qui serait bloqué avant de rien couper
+- Appliqué par l'agent de chaque serveur dans ses propres chaînes iptables (`TARMAC-FW-*`, y compris `DOCKER-USER`) : Tarmac ne fait que retirer des accès, et les flux dont il a besoin (montages, synchronisations, DNS, VPN) restent toujours autorisés
+- Règles par serveur, étiquette, adresse IP, liste d'adresses réutilisable ou pays (plages des registres Internet, chargées dans ipset et rafraîchies chaque semaine), temporaires si besoin ; les blocages passent avant les autorisations
+- Filtrage sortant : les services d'un serveur ne contactent Internet que là où une règle l'autorise ; root (dont l'agent), DNS, heure et ping restent libres
+- Protection anti-verrouillage SSH et limite des tentatives SSH par adresse (20 d'affilée puis 10/min, connexions ralenties, jamais bloquées)
+- Activité en direct (connexions refusées ou qui le seraient), « Vu, rien à faire », test d'une connexion avant de l'appliquer, matrice « qui peut joindre qui »
+- Les protections récentes (sortant, pays, limite SSH) ne sont envoyées qu'aux agents qui les connaissent : un agent trop ancien est signalé « à mettre à jour »
 
 **Accès distant (VPN WireGuard)**
 - Profils par appareil : connexion à un nœud d'entrée (UDP `51821`, `VPN_LISTEN_PORT` côté API), configuration en fichier ou QR code
@@ -109,8 +120,8 @@ et les vues topologiques.
 
 ```mermaid
 flowchart LR
-    U(["Navigateur"]) --> W["apps/web<br/>Next.js 14"]
-    W -- "REST /api/v1" --> A["apps/api<br/>NestJS 10"]
+    U(["Navigateur"]) --> W["apps/web<br/>Next.js 15"]
+    W -- "REST /api/v1" --> A["apps/api<br/>NestJS 11"]
     A --> DB[("PostgreSQL")]
     A --> RD[("Redis")]
     A <-- "WebSocket /agents-ws" --> F
