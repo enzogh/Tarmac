@@ -24,7 +24,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { StatusPill } from '@/components/ui/status';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { FirewallMatrixCell, FirewallMode, FirewallNode, FirewallRule, FirewallScope, FirewallSystemFlow } from '@/lib/api';
-import { formatRelative } from '@/lib/format';
+import { formatRelative, shortHostname } from '@/lib/format';
 import { useReadOnly } from '@/lib/read-only';
 import { cn } from '@/lib/utils';
 import { MODE_INFO, NodeName, serviceLabel, sourceSummary, Switch, targetSummary } from './fw-ui';
@@ -48,6 +48,40 @@ export function ModeSelector({
 }) {
   const { readOnly } = useReadOnly();
   const modes: FirewallMode[] = ['open', 'observe', 'enforce'];
+  if (compact) {
+    return (
+      <div className="grid grid-cols-3 gap-1 rounded-lg border border-border bg-surface-2 p-1" role="radiogroup" aria-label="Mode du pare-feu">
+        {modes.map((mode) => {
+          const info = MODE_INFO[mode];
+          const active = value === mode;
+          return (
+            <button
+              key={mode}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              disabled={busy || readOnly}
+              onClick={() => !active && onChange(mode)}
+              title={info.public}
+              className={cn(
+                'flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed',
+                active
+                  ? mode === 'enforce'
+                    ? 'bg-[hsl(var(--ok))]/15 text-[hsl(var(--ok))] shadow-sm'
+                    : mode === 'observe'
+                      ? 'bg-[hsl(var(--info))]/15 text-[hsl(var(--info))] shadow-sm'
+                      : 'bg-surface-3 text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <info.icon className="h-3.5 w-3.5" />
+              {info.title}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
   return (
     <div className={cn('grid gap-2', compact ? 'grid-cols-3' : 'sm:grid-cols-3')} role="radiogroup" aria-label="Mode du pare-feu">
       {modes.map((mode, index) => {
@@ -152,18 +186,16 @@ export function AccessMatrix({
           })}
         </div>
       </div>
-      <div className="scroll-thin overflow-x-auto">
-        <table className="border-separate border-spacing-1 p-3 text-xs">
+      <div className="scroll-thin overflow-x-auto p-4">
+        <table className="w-full min-w-max table-fixed border-separate border-spacing-1.5 text-xs">
           <thead>
             <tr>
-              <th className="sticky left-0 z-10 bg-surface-1 px-2 text-left align-bottom text-2xs font-medium uppercase tracking-wider text-muted-foreground">
-                De ↓ · Vers →
+              <th className="sticky left-0 z-10 w-44 bg-surface-1 pb-1 text-left align-bottom text-2xs font-medium uppercase tracking-wider text-muted-foreground">
+                Depuis ↓ &nbsp;Vers →
               </th>
               {members.map((target) => (
-                <th key={target.id} className="h-28 w-9 align-bottom font-normal">
-                  <span className="mx-auto block max-h-28 truncate text-muted-foreground [writing-mode:vertical-rl] rotate-180" title={target.name}>
-                    {target.name}
-                  </span>
+                <th key={target.id} className="min-w-[4.5rem] pb-1 align-bottom font-medium" title={target.name}>
+                  <span className="block truncate px-1 text-center text-foreground/80">{shortHostname(target.name)}</span>
                 </th>
               ))}
             </tr>
@@ -171,14 +203,14 @@ export function AccessMatrix({
           <tbody>
             {members.map((source) => (
               <tr key={source.id}>
-                <th className="sticky left-0 z-10 max-w-[12rem] truncate bg-surface-1 px-2 text-left font-normal text-foreground" title={source.name}>
-                  {source.name}
+                <th className="sticky left-0 z-10 w-44 bg-surface-1 pr-3 text-left font-medium text-foreground" title={source.name}>
+                  <span className="block truncate">{shortHostname(source.name)}</span>
                 </th>
                 {members.map((target) => {
                   if (source.id === target.id) {
                     return (
-                      <td key={target.id} className="h-9 w-9 rounded bg-surface-2/40" aria-hidden>
-                        <span className="block text-center text-muted-foreground/30">·</span>
+                      <td key={target.id} aria-hidden>
+                        <span className="flex h-11 items-center justify-center rounded-md border border-dashed border-border/60 text-muted-foreground/40">—</span>
                       </td>
                     );
                   }
@@ -187,7 +219,7 @@ export function AccessMatrix({
                   const info = CELL[cell.status];
                   const isSelected = selected?.source === source.id && selected?.target === target.id;
                   return (
-                    <td key={target.id} className="p-0">
+                    <td key={target.id}>
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <button
@@ -195,12 +227,12 @@ export function AccessMatrix({
                             onClick={() => setSelected(isSelected ? null : { source: source.id, target: target.id })}
                             aria-label={`${source.name} vers ${target.name} : ${info.label}`}
                             className={cn(
-                              'flex h-9 w-9 items-center justify-center rounded transition-colors',
+                              'flex h-11 w-full items-center justify-center rounded-md transition-all',
                               info.className,
-                              isSelected && 'ring-2 ring-primary ring-offset-1 ring-offset-background',
+                              isSelected && 'ring-2 ring-primary ring-offset-2 ring-offset-surface-1',
                             )}
                           >
-                            <info.icon className="h-3.5 w-3.5" />
+                            <info.icon className="h-4 w-4" />
                           </button>
                         </TooltipTrigger>
                         <TooltipContent className="max-w-xs">

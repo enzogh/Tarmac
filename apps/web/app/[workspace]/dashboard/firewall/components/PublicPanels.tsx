@@ -63,13 +63,13 @@ export function PublicNodeCard({
   const apply = APPLY_INFO[node.apply.status];
   const listening = node.report?.listening ?? [];
   const exposed = listening.filter((entry) => entry.exposure !== 'local');
-  const wideOpen = exposed.filter((entry) => entry.exposure === 'public' && !entry.managedBy);
-  const risky = wideOpen.filter((entry) => SENSITIVE.has(entry.port));
+  const risky = exposed.filter((entry) => entry.exposure === 'public' && !entry.managedBy && SENSITIVE.has(entry.port));
+  const problem = node.apply.message && ['error', 'outdated', 'offline'].includes(node.apply.status);
   return (
-    <Card className="flex flex-col gap-3 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <NodeName node={node} showIp={false} />
+    <Card className="flex flex-col overflow-hidden">
+      <div className="flex items-start justify-between gap-3 px-5 pt-5">
+        <div className="min-w-0 space-y-2">
+          <NodeName node={node} />
           <div className="flex flex-wrap items-center gap-1.5">
             <StatusPill tone={apply.tone}>{apply.label}</StatusPill>
             {node.blocked24h > 0 && (
@@ -78,64 +78,67 @@ export function PublicNodeCard({
               </StatusPill>
             )}
             {node.report?.docker && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span>
-                    <StatusPill tone="neutral" dot={false}>
-                      <Container className="h-3 w-3" />
-                      Docker
-                    </StatusPill>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs">Les ports publiés par vos conteneurs sont filtrés eux aussi.</TooltipContent>
-              </Tooltip>
+              <StatusPill tone="neutral" dot={false}>
+                <Container className="h-3 w-3" />
+                Docker filtré
+              </StatusPill>
             )}
           </div>
         </div>
-        <div className="w-full sm:w-[19rem]">
+        {node.report && node.report.uplinks.length > 0 && (
+          <span className="shrink-0 rounded-md border border-border bg-surface-2 px-2 py-0.5 font-mono text-2xs text-muted-foreground" title="Interface reliée à Internet">
+            {node.report.uplinks.join(', ')}
+          </span>
+        )}
+      </div>
+
+      <div className="flex-1 space-y-3 px-5 py-4">
+        {problem && (
+          <p className={cn('flex items-start gap-2 text-xs', node.apply.status === 'error' ? 'text-[hsl(var(--danger))]' : 'text-[hsl(var(--warn))]')}>
+            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {node.apply.message}
+          </p>
+        )}
+        {!node.report ? (
+          node.apply.status === 'offline' ? null : (
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Plug className="h-3.5 w-3.5 shrink-0" />
+              {node.status === 'offline'
+                ? 'Serveur hors ligne : ses ports s’afficheront à son retour.'
+                : 'En attente du premier rapport de l’agent. S’il n’arrive pas, mettez l’agent à jour depuis la page Nœuds.'}
+            </p>
+          )
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-muted-foreground">
+              Ports en écoute <span className="font-normal text-muted-foreground/70">· {formatRelative(node.report.reportedAt)}</span>
+            </p>
+            {exposed.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Aucun port n’écoute sur une adresse publique.</p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {exposed.map((entry) => (
+                  <ExposureChip key={`${entry.protocol}-${entry.port}`} listen={entry} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {risky.length > 0 && (
+          <p className="flex items-start gap-2 rounded-lg bg-[hsl(var(--warn))]/10 px-3 py-2 text-xs text-[hsl(var(--warn))]">
+            <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {risky.map((entry) => entry.service ?? entry.port).join(', ')} {risky.length > 1 ? 'sont joignables' : 'est joignable'} par tout Internet : à réserver
+            à des adresses précises.
+          </p>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-surface-2/40 px-5 py-3">
+        <span className="text-xs font-medium text-muted-foreground">Filtrage Internet</span>
+        <div className="w-full sm:w-auto sm:min-w-[20rem]">
           <ModeSelector value={node.publicMode} onChange={(mode) => onChangeMode(node, mode)} scope="public" busy={busy} compact />
         </div>
       </div>
-
-      {node.apply.message && (node.apply.status === 'error' || node.apply.status === 'outdated' || node.apply.status === 'offline') && (
-        <Callout variant={node.apply.status === 'error' ? 'danger' : 'warning'} className="p-2.5 [&_div]:text-xs">
-          {node.apply.message}
-        </Callout>
-      )}
-
-      {!node.report ? (
-        node.apply.status === 'offline' ? null : <p className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2.5 text-xs text-muted-foreground">
-          <Plug className="h-3.5 w-3.5 shrink-0" />
-          {node.status === 'offline'
-            ? 'Serveur hors ligne : ses ports en écoute s’afficheront à son retour.'
-            : 'En attente du premier rapport de l’agent (environ 20 secondes). S’il n’arrive pas, mettez l’agent à jour depuis la page Nœuds.'}
-        </p>
-      ) : exposed.length === 0 ? (
-        <p className="text-xs text-muted-foreground">Aucun port n’écoute sur une adresse publique.</p>
-      ) : (
-        <div className="space-y-1.5">
-          <p className="text-2xs font-medium uppercase tracking-wider text-muted-foreground">
-            Ports en écoute{' '}
-            <span className="normal-case tracking-normal text-muted-foreground/70">
-              · mis à jour {formatRelative(node.report.reportedAt)}
-              {node.report.uplinks.length > 0 && ` · interface ${node.report.uplinks.join(', ')}`}
-            </span>
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {exposed.map((entry) => (
-              <ExposureChip key={`${entry.protocol}-${entry.port}`} listen={entry} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {risky.length > 0 && (
-        <p className="flex items-start gap-2 text-xs text-[hsl(var(--warn))]">
-          <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          {risky.map((entry) => entry.service ?? entry.port).join(', ')} {risky.length > 1 ? 'sont joignables' : 'est joignable'} par tout Internet.
-          Une base de données ou un service d’administration ne devrait l’être que depuis des adresses précises.
-        </p>
-      )}
     </Card>
   );
 }

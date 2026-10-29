@@ -64,13 +64,15 @@ function cutFlows(rule: FirewallRulePayload, system: FirewallSystemFlow[], nodes
 
 function Section({ step, title, hint, children }: { step: number; title: string; hint?: string; children: React.ReactNode }) {
   return (
-    <section className="space-y-2.5">
-      <div className="flex items-baseline gap-2">
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-2xs font-semibold text-primary">{step}</span>
-        <h3 className="text-sm font-medium text-foreground">{title}</h3>
-        {hint && <span className="truncate text-xs text-muted-foreground">{hint}</span>}
+    <section className="grid gap-3 border-t border-border pt-5 sm:grid-cols-[11rem_1fr] sm:gap-6">
+      <div className="flex items-start gap-2.5">
+        <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">{step}</span>
+        <div>
+          <h3 className="text-sm font-medium text-foreground">{title}</h3>
+          {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
+        </div>
       </div>
-      <div className="pl-7">{children}</div>
+      <div className="min-w-0">{children}</div>
     </section>
   );
 }
@@ -321,7 +323,7 @@ export function RuleDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle>{rule ? 'Modifier la règle' : 'Nouvelle règle de pare-feu'}</DialogTitle>
           <DialogDescription>
@@ -360,7 +362,7 @@ export function RuleDialog({
             </div>
           )}
 
-          <Section step={1} title="Action">
+          <Section step={1} title="Action" hint="Ouvrir ou fermer l’accès">
             <div className="grid grid-cols-2 gap-2">
               {(
                 [
@@ -465,7 +467,7 @@ export function RuleDialog({
             </div>
           </Section>
 
-          <Section step={4} title="Service">
+          <Section step={4} title="Service" hint="Le port visé">
             <div className="space-y-2.5">
               <div className="flex flex-wrap gap-1.5">
                 {[...SERVICE_PRESETS, { id: 'custom', label: 'Personnalisé…', protocol: 'tcp' as FirewallProtocol, ports: [] }].map((preset) => (
@@ -510,7 +512,7 @@ export function RuleDialog({
             </div>
           </Section>
 
-          <Section step={5} title="Nom et durée">
+          <Section step={5} title="Nom et durée" hint="Facultatif">
             <div className="grid gap-2 sm:grid-cols-[1fr_11rem]">
               <div className="space-y-1">
                 <Label htmlFor="fw-rule-name" className="sr-only">
@@ -551,16 +553,6 @@ export function RuleDialog({
             />
           </Section>
 
-          <div
-            className={cn(
-              'rounded-lg border px-3.5 py-3',
-              form.action === 'deny' ? 'border-[hsl(var(--danger))]/25 bg-[hsl(var(--danger))]/[0.06]' : 'border-[hsl(var(--ok))]/25 bg-[hsl(var(--ok))]/[0.06]',
-            )}
-          >
-            <p className="text-2xs font-medium uppercase tracking-wider text-muted-foreground">En résumé</p>
-            <p className="mt-0.5 text-sm text-foreground">{sentence}.</p>
-          </div>
-
           {lockoutRisk && (
             <Callout variant="danger">
               Cette règle bloque SSH pour tout Internet{sshGuard ? ', et les blocages passent avant la protection anti-verrouillage' : ''} :
@@ -585,7 +577,18 @@ export function RuleDialog({
           {error && <Callout variant="danger">{error}</Callout>}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="sm:items-center">
+          <div className="flex min-w-0 flex-1 items-start gap-2.5 sm:mr-4">
+            <span
+              className={cn(
+                'mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full',
+                form.action === 'deny' ? 'bg-[hsl(var(--danger))]/15 text-[hsl(var(--danger))]' : 'bg-[hsl(var(--ok))]/15 text-[hsl(var(--ok))]',
+              )}
+            >
+              {form.action === 'deny' ? <Ban className="h-3.5 w-3.5" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+            </span>
+            <p className="min-w-0 text-sm text-foreground">{sentence}.</p>
+          </div>
           <Button variant="secondary" onClick={() => onOpenChange(false)} disabled={saving}>
             Annuler
           </Button>

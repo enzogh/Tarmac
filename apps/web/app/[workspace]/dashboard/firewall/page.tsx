@@ -44,11 +44,12 @@ function ZoneCard({
   status: string;
   tone: 'ok' | 'info' | 'neutral' | 'warn';
   text: string;
-  facts: string[];
+  facts: Array<{ value: number; label: string; warn?: boolean }>;
   href: string;
 }) {
   return (
-    <Card className="group flex flex-col p-5 transition-colors hover:border-primary/30">
+    <Card className="group relative flex flex-col overflow-hidden p-6 transition-colors hover:border-primary/30">
+      <div className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-primary/10 blur-3xl" aria-hidden />
       <div className="flex items-start justify-between gap-3">
         <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10">
           <Icon className="h-5 w-5 text-primary" />
@@ -57,8 +58,17 @@ function ZoneCard({
       </div>
       <h2 className="mt-4 text-base font-semibold text-foreground">{title}</h2>
       <p className="mt-1 flex-1 text-sm leading-relaxed text-muted-foreground">{text}</p>
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-        <p className="text-xs text-muted-foreground">{facts.join(' · ')}</p>
+      <div className="mt-5 flex flex-wrap items-end justify-between gap-4 border-t border-border pt-4">
+        <div className="flex gap-6">
+          {facts.map((fact) => (
+            <div key={fact.label}>
+              <p className={cn('tabular text-2xl font-semibold leading-none', fact.warn && fact.value > 0 ? 'text-[hsl(var(--warn))]' : 'text-foreground')}>
+                {fact.value}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">{fact.label}</p>
+            </div>
+          ))}
+        </div>
         <Button variant="secondary" size="sm" asChild>
           <Link href={href} className="gap-1.5">
             Configurer
@@ -191,7 +201,10 @@ export default function FirewallOverviewPage() {
               status={MODE_INFO[meshMode].title}
               tone={MODE_INFO[meshMode].tone === 'ok' ? 'ok' : meshMode === 'observe' ? 'info' : 'warn'}
               text={MODE_INFO[meshMode].mesh}
-              facts={[`${meshNodes.length} serveur(s) reliés`, `${meshRules.length} règle(s) active(s)`]}
+              facts={[
+                { value: meshNodes.length, label: 'serveurs reliés' },
+                { value: meshRules.length, label: 'règles actives' },
+              ]}
               href={`${base}/servers`}
             />
             <ZoneCard
@@ -204,7 +217,10 @@ export default function FirewallOverviewPage() {
                   ? 'Aucun serveur ne filtre encore Internet : tout port en écoute est joignable par n’importe qui.'
                   : 'Les serveurs filtrés n’exposent que les ports autorisés. SSH et les services Tarmac restent toujours joignables.'
               }
-              facts={[`${exposed.length} port(s) ouvert(s) à tous`, `${publicRules.length} règle(s) active(s)`]}
+              facts={[
+                { value: exposed.length, label: 'ports ouverts à tous', warn: true },
+                { value: publicRules.length, label: 'règles actives' },
+              ]}
               href={`${base}/internet`}
             />
           </div>

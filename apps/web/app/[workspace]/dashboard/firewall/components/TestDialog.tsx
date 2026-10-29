@@ -145,7 +145,7 @@ export function TestDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Radar className="h-4 w-4 text-primary" />
@@ -156,7 +156,7 @@ export function TestDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="space-y-5">
           <Tabs value={scope} onValueChange={(value) => setScope(value as FirewallScope)}>
             <TabsList variant="segmented">
               <TabsTrigger value="mesh">Entre serveurs</TabsTrigger>
@@ -224,7 +224,9 @@ export function TestDialog({
                   </button>
                 );
               })}
-              <span className="mx-1 h-5 w-px bg-border" />
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <span className="text-xs text-muted-foreground">ou précisez</span>
               <Select value={protocol} onValueChange={(value) => setProtocol(value as typeof protocol)}>
                 <SelectTrigger className="h-8 w-[5.5rem] text-xs">
                   <SelectValue />
