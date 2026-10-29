@@ -73,8 +73,8 @@ export class CreateFirewallRuleDto {
   @IsBoolean()
   enabled?: boolean;
 
-  @IsIn(['any', 'nodes', 'labels', 'cidrs'])
-  sourceKind!: 'any' | 'nodes' | 'labels' | 'cidrs';
+  @IsIn(['any', 'nodes', 'labels', 'cidrs', 'lists'])
+  sourceKind!: 'any' | 'nodes' | 'labels' | 'cidrs' | 'lists';
 
   @IsOptional()
   @IsArray()
@@ -93,6 +93,12 @@ export class CreateFirewallRuleDto {
   @ArrayMaxSize(100)
   @IsString({ each: true })
   sourceCidrs?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  sourceListIds?: string[];
 
   @IsIn(['any', 'nodes', 'labels'])
   targetKind!: 'any' | 'nodes' | 'labels';
@@ -146,8 +152,8 @@ export class UpdateFirewallRuleDto {
   enabled?: boolean;
 
   @IsOptional()
-  @IsIn(['any', 'nodes', 'labels', 'cidrs'])
-  sourceKind?: 'any' | 'nodes' | 'labels' | 'cidrs';
+  @IsIn(['any', 'nodes', 'labels', 'cidrs', 'lists'])
+  sourceKind?: 'any' | 'nodes' | 'labels' | 'cidrs' | 'lists';
 
   @IsOptional()
   @IsArray()
@@ -166,6 +172,12 @@ export class UpdateFirewallRuleDto {
   @ArrayMaxSize(100)
   @IsString({ each: true })
   sourceCidrs?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  sourceListIds?: string[];
 
   @IsOptional()
   @IsIn(['any', 'nodes', 'labels'])
@@ -223,4 +235,42 @@ export class TestFirewallDto {
   @Min(1)
   @Max(65535)
   port?: number;
+}
+
+export class FirewallAddressListDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(60)
+  name!: string;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  @MaxLength(300)
+  description?: string | null;
+
+  @IsArray()
+  @ArrayMaxSize(500)
+  @IsString({ each: true })
+  cidrs!: string[];
+}
+
+export class UpdateFirewallAddressListDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(60)
+  name?: string;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  @MaxLength(300)
+  description?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  @IsString({ each: true })
+  cidrs?: string[];
 }

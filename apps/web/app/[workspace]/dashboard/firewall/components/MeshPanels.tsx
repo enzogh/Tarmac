@@ -23,7 +23,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { StatusPill } from '@/components/ui/status';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import type { FirewallMatrixCell, FirewallMode, FirewallNode, FirewallRule, FirewallScope, FirewallSystemFlow } from '@/lib/api';
+import type { FirewallAddressList, FirewallMatrixCell, FirewallMode, FirewallNode, FirewallRule, FirewallScope, FirewallSystemFlow } from '@/lib/api';
 import { formatRelative, shortHostname } from '@/lib/format';
 import { useReadOnly } from '@/lib/read-only';
 import { cn } from '@/lib/utils';
@@ -310,9 +310,11 @@ export function RulesTable({
   onAction,
   onCreate,
   examples,
+  lists = [],
 }: {
   rules: FirewallRule[];
   nodes: FirewallNode[];
+  lists?: FirewallAddressList[];
   scope: FirewallScope;
   mode?: FirewallMode;
   onAction: (rule: FirewallRule, action: RuleAction) => void;
@@ -403,7 +405,7 @@ export function RulesTable({
                   )}
                 </span>
                 <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                  {sourceSummary(rule, nodes)} <span className="text-muted-foreground/60">→</span> {targetSummary(rule, nodes)}
+                  {sourceSummary(rule, nodes, 2, lists)} <span className="text-muted-foreground/60">→</span> {targetSummary(rule, nodes)}
                   <span className="mx-1.5 text-muted-foreground/40">·</span>
                   {serviceLabel(rule)}
                 </span>

@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { api, FirewallMode, FirewallNode, FirewallProtocol, FirewallRule, FirewallRulePayload, FirewallScope, FirewallSystemFlow } from '@/lib/api';
+import { api, FirewallAddressList, FirewallMode, FirewallNode, FirewallProtocol, FirewallRule, FirewallRulePayload, FirewallScope, FirewallSystemFlow } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { EXPIRY_CHOICES, expiryToIso, NodeName, presetFor, PROTOCOL_LABEL, ruleSentence, SERVICE_PRESETS } from './fw-ui';
 
@@ -24,6 +24,7 @@ const EMPTY: Omit<FirewallRulePayload, 'scope'> = {
   sourceNodeIds: [],
   sourceLabels: [],
   sourceCidrs: [],
+  sourceListIds: [],
   targetKind: 'any',
   targetNodeIds: [],
   targetLabels: [],
@@ -74,6 +75,40 @@ function Section({ step, title, hint, children }: { step: number; title: string;
       </div>
       <div className="min-w-0">{children}</div>
     </section>
+  );
+}
+
+/** Address lists to pick from; the addresses themselves are edited in Depuis Internet. */
+function ListChecklist({ lists, selected, onChange }: { lists: FirewallAddressList[]; selected: string[]; onChange: (ids: string[]) => void }) {
+  const toggle = (id: string) => onChange(selected.includes(id) ? selected.filter((item) => item !== id) : [...selected, id]);
+  if (lists.length === 0) {
+    return (
+      <p className="rounded-lg border border-dashed border-border bg-surface-2 px-3 py-4 text-center text-xs text-muted-foreground">
+        Aucune liste pour l’instant. Créez-en une dans Depuis Internet › Listes d’adresses, par exemple « Bureau » avec l’IP de vos locaux.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-1">
+      <div className="scroll-thin max-h-48 overflow-y-auto rounded-lg border border-border bg-surface-2 p-1">
+        {lists.map((list) => (
+          <label
+            key={list.id}
+            className={cn('flex cursor-pointer items-center gap-3 rounded-md px-2.5 py-1.5 transition-colors hover:bg-surface-3', selected.includes(list.id) && 'bg-primary/[0.06]')}
+          >
+            <Checkbox checked={selected.includes(list.id)} onChange={() => toggle(list.id)} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm text-foreground">{list.name}</span>
+              <span className="block truncate font-mono text-2xs text-muted-foreground">
+                {list.cidrs.slice(0, 3).join(', ')}
+                {list.cidrs.length > 3 ? ` +${list.cidrs.length - 3}` : ''}
+              </span>
+            </span>
+          </label>
+        ))}
+      </div>
+      <p className="text-2xs text-muted-foreground">La règle suit la liste : modifiez ses adresses une fois, toutes les règles qui l’utilisent sont mises à jour.</p>
+    </div>
   );
 }
 
@@ -181,6 +216,7 @@ export function RuleDialog({
   draft,
   nodes,
   labels,
+  lists = [],
   meshMode,
   sshGuard,
   system = [],
@@ -194,6 +230,7 @@ export function RuleDialog({
   draft?: RuleDraft | null;
   nodes: FirewallNode[];
   labels: string[];
+  lists?: FirewallAddressList[];
   meshMode: FirewallMode;
   sshGuard: boolean;
   system?: FirewallSystemFlow[];
@@ -220,6 +257,7 @@ export function RuleDialog({
           sourceNodeIds: rule.sourceNodeIds,
           sourceLabels: rule.sourceLabels,
           sourceCidrs: rule.sourceCidrs,
+          sourceListIds: rule.sourceListIds,
           targetKind: rule.targetKind,
           targetNodeIds: rule.targetNodeIds,
           targetLabels: rule.targetLabels,
@@ -227,7 +265,7 @@ export function RuleDialog({
           ports: rule.ports,
         }
       : { ...EMPTY, ...(draft ?? {}), scope: draft?.scope ?? 'mesh' };
-    if (!rule && base.scope === 'public' && base.sourceKind !== 'cidrs') base.sourceKind = 'any';
+    if (!rule && base.scope === 'public' && base.sourceKind !== 'cidrs' && base.sourceKind !== 'lists') base.sourceKind = 'any';
     setForm(base);
     setNameTouched(Boolean(rule) || Boolean(draft?.name));
     setCustom(!presetFor(base.protocol, base.ports));
@@ -259,13 +297,14 @@ export function RuleDialog({
     };
   }, [form, custom, portsText, cidrText]);
 
-  const sentence = ruleSentence(effective, nodes);
+  const sentence = ruleSentence(effective, nodes, lists);
   const name = nameTouched ? form.name : sentence.slice(0, 80);
 
   const problems: string[] = [];
   if (effective.sourceKind === 'nodes' && effective.sourceNodeIds.length === 0) problems.push('Choisissez au moins un serveur d’origine.');
   if (effective.sourceKind === 'labels' && effective.sourceLabels.length === 0) problems.push('Choisissez au moins une étiquette d’origine.');
   if (effective.sourceKind === 'cidrs' && effective.sourceCidrs.length === 0) problems.push('Indiquez au moins une adresse IP.');
+  if (effective.sourceKind === 'lists' && effective.sourceListIds.length === 0) problems.push('Choisissez au moins une liste d’adresses.');
   if (effective.targetKind === 'nodes' && effective.targetNodeIds.length === 0) problems.push('Choisissez au moins un serveur protégé.');
   if (effective.targetKind === 'labels' && effective.targetLabels.length === 0) problems.push('Choisissez au moins une étiquette de destination.');
   if ((effective.protocol === 'tcp' || effective.protocol === 'udp' || effective.protocol === 'tcpudp') && custom && effective.ports.some((port) => !/^\d{1,5}(-\d{1,5})?$/.test(port))) {
@@ -408,11 +447,12 @@ export function RuleDialog({
                 />
               ) : (
                 <KindTabs
-                  value={form.sourceKind as 'any' | 'cidrs'}
+                  value={form.sourceKind as 'any' | 'cidrs' | 'lists'}
                   onChange={(sourceKind) => set({ sourceKind })}
                   options={[
                     { value: 'any', label: 'Tout Internet' },
                     { value: 'cidrs', label: 'Adresses IP précises' },
+                    { value: 'lists', label: 'Listes d’adresses' },
                   ]}
                 />
               )}
@@ -426,6 +466,9 @@ export function RuleDialog({
               )}
               {form.sourceKind === 'labels' && (
                 <LabelPicker labels={labels} selected={form.sourceLabels} onChange={(sourceLabels) => set({ sourceLabels })} />
+              )}
+              {form.sourceKind === 'lists' && (
+                <ListChecklist lists={lists} selected={form.sourceListIds} onChange={(sourceListIds) => set({ sourceListIds })} />
               )}
               {form.sourceKind === 'cidrs' && (
                 <div className="space-y-1">

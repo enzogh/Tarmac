@@ -30,6 +30,7 @@ function rule(partial: Partial<PolicyRule>): PolicyRule {
     sourceNodeIds: [],
     sourceLabels: [],
     sourceCidrs: [],
+    sourceListIds: [],
     targetKind: 'any',
     targetNodeIds: [],
     targetLabels: [],
@@ -192,4 +193,23 @@ test('SSH limit: sent to every node, exempting addresses an SSH rule allows', ()
   assert.equal(payloadIsEmpty(buildAgentPayload(ctx({ sshLimit: true }), 'dev', 'r')), false);
   assert.equal(buildAgentPayload(ctx({ sshLimit: false }), 'dev', 'r').sshLimit, undefined);
   assert.equal(payloadIsEmpty(buildAgentPayload(ctx({ sshLimit: false }), 'dev', 'r')), true);
+});
+
+test('address lists: resolved at apply time, an empty list never widens the rule', () => {
+  const office = { id: 'office', name: 'Bureau', cidrs: ['198.51.100.7/32', '2001:db8:1::/48'] };
+  const empty = { id: 'empty', name: 'Vide', cidrs: [] };
+  const allowOffice = rule({ id: 'ssh-office', scope: 'public', sourceKind: 'lists', sourceListIds: ['office'], protocol: 'tcp', ports: ['22'] });
+  const banEmpty = rule({ id: 'ban', scope: 'public', action: 'deny', sourceKind: 'lists', sourceListIds: ['empty'], protocol: 'any' });
+  const c = ctx({ rules: [allowOffice, banEmpty], lists: [office, empty], sshLimit: true, nodes: nodes.map((node) => ({ ...node, publicMode: 'enforce' as const })) });
+
+  const payload = buildAgentPayload(c, 'dev', 'r');
+  assert.deepEqual(payload.public.allows.find((entry) => entry.id === 'ssh-office')?.sources, ['198.51.100.7/32', '2001:db8:1::/48']);
+  // The ban names an empty list: skipped, not turned into "block everyone".
+  assert.equal(payload.public.denies.length, 0);
+  // Addresses allowed on SSH through a list are never throttled either.
+  assert.deepEqual(payload.sshLimit?.exempt, ['198.51.100.7/32', '2001:db8:1::/48']);
+
+  // The connection tester reads the same lists.
+  assert.equal(evaluate(c, { scope: 'public', targetNodeId: 'dev', sourceIp: '2001:db8:1:5::9', protocol: 'tcp', port: 22 }).verdict, 'allowed');
+  assert.equal(evaluate(c, { scope: 'public', targetNodeId: 'dev', sourceIp: '203.0.113.5', protocol: 'tcp', port: 22 }).verdict, 'blocked');
 });

@@ -6,7 +6,7 @@ export type FwScope = 'mesh' | 'public';
 export type FwMode = 'open' | 'observe' | 'enforce';
 export type FwAction = 'allow' | 'deny';
 export type FwProtocol = 'any' | 'tcp' | 'udp' | 'tcpudp' | 'icmp';
-export type FwSourceKind = 'any' | 'nodes' | 'labels' | 'cidrs';
+export type FwSourceKind = 'any' | 'nodes' | 'labels' | 'cidrs' | 'lists';
 export type FwTargetKind = 'any' | 'nodes' | 'labels';
 
 export const FW_MODES: FwMode[] = ['open', 'observe', 'enforce'];
@@ -32,6 +32,8 @@ export type PolicyRule = {
   sourceNodeIds: string[];
   sourceLabels: string[];
   sourceCidrs: string[];
+  // Address lists (public rules), see PolicyContext.lists.
+  sourceListIds: string[];
   targetKind: FwTargetKind;
   targetNodeIds: string[];
   targetLabels: string[];
@@ -64,8 +66,23 @@ export type PolicyContext = {
   nodes: PolicyNode[];
   rules: PolicyRule[];
   system: SystemFlow[];
+  // Named sets of internet addresses that public rules can use as source.
+  lists?: AddressList[];
   now?: Date;
 };
+
+export type AddressList = { id: string; name: string; cidrs: string[] };
+
+/**
+ * The internet addresses a public rule names: its own CIDRs, or the union
+ * of its address lists as they are now. Empty for any other kind.
+ */
+export function ruleCidrs(rule: Pick<PolicyRule, 'sourceKind' | 'sourceCidrs' | 'sourceListIds'>, lists: AddressList[] = []): string[] {
+  if (rule.sourceKind === 'cidrs') return rule.sourceCidrs;
+  if (rule.sourceKind !== 'lists') return [];
+  const wanted = new Set(rule.sourceListIds);
+  return [...new Set(lists.filter((list) => wanted.has(list.id)).flatMap((list) => list.cidrs))];
+}
 
 export type AgentRule = { id: string; sources: string[]; protocol: FwProtocol; ports: string[] };
 export type AgentZone = { mode: FwMode; denies: AgentRule[]; allows: AgentRule[] };
@@ -123,12 +140,15 @@ export function ruleSourceNodes(rule: PolicyRule, nodes: PolicyNode[]): PolicyNo
  * can't apply (all of its source nodes are gone, a mesh rule naming CIDRs):
  * it must then be skipped - never widened to "any source".
  */
-function agentSources(rule: PolicyRule, nodes: PolicyNode[]): string[] | null {
+function agentSources(rule: PolicyRule, ctx: PolicyContext): string[] | null {
   if (rule.sourceKind === 'any') return [];
   if (rule.scope === 'public') {
-    if (rule.sourceKind !== 'cidrs') return null;
-    return rule.sourceCidrs.length > 0 ? rule.sourceCidrs : null;
+    // An empty list (or every list deleted) must skip the rule, never widen
+    // it to the whole internet.
+    const cidrs = ruleCidrs(rule, ctx.lists);
+    return cidrs.length > 0 ? cidrs : null;
   }
+  const nodes = ctx.nodes;
   const sourceNodes = ruleSourceNodes(rule, nodes) ?? [];
   const ips = sourceNodes.map((node) => node.vlanIp).filter((ip): ip is string => Boolean(ip));
   return ips.length > 0 ? ips.map((ip) => `${ip}/32`) : null;
@@ -168,7 +188,7 @@ export function buildAgentPayload(ctx: PolicyContext, nodeId: string, revision: 
   for (const rule of ctx.rules) {
     if (!isRuleLive(rule, now)) continue;
     if (!ruleTargets(rule, ctx.nodes).some((target) => target.id === nodeId)) continue;
-    const sources = agentSources(rule, ctx.nodes);
+    const sources = agentSources(rule, ctx);
     if (sources === null) continue;
     const target = payload[rule.scope === 'mesh' ? 'mesh' : 'public'];
     (rule.action === 'deny' ? target.denies : target.allows).push({
@@ -191,10 +211,10 @@ export function buildAgentPayload(ctx: PolicyContext, nodeId: string, revision: 
 export function sshLimitFor(ctx: PolicyContext, node: PolicyNode, now: Date): { ports: string[]; exempt: string[] } {
   const exempt = new Set<string>();
   for (const rule of ctx.rules) {
-    if (rule.scope !== 'public' || rule.action !== 'allow' || rule.sourceKind !== 'cidrs' || !isRuleLive(rule, now)) continue;
+    if (rule.scope !== 'public' || rule.action !== 'allow' || rule.sourceKind === 'any' || !isRuleLive(rule, now)) continue;
     if (!ruleTargets(rule, ctx.nodes).some((target) => target.id === node.id)) continue;
     if (!node.sshPorts.some((port) => protocolMatches(rule, { protocol: 'tcp', port }))) continue;
-    for (const cidr of rule.sourceCidrs) exempt.add(cidr);
+    for (const cidr of ruleCidrs(rule, ctx.lists)) exempt.add(cidr);
   }
   return { ports: node.sshPorts.map(String), exempt: [...exempt] };
 }
@@ -296,7 +316,7 @@ export type Evaluation = {
 function sourceMatches(rule: PolicyRule, ctx: PolicyContext, source: { nodeId?: string; ip?: string }): boolean {
   if (rule.sourceKind === 'any') return true;
   if (rule.scope === 'public') {
-    return rule.sourceKind === 'cidrs' && Boolean(source.ip) && rule.sourceCidrs.some((cidr) => cidrContains(cidr, source.ip!));
+    return Boolean(source.ip) && ruleCidrs(rule, ctx.lists).some((cidr) => cidrContains(cidr, source.ip!));
   }
   const nodes = ruleSourceNodes(rule, ctx.nodes) ?? [];
   return nodes.some((node) => node.id === source.nodeId);

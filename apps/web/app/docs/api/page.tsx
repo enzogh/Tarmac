@@ -474,11 +474,21 @@ const MODULES: Module[] = [
       {
         method: 'POST',
         path: '/firewall/rules',
-        body: 'scope, action, name, sourceKind, sourceNodeIds?, sourceLabels?, sourceCidrs?, targetKind, targetNodeIds?, targetLabels?, protocol, ports, expiresAt?',
-        description: 'Crée une règle. scope : mesh ou public ; action : allow ou deny ; ports : "22", "8000-8100".',
+        body: 'scope, action, name, sourceKind, sourceNodeIds?, sourceLabels?, sourceCidrs?, sourceListIds?, targetKind, targetNodeIds?, targetLabels?, protocol, ports, expiresAt?',
+        description:
+          'Crée une règle. scope : mesh ou public ; action : allow ou deny ; sourceKind : any, nodes, labels (mesh), cidrs ou lists (public) ; ports : "22", "8000-8100".',
       },
       { method: 'PATCH', path: '/firewall/rules/:id', description: 'Met à jour une règle (dont enabled pour la désactiver).' },
       { method: 'DELETE', path: '/firewall/rules/:id', description: 'Supprime une règle.' },
+      {
+        method: 'POST',
+        path: '/firewall/lists',
+        body: 'name, cidrs, description?',
+        description: 'Crée une liste d’adresses Internet, utilisable comme origine des règles (sourceKind lists).',
+        isNew: true,
+      },
+      { method: 'PATCH', path: '/firewall/lists/:id', body: 'name?, cidrs?, description?', description: 'Modifie une liste : les règles qui l’utilisent sont réappliquées.', isNew: true },
+      { method: 'DELETE', path: '/firewall/lists/:id', description: 'Supprime une liste (refusé tant qu’une règle l’utilise).', isNew: true },
       {
         method: 'POST',
         path: '/firewall/test',

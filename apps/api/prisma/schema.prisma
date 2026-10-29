@@ -280,6 +280,7 @@ model Workspace {
   customRoles          WorkspaceCustomRole[]
   invitations          WorkspaceInvitation[]
   firewallRules        FirewallRule[]
+  firewallAddressLists FirewallAddressList[]
 
   @@index([createdById])
 }
@@ -1163,11 +1164,13 @@ model FirewallRule {
   name            String
   description     String?
   enabled         Boolean   @default(true)
-  // any | nodes | labels (mesh) - any | cidrs (public)
+  // any | nodes | labels (mesh) - any | cidrs | lists (public)
   sourceKind      String    @default("any")
   sourceNodeIds   String[]  @default([])
   sourceLabels    String[]  @default([])
   sourceCidrs     String[]  @default([])
+  // FirewallAddressList ids, resolved to their addresses at apply time.
+  sourceListIds   String[]  @default([])
   // any | nodes | labels
   targetKind      String    @default("any")
   targetNodeIds   String[]  @default([])
@@ -1186,6 +1189,21 @@ model FirewallRule {
   updatedAt       DateTime  @updatedAt
 
   @@index([workspaceId])
+}
+
+// A named set of internet addresses ("Bureau", "Prestataire X") that rules
+// pick as their source: change it once, every rule using it follows.
+model FirewallAddressList {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  cidrs       String[]  @default([])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([workspaceId, name])
 }
 
 // Connections a node's firewall blocked (or, in observation mode, would

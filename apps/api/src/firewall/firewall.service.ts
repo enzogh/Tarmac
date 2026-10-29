@@ -1,4 +1,4 @@
-import { BadRequestException, forwardRef, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, forwardRef, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { FirewallRule, Prisma } from '@prisma/client';
 import * as net from 'net';
@@ -12,7 +12,9 @@ import { VPN_LISTEN_PORT } from '../vpn/vpn-network';
 import {
   BulkFirewallNodesDto,
   CreateFirewallRuleDto,
+  FirewallAddressListDto,
   TestFirewallDto,
+  UpdateFirewallAddressListDto,
   UpdateFirewallRuleDto,
   UpdateFirewallSettingsDto,
 } from './dto/firewall.dto';
@@ -182,7 +184,7 @@ export class FirewallService {
   }
 
   private async loadContext(workspaceId: string) {
-    const [workspace, nodes, rules] = await Promise.all([
+    const [workspace, nodes, rules, lists] = await Promise.all([
       this.prisma.workspace.findUniqueOrThrow({
         where: { id: workspaceId },
         select: { firewallMeshMode: true, firewallPublicPing: true, firewallSshGuard: true, firewallSshLimit: true, internalDnsNodeId: true },
@@ -209,6 +211,7 @@ export class FirewallService {
         },
       }),
       this.prisma.firewallRule.findMany({ where: { workspaceId }, orderBy: [{ scope: 'asc' }, { createdAt: 'asc' }] }),
+      this.prisma.firewallAddressList.findMany({ where: { workspaceId }, orderBy: { name: 'asc' } }),
     ]);
     const policyNodes: PolicyNode[] = nodes.map((node) => {
       const report = node.firewallReport as StoredReport | null;
@@ -237,8 +240,9 @@ export class FirewallService {
       nodes: policyNodes,
       rules: rules.map((rule) => this.toPolicyRule(rule)),
       system,
+      lists: lists.map((list) => ({ id: list.id, name: list.name, cidrs: list.cidrs })),
     };
-    return { workspace, nodes, rules, ctx };
+    return { workspace, nodes, rules, lists, ctx };
   }
 
   private toPolicyRule(rule: FirewallRule): PolicyRule {
@@ -252,6 +256,7 @@ export class FirewallService {
       sourceNodeIds: rule.sourceNodeIds,
       sourceLabels: rule.sourceLabels,
       sourceCidrs: rule.sourceCidrs,
+      sourceListIds: rule.sourceListIds,
       targetKind: rule.targetKind as PolicyRule['targetKind'],
       targetNodeIds: rule.targetNodeIds,
       targetLabels: rule.targetLabels,
@@ -501,7 +506,7 @@ export class FirewallService {
 
   async overview(scope: WorkspaceScope) {
     const workspaceId = scope.workspaceId as string;
-    const { workspace, nodes, rules, ctx } = await this.cachedContext(workspaceId);
+    const { workspace, nodes, rules, lists, ctx } = await this.cachedContext(workspaceId);
     const since = new Date(Date.now() - 24 * 3600 * 1000);
     const eventTotals = await this.prisma.firewallEvent.groupBy({
       by: ['verdict', 'nodeId'],
@@ -570,6 +575,14 @@ export class FirewallService {
       },
       nodes: nodeRows,
       rules: rules.map((rule) => this.serializeRule(rule, nodeNames, ctx)),
+      lists: lists.map((list) => ({
+        id: list.id,
+        name: list.name,
+        description: list.description,
+        cidrs: list.cidrs,
+        usedBy: rules.filter((rule) => rule.sourceKind === 'lists' && rule.sourceListIds.includes(list.id)).map((rule) => rule.id),
+        updatedAt: list.updatedAt.toISOString(),
+      })),
       system: ctx.system.map((flow) => ({ ...flow, service: describeService(flow) })),
       matrix: meshMatrix(ctx),
       labels: [...new Set(nodes.flatMap((node) => node.labels))].sort((a, b) => a.localeCompare(b)),
@@ -625,6 +638,7 @@ export class FirewallService {
       sourceNodeIds: rule.sourceNodeIds.filter((id) => nodeNames.has(id)),
       sourceLabels: rule.sourceLabels,
       sourceCidrs: rule.sourceCidrs,
+      sourceListIds: rule.sourceListIds.filter((id) => (ctx.lists ?? []).some((list) => list.id === id)),
       targetKind: rule.targetKind,
       targetNodeIds: rule.targetNodeIds.filter((id) => nodeNames.has(id)),
       targetLabels: rule.targetLabels,
@@ -863,6 +877,7 @@ export class FirewallService {
       sourceNodeIds: input.sourceNodeIds ?? current?.sourceNodeIds ?? [],
       sourceLabels: normalizeList(input.sourceLabels ?? current?.sourceLabels, 20),
       sourceCidrs: input.sourceCidrs ?? current?.sourceCidrs ?? [],
+      sourceListIds: input.sourceListIds ?? current?.sourceListIds ?? [],
       targetKind: input.targetKind ?? current?.targetKind ?? 'any',
       targetNodeIds: input.targetNodeIds ?? current?.targetNodeIds ?? [],
       targetLabels: normalizeList(input.targetLabels ?? current?.targetLabels, 20),
@@ -870,7 +885,7 @@ export class FirewallService {
       ports: input.ports ?? current?.ports ?? [],
     };
 
-    if (scope === 'mesh' && merged.sourceKind === 'cidrs') {
+    if (scope === 'mesh' && (merged.sourceKind === 'cidrs' || merged.sourceKind === 'lists')) {
       throw new BadRequestException('Entre serveurs, l’origine est un serveur ou une étiquette, pas une adresse IP.');
     }
     if (scope === 'public' && (merged.sourceKind === 'nodes' || merged.sourceKind === 'labels')) {
@@ -889,6 +904,11 @@ export class FirewallService {
     if (merged.sourceKind !== 'nodes') merged.sourceNodeIds = [];
     if (merged.sourceKind !== 'labels') merged.sourceLabels = [];
     if (merged.sourceKind !== 'cidrs') merged.sourceCidrs = [];
+    if (merged.sourceKind === 'lists') {
+      const owned = await this.prisma.firewallAddressList.findMany({ where: { workspaceId, id: { in: merged.sourceListIds } }, select: { id: true } });
+      merged.sourceListIds = [...new Set(merged.sourceListIds.filter((id) => owned.some((list) => list.id === id)))];
+      if (merged.sourceListIds.length === 0) throw new BadRequestException('Choisissez au moins une liste d’adresses.');
+    } else merged.sourceListIds = [];
     if (merged.targetKind !== 'nodes') merged.targetNodeIds = [];
     if (merged.targetKind !== 'labels') merged.targetLabels = [];
     if (merged.sourceKind === 'nodes' && merged.sourceNodeIds.length === 0) throw new BadRequestException('Choisissez au moins un serveur d’origine.');
@@ -960,6 +980,83 @@ export class FirewallService {
     const current = await this.findOwned(id, workspaceId);
     await this.prisma.firewallRule.delete({ where: { id } });
     await this.audit(actor, 'firewall_rule.delete', id, this.auditDetails(current));
+    await this.changed(workspaceId);
+    return { success: true };
+  }
+
+  // ---------------------------------------------------------------------
+  // Address lists
+  // ---------------------------------------------------------------------
+
+  private normalizeCidrs(raw: string[]): string[] {
+    const cidrs: string[] = [];
+    for (const value of raw.map((entry) => entry.trim()).filter(Boolean)) {
+      const cidr = normalizeCidr(value);
+      if (!cidr) throw new BadRequestException(`« ${value} » n’est ni une adresse IP ni une plage valide (ex. 203.0.113.0/24).`);
+      if (!cidrs.includes(cidr)) cidrs.push(cidr);
+    }
+    if (cidrs.length === 0) throw new BadRequestException('Indiquez au moins une adresse IP ou une plage.');
+    return cidrs;
+  }
+
+  private async assertListNameFree(workspaceId: string, name: string, exceptId?: string) {
+    const clash = await this.prisma.firewallAddressList.findFirst({
+      where: { workspaceId, name: { equals: name, mode: 'insensitive' }, ...(exceptId ? { id: { not: exceptId } } : {}) },
+      select: { id: true },
+    });
+    if (clash) throw new ConflictException(`Une liste « ${name} » existe déjà.`);
+  }
+
+  async createList(dto: FirewallAddressListDto, actor: Actor) {
+    const workspaceId = actor.scope.workspaceId as string;
+    const name = dto.name.trim();
+    if (!name) throw new BadRequestException('Donnez un nom à la liste.');
+    await this.assertListNameFree(workspaceId, name);
+    const list = await this.prisma.firewallAddressList.create({
+      data: { workspaceId, name, description: dto.description?.trim() || null, cidrs: this.normalizeCidrs(dto.cidrs) },
+    });
+    await this.audit(actor, 'firewall_list.create', list.id, { name: list.name, count: list.cidrs.length });
+    await this.changed(workspaceId);
+    return list;
+  }
+
+  async updateList(id: string, dto: UpdateFirewallAddressListDto, actor: Actor) {
+    const workspaceId = actor.scope.workspaceId as string;
+    const current = await this.prisma.firewallAddressList.findFirst({ where: { id, workspaceId } });
+    if (!current) throw new NotFoundException('Liste introuvable');
+    const name = dto.name?.trim();
+    if (dto.name !== undefined && !name) throw new BadRequestException('Donnez un nom à la liste.');
+    if (name && name !== current.name) await this.assertListNameFree(workspaceId, name, id);
+    const list = await this.prisma.firewallAddressList.update({
+      where: { id },
+      data: {
+        ...(name ? { name } : {}),
+        ...(dto.description !== undefined ? { description: dto.description?.trim() || null } : {}),
+        ...(dto.cidrs !== undefined ? { cidrs: this.normalizeCidrs(dto.cidrs) } : {}),
+      },
+    });
+    await this.audit(actor, 'firewall_list.update', id, { name: list.name, count: list.cidrs.length });
+    // Every rule using it is re-applied with the new addresses.
+    await this.changed(workspaceId);
+    return list;
+  }
+
+  async removeList(id: string, actor: Actor) {
+    const workspaceId = actor.scope.workspaceId as string;
+    const current = await this.prisma.firewallAddressList.findFirst({ where: { id, workspaceId } });
+    if (!current) throw new NotFoundException('Liste introuvable');
+    const users = await this.prisma.firewallRule.findMany({
+      where: { workspaceId, sourceKind: 'lists', sourceListIds: { has: id } },
+      select: { name: true },
+    });
+    if (users.length > 0) {
+      const names = users.slice(0, 3).map((rule) => `« ${rule.name} »`).join(', ');
+      throw new ConflictException(
+        `Cette liste est utilisée par ${users.length === 1 ? 'la règle' : `${users.length} règles :`} ${names}${users.length > 3 ? '…' : ''}. Changez leur origine avant de la supprimer.`,
+      );
+    }
+    await this.prisma.firewallAddressList.delete({ where: { id } });
+    await this.audit(actor, 'firewall_list.delete', id, { name: current.name });
     await this.changed(workspaceId);
     return { success: true };
   }

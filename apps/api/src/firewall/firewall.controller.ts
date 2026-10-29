@@ -6,6 +6,8 @@ import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/worksp
 import {
   BulkFirewallNodesDto,
   CreateFirewallRuleDto,
+  FirewallAddressListDto,
+  UpdateFirewallAddressListDto,
   TestFirewallDto,
   UpdateFirewallRuleDto,
   UpdateFirewallSettingsDto,
@@ -101,6 +103,26 @@ export class FirewallController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.firewallService.updateRule(id, dto, { scope, userId: req.user?.userId });
+  }
+
+  @Post('lists')
+  createList(@Body() dto: FirewallAddressListDto, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.firewallService.createList(dto, { scope, userId: req.user?.userId });
+  }
+
+  @Patch('lists/:id')
+  updateList(
+    @Param('id') id: string,
+    @Body() dto: UpdateFirewallAddressListDto,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.firewallService.updateList(id, dto, { scope, userId: req.user?.userId });
+  }
+
+  @Delete('lists/:id')
+  removeList(@Param('id') id: string, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.firewallService.removeList(id, { scope, userId: req.user?.userId });
   }
 
   @Delete('rules/:id')

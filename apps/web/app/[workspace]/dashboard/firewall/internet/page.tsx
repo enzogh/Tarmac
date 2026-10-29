@@ -11,6 +11,7 @@ import { FwSection, Switch } from '../components/fw-ui';
 import { RulesTable, SystemFlows } from '../components/MeshPanels';
 import { EnforcePreflight } from '../components/PublicPanels';
 import { InternetServerList, InternetServerSheet } from '../components/InternetServers';
+import { AddressLists } from '../components/AddressLists';
 
 function SettingRow({
   title,
@@ -122,6 +123,7 @@ export default function FirewallInternetPage() {
         <RulesTable
           rules={rules}
           nodes={data.nodes}
+          lists={data.lists}
           scope="public"
           onAction={(rule, action) => void onRuleAction(rule, action)}
           onCreate={() => openRule({ draft: { scope: 'public' } })}
@@ -129,6 +131,8 @@ export default function FirewallInternetPage() {
         />
         <SystemFlows flows={data.system} nodes={data.nodes} scope="public" />
       </FwSection>
+
+      <AddressLists />
 
       <FwSection title="Réglages" description="Valables pour tous vos serveurs.">
         <Card className="divide-y divide-border overflow-hidden">

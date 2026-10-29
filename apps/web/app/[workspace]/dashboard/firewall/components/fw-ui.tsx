@@ -106,10 +106,12 @@ function list(names: string[], max = 2): string {
 }
 
 export function sourceSummary(
-  rule: Pick<FirewallRulePayload, 'scope' | 'sourceKind' | 'sourceNodeIds' | 'sourceLabels' | 'sourceCidrs'>,
+  rule: Pick<FirewallRulePayload, 'scope' | 'sourceKind' | 'sourceNodeIds' | 'sourceLabels' | 'sourceCidrs' | 'sourceListIds'>,
   nodes: Named[],
   max = 2,
+  lists: Named[] = [],
 ): string {
+  if (rule.sourceKind === 'lists') return list(rule.sourceListIds.map((id) => `« ${lists.find((item) => item.id === id)?.name ?? 'liste supprimée'} »`), max);
   if (rule.sourceKind === 'any') return rule.scope === 'mesh' ? 'Tous les serveurs' : 'Tout Internet';
   if (rule.sourceKind === 'nodes') {
     return list(rule.sourceNodeIds.map((id) => nodes.find((node) => node.id === id)?.name ?? 'serveur supprimé'), max);
@@ -131,10 +133,10 @@ export function targetSummary(
 }
 
 /** "Bloquer SSH (22) de d2-2 vers dev-server" - the sentence a rule reads as. */
-export function ruleSentence(rule: FirewallRulePayload, nodes: Named[]): string {
+export function ruleSentence(rule: FirewallRulePayload, nodes: Named[], lists: Named[] = []): string {
   const verb = rule.action === 'deny' ? 'Bloquer' : 'Autoriser';
   const service = serviceLabel(rule);
-  const from = sourceSummary(rule, nodes, 3);
+  const from = sourceSummary(rule, nodes, 3, lists);
   const to = targetSummary(rule, nodes, 3);
   const fromWord = rule.sourceKind === 'any' ? (rule.scope === 'mesh' ? 'depuis tous les serveurs' : 'depuis tout Internet') : `depuis ${from}`;
   const toWord = rule.targetKind === 'any' ? 'vers tous les serveurs' : `vers ${to}`;

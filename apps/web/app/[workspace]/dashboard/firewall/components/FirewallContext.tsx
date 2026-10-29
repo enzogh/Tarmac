@@ -95,6 +95,7 @@ export function FirewallProvider({ children }: { children: ReactNode }) {
         draft={rule?.draft}
         nodes={data.nodes}
         labels={data.labels}
+        lists={data.lists}
         meshMode={data.settings.meshMode}
         sshGuard={data.settings.sshGuard}
         system={data.system}

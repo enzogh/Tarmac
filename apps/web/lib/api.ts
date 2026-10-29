@@ -728,10 +728,12 @@ export type FirewallRule = {
   enabled: boolean;
   expired: boolean;
   inert: boolean;
-  sourceKind: 'any' | 'nodes' | 'labels' | 'cidrs';
+  sourceKind: 'any' | 'nodes' | 'labels' | 'cidrs' | 'lists';
   sourceNodeIds: string[];
   sourceLabels: string[];
   sourceCidrs: string[];
+  // Address lists (internet rules), see FirewallAddressList.
+  sourceListIds: string[];
   targetKind: 'any' | 'nodes' | 'labels';
   targetNodeIds: string[];
   targetLabels: string[];
@@ -775,10 +777,22 @@ export type FirewallOverview = {
   settings: { meshMode: FirewallMode; publicPing: boolean; sshGuard: boolean; sshLimit: boolean };
   nodes: FirewallNode[];
   rules: FirewallRule[];
+  lists: FirewallAddressList[];
   system: FirewallSystemFlow[];
   matrix: FirewallMatrixCell[];
   labels: string[];
   stats: { blocked24h: number; observed24h: number; rules: number; protectedNodes: number };
+};
+
+/** A named set of internet addresses, usable as the source of internet rules. */
+export type FirewallAddressList = {
+  id: string;
+  name: string;
+  description: string | null;
+  cidrs: string[];
+  // Ids of the rules using it.
+  usedBy: string[];
+  updatedAt: string;
 };
 
 export type FirewallEvent = {
@@ -1603,6 +1617,11 @@ export const api = {
     },
     downloadEvents: (params: { hours?: number; scope?: FirewallScope; verdict?: 'blocked' | 'observed'; nodeId?: string; format: 'csv' | 'json' }) =>
       download(`/api/v1/firewall/events/export?${queryOf(params)}`, `pare-feu-activite-${today()}.${params.format}`),
+    createList: (payload: { name: string; description?: string | null; cidrs: string[] }) =>
+      request<FirewallAddressList>('/api/v1/firewall/lists', { method: 'POST', body: JSON.stringify(payload) }),
+    updateList: (id: string, payload: { name?: string; description?: string | null; cidrs?: string[] }) =>
+      request<FirewallAddressList>(`/api/v1/firewall/lists/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+    removeList: (id: string) => request<{ success: boolean }>(`/api/v1/firewall/lists/${id}`, { method: 'DELETE' }),
     setEventDismissed: (id: string, dismissed: boolean) =>
       request<{ success: boolean }>(`/api/v1/firewall/events/${id}/dismiss`, { method: dismissed ? 'POST' : 'DELETE' }),
     timeline: (params: { hours?: number; scope?: FirewallScope; nodeId?: string } = {}) => {
