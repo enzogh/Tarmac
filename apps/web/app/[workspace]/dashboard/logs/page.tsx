@@ -38,6 +38,7 @@ import {
   RESOURCE_LABEL,
 } from '../../../../lib/audit-vocabulary';
 import { usePolling } from '../../../../lib/hooks/usePolling';
+import { ExportMenu } from '../../../../components/ExportMenu';
 import { useLiveSocket } from '../../../../lib/hooks/useLiveSocket';
 import { shortHostname } from '../../../../lib/format';
 import { cn } from '../../../../lib/utils';
@@ -421,24 +422,6 @@ function PurgeButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function ExportMenu({ onExport, hint }: { onExport: (format: 'csv' | 'json') => void; hint: string }) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="secondary" size="sm" className="gap-1.5">
-          <Download className="h-3.5 w-3.5" />
-          Exporter
-          <ChevronDown className="h-3 w-3" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuLabel className="text-2xs font-normal text-muted-foreground">{hint}</DropdownMenuLabel>
-        <DropdownMenuItem onClick={() => onExport('csv')}>Tableur (CSV)</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => onExport('json')}>JSON</DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
 
 function ActionsTab() {
   const params = useParams<{ workspace: string }>();
@@ -531,7 +514,7 @@ function ActionsTab() {
 
   const openExport = (format: 'csv' | 'json') => {
     const from = periodStart(period) ?? new Date(0).toISOString();
-    window.open(api.auditLogs.exportUrl({ from, to: new Date().toISOString(), format }), '_blank');
+    return api.auditLogs.download({ from, to: new Date().toISOString(), format });
   };
 
   const days = useMemo(() => {
@@ -874,12 +857,13 @@ function AgentsTab() {
     }
   };
 
+  const [exportError, setExportError] = useState<string | null>(null);
   const openExport = (format: 'csv' | 'json', hours: number) => {
     const from = new Date(Date.now() - hours * 3600e3).toISOString();
-    window.open(
-      api.agentLogs.exportUrl({ from, to: new Date().toISOString(), format, nodeId: nodeFilter === 'all' ? undefined : nodeFilter }),
-      '_blank',
-    );
+    setExportError(null);
+    api.agentLogs
+      .download({ from, to: new Date().toISOString(), format, nodeId: nodeFilter === 'all' ? undefined : nodeFilter })
+      .catch((caught: unknown) => setExportError(caught instanceof Error ? caught.message : 'L’export a échoué.'));
   };
 
   const LEVEL_FILTER_LABEL: Record<string, string> = { all: 'Tous', error: 'Erreurs', warning: 'Avertissements', info: 'Infos' };
@@ -954,6 +938,11 @@ function AgentsTab() {
           <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input className="h-8 pl-8" placeholder="Filtrer les lignes chargées…" value={search} onChange={(event) => setSearch(event.target.value)} />
         </div>
+        {exportError && (
+          <span role="alert" className="text-xs text-[hsl(var(--danger))]">
+            {exportError}
+          </span>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="secondary" size="sm" className="gap-1.5">

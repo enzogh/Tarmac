@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { animate, AnimatePresence, motion } from 'framer-motion';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { ArrowRight, Ban, Check, ChevronDown, Container, Eye, EyeOff, Globe2, Network, Radar, RotateCcw, Search, ShieldCheck, X } from 'lucide-react';
+import { ExportMenu } from '@/components/ExportMenu';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { ChartContainer, ChartTooltip } from '@/components/ui/chart';
@@ -543,6 +544,7 @@ export function ActivityView({
             Effacer
           </Button>
         )}
+        <ExportMenu onExport={(format) => api.firewall.downloadEvents({ ...filters, format })} hint="Connexions affichées par les filtres" />
         <span className="inline-flex items-center gap-1.5 pl-1 text-2xs text-muted-foreground">
           <span className="relative flex h-2 w-2">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[hsl(var(--ok))] opacity-60" />

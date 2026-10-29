@@ -695,6 +695,31 @@ export class FirewallService {
     }));
   }
 
+  /** The Activity as flat rows (names resolved), for a CSV / JSON download. */
+  async exportEvents(scope: WorkspaceScope, query: { hours?: string; scope?: string; verdict?: string; nodeId?: string }) {
+    const workspaceId = scope.workspaceId as string;
+    const [events, { nodes, rules }] = await Promise.all([this.events(scope, query), this.cachedContext(workspaceId)]);
+    const nodeName = new Map(nodes.map((node) => [node.id, node.name]));
+    const ruleName = new Map(rules.map((rule) => [rule.id, rule.name]));
+    return events.map((event) => ({
+      lastSeenAt: event.lastSeenAt,
+      firstSeenAt: event.firstSeenAt,
+      verdict: event.verdict === 'blocked' ? 'bloquée' : 'serait bloquée',
+      zone: event.scope === 'mesh' ? 'entre serveurs' : 'internet',
+      source: event.sourceNodeId ? (nodeName.get(event.sourceNodeId) ?? event.sourceIp) : event.sourceIp,
+      sourceIp: event.sourceIp,
+      otherSources: event.sources.filter((ip) => ip !== event.sourceIp).join(' '),
+      target: nodeName.get(event.nodeId) ?? '',
+      protocol: event.protocol,
+      port: event.port ?? '',
+      service: event.service ?? '',
+      decision:
+        event.ruleId === SSH_LIMIT_ID ? 'trop de tentatives SSH' : event.ruleId ? `règle « ${ruleName.get(event.ruleId) ?? event.ruleId} »` : event.verdict === 'blocked' ? 'aucune règle ne l’autorise' : 'mode observation',
+      attempts: event.count,
+      seen: event.dismissed ? 'oui' : 'non',
+    }));
+  }
+
   private dismissals(workspaceId: string) {
     return this.prisma.firewallDismissal.findMany({ where: { workspaceId }, select: { nodeId: true, key: true } });
   }

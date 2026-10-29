@@ -22,6 +22,7 @@ import { AlertItem, api } from '../../../../lib/api';
 import { usePolling } from '../../../../lib/hooks/usePolling';
 import { ALERT_STATUS, SEVERITY, StatusPill, describe } from '../../../../components/ui/status';
 import { PageHeader } from '../../../../components/PageHeader';
+import { ExportMenu } from '../../../../components/ExportMenu';
 import { Callout } from '../../../../components/Callout';
 import { Stat, StatRow } from '../../../../components/ui/stat';
 import { Card } from '../../../../components/ui/card';
@@ -374,6 +375,8 @@ export default function AlertsPage() {
       <PageHeader
         title="Alertes"
         description="Les problèmes détectés sur la flotte par vos règles de seuil et par la supervision (liens, disques, agents). Résolvez-les une fois traités."
+        actionsReadOnlySafe
+        actions={<ExportMenu onExport={(format) => api.alerts.download({ format })} hint="Alertes des 30 derniers jours" />}
         meta={
           open.length > 0 ? (
             <StatusPill tone={counts.critical + counts.high > 0 ? 'danger' : 'warn'}>{open.length} à traiter</StatusPill>

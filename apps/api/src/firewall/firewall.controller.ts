@@ -1,5 +1,6 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { Request } from 'express';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import type { Request, Response } from 'express';
+import { toCsv } from '../common/csv';
 import { ApiKeyOrJwtGuard, ApiKeyResource, RequireApiScope } from '../auth/api-key.guard';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import {
@@ -31,6 +32,24 @@ export class FirewallController {
   @Get('events/timeline')
   timeline(@CurrentWorkspace() scope: WorkspaceScope, @Query() query: { hours?: string; scope?: string; nodeId?: string }) {
     return this.firewallService.timeline(scope, query);
+  }
+
+  // Same filters as the Activity, one row per flow.
+  @Get('events/export')
+  async exportEvents(
+    @Res({ passthrough: true }) res: Response,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Query() query: { hours?: string; scope?: string; verdict?: string; nodeId?: string; format?: string },
+  ) {
+    const rows = await this.firewallService.exportEvents(scope, query);
+    if (query.format === 'json') {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', 'attachment; filename="pare-feu-activite.json"');
+      return rows;
+    }
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="pare-feu-activite.csv"');
+    return toCsv(rows);
   }
 
   @Get('events')

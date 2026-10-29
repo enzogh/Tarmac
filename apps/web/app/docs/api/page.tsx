@@ -1,4 +1,5 @@
 import {
+  BrickWallFire,
   Lock,
   Server,
   Share2,
@@ -450,6 +451,57 @@ const MODULES: Module[] = [
     ],
   },
   {
+    name: 'Pare-feu',
+    base: '/firewall',
+    icon: BrickWallFire,
+    description:
+      "Qui peut joindre vos serveurs, entre eux (réseau privé) et depuis Internet. Les règles sont appliquées par l'agent de chaque serveur ; les blocages passent toujours avant les autorisations.",
+    endpoints: [
+      {
+        method: 'GET',
+        path: '/firewall',
+        description: 'État complet : réglages, serveurs (mode Internet, ports en écoute, état d’application), règles, flux autorisés par Tarmac, matrice « qui joint qui ».',
+      },
+      {
+        method: 'PATCH',
+        path: '/firewall/settings',
+        body: 'meshMode?, publicPing?, sshGuard?, sshLimit?',
+        description:
+          'Mode du réseau privé (open, observe, enforce), réponse au ping, protection anti-verrouillage SSH et limite des tentatives SSH depuis Internet.',
+        isNew: true,
+      },
+      { method: 'PATCH', path: '/firewall/nodes', body: 'nodeIds, publicMode', description: 'Filtrage Internet de plusieurs serveurs d’un coup (open, observe, enforce).' },
+      {
+        method: 'POST',
+        path: '/firewall/rules',
+        body: 'scope, action, name, sourceKind, sourceNodeIds?, sourceLabels?, sourceCidrs?, targetKind, targetNodeIds?, targetLabels?, protocol, ports, expiresAt?',
+        description: 'Crée une règle. scope : mesh ou public ; action : allow ou deny ; ports : "22", "8000-8100".',
+      },
+      { method: 'PATCH', path: '/firewall/rules/:id', description: 'Met à jour une règle (dont enabled pour la désactiver).' },
+      { method: 'DELETE', path: '/firewall/rules/:id', description: 'Supprime une règle.' },
+      {
+        method: 'POST',
+        path: '/firewall/test',
+        body: 'scope, targetNodeId, sourceNodeId?, sourceIp?, protocol, port?',
+        description: 'Simule une connexion et dit si elle passerait, et pourquoi. Lecture seule (permission firewall:read).',
+      },
+      { method: 'GET', path: '/firewall/events?hours=&scope=&verdict=&nodeId=', description: 'Connexions refusées, ou qui le seraient en mode observation (14 jours au plus).' },
+      { method: 'GET', path: '/firewall/events/timeline?hours=&scope=&nodeId=', description: 'Tentatives par heure, pour un graphique.' },
+      {
+        method: 'GET',
+        path: '/firewall/events/export?hours=&scope=&verdict=&nodeId=&format=',
+        description: 'Export de l’activité, en csv ou json (téléchargement).',
+        isNew: true,
+      },
+      {
+        method: 'POST',
+        path: '/firewall/events/:id/dismiss',
+        description: 'Marque une connexion comme vue : elle n’est plus comptée parmi celles à examiner, même quand elle revient. DELETE pour annuler.',
+        isNew: true,
+      },
+    ],
+  },
+  {
     name: 'VPN',
     base: '/vpn',
     icon: ShieldCheck,
@@ -579,6 +631,7 @@ const MODULES: Module[] = [
       { method: 'POST', path: '/alerts/:id/ack', description: "Accuse réception d'une alerte." },
       { method: 'POST', path: '/alerts/:id/resolve', description: 'Résout une alerte. Les alertes de règle se résolvent aussi automatiquement dès que la métrique repasse sous le seuil.' },
       { method: 'DELETE', path: '/alerts/:id', description: 'Supprime une alerte.' },
+      { method: 'GET', path: '/alerts/export?from=&to=&format=', description: 'Export des alertes sur une période (30 derniers jours par défaut), en csv ou json.', isNew: true },
       { method: 'GET', path: '/notification-channels', description: 'Liste les canaux (e-mail, webhook, Slack).' },
       { method: 'POST', path: '/notification-channels', body: 'name, type, target, enabled?', description: 'Crée un canal de notification.' },
       { method: 'PATCH', path: '/notification-channels/:id', description: 'Met à jour un canal.' },

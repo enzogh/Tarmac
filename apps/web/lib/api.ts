@@ -1107,6 +1107,38 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/**
+ * Downloads an export (CSV / JSON) as a file. Goes through fetch rather than
+ * a plain link so the request carries the workspace being viewed, like
+ * every other call - a link can't send the X-Workspace-Id header.
+ */
+async function download(path: string, filename: string): Promise<void> {
+  const workspaceId = getCurrentWorkspaceId();
+  const res = await fetch(`${API_BASE}${path}`, {
+    credentials: 'include',
+    headers: workspaceId ? { 'X-Workspace-Id': workspaceId } : {},
+  });
+  if (!res.ok) throw new ApiError(res.status === 403 ? 'Vous n’avez pas accès à cet export.' : 'L’export a échoué. Réessayez dans un instant.', res.status);
+  const url = URL.createObjectURL(await res.blob());
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+function queryOf(params: Record<string, string | number | undefined>): string {
+  return new URLSearchParams(
+    Object.entries(params)
+      .filter(([, value]) => value !== undefined && value !== '')
+      .map(([key, value]) => [key, String(value)]),
+  ).toString();
+}
+
 export const api = {
   login: (email: string, password: string) =>
     fetch(`${API_BASE}/api/v1/auth/login`, {
@@ -1332,6 +1364,8 @@ export const api = {
 
   alerts: {
     list: () => request<AlertItem[]>('/api/v1/alerts'),
+    download: (params: { from?: string; to?: string; format: 'csv' | 'json' }) =>
+      download(`/api/v1/alerts/export?${queryOf(params)}`, `alertes-${today()}.${params.format}`),
     ack: (id: string) => request(`/api/v1/alerts/${id}/ack`, { method: 'POST' }),
     resolve: (id: string) => request(`/api/v1/alerts/${id}/resolve`, { method: 'POST' }),
     remove: (id: string) => request(`/api/v1/alerts/${id}`, { method: 'DELETE' }),
@@ -1513,8 +1547,8 @@ export const api = {
       return request<PagedResult<AuditLogItem> & { refs?: Record<string, string> }>(`/api/v1/audit-logs?${query.toString()}`);
     },
     facets: () => request<{ actions: string[]; resourceTypes: string[]; actors: AuditActor[] }>('/api/v1/audit-logs/facets'),
-    exportUrl: (params: { from: string; to: string; format: 'csv' | 'json' }) =>
-      `${API_BASE}/api/v1/audit-logs/export?${new URLSearchParams(params).toString()}`,
+    download: (params: { from: string; to: string; format: 'csv' | 'json' }) =>
+      download(`/api/v1/audit-logs/export?${queryOf(params)}`, `journal-actions-${today()}.${params.format}`),
     // Superusers only. Either `ids`, or everything matching the filters.
     remove: (payload: { ids?: string[]; from?: string; actorUserId?: string; resourceType?: string; q?: string }) =>
       request<{ deleted: number }>('/api/v1/audit-logs/delete', { method: 'POST', body: JSON.stringify(payload) }),
@@ -1530,11 +1564,8 @@ export const api = {
       if (params.limit) query.set('limit', String(params.limit));
       return request<PagedResult<AgentLogItem>>(`/api/v1/agent-logs?${query.toString()}`);
     },
-    exportUrl: (params: { from: string; to: string; format: 'csv' | 'json'; nodeId?: string }) => {
-      const query = new URLSearchParams({ from: params.from, to: params.to, format: params.format });
-      if (params.nodeId) query.set('nodeId', params.nodeId);
-      return `${API_BASE}/api/v1/agent-logs/export?${query.toString()}`;
-    },
+    download: (params: { from: string; to: string; format: 'csv' | 'json'; nodeId?: string }) =>
+      download(`/api/v1/agent-logs/export?${queryOf(params)}`, `journal-agents-${today()}.${params.format}`),
     // Superusers only. No `from` = the whole retained history.
     remove: (payload: { nodeId?: string; level?: string; from?: string }) =>
       request<{ deleted: number }>('/api/v1/agent-logs/delete', { method: 'POST', body: JSON.stringify(payload) }),
@@ -1570,6 +1601,8 @@ export const api = {
       ).toString();
       return request<FirewallEvent[]>(`/api/v1/firewall/events${query ? `?${query}` : ''}`);
     },
+    downloadEvents: (params: { hours?: number; scope?: FirewallScope; verdict?: 'blocked' | 'observed'; nodeId?: string; format: 'csv' | 'json' }) =>
+      download(`/api/v1/firewall/events/export?${queryOf(params)}`, `pare-feu-activite-${today()}.${params.format}`),
     setEventDismissed: (id: string, dismissed: boolean) =>
       request<{ success: boolean }>(`/api/v1/firewall/events/${id}/dismiss`, { method: dismissed ? 'POST' : 'DELETE' }),
     timeline: (params: { hours?: number; scope?: FirewallScope; nodeId?: string } = {}) => {

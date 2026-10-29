@@ -1,5 +1,6 @@
-import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
-import { Request } from 'express';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import type { Request, Response } from 'express';
+import { toCsv } from '../common/csv';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import { ApiKeyOrJwtGuard, ApiKeyResource } from '../auth/api-key.guard';
 import { AlertsService } from './alerts.service';
@@ -19,6 +20,28 @@ export class AlertsController {
   @Get()
   list(@CurrentWorkspace() scope: WorkspaceScope) {
     return this.alertsService.list(scope);
+  }
+
+  // Before ':id' routes. Default period: the last 30 days.
+  @Get('export')
+  async export(
+    @Res({ passthrough: true }) res: Response,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('format') format: 'csv' | 'json' = 'csv',
+  ) {
+    const range = { from: from ? new Date(from) : new Date(Date.now() - 30 * 86_400_000), to: to ? new Date(to) : new Date() };
+    if (Number.isNaN(range.from.getTime()) || Number.isNaN(range.to.getTime())) throw new BadRequestException('Période invalide.');
+    const rows = await this.alertsService.exportRange(range, scope);
+    if (format === 'json') {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', 'attachment; filename="alertes.json"');
+      return rows;
+    }
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="alertes.csv"');
+    return toCsv(rows);
   }
 
   @Post()

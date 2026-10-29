@@ -22,6 +22,26 @@ export class AlertsService {
     });
   }
 
+  /** Alerts raised over a period, flattened for a CSV / JSON download. */
+  async exportRange(params: { from: Date; to: Date }, scope: WorkspaceScope) {
+    const rows = await this.prisma.alert.findMany({
+      where: { ...scopeWhere(scope), triggeredAt: { gte: params.from, lte: params.to } },
+      orderBy: { triggeredAt: 'asc' },
+      include: { rule: { select: { name: true } }, node: { select: { name: true } } },
+      take: 50_000,
+    });
+    return rows.map((alert) => ({
+      triggeredAt: alert.triggeredAt.toISOString(),
+      severity: alert.severity,
+      status: alert.status,
+      node: alert.node?.name ?? '',
+      rule: alert.rule?.name ?? '',
+      message: alert.message,
+      acknowledgedAt: alert.acknowledgedAt?.toISOString() ?? '',
+      resolvedAt: alert.resolvedAt?.toISOString() ?? '',
+    }));
+  }
+
   private async assertOwned(id: string, scope: WorkspaceScope) {
     const alert = await this.prisma.alert.findFirst({ where: { id, workspaceId: scope.workspaceId }, select: { id: true } });
     if (!alert) throw new NotFoundException('alert not found');
