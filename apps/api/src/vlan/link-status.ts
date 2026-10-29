@@ -24,7 +24,13 @@ export const LINK_DEGRADED_LATENCY_CROSS_REGION_MS = 300;
  */
 export function classifyLink(
   metric: LinkTelemetry,
-  context: { peerOnline: boolean; crossRegion: boolean },
+  context: {
+    peerOnline: boolean;
+    crossRegion: boolean;
+    // The peer's own pings back over this link are answered: the tunnel
+    // demonstrably carries traffic both ways.
+    reversePathProven?: boolean;
+  },
 ): LinkStatus {
   const hasTraffic = (metric.rxMbps ?? 0) > 0;
   const probeAnswered =
@@ -39,6 +45,21 @@ export function classifyLink(
     handshakeAgeSec >= LINK_DEGRADED_HANDSHAKE_SEC &&
     handshakeAgeSec < LINK_OFFLINE_HANDSHAKE_SEC;
   const latencyDegradedThresholdMs = context.crossRegion ? LINK_DEGRADED_LATENCY_CROSS_REGION_MS : LINK_DEGRADED_LATENCY_MS;
+
+  // Our pings all lost over a fresh tunnel while the peer's pings to us get
+  // answered: the peer (or something on the way) filters ICMP echo
+  // requests. The link itself is up - counting it as degraded made a
+  // perfectly working link read 50 % available.
+  if (
+    probeDead &&
+    context.reversePathProven &&
+    context.peerOnline &&
+    handshakeAgeSec !== undefined &&
+    handshakeAgeSec >= 0 &&
+    handshakeAgeSec < LINK_DEGRADED_HANDSHAKE_SEC
+  ) {
+    return 'healthy';
+  }
 
   // Offline only from hard link telemetry: the node status can be stale
   // while the tunnel itself is fine.

@@ -38,3 +38,12 @@ test('partial loss and an offline peer degrade the link', () => {
   assert.equal(classifyLink({ handshakeAgeSec: 10, latencyMs: 3, packetLoss: 50 }, sameRegion), 'degraded');
   assert.equal(classifyLink({ handshakeAgeSec: 10, latencyMs: 3 }, { peerOnline: false, crossRegion: false }), 'degraded');
 });
+
+test('pings filtered one way over a working tunnel are not a degraded link', () => {
+  const filtered = { handshakeAgeSec: 30, packetLoss: 100 };
+  assert.equal(classifyLink(filtered, { ...sameRegion, reversePathProven: true }), 'healthy');
+  // Without proof from the other side it stays a warning.
+  assert.equal(classifyLink(filtered, sameRegion), 'degraded');
+  // A stale tunnel is not rescued by the reverse path.
+  assert.equal(classifyLink({ handshakeAgeSec: 700, packetLoss: 100 }, { ...sameRegion, reversePathProven: true }), 'offline');
+});

@@ -86,6 +86,9 @@ type PendingDnsZoneKeysRequest = {
 const NODE_HEARTBEAT_TIMEOUT_MS = 60 * 1000; // 60 seconds
 // One stored metric sample per node per 30 s (heartbeats come every 5 s).
 const METRIC_SAMPLE_INTERVAL_MS = 30_000;
+// A node's own measurement of a link direction counts as current this long
+// (heartbeats every 5 s).
+const OWN_LINK_REPORT_TTL_MS = 30_000;
 // Every node is marked offline at boot until its agent reconnects: gateway
 // failover waits this long so a slow-reconnecting primary isn't taken for dead.
 const GATEWAY_FAILOVER_STARTUP_GRACE_MS = 3 * 60_000;
@@ -125,6 +128,11 @@ export class AgentsService implements OnModuleInit {
   private readonly logger = new Logger(AgentsService.name);
   private readonly senders = new Map<string, SendFn>();
   private readonly metricSampledAt = new Map<string, number>();
+  // Last link measurement each node made itself, per direction
+  // ("source:target"): a direction measured by its own source is never
+  // overwritten by the mirrored guess of the other side, and a peer whose
+  // pings get through proves the tunnel for the reverse direction.
+  private readonly ownLinkReports = new Map<string, { at: number; probeOk: boolean }>();
   private readonly overlaySyncAt = new Map<string, number>();
   private readonly pendingDirectoryRequests = new Map<string, PendingDirectoryRequest>();
   private readonly pendingDirectoryScanRequests = new Map<string, PendingDirectoryScanRequest>();
@@ -2126,12 +2134,22 @@ export class AgentsService implements OnModuleInit {
       const txMbps = metric.txMbps ?? 0;
       const rxMbps = metric.rxMbps ?? 0;
       const targetRegion = resolveRegion(target.locationCountryCode);
+      const now = Date.now();
+      const probeOk =
+        (metric.latencyMs !== undefined && metric.latencyMs > 0) || (metric.packetLoss !== undefined && metric.packetLoss < 100);
+      this.ownLinkReports.set(`${sourceNodeId}:${target.id}`, { at: now, probeOk });
+      const reverse = this.ownLinkReports.get(`${target.id}:${sourceNodeId}`);
+      const reverseFresh = Boolean(reverse && now - reverse.at < OWN_LINK_REPORT_TTL_MS);
       const status = classifyLink(metric, {
         peerOnline: target.status === 'online',
         // A link crossing regions (e.g. the France <-> Canada gateway
         // backbone) has a much higher latency floor from distance alone.
         crossRegion: Boolean(sourceRegion && targetRegion && sourceRegion !== targetRegion),
+        reversePathProven: reverseFresh && reverse!.probeOk,
       });
+      // Pings filtered on the way: the 100 % loss measures the filter, not
+      // the link, so it isn't recorded as one.
+      const pingFiltered = status === 'healthy' && metric.packetLoss !== undefined && metric.packetLoss >= 100;
 
       const commonData = {
         status,
@@ -2140,23 +2158,29 @@ export class AgentsService implements OnModuleInit {
       const measuredLatencyMs =
         metric.latencyMs !== undefined && Number.isFinite(metric.latencyMs) ? metric.latencyMs : undefined;
       const measuredPacketLoss =
-        metric.packetLoss !== undefined && Number.isFinite(metric.packetLoss)
+        !pingFiltered && metric.packetLoss !== undefined && Number.isFinite(metric.packetLoss)
           ? metric.packetLoss
           : undefined;
       const measuredTxMbps = Math.max(0, txMbps);
       const measuredRxMbps = Math.max(0, rxMbps);
 
-      return [
-        {
-          sourceNodeId,
-          targetNodeId: target.id,
-          data: {
-            ...commonData,
-            bandwidth: measuredTxMbps,
-            latencyMs: measuredLatencyMs ?? null,
-            packetLoss: measuredPacketLoss ?? null,
-          },
+      const own = {
+        sourceNodeId,
+        targetNodeId: target.id,
+        data: {
+          ...commonData,
+          bandwidth: measuredTxMbps,
+          latencyMs: measuredLatencyMs ?? null,
+          packetLoss: measuredPacketLoss ?? null,
         },
+      };
+      // The reverse direction is only filled in from our side while its own
+      // source doesn't report it: otherwise the two nodes' verdicts used to
+      // overwrite each other on every heartbeat (and write a history sample
+      // each time, since the status kept changing).
+      if (reverseFresh) return [own];
+      return [
+        own,
         {
           sourceNodeId: target.id,
           targetNodeId: sourceNodeId,
