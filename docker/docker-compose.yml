@@ -34,6 +34,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       JWT_SECRET_PREVIOUS: ${JWT_SECRET_PREVIOUS:-}
       AGENT_SHARED_TOKEN: ${AGENT_SHARED_TOKEN:?AGENT_SHARED_TOKEN must be set}
+      # "disabled" once every node has its own token (see AgentTokenService).
+      AGENT_LEGACY_TOKEN: ${AGENT_LEGACY_TOKEN:-}
       # Chiffre au repos les clés VPN et secrets TSIG (voir common/secret-box.ts).
       TARMAC_SECRETS_KEY: ${TARMAC_SECRETS_KEY:?TARMAC_SECRETS_KEY must be set}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@tarmac.local}
