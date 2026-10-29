@@ -10,7 +10,8 @@ import { useReadOnly } from '@/lib/read-only';
 import { useFirewall, useRuleActions } from '../components/FirewallContext';
 import { FwSection, Switch } from '../components/fw-ui';
 import { RulesTable, SystemFlows } from '../components/MeshPanels';
-import { EnforcePreflight, PublicNodeCard } from '../components/PublicPanels';
+import { EnforcePreflight } from '../components/PublicPanels';
+import { InternetServerList, InternetServerSheet } from '../components/InternetServers';
 
 function SettingRow({ title, text, checked, onChange, disabled }: { title: string; text: string; checked: boolean; onChange: (next: boolean) => void; disabled?: boolean }) {
   return (
@@ -30,6 +31,8 @@ export default function FirewallInternetPage() {
   const { readOnly } = useReadOnly();
   const [busy, setBusy] = useState(false);
   const [preflight, setPreflight] = useState<{ node: FirewallNode; mode: FirewallMode } | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const opened = data.nodes.find((node) => node.id === openId) ?? null;
   const rules = data.rules.filter((rule) => rule.scope === 'public');
 
   const onMode = async (node: FirewallNode, mode: FirewallMode) => {
@@ -86,7 +89,7 @@ export default function FirewallInternetPage() {
     <>
       <PageHeader
         title="Depuis Internet"
-        description="Ce que chacun de vos serveurs expose au monde. Le filtrage s’active serveur par serveur, idéalement en passant d’abord par l’observation."
+        description="Ce que vos serveurs exposent au monde. Activez le filtrage serveur par serveur, de préférence en passant d’abord par l’observation."
         actionsReadOnlySafe
         actions={
           <>
@@ -102,17 +105,13 @@ export default function FirewallInternetPage() {
         }
       />
 
-      <FwSection title="Vos serveurs" description="Ports en écoute et niveau de filtrage de chaque serveur. Survolez un port pour savoir qui peut l’atteindre.">
-        <div className="grid gap-4 xl:grid-cols-2">
-          {data.nodes.map((node) => (
-            <PublicNodeCard key={node.id} node={node} busy={busy} onChangeMode={(target, mode) => void onMode(target, mode)} />
-          ))}
-        </div>
+      <FwSection title="Vos serveurs" description="Cliquez sur un serveur pour voir ses ports et les ouvrir ou fermer un par un.">
+        <InternetServerList nodes={data.nodes} busy={busy} onOpen={(node) => setOpenId(node.id)} onChangeMode={(node, mode) => void onMode(node, mode)} />
       </FwSection>
 
       <FwSection
         title="Règles"
-        description="Ouvrez un service, réservez-le à des adresses précises ou bannissez une source. Les blocages passent avant les autorisations."
+        description="Les blocages passent toujours avant les autorisations."
         actions={
           rules.length > 0 ? (
             <Button write size="sm" variant="secondary" className="gap-1.5" onClick={() => openRule({ draft: { scope: 'public' } })}>
@@ -133,28 +132,38 @@ export default function FirewallInternetPage() {
         <SystemFlows flows={data.system} nodes={data.nodes} scope="public" />
       </FwSection>
 
-      <FwSection title="Réglages communs" description="S’appliquent à tous les serveurs filtrés.">
-        <Card className="divide-y divide-border">
+      <FwSection title="Réglages" description="Pour tous les serveurs filtrés.">
+        <Card className="grid divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">
           <SettingRow
             title="Protection anti-verrouillage"
-            text="SSH reste joignable depuis Internet sur les serveurs filtrés, pour ne jamais perdre la main."
+            text="SSH reste toujours joignable, pour ne jamais perdre la main."
             checked={data.settings.sshGuard}
             onChange={(sshGuard) => void setSetting({ sshGuard })}
             disabled={readOnly}
           />
           <SettingRow
             title="Répondre au ping"
-            text="Les serveurs filtrés répondent au ping, utile pour une supervision externe."
+            text="Utile pour une supervision externe."
             checked={data.settings.publicPing}
             onChange={(publicPing) => void setSetting({ publicPing })}
             disabled={readOnly}
           />
         </Card>
-        <p className="text-xs text-muted-foreground">
-          Les pare-feux déjà présents sur vos serveurs (ufw, firewalld) continuent de s’appliquer : Tarmac ne rouvre jamais un port qu’ils ferment.
-        </p>
       </FwSection>
 
+      <InternetServerSheet
+        node={opened}
+        busy={busy}
+        onOpenChange={(open) => !open && setOpenId(null)}
+        onChangeMode={(node, mode) => {
+          if (mode !== 'open') setOpenId(null);
+          void onMode(node, mode);
+        }}
+        onCreateRule={(draft) => {
+          setOpenId(null);
+          openRule({ draft });
+        }}
+      />
       <EnforcePreflight
         target={preflight}
         onOpenChange={(open) => !open && setPreflight(null)}
