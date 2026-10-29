@@ -87,10 +87,10 @@ services:
     build:
       context: ..
       dockerfile: apps/web/Dockerfile
-    restart: unless-stopped
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
         NEXT_PUBLIC_APP_VERSION: ${GITHUB_SHA:-dev-local}
+    restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
       NEXT_PUBLIC_APP_VERSION: ${GITHUB_SHA:-dev-local}
