@@ -10,13 +10,10 @@ import {
   Eye,
   Globe2,
   Network,
-  Plus,
-  Radar,
   ShieldAlert,
   TriangleAlert,
   type LucideIcon,
 } from 'lucide-react';
-import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { StatusPill } from '@/components/ui/status';
@@ -83,7 +80,7 @@ function ZoneCard({
 export default function FirewallOverviewPage() {
   const { workspace } = useParams<{ workspace: string }>();
   const base = `/${workspace}/dashboard/firewall`;
-  const { data, openRule, openTest, replace, notify, fail } = useFirewall();
+  const { data, openRule, replace, notify, fail } = useFirewall();
   const [busy, setBusy] = useState(false);
   const { data: events } = useFirewallEvents({ hours: 24 });
   const nodeById = useMemo(() => new Map(data.nodes.map((node) => [node.id, node])), [data.nodes]);
@@ -164,24 +161,6 @@ export default function FirewallOverviewPage() {
 
   return (
     <>
-      <PageHeader
-        title="Pare-feu"
-        description="Choisissez qui peut joindre vos serveurs, entre eux et depuis Internet. Chaque serveur applique lui-même ses règles."
-        actionsReadOnlySafe
-        actions={
-          <>
-            <Button variant="secondary" className="gap-1.5" onClick={() => openTest({ scope: 'mesh' })} disabled={data.nodes.length === 0}>
-              <Radar className="h-4 w-4" />
-              Tester une connexion
-            </Button>
-            <Button write className="gap-1.5" onClick={() => openRule({ draft: { scope: 'mesh' } })} disabled={data.nodes.length === 0}>
-              <Plus className="h-4 w-4" />
-              Nouvelle règle
-            </Button>
-          </>
-        }
-      />
-
       {data.nodes.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center gap-3 py-14 text-center">

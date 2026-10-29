@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { Bell, Building2, Database, Globe, HardDrive, Layers, RefreshCw, Search, Server, Settings, ShieldCheck, Tag, Users, type LucideIcon } from 'lucide-react';
+import { Activity, Bell, Building2, Database, Globe, Globe2, HardDrive, Layers, Network, RefreshCw, Search, Server, Settings, ShieldCheck, Tag, Users, type LucideIcon } from 'lucide-react';
 import { api, setCurrentWorkspaceId } from '../lib/api';
 import { buildNavItems, navItemArea } from '../lib/nav-items';
 import { useWorkspaceAccess } from '../lib/access';
@@ -42,6 +42,16 @@ export function CommandPalette() {
           icon: item.icon,
           group: 'Pages',
         }))
+        // The firewall is one sidebar entry; its tabs stay reachable by name.
+        .concat(
+          access.level('firewall') !== 'none'
+            ? [
+                { key: 'nav:firewall-servers', label: 'Entre serveurs', sublabel: 'Pare-feu', href: `/${slug}/dashboard/firewall/servers`, icon: Network, group: 'Pages' },
+                { key: 'nav:firewall-internet', label: 'Depuis Internet', sublabel: 'Pare-feu', href: `/${slug}/dashboard/firewall/internet`, icon: Globe2, group: 'Pages' },
+                { key: 'nav:firewall-activity', label: 'Activité du pare-feu', sublabel: 'Pare-feu', href: `/${slug}/dashboard/firewall/activity`, icon: Activity, group: 'Pages' },
+              ]
+            : [],
+        )
         .concat(
           access.isManager
             ? [

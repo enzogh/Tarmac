@@ -16,8 +16,6 @@ import {
   RadioTower,
   SlidersHorizontal,
   BrickWallFire,
-  Gauge,
-  Globe2,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -51,18 +49,9 @@ export function buildNavGroups(slug: string): NavGroup[] {
       items: [
         { href: `${base}/infrastructure`, label: 'Nœuds', icon: Server },
         { href: `${base}/network`, label: 'Réseau privé', icon: Network },
+        // One entry: its sections are tabs inside the page.
+        { href: `${base}/firewall`, label: 'Pare-feu', icon: BrickWallFire },
         { href: `${base}/dns`, label: 'DNS', icon: Globe },
-      ],
-    },
-    {
-      label: 'Pare-feu',
-      icon: BrickWallFire,
-      items: [
-        // exact: the sub-pages are their own entries.
-        { href: `${base}/firewall`, label: 'Synthèse', icon: Gauge, exact: true },
-        { href: `${base}/firewall/servers`, label: 'Entre serveurs', icon: Network },
-        { href: `${base}/firewall/internet`, label: 'Depuis Internet', icon: Globe2 },
-        { href: `${base}/firewall/activity`, label: 'Activité', icon: Activity },
       ],
     },
     {

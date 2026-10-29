@@ -3,9 +3,8 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { Ban, Eye, LoaderCircle, Plus, Radar, ShieldCheck } from 'lucide-react';
+import { Ban, Eye, LoaderCircle, Plus, ShieldCheck } from 'lucide-react';
 import { Callout } from '@/components/Callout';
-import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -65,7 +64,6 @@ export default function FirewallServersPage() {
   const [confirm, setConfirm] = useState(false);
 
   const mode = data.settings.meshMode;
-  const meshNodes = data.nodes.filter((node) => node.vlanIp);
   const rules = data.rules.filter((rule) => rule.scope === 'mesh');
   const cut = data.matrix.filter((cell) => cell.status === 'blocked' || cell.status === 'observed').length;
 
@@ -111,24 +109,6 @@ export default function FirewallServersPage() {
 
   return (
     <>
-      <PageHeader
-        title="Entre serveurs"
-        description="Le trafic qui circule entre vos serveurs sur le réseau privé Tarmac : qui peut joindre qui, et sur quels services."
-        actionsReadOnlySafe
-        actions={
-          <>
-            <Button variant="secondary" className="gap-1.5" onClick={() => openTest({ scope: 'mesh' })} disabled={meshNodes.length < 2}>
-              <Radar className="h-4 w-4" />
-              Tester une connexion
-            </Button>
-            <Button write className="gap-1.5" onClick={() => openRule({ draft: { scope: 'mesh' } })} disabled={meshNodes.length === 0}>
-              <Plus className="h-4 w-4" />
-              Nouvelle règle
-            </Button>
-          </>
-        }
-      />
-
       <FwSection title="Niveau de protection" description="Les règles de blocage s’appliquent dans tous les modes. Commencez par l’observation pour ne rien casser.">
         <Card>
           <CardContent className="space-y-5 p-5">

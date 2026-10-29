@@ -1,8 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Radar } from 'lucide-react';
-import { PageHeader } from '@/components/PageHeader';
+import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { api, FirewallMode, FirewallNode, FirewallOverview } from '@/lib/api';
@@ -26,7 +25,7 @@ function SettingRow({ title, text, checked, onChange, disabled }: { title: strin
 }
 
 export default function FirewallInternetPage() {
-  const { data, replace, refresh, notify, fail, openRule, openTest } = useFirewall();
+  const { data, replace, refresh, notify, fail, openRule } = useFirewall();
   const onRuleAction = useRuleActions();
   const { readOnly } = useReadOnly();
   const [busy, setBusy] = useState(false);
@@ -87,24 +86,6 @@ export default function FirewallInternetPage() {
 
   return (
     <>
-      <PageHeader
-        title="Depuis Internet"
-        description="Ce que vos serveurs exposent au monde. Activez le filtrage serveur par serveur, de préférence en passant d’abord par l’observation."
-        actionsReadOnlySafe
-        actions={
-          <>
-            <Button variant="secondary" className="gap-1.5" onClick={() => openTest({ scope: 'public' })}>
-              <Radar className="h-4 w-4" />
-              Tester une connexion
-            </Button>
-            <Button write className="gap-1.5" onClick={() => openRule({ draft: { scope: 'public' } })}>
-              <Plus className="h-4 w-4" />
-              Nouvelle règle
-            </Button>
-          </>
-        }
-      />
-
       <FwSection title="Vos serveurs" description="Cliquez sur un serveur pour voir ses ports et les ouvrir ou fermer un par un.">
         <InternetServerList nodes={data.nodes} busy={busy} onOpen={(node) => setOpenId(node.id)} onChangeMode={(node, mode) => void onMode(node, mode)} />
       </FwSection>
