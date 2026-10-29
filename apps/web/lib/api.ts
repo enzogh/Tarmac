@@ -707,6 +707,8 @@ export type FirewallNode = {
   locationCity: string | null;
   publicMode: FirewallMode;
   apply: { status: FirewallApplyStatus; message: string | null };
+  // Whether this node's agent throttles SSH attempts (needs a recent agent).
+  sshLimit: 'on' | 'off' | 'unsupported' | 'unknown';
   blocked24h: number;
   report: {
     uplinks: string[];
@@ -770,7 +772,7 @@ export type FirewallMatrixCell = {
 };
 
 export type FirewallOverview = {
-  settings: { meshMode: FirewallMode; publicPing: boolean; sshGuard: boolean };
+  settings: { meshMode: FirewallMode; publicPing: boolean; sshGuard: boolean; sshLimit: boolean };
   nodes: FirewallNode[];
   rules: FirewallRule[];
   system: FirewallSystemFlow[];

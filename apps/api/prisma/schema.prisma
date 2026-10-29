@@ -241,6 +241,8 @@ model Workspace {
   // nobody locks themselves out).
   firewallPublicPing  Boolean   @default(true)
   firewallSshGuard    Boolean   @default(true)
+  // Throttle new SSH connections from the internet, per source address.
+  firewallSshLimit    Boolean   @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

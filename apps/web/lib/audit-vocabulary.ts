@@ -229,6 +229,10 @@ export const DETAIL_LABEL: Record<string, string> = {
   nodeId: 'Nœud',
   minutes: 'Durée (min)',
   apiKey: 'Via la clé API',
+  meshMode: 'Réseau privé',
+  publicPing: 'Réponse au ping',
+  sshGuard: 'Anti-verrouillage SSH',
+  sshLimit: 'Limite des tentatives SSH',
 };
 
 // Field names in `changes` arrays.

@@ -59,6 +59,8 @@ export type PolicyContext = {
   meshMode: FwMode;
   publicPing: boolean;
   sshGuard: boolean;
+  // Throttle new SSH connections from the internet (see the agent's TARMAC-FW-SSH).
+  sshLimit: boolean;
   nodes: PolicyNode[];
   rules: PolicyRule[];
   system: SystemFlow[];
@@ -73,6 +75,8 @@ export type AgentPayload = {
   ping: boolean;
   mesh: AgentZone;
   public: AgentZone;
+  // Absent when off; exempt = addresses an SSH rule explicitly allows.
+  sshLimit?: { ports: string[]; exempt: string[] };
 };
 
 const PORT_PATTERN = /^(\d{1,5})(?:-(\d{1,5}))?$/;
@@ -175,13 +179,30 @@ export function buildAgentPayload(ctx: PolicyContext, nodeId: string, revision: 
     });
   }
   if (!node.vlanIp) payload.mesh = zone('open');
+  if (ctx.sshLimit) payload.sshLimit = sshLimitFor(ctx, node, now);
   return payload;
+}
+
+/**
+ * The SSH ports to throttle on a node, and the addresses never throttled:
+ * those a live internet rule explicitly allows to reach SSH ("SSH from the
+ * office"), so a known admin address is never slowed down.
+ */
+export function sshLimitFor(ctx: PolicyContext, node: PolicyNode, now: Date): { ports: string[]; exempt: string[] } {
+  const exempt = new Set<string>();
+  for (const rule of ctx.rules) {
+    if (rule.scope !== 'public' || rule.action !== 'allow' || rule.sourceKind !== 'cidrs' || !isRuleLive(rule, now)) continue;
+    if (!ruleTargets(rule, ctx.nodes).some((target) => target.id === node.id)) continue;
+    if (!node.sshPorts.some((port) => protocolMatches(rule, { protocol: 'tcp', port }))) continue;
+    for (const cidr of rule.sourceCidrs) exempt.add(cidr);
+  }
+  return { ports: node.sshPorts.map(String), exempt: [...exempt] };
 }
 
 /** True when an apply would install nothing on the node. */
 export function payloadIsEmpty(payload: AgentPayload): boolean {
   const zoneActive = (zone: AgentZone) => zone.mode !== 'open' || zone.denies.length > 0;
-  return !zoneActive(payload.mesh) && !zoneActive(payload.public);
+  return !zoneActive(payload.mesh) && !zoneActive(payload.public) && !payload.sshLimit;
 }
 
 // ---------------------------------------------------------------------

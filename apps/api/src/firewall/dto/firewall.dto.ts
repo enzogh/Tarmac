@@ -31,6 +31,10 @@ export class UpdateFirewallSettingsDto {
   @IsOptional()
   @IsBoolean()
   sshGuard?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  sshLimit?: boolean;
 }
 
 export class UpdateFirewallNodeDto {

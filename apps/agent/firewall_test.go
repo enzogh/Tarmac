@@ -270,3 +270,94 @@ func TestFirewallParseUplinks(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+func TestFirewallSSHLimit(t *testing.T) {
+	desired := fwTestPayload(t, `{"revision":"1","mesh":{"mode":"open"},"public":{"mode":"open"},
+		"sshLimit":{"ports":["22","2222"],"exempt":["198.51.100.7","2001:db8::/48"]}}`)
+
+	plan := buildFirewallPlan(desired, false, []string{"eth0"}, false)
+	pub := fwChain(plan, fwChainPub)
+	ssh := fwChain(plan, fwChainSSH)
+	sshX := fwChain(plan, fwChainSSHX)
+	if pub == nil || ssh == nil || sshX == nil {
+		t.Fatal("an open public zone with the SSH limit on must still install the limiter")
+	}
+	body := fwJoin(pub.rules)
+	for _, want := range []string{
+		"-p tcp --dport 22 -m conntrack --ctstate NEW -j TARMAC-FW-SSH",
+		"-p tcp --dport 2222 -m conntrack --ctstate NEW -j TARMAC-FW-SSH",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "DROP") {
+		t.Errorf("an open zone must drop nothing but the SSH excess:\n%s", body)
+	}
+	limiter := fwJoin(ssh.rules)
+	if !strings.HasPrefix(limiter, "-s 198.51.100.7/32 -j RETURN\n") || strings.Contains(limiter, "2001:db8") {
+		t.Errorf("IPv4 exemption must come first, alone:\n%s", limiter)
+	}
+	if !strings.Contains(limiter, "--hashlimit-srcmask 32 --hashlimit-name tarmac-ssh4 -j TARMAC-FW-SSH-X") {
+		t.Errorf("IPv4 limiter missing:\n%s", limiter)
+	}
+	if got := fwJoin(sshX.rules); !strings.Contains(got, "TFW:S ") || !strings.HasSuffix(got, "--comment tarmac-fw:ssh-limit -j DROP") {
+		t.Errorf("excess must be logged then dropped:\n%s", got)
+	}
+	// Children before parents: the jump targets must exist first.
+	order := map[string]int{}
+	for i, chain := range plan.chains {
+		order[chain.chain] = i
+	}
+	if !(order[fwChainSSHX] < order[fwChainSSH] && order[fwChainSSH] < order[fwChainPub] && order[fwChainPub] < order[fwChainIn]) {
+		t.Errorf("bad chain order: %v", order)
+	}
+
+	plan6 := buildFirewallPlan(desired, true, []string{"eth0"}, false)
+	ssh6 := fwChain(plan6, fwChainSSH)
+	if ssh6 == nil {
+		t.Fatal("IPv6 limiter missing")
+	}
+	limiter6 := fwJoin(ssh6.rules)
+	if !strings.Contains(limiter6, "-s 2001:db8::/48 -j RETURN") || strings.Contains(limiter6, "198.51.100.7") ||
+		!strings.Contains(limiter6, "--hashlimit-srcmask 64 --hashlimit-name tarmac-ssh6") {
+		t.Errorf("IPv6 limiter wrong:\n%s", limiter6)
+	}
+
+	// Off again: the limiter chains are removed.
+	off := fwTestPayload(t, `{"revision":"2","public":{"mode":"enforce"}}`)
+	plan = buildFirewallPlan(off, false, []string{"eth0"}, false)
+	if fwChain(plan, fwChainSSH) != nil || fwChain(plan, fwChainSSHX) != nil {
+		t.Error("limiter chains must be gone when the limit is off")
+	}
+	removed := map[string]bool{}
+	for _, chain := range plan.obsolete {
+		removed[chain.chain] = true
+	}
+	if !removed[fwChainSSH] || !removed[fwChainSSHX] {
+		t.Error("limiter chains must be listed as obsolete")
+	}
+	if strings.Contains(fwJoin(fwChain(plan, fwChainPub).rules), fwChainSSH) {
+		t.Error("public chain still jumps to the limiter")
+	}
+}
+
+func TestFirewallSSHLimitParse(t *testing.T) {
+	if desired := fwTestPayload(t, `{"sshLimit":{"ports":[]}}`); desired.sshLimit != nil || desired.active() {
+		t.Error("a limit without ports is off")
+	}
+	for _, raw := range []string{
+		`{"sshLimit":{"ports":["22;rm"]}}`,
+		`{"sshLimit":{"ports":["22"],"exempt":["nope"]}}`,
+	} {
+		var payload map[string]interface{}
+		_ = json.Unmarshal([]byte(raw), &payload)
+		if _, err := parseFirewallPayload(payload); err == nil {
+			t.Errorf("expected an error for %s", raw)
+		}
+	}
+	event, ok := fwParseLogLine("TFW:S IN=eth0 OUT= SRC=203.0.113.9 DST=198.51.100.1 PROTO=TCP SPT=50000 DPT=22", nil)
+	if !ok || event.Verdict != "blocked" || event.RuleID != "ssh-limit" || event.Port != 22 {
+		t.Errorf("bad SSH limit event: %+v", event)
+	}
+}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -12,12 +12,27 @@ import { RulesTable, SystemFlows } from '../components/MeshPanels';
 import { EnforcePreflight } from '../components/PublicPanels';
 import { InternetServerList, InternetServerSheet } from '../components/InternetServers';
 
-function SettingRow({ title, text, checked, onChange, disabled }: { title: string; text: string; checked: boolean; onChange: (next: boolean) => void; disabled?: boolean }) {
+function SettingRow({
+  title,
+  text,
+  note,
+  checked,
+  onChange,
+  disabled,
+}: {
+  title: string;
+  text: string;
+  note?: ReactNode;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  disabled?: boolean;
+}) {
   return (
     <div className="flex items-start justify-between gap-4 p-4">
       <div>
         <p className="text-sm font-medium text-foreground">{title}</p>
         <p className="mt-0.5 text-sm text-muted-foreground">{text}</p>
+        {note}
       </div>
       <Switch checked={checked} onChange={onChange} label={title} disabled={disabled} />
     </div>
@@ -33,6 +48,8 @@ export default function FirewallInternetPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const opened = data.nodes.find((node) => node.id === openId) ?? null;
   const rules = data.rules.filter((rule) => rule.scope === 'public');
+  // Agents too old to throttle SSH: the setting says so instead of overpromising.
+  const sshLimitPending = data.nodes.filter((node) => node.sshLimit === 'unsupported');
 
   const onMode = async (node: FirewallNode, mode: FirewallMode) => {
     if (mode !== 'open') {
@@ -113,22 +130,40 @@ export default function FirewallInternetPage() {
         <SystemFlows flows={data.system} nodes={data.nodes} scope="public" />
       </FwSection>
 
-      <FwSection title="Réglages" description="Pour tous les serveurs filtrés.">
-        <Card className="grid divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">
+      <FwSection title="Réglages" description="Valables pour tous vos serveurs.">
+        <Card className="divide-y divide-border overflow-hidden">
           <SettingRow
-            title="Protection anti-verrouillage"
-            text="SSH reste toujours joignable, pour ne jamais perdre la main."
-            checked={data.settings.sshGuard}
-            onChange={(sshGuard) => void setSetting({ sshGuard })}
+            title="Limiter les tentatives SSH"
+            text="Une même adresse peut ouvrir 20 connexions SSH d’affilée, puis 10 par minute : au-delà, elle est ralentie, jamais bloquée. Efficace contre les robots qui essaient des mots de passe. Les adresses autorisées par une règle SSH ne sont jamais limitées. S’applique aussi aux serveurs non filtrés."
+            note={
+              data.settings.sshLimit && sshLimitPending.length > 0 ? (
+                <p className="mt-2 text-xs text-[hsl(var(--warn))]">
+                  {sshLimitPending.length === 1
+                    ? `${sshLimitPending[0].name} doit mettre à jour son agent pour en profiter (page Nœuds).`
+                    : `${sshLimitPending.length} serveurs doivent mettre à jour leur agent pour en profiter (page Nœuds).`}
+                </p>
+              ) : undefined
+            }
+            checked={data.settings.sshLimit}
+            onChange={(sshLimit) => void setSetting({ sshLimit })}
             disabled={readOnly}
           />
-          <SettingRow
-            title="Répondre au ping"
-            text="Utile pour une supervision externe."
-            checked={data.settings.publicPing}
-            onChange={(publicPing) => void setSetting({ publicPing })}
-            disabled={readOnly}
-          />
+          <div className="grid divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">
+            <SettingRow
+              title="Protection anti-verrouillage"
+              text="Sur les serveurs filtrés, SSH reste toujours joignable, pour ne jamais perdre la main."
+              checked={data.settings.sshGuard}
+              onChange={(sshGuard) => void setSetting({ sshGuard })}
+              disabled={readOnly}
+            />
+            <SettingRow
+              title="Répondre au ping"
+              text="Sur les serveurs filtrés. Utile pour une supervision externe."
+              checked={data.settings.publicPing}
+              onChange={(publicPing) => void setSetting({ publicPing })}
+              disabled={readOnly}
+            />
+          </div>
         </Card>
       </FwSection>
 

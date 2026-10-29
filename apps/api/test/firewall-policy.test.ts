@@ -41,7 +41,7 @@ function rule(partial: Partial<PolicyRule>): PolicyRule {
 }
 
 function ctx(partial: Partial<PolicyContext>): PolicyContext {
-  return { meshMode: 'open', publicPing: true, sshGuard: true, nodes, rules: [], system: [], now: new Date('2026-10-29T12:00:00Z'), ...partial };
+  return { meshMode: 'open', publicPing: true, sshGuard: true, sshLimit: false, nodes, rules: [], system: [], now: new Date('2026-10-29T12:00:00Z'), ...partial };
 }
 
 test('open mesh with no rule sends nothing', () => {
@@ -173,4 +173,23 @@ test('isPrivateAddress', () => {
   assert.equal(isPrivateAddress('2a01:4f8::1'), false);
   assert.equal(isPrivateAddress('::'), false);
   assert.equal(isPrivateAddress('*'), false);
+});
+
+test('SSH limit: sent to every node, exempting addresses an SSH rule allows', () => {
+  const office = rule({ id: 'office', scope: 'public', sourceKind: 'cidrs', sourceCidrs: ['198.51.100.7/32'], protocol: 'tcp', ports: ['2222'] });
+  const web = rule({ id: 'web', scope: 'public', sourceKind: 'cidrs', sourceCidrs: ['203.0.113.0/24'], protocol: 'tcp', ports: ['443'] });
+  const anyone = rule({ id: 'anyone', scope: 'public', sourceKind: 'any', protocol: 'tcp', ports: ['2222'] });
+  const blocked = rule({ id: 'blocked', scope: 'public', action: 'deny', sourceKind: 'cidrs', sourceCidrs: ['192.0.2.0/24'], protocol: 'any' });
+  const expired = rule({ id: 'old', scope: 'public', sourceKind: 'cidrs', sourceCidrs: ['192.0.2.9/32'], protocol: 'tcp', ports: ['2222'], expiresAt: new Date('2026-01-01') });
+  const c = ctx({ sshLimit: true, rules: [office, web, anyone, blocked, expired] });
+
+  // web-1's sshd listens on 2222: only the office rule covers it.
+  const payload = buildAgentPayload(c, 'web', 'r');
+  assert.deepEqual(payload.sshLimit, { ports: ['2222'], exempt: ['198.51.100.7/32'] });
+  // dev-server listens on 22: no rule covers it, nothing exempt.
+  assert.deepEqual(buildAgentPayload(c, 'dev', 'r').sshLimit, { ports: ['22'], exempt: [] });
+  // The limit alone makes the payload worth sending; off, nothing changes.
+  assert.equal(payloadIsEmpty(buildAgentPayload(ctx({ sshLimit: true }), 'dev', 'r')), false);
+  assert.equal(buildAgentPayload(ctx({ sshLimit: false }), 'dev', 'r').sshLimit, undefined);
+  assert.equal(payloadIsEmpty(buildAgentPayload(ctx({ sshLimit: false }), 'dev', 'r')), true);
 });

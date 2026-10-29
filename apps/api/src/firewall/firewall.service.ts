@@ -38,6 +38,8 @@ const RECONCILE_MAX_WAIT_MS = 2_000;
 const EVENT_RETENTION_DAYS = 14;
 const INTERNAL_DNS_PORT = 5300;
 const MESH_INTERFACE = 'tarmacwg0';
+// Rule id the agent puts on events and counters of the SSH limiter.
+const SSH_LIMIT_ID = 'ssh-limit';
 // The dashboard polls every 10 s per open tab and refetches on every live
 // event: a short cache spares recomputing the whole policy each time.
 const CONTEXT_CACHE_MS = 3_000;
@@ -50,6 +52,8 @@ export type FirewallReport = {
   full?: boolean;
   listening?: Array<{ protocol: string; port: number; addresses?: string[]; processes?: string[] }>;
   counters?: Record<string, number>;
+  // Optional protections this agent knows how to apply (e.g. "ssh-limit").
+  features?: string[];
   events?: Array<{
     verdict: string;
     ruleId?: string;
@@ -69,6 +73,7 @@ type StoredReport = {
   uplinks: string[];
   docker: boolean;
   logging: boolean;
+  features?: string[];
   listening: Array<{ protocol: 'tcp' | 'udp'; port: number; addresses: string[]; processes: string[] }>;
   reportedAt: string;
 };
@@ -102,6 +107,7 @@ function sanitizeReport(report: FirewallReport): StoredReport {
     uplinks: (report.uplinks ?? []).filter((value) => typeof value === 'string').slice(0, 8),
     docker: Boolean(report.docker),
     logging: Boolean(report.logging),
+    features: (report.features ?? []).filter((value) => typeof value === 'string').slice(0, 20).map((value) => value.slice(0, 40)),
     listening,
     reportedAt: new Date().toISOString(),
   };
@@ -179,7 +185,7 @@ export class FirewallService {
     const [workspace, nodes, rules] = await Promise.all([
       this.prisma.workspace.findUniqueOrThrow({
         where: { id: workspaceId },
-        select: { firewallMeshMode: true, firewallPublicPing: true, firewallSshGuard: true, internalDnsNodeId: true },
+        select: { firewallMeshMode: true, firewallPublicPing: true, firewallSshGuard: true, firewallSshLimit: true, internalDnsNodeId: true },
       }),
       this.prisma.node.findMany({
         where: { workspaceId },
@@ -227,6 +233,7 @@ export class FirewallService {
       meshMode: workspace.firewallMeshMode as FwMode,
       publicPing: workspace.firewallPublicPing,
       sshGuard: workspace.firewallSshGuard,
+      sshLimit: workspace.firewallSshLimit,
       nodes: policyNodes,
       rules: rules.map((rule) => this.toPolicyRule(rule)),
       system,
@@ -533,6 +540,8 @@ export class FirewallService {
         locationCity: node.locationCity,
         publicMode: node.firewallPublicMode as FwMode,
         apply: this.applyState(node, wanted),
+        // "unsupported": the agent's last report doesn't list the limiter.
+        sshLimit: !ctx.sshLimit ? 'off' : report?.features?.includes(SSH_LIMIT_ID) ? 'on' : report ? 'unsupported' : 'unknown',
         blocked24h: blockedByNode.get(node.id) ?? 0,
         report: report
           ? { uplinks: report.uplinks, docker: report.docker, logging: report.logging, reportedAt: report.reportedAt, listening }
@@ -546,6 +555,7 @@ export class FirewallService {
         meshMode: workspace.firewallMeshMode as FwMode,
         publicPing: workspace.firewallPublicPing,
         sshGuard: workspace.firewallSshGuard,
+        sshLimit: workspace.firewallSshLimit,
       },
       nodes: nodeRows,
       rules: rules.map((rule) => this.serializeRule(rule, nodeNames, ctx)),
@@ -731,12 +741,13 @@ export class FirewallService {
     const workspaceId = actor.scope.workspaceId as string;
     const before = await this.prisma.workspace.findUniqueOrThrow({
       where: { id: workspaceId },
-      select: { firewallMeshMode: true, firewallPublicPing: true, firewallSshGuard: true },
+      select: { firewallMeshMode: true, firewallPublicPing: true, firewallSshGuard: true, firewallSshLimit: true },
     });
     const data: Prisma.WorkspaceUpdateInput = {};
     if (dto.meshMode !== undefined) data.firewallMeshMode = dto.meshMode;
     if (dto.publicPing !== undefined) data.firewallPublicPing = dto.publicPing;
     if (dto.sshGuard !== undefined) data.firewallSshGuard = dto.sshGuard;
+    if (dto.sshLimit !== undefined) data.firewallSshLimit = dto.sshLimit;
     await this.prisma.workspace.update({ where: { id: workspaceId }, data });
     await this.audit(actor, 'firewall.settings', workspaceId, {
       ...(dto.meshMode !== undefined && dto.meshMode !== before.firewallMeshMode
@@ -744,6 +755,7 @@ export class FirewallService {
         : {}),
       ...(dto.publicPing !== undefined ? { publicPing: dto.publicPing } : {}),
       ...(dto.sshGuard !== undefined ? { sshGuard: dto.sshGuard } : {}),
+      ...(dto.sshLimit !== undefined ? { sshLimit: dto.sshLimit } : {}),
     });
     await this.changed(workspaceId);
     return this.overview(actor.scope);
@@ -1026,7 +1038,7 @@ export class FirewallService {
     const deltas: Array<[string, number]> = [];
     for (const [id, raw] of Object.entries(counters)) {
       const value = Number(raw);
-      if (!Number.isFinite(value) || id === 'default' || id.startsWith('sys:')) continue;
+      if (!Number.isFinite(value) || id === 'default' || id === SSH_LIMIT_ID || id.startsWith('sys:')) continue;
       const before = previous[id];
       // Counters restart from zero on every apply.
       const delta = before === undefined ? 0 : value >= before ? value - before : value;
@@ -1058,7 +1070,7 @@ export class FirewallService {
       const last = new Date((Number(event.lastSeen) || Date.now() / 1000) * 1000);
       const first = new Date((Number(event.firstSeen) || Number(event.lastSeen) || Date.now() / 1000) * 1000);
       const bucketStart = new Date(Math.floor(last.getTime() / 3_600_000) * 3_600_000);
-      const ruleId = event.ruleId && ruleIds.has(event.ruleId) ? event.ruleId : null;
+      const ruleId = event.ruleId && (ruleIds.has(event.ruleId) || event.ruleId === SSH_LIMIT_ID) ? event.ruleId : null;
       // Mesh: one row per source. Internet: one row per port, sources sampled.
       const key = [verdict, scope, protocol, port, event.docker ? 'd' : '', ruleId ?? '', scope === 'mesh' ? event.source : ''].join('|');
       const where = { nodeId_key_bucketStart: { nodeId, key, bucketStart } };

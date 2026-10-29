@@ -41,6 +41,10 @@ const (
 	fwChainDnat  = "TARMAC-FW-DNAT"
 	fwChainMeshD = "TARMAC-FW-MESH-D"
 	fwChainPubD  = "TARMAC-FW-PUB-D"
+	// SSH brute-force limiter: new SSH connections from the internet go
+	// through SSH, whose excess is logged and dropped by SSH-X.
+	fwChainSSH  = "TARMAC-FW-SSH"
+	fwChainSSHX = "TARMAC-FW-SSH-X"
 
 	fwCommentPrefix = "tarmac-fw"
 	// Kernel log prefix of every packet this firewall logs; see fwParseLogLine.
@@ -51,7 +55,18 @@ const (
 	fwLogBurst = "20"
 	// Cap on distinct events buffered between two heartbeats.
 	fwMaxEvents = 400
+	// Per source address (/64 in IPv6): a burst of 20 new SSH connections,
+	// then 10 a minute. Excess SYNs are dropped, not rejected, so a person
+	// is only slowed down (the client retries), never locked out.
+	fwSSHRate  = "10/min"
+	fwSSHBurst = "20"
+	// Rule id in logs and counters for packets the limiter dropped.
+	fwSSHLimitID = "ssh-limit"
 )
+
+// Features this agent supports beyond the base firewall, reported so the
+// dashboard never claims a protection an older agent ignores.
+var fwFeatures = []string{"ssh-limit"}
 
 var (
 	fwPortPattern  = regexp.MustCompile(`^([0-9]{1,5})(?:-([0-9]{1,5}))?$`)
@@ -75,6 +90,11 @@ func (z fwZone) active() bool {
 	return z.mode == "observe" || z.mode == "enforce" || len(z.denies) > 0
 }
 
+type fwSSHLimit struct {
+	ports  []string // sshd ports
+	exempt []string // CIDRs never limited (allowed by an SSH rule)
+}
+
 type fwDesired struct {
 	revision  string
 	meshIface string
@@ -82,10 +102,16 @@ type fwDesired struct {
 	public    fwZone
 	// Answer ping from the internet (public zone, when filtered).
 	ping bool
+	// Throttle new SSH connections from the internet; nil = off.
+	sshLimit *fwSSHLimit
+}
+
+func (d fwDesired) publicActive() bool {
+	return d.public.active() || d.sshLimit != nil
 }
 
 func (d fwDesired) active() bool {
-	return d.mesh.active() || d.public.active()
+	return d.mesh.active() || d.publicActive()
 }
 
 // ---------------------------------------------------------------------
@@ -229,6 +255,26 @@ func parseFirewallPayload(payload map[string]interface{}) (fwDesired, error) {
 	}
 	if desired.public, err = fwParseZone(payload, "public"); err != nil {
 		return desired, err
+	}
+	if raw, ok := payload["sshLimit"].(map[string]interface{}); ok {
+		limit := &fwSSHLimit{}
+		for _, port := range readStringSlice(raw, "ports") {
+			port = strings.TrimSpace(port)
+			if !fwValidPort(port) {
+				return desired, fmt.Errorf("sshLimit: invalid port %q", port)
+			}
+			limit.ports = append(limit.ports, port)
+		}
+		for _, source := range readStringSlice(raw, "exempt") {
+			normalized, ok := fwNormalizeSource(source)
+			if !ok {
+				return desired, fmt.Errorf("sshLimit: invalid exempt source %q", source)
+			}
+			limit.exempt = append(limit.exempt, normalized)
+		}
+		if len(limit.ports) > 0 {
+			desired.sshLimit = limit
+		}
 	}
 	return desired, nil
 }
@@ -392,11 +438,14 @@ func buildFirewallPlan(desired fwDesired, v6 bool, uplinks []string, docker bool
 	dnatIn := spec(fwChainDnat, []string{"DOCKER-USER"})
 	meshD := spec(fwChainMeshD, nil)
 	pubD := spec(fwChainPubD, nil)
-	all := []vpnChainSpec{in, mesh, pub, dnatIn, meshD, pubD}
+	ssh := spec(fwChainSSH, nil)
+	sshX := spec(fwChainSSHX, nil)
+	all := []vpnChainSpec{in, mesh, pub, dnatIn, meshD, pubD, ssh, sshX}
 
 	// The private mesh is IPv4 only.
 	meshOn := !v6 && desired.mesh.active()
-	pubOn := desired.public.active() && len(uplinks) > 0
+	pubOn := desired.publicActive() && len(uplinks) > 0
+	sshOn := pubOn && desired.sshLimit != nil
 	if !meshOn && !pubOn {
 		return fwPlan{obsolete: all}
 	}
@@ -457,11 +506,41 @@ func buildFirewallPlan(desired fwDesired, v6 bool, uplinks []string, docker bool
 				pre = append(pre, []string{"-p", "icmp", "!", "--icmp-type", "echo-request", "-j", "RETURN"})
 			}
 		}
+		if sshOn {
+			// Before the zone rules: the SSH guard allows SSH from anyone,
+			// and that is exactly the traffic to throttle.
+			for _, port := range desired.sshLimit.ports {
+				pub.rules = append(pub.rules, []string{"-p", "tcp", "--dport", strings.Replace(port, "-", ":", 1), "-m", "conntrack", "--ctstate", "NEW", "-j", fwChainSSH})
+			}
+			for _, source := range desired.sshLimit.exempt {
+				if fwIsV6(source) == v6 {
+					ssh.rules = append(ssh.rules, []string{"-s", source, "-j", "RETURN"})
+				}
+			}
+			name, mask := "tarmac-ssh4", "32"
+			if v6 {
+				name, mask = "tarmac-ssh6", "64"
+			}
+			ssh.rules = append(ssh.rules, []string{
+				"-m", "hashlimit", "--hashlimit-above", fwSSHRate, "--hashlimit-burst", fwSSHBurst,
+				"--hashlimit-mode", "srcip", "--hashlimit-srcmask", mask, "--hashlimit-name", name,
+				"-j", fwChainSSHX,
+			})
+			sshX.rules = [][]string{
+				fwLogRule(fwLogTag + "S"),
+				append(fwComment(fwSSHLimitID), "-j", "DROP"),
+			}
+		}
 		pub.rules = append(pub.rules, fwZoneRules(desired.public, v6, false, denyIndex, pre)...)
 		pubD.rules = fwZoneRules(desired.public, v6, true, denyIndex, nil)
 	}
 
 	// Children first, so the jumps to them never point at a missing chain.
+	if sshOn {
+		plan.chains = append(plan.chains, sshX, ssh)
+	} else {
+		plan.obsolete = append(plan.obsolete, ssh, sshX)
+	}
 	if meshOn {
 		plan.chains = append(plan.chains, mesh)
 	} else {
@@ -710,10 +789,10 @@ func applyFirewall(payload map[string]interface{}) (string, bool, error) {
 			log.Printf("firewall: ipv6: %v", err)
 			note = " (IPv6 non filtré : " + err.Error() + ")"
 		}
-	} else if desired.public.active() {
+	} else if desired.publicActive() {
 		note = " (ip6tables absent : IPv6 non filtré)"
 	}
-	if desired.public.active() && len(uplinks4) == 0 && len(uplinks6) == 0 {
+	if desired.publicActive() && len(uplinks4) == 0 && len(uplinks6) == 0 {
 		note += " (aucune interface Internet détectée : filtrage Internet inactif)"
 	}
 
@@ -737,9 +816,13 @@ func applyFirewall(payload map[string]interface{}) (string, bool, error) {
 	if !desired.active() {
 		return "firewall cleared", false, nil
 	}
-	return fmt.Sprintf("firewall applied: private network %s (%d block(s), %d allow(s)), internet %s (%d block(s), %d allow(s))%s",
+	limiter := "off"
+	if desired.sshLimit != nil {
+		limiter = "on"
+	}
+	return fmt.Sprintf("firewall applied: private network %s (%d block(s), %d allow(s)), internet %s (%d block(s), %d allow(s)), ssh limit %s%s",
 		desired.mesh.mode, len(desired.mesh.denies), len(desired.mesh.allows),
-		desired.public.mode, len(desired.public.denies), len(desired.public.allows), note), true, nil
+		desired.public.mode, len(desired.public.denies), len(desired.public.allows), limiter, note), true, nil
 }
 
 func fwDedupe(values []string) []string {
@@ -827,6 +910,7 @@ type fwReport struct {
 	Listening []fwListen        `json:"listening,omitempty"`
 	Counters  map[string]uint64 `json:"counters,omitempty"`
 	Events    []fwEvent         `json:"events,omitempty"`
+	Features  []string          `json:"features,omitempty"`
 	// False on heartbeats carrying only events (see collectFirewallReport).
 	Full bool `json:"full"`
 }
@@ -996,6 +1080,9 @@ func fwParseLogLine(message string, denyIDs []string) (fwEvent, bool) {
 		event.Verdict = "blocked"
 	case tag == "O":
 		event.Verdict = "observed"
+	case tag == "S":
+		event.Verdict = "blocked"
+		event.RuleID = fwSSHLimitID
 	case strings.HasPrefix(tag, "R"):
 		index, err := strconv.Atoi(tag[1:])
 		if err != nil {
@@ -1138,6 +1225,9 @@ func collectFirewallReport(full bool) *fwReport {
 	logging := fwEvents.logging
 	fwEvents.Unlock()
 	report := &fwReport{Revision: revision, Events: events, Logging: logging, Full: full}
+	if full {
+		report.Features = fwFeatures
+	}
 	if full {
 		report.Listening = fwListeningPorts()
 		if revision != "" {
