@@ -48,13 +48,19 @@ export class BulkFirewallNodesDto {
   @IsString({ each: true })
   nodeIds!: string[];
 
+  // At least one of the two.
+  @IsOptional()
   @IsIn(FW_MODES)
-  publicMode!: FwMode;
+  publicMode?: FwMode;
+
+  @IsOptional()
+  @IsIn(FW_MODES)
+  outboundMode?: FwMode;
 }
 
 export class CreateFirewallRuleDto {
-  @IsIn(['mesh', 'public'])
-  scope!: 'mesh' | 'public';
+  @IsIn(['mesh', 'public', 'outbound'])
+  scope!: 'mesh' | 'public' | 'outbound';
 
   @IsIn(['allow', 'deny'])
   action!: 'allow' | 'deny';
@@ -73,8 +79,8 @@ export class CreateFirewallRuleDto {
   @IsBoolean()
   enabled?: boolean;
 
-  @IsIn(['any', 'nodes', 'labels', 'cidrs', 'lists'])
-  sourceKind!: 'any' | 'nodes' | 'labels' | 'cidrs' | 'lists';
+  @IsIn(['any', 'nodes', 'labels', 'cidrs', 'lists', 'countries'])
+  sourceKind!: 'any' | 'nodes' | 'labels' | 'cidrs' | 'lists' | 'countries';
 
   @IsOptional()
   @IsArray()
@@ -99,6 +105,12 @@ export class CreateFirewallRuleDto {
   @ArrayMaxSize(20)
   @IsString({ each: true })
   sourceListIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(60)
+  @Matches(/^[A-Za-z]{2}$/, { each: true })
+  sourceCountries?: string[];
 
   @IsIn(['any', 'nodes', 'labels'])
   targetKind!: 'any' | 'nodes' | 'labels';
@@ -152,8 +164,8 @@ export class UpdateFirewallRuleDto {
   enabled?: boolean;
 
   @IsOptional()
-  @IsIn(['any', 'nodes', 'labels', 'cidrs', 'lists'])
-  sourceKind?: 'any' | 'nodes' | 'labels' | 'cidrs' | 'lists';
+  @IsIn(['any', 'nodes', 'labels', 'cidrs', 'lists', 'countries'])
+  sourceKind?: 'any' | 'nodes' | 'labels' | 'cidrs' | 'lists' | 'countries';
 
   @IsOptional()
   @IsArray()
@@ -178,6 +190,12 @@ export class UpdateFirewallRuleDto {
   @ArrayMaxSize(20)
   @IsString({ each: true })
   sourceListIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(60)
+  @Matches(/^[A-Za-z]{2}$/, { each: true })
+  sourceCountries?: string[];
 
   @IsOptional()
   @IsIn(['any', 'nodes', 'labels'])
@@ -212,8 +230,8 @@ export class UpdateFirewallRuleDto {
 }
 
 export class TestFirewallDto {
-  @IsIn(['mesh', 'public'])
-  scope!: 'mesh' | 'public';
+  @IsIn(['mesh', 'public', 'outbound'])
+  scope!: 'mesh' | 'public' | 'outbound';
 
   @IsString()
   targetNodeId!: string;

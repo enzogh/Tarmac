@@ -120,7 +120,7 @@ export function ModeSelector({
               </span>
               {active && !compact && <CircleCheck className="ml-auto h-3.5 w-3.5 text-muted-foreground" />}
             </span>
-            {!compact && <span className="text-xs leading-relaxed text-muted-foreground">{scope === 'mesh' ? info.mesh : info.public}</span>}
+            {!compact && <span className="text-xs leading-relaxed text-muted-foreground">{info[scope]}</span>}
           </button>
         );
       })}
@@ -327,7 +327,7 @@ export function RulesTable({
       <Card>
         <CardContent className="space-y-4 py-8">
           <div className="text-center">
-            <p className="text-sm font-medium text-foreground">Aucune règle {scope === 'mesh' ? 'entre serveurs' : 'pour Internet'} pour l’instant</p>
+            <p className="text-sm font-medium text-foreground">Aucune règle {scope === 'mesh' ? 'entre serveurs' : scope === 'outbound' ? 'pour les connexions sortantes' : 'pour Internet'} pour l’instant</p>
             <p className="mt-1 text-xs text-muted-foreground">Partez d’un exemple ou créez votre propre règle.</p>
           </div>
           <div className="mx-auto grid max-w-3xl gap-2 sm:grid-cols-3">

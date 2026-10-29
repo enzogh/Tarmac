@@ -13,12 +13,13 @@ import type {
   FirewallRule,
   FirewallRulePayload,
 } from '@/lib/api';
+import { countryName } from '@/lib/countries';
 import { flagFromCountryCode } from '@/lib/geo';
 import { cn } from '@/lib/utils';
 
 export const MODE_INFO: Record<
   FirewallMode,
-  { title: string; short: string; tone: StatusTone; icon: LucideIcon; mesh: string; public: string }
+  { title: string; short: string; tone: StatusTone; icon: LucideIcon; mesh: string; public: string; outbound: string }
 > = {
   open: {
     title: 'Ouvert',
@@ -27,6 +28,7 @@ export const MODE_INFO: Record<
     icon: ShieldOff,
     mesh: 'Vos serveurs se joignent librement. Seules vos règles de blocage s’appliquent.',
     public: 'Le serveur reste joignable comme aujourd’hui. Seules vos règles de blocage s’appliquent.',
+    outbound: 'Le serveur contacte Internet librement. Seules vos règles de blocage s’appliquent.',
   },
   observe: {
     title: 'Observation',
@@ -35,6 +37,7 @@ export const MODE_INFO: Record<
     icon: Eye,
     mesh: 'Rien n’est coupé, mais chaque connexion qui serait bloquée est journalisée. Idéal pour préparer le passage en mode appliqué.',
     public: 'Rien n’est coupé, mais chaque connexion qui serait bloquée est journalisée.',
+    outbound: 'Rien n’est coupé, mais chaque connexion sortante qui serait bloquée est journalisée.',
   },
   enforce: {
     title: 'Appliqué',
@@ -43,6 +46,7 @@ export const MODE_INFO: Record<
     icon: ShieldCheck,
     mesh: 'Seules les connexions autorisées (par vos règles ou par Tarmac) passent. Tout le reste est bloqué.',
     public: 'Seuls les ports autorisés restent joignables depuis Internet. Tout le reste est fermé.',
+    outbound: 'Les services du serveur ne contactent Internet que là où une règle l’autorise. Root, DNS et heure restent libres.',
   },
 };
 
@@ -106,11 +110,12 @@ function list(names: string[], max = 2): string {
 }
 
 export function sourceSummary(
-  rule: Pick<FirewallRulePayload, 'scope' | 'sourceKind' | 'sourceNodeIds' | 'sourceLabels' | 'sourceCidrs' | 'sourceListIds'>,
+  rule: Pick<FirewallRulePayload, 'scope' | 'sourceKind' | 'sourceNodeIds' | 'sourceLabels' | 'sourceCidrs' | 'sourceListIds' | 'sourceCountries'>,
   nodes: Named[],
   max = 2,
   lists: Named[] = [],
 ): string {
+  if (rule.sourceKind === 'countries') return list((rule.sourceCountries ?? []).map(countryName), max);
   if (rule.sourceKind === 'lists') return list(rule.sourceListIds.map((id) => `« ${lists.find((item) => item.id === id)?.name ?? 'liste supprimée'} »`), max);
   if (rule.sourceKind === 'any') return rule.scope === 'mesh' ? 'Tous les serveurs' : 'Tout Internet';
   if (rule.sourceKind === 'nodes') {
@@ -136,10 +141,16 @@ export function targetSummary(
 export function ruleSentence(rule: FirewallRulePayload, nodes: Named[], lists: Named[] = []): string {
   const verb = rule.action === 'deny' ? 'Bloquer' : 'Autoriser';
   const service = serviceLabel(rule);
-  const from = sourceSummary(rule, nodes, 3, lists);
-  const to = targetSummary(rule, nodes, 3);
-  const fromWord = rule.sourceKind === 'any' ? (rule.scope === 'mesh' ? 'depuis tous les serveurs' : 'depuis tout Internet') : `depuis ${from}`;
-  const toWord = rule.targetKind === 'any' ? 'vers tous les serveurs' : `vers ${to}`;
+  const remote = sourceSummary(rule, nodes, 3, lists);
+  const servers = targetSummary(rule, nodes, 3);
+  if (rule.scope === 'outbound') {
+    // The servers send, the remote end receives.
+    const fromServers = rule.targetKind === 'any' ? 'depuis tous les serveurs' : `depuis ${servers}`;
+    const toRemote = rule.sourceKind === 'any' ? 'vers tout Internet' : `vers ${remote}`;
+    return `${verb} ${service === 'Tout le trafic' ? 'tout le trafic' : service} ${fromServers} ${toRemote}`;
+  }
+  const fromWord = rule.sourceKind === 'any' ? (rule.scope === 'mesh' ? 'depuis tous les serveurs' : 'depuis tout Internet') : `depuis ${remote}`;
+  const toWord = rule.targetKind === 'any' ? 'vers tous les serveurs' : `vers ${servers}`;
   return `${verb} ${service === 'Tout le trafic' ? 'tout le trafic' : service} ${fromWord} ${toWord}`;
 }
 

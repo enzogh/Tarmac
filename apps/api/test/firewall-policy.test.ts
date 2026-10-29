@@ -213,3 +213,41 @@ test('address lists: resolved at apply time, an empty list never widens the rule
   assert.equal(evaluate(c, { scope: 'public', targetNodeId: 'dev', sourceIp: '2001:db8:1:5::9', protocol: 'tcp', port: 22 }).verdict, 'allowed');
   assert.equal(evaluate(c, { scope: 'public', targetNodeId: 'dev', sourceIp: '203.0.113.5', protocol: 'tcp', port: 22 }).verdict, 'blocked');
 });
+
+test('outbound: rules target the senders, sources name the remote end', () => {
+  const noSmtp = rule({ id: 'smtp', scope: 'outbound', action: 'deny', sourceKind: 'any', targetKind: 'nodes', targetNodeIds: ['web'], protocol: 'tcp', ports: ['25'] });
+  const https = rule({ id: 'https', scope: 'outbound', sourceKind: 'any', protocol: 'tcp', ports: ['443'] });
+  const partner = rule({ id: 'partner', scope: 'outbound', sourceKind: 'cidrs', sourceCidrs: ['198.51.100.0/24'], protocol: 'any' });
+  const enforced = nodes.map((node) => ({ ...node, outboundMode: node.id === 'web' ? ('enforce' as const) : ('open' as const) }));
+  const c = ctx({ nodes: enforced, rules: [noSmtp, https, partner] });
+
+  const web = buildAgentPayload(c, 'web', 'r');
+  assert.equal(web.outbound.mode, 'enforce');
+  assert.deepEqual(web.outbound.denies.map((entry) => entry.id), ['smtp']);
+  assert.deepEqual(web.outbound.allows.find((entry) => entry.id === 'partner')?.sources, ['198.51.100.0/24']);
+  // The SMTP block only targets web-1.
+  assert.equal(buildAgentPayload(c, 'dev', 'r').outbound.denies.length, 0);
+
+  const probe = (port: number, ip = '203.0.113.5') => evaluate(c, { scope: 'outbound', targetNodeId: 'web', sourceIp: ip, protocol: 'tcp', port }).verdict;
+  assert.equal(probe(25), 'blocked');
+  assert.equal(probe(443), 'allowed');
+  assert.equal(probe(8080), 'blocked');
+  assert.equal(probe(8080, '198.51.100.20'), 'allowed');
+  // DNS and time stay reachable whatever the rules.
+  assert.equal(evaluate(c, { scope: 'outbound', targetNodeId: 'web', sourceIp: '9.9.9.9', protocol: 'udp', port: 53 }).verdict, 'allowed');
+});
+
+test('countries: only agents that support them receive country rules', () => {
+  const geo = rule({ id: 'geo', scope: 'public', action: 'deny', sourceKind: 'countries', sourceCountries: ['CN', 'RU'], protocol: 'any' });
+  const current = nodes.map((node) => ({ ...node, features: ['ssh-limit', 'outbound', 'countries'] }));
+  const payload = buildAgentPayload(ctx({ nodes: current, rules: [geo] }), 'dev', 'r');
+  assert.deepEqual(payload.public.denies, [{ id: 'geo', sources: [], countries: ['CN', 'RU'], protocol: 'any', ports: [] }]);
+
+  // An older agent would read "no sources" as "everyone": it gets nothing.
+  const old = nodes.map((node) => ({ ...node, features: ['ssh-limit'] }));
+  assert.equal(buildAgentPayload(ctx({ nodes: old, rules: [geo] }), 'dev', 'r').public.denies.length, 0);
+
+  // The tester can't place an address in a country: it says so.
+  const verdict = evaluate(ctx({ nodes: current, rules: [geo] }), { scope: 'public', targetNodeId: 'dev', sourceIp: '203.0.113.5', protocol: 'tcp', port: 443 });
+  assert.match(verdict.reason, /par pays/);
+});

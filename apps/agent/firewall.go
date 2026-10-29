@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,6 +46,10 @@ const (
 	// through SSH, whose excess is logged and dropped by SSH-X.
 	fwChainSSH  = "TARMAC-FW-SSH"
 	fwChainSSHX = "TARMAC-FW-SSH-X"
+	// Outbound: connections this server opens towards the internet, jumped
+	// to from OUTPUT for the uplinks.
+	fwChainOut = "TARMAC-FW-OUT"
+	fwChainEgr = "TARMAC-FW-EGR"
 
 	fwCommentPrefix = "tarmac-fw"
 	// Kernel log prefix of every packet this firewall logs; see fwParseLogLine.
@@ -66,7 +71,7 @@ const (
 
 // Features this agent supports beyond the base firewall, reported so the
 // dashboard never claims a protection an older agent ignores.
-var fwFeatures = []string{"ssh-limit"}
+var fwFeatures = []string{"ssh-limit", "outbound", "countries"}
 
 var (
 	fwPortPattern  = regexp.MustCompile(`^([0-9]{1,5})(?:-([0-9]{1,5}))?$`)
@@ -74,10 +79,11 @@ var (
 )
 
 type fwRule struct {
-	id       string
-	sources  []string // CIDRs, empty = any source
-	protocol string   // any | tcp | udp | tcpudp | icmp
-	ports    []string // "22", "8000-8100"; empty = every port
+	id        string
+	sources   []string // CIDRs, empty = any source (the remote end for outbound)
+	countries []string // ISO codes matched through ipsets; replaces sources
+	protocol  string   // any | tcp | udp | tcpudp | icmp
+	ports     []string // "22", "8000-8100"; empty = every port
 }
 
 type fwZone struct {
@@ -100,6 +106,8 @@ type fwDesired struct {
 	meshIface string
 	mesh      fwZone
 	public    fwZone
+	// Connections opened from this server towards the internet.
+	outbound fwZone
 	// Answer ping from the internet (public zone, when filtered).
 	ping bool
 	// Throttle new SSH connections from the internet; nil = off.
@@ -111,7 +119,7 @@ func (d fwDesired) publicActive() bool {
 }
 
 func (d fwDesired) active() bool {
-	return d.mesh.active() || d.publicActive()
+	return d.mesh.active() || d.publicActive() || d.outbound.active()
 }
 
 // ---------------------------------------------------------------------
@@ -191,6 +199,22 @@ func fwParseRule(raw interface{}) (fwRule, error) {
 		}
 		rule.ports = append(rule.ports, port)
 	}
+	for _, country := range readStringSlice(record, "countries") {
+		country = strings.ToUpper(strings.TrimSpace(country))
+		if !fwCountryPattern.MatchString(country) {
+			return fwRule{}, fmt.Errorf("rule %s: invalid country %q", rule.id, country)
+		}
+		rule.countries = append(rule.countries, country)
+	}
+	if len(rule.countries) > 0 && len(rule.sources) > 0 {
+		return fwRule{}, fmt.Errorf("rule %s: countries and sources are exclusive", rule.id)
+	}
+	// "countries" given but empty must never mean "any source".
+	if raw, present := record["countries"]; present {
+		if list, ok := raw.([]interface{}); ok && len(list) > 0 && len(rule.countries) == 0 {
+			return fwRule{}, fmt.Errorf("rule %s: no valid country", rule.id)
+		}
+	}
 	if len(rule.ports) > 0 && rule.protocol != "tcp" && rule.protocol != "udp" && rule.protocol != "tcpudp" {
 		return fwRule{}, fmt.Errorf("rule %s: ports need tcp or udp", rule.id)
 	}
@@ -256,6 +280,9 @@ func parseFirewallPayload(payload map[string]interface{}) (fwDesired, error) {
 	if desired.public, err = fwParseZone(payload, "public"); err != nil {
 		return desired, err
 	}
+	if desired.outbound, err = fwParseZone(payload, "outbound"); err != nil {
+		return desired, err
+	}
 	if raw, ok := payload["sshLimit"].(map[string]interface{}); ok {
 		limit := &fwSSHLimit{}
 		for _, port := range readStringSlice(raw, "ports") {
@@ -291,6 +318,10 @@ func fwIsV6(cidr string) bool {
 // for "any source", nil when the rule has no source in that family (and so
 // generates nothing there).
 func fwSourcesFor(rule fwRule, v6 bool) []string {
+	if len(rule.countries) > 0 {
+		// Matched through ipsets, see fwMatches.
+		return nil
+	}
 	if len(rule.sources) == 0 {
 		return []string{""}
 	}
@@ -324,16 +355,34 @@ func fwProtocols(protocol string, v6 bool) []string {
 // destination port was rewritten, so the port the client asked for is
 // matched on the conntrack entry instead.
 func fwMatches(rule fwRule, v6, dnat bool) [][]string {
-	var out [][]string
+	return fwMatchesDir(rule, v6, dnat, false)
+}
+
+// fwMatchesDir: outbound rules name the remote end, so their addresses
+// (and countries) match the destination instead of the source.
+func fwMatchesDir(rule fwRule, v6, dnat, outbound bool) [][]string {
+	addrFlag, setDir := "-s", "src"
+	if outbound {
+		addrFlag, setDir = "-d", "dst"
+	}
+	var origins [][]string
 	for _, source := range fwSourcesFor(rule, v6) {
+		if source == "" {
+			origins = append(origins, nil)
+		} else {
+			origins = append(origins, []string{addrFlag, source})
+		}
+	}
+	for _, country := range rule.countries {
+		origins = append(origins, []string{"-m", "set", "--match-set", fwGeoSetName(country, v6), setDir})
+	}
+	var out [][]string
+	for _, origin := range origins {
 		for _, proto := range fwProtocols(rule.protocol, v6) {
 			if dnat && (proto == "icmp" || proto == "ipv6-icmp") {
 				continue
 			}
-			base := []string{}
-			if source != "" {
-				base = append(base, "-s", source)
-			}
+			base := append([]string{}, origin...)
 			if proto != "" {
 				base = append(base, "-p", proto)
 			}
@@ -369,14 +418,23 @@ func fwLogRule(prefix string) []string {
 // id to its position in the log prefix ("TFW:R3"), so a logged packet can
 // be traced back to the rule that blocked it.
 func fwZoneRules(zone fwZone, v6, dnat bool, denyIndex map[string]int, preDefault [][]string) [][]string {
-	suffix := ""
+	return fwZoneRulesDir(zone, v6, dnat, false, denyIndex, preDefault)
+}
+
+// fwZoneRulesDir: outbound log tags start with "X" (TFW:XB, TFW:XR2...)
+// so a logged packet is known to be one this server tried to send.
+func fwZoneRulesDir(zone fwZone, v6, dnat, outbound bool, denyIndex map[string]int, preDefault [][]string) [][]string {
+	suffix, tag := "", fwLogTag
 	if dnat {
 		suffix = "d"
 	}
+	if outbound {
+		tag += "X"
+	}
 	var rules [][]string
 	for _, deny := range zone.denies {
-		prefix := fmt.Sprintf("%sR%d%s", fwLogTag, denyIndex[deny.id], suffix)
-		for _, match := range fwMatches(deny, v6, dnat) {
+		prefix := fmt.Sprintf("%sR%d%s", tag, denyIndex[deny.id], suffix)
+		for _, match := range fwMatchesDir(deny, v6, dnat, outbound) {
 			rules = append(rules, append(append([]string{}, match...), fwLogRule(prefix)...))
 			rules = append(rules, append(append(append([]string{}, match...), fwComment(deny.id)...), "-j", "DROP"))
 		}
@@ -386,15 +444,15 @@ func fwZoneRules(zone fwZone, v6, dnat bool, denyIndex map[string]int, preDefaul
 	}
 	rules = append(rules, preDefault...)
 	for _, allow := range zone.allows {
-		for _, match := range fwMatches(allow, v6, dnat) {
+		for _, match := range fwMatchesDir(allow, v6, dnat, outbound) {
 			rules = append(rules, append(append(append([]string{}, match...), fwComment(allow.id)...), "-j", "RETURN"))
 		}
 	}
 	if zone.mode == "observe" {
-		rules = append(rules, fwLogRule(fwLogTag+"O"+suffix))
+		rules = append(rules, fwLogRule(tag+"O"+suffix))
 		return rules
 	}
-	rules = append(rules, fwLogRule(fwLogTag+"B"+suffix))
+	rules = append(rules, fwLogRule(tag+"B"+suffix))
 	rules = append(rules, []string{"-m", "comment", "--comment", fwCommentPrefix + ":default", "-j", "DROP"})
 	return rules
 }
@@ -402,7 +460,7 @@ func fwZoneRules(zone fwZone, v6, dnat bool, denyIndex map[string]int, preDefaul
 func fwDenyIndex(desired fwDesired) (map[string]int, []string) {
 	index := map[string]int{}
 	ids := []string{}
-	for _, zone := range []fwZone{desired.mesh, desired.public} {
+	for _, zone := range []fwZone{desired.mesh, desired.public, desired.outbound} {
 		for _, deny := range zone.denies {
 			if _, ok := index[deny.id]; ok {
 				continue
@@ -440,13 +498,16 @@ func buildFirewallPlan(desired fwDesired, v6 bool, uplinks []string, docker bool
 	pubD := spec(fwChainPubD, nil)
 	ssh := spec(fwChainSSH, nil)
 	sshX := spec(fwChainSSHX, nil)
-	all := []vpnChainSpec{in, mesh, pub, dnatIn, meshD, pubD, ssh, sshX}
+	out := spec(fwChainOut, []string{"OUTPUT"})
+	egr := spec(fwChainEgr, nil)
+	all := []vpnChainSpec{in, mesh, pub, dnatIn, meshD, pubD, ssh, sshX, out, egr}
 
 	// The private mesh is IPv4 only.
 	meshOn := !v6 && desired.mesh.active()
 	pubOn := desired.publicActive() && len(uplinks) > 0
 	sshOn := pubOn && desired.sshLimit != nil
-	if !meshOn && !pubOn {
+	outOn := desired.outbound.active() && len(uplinks) > 0
+	if !meshOn && !pubOn && !outOn {
 		return fwPlan{obsolete: all}
 	}
 
@@ -535,7 +596,43 @@ func buildFirewallPlan(desired fwDesired, v6 bool, uplinks []string, docker bool
 		pubD.rules = fwZoneRules(desired.public, v6, true, denyIndex, nil)
 	}
 
+	if outOn {
+		out.rules = [][]string{{"-o", "lo", "-j", "RETURN"}}
+		for _, uplink := range uplinks {
+			out.rules = append(out.rules, []string{"-o", uplink, "-j", fwChainEgr})
+		}
+		egr.rules = [][]string{
+			{"-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "RETURN"},
+			// root stays free: the agent itself (its link to Tarmac), package
+			// updates... Outbound filtering is about services (a web app, a
+			// database) that would phone out once compromised.
+			{"-m", "owner", "--uid-owner", "0", "-j", "RETURN"},
+			{"-p", "udp", "--dport", "53", "-j", "RETURN"},
+			{"-p", "tcp", "--dport", "53", "-j", "RETURN"},
+			{"-p", "udp", "--dport", "123", "-j", "RETURN"},
+		}
+		if v6 {
+			egr.rules = append(egr.rules,
+				[]string{"-p", "ipv6-icmp", "-j", "RETURN"},
+				[]string{"-d", "ff00::/8", "-j", "RETURN"},
+				[]string{"-p", "udp", "--dport", "547", "-j", "RETURN"},
+			)
+		} else {
+			egr.rules = append(egr.rules,
+				[]string{"-p", "icmp", "-j", "RETURN"},
+				[]string{"-m", "addrtype", "--dst-type", "BROADCAST,MULTICAST", "-j", "RETURN"},
+				[]string{"-p", "udp", "--dport", "67", "-j", "RETURN"},
+			)
+		}
+		egr.rules = append(egr.rules, fwZoneRulesDir(desired.outbound, v6, false, true, denyIndex, nil)...)
+	}
+
 	// Children first, so the jumps to them never point at a missing chain.
+	if outOn {
+		plan.chains = append(plan.chains, egr, out)
+	} else {
+		plan.obsolete = append(plan.obsolete, out, egr)
+	}
 	if sshOn {
 		plan.chains = append(plan.chains, sshX, ssh)
 	} else {
@@ -578,10 +675,11 @@ var (
 	fwEnforcedDenies = map[string]bool{}
 	fwStateMu        sync.Mutex
 	fwState          = struct {
-		revision string
-		denyIDs  []string
-		uplinks  []string
-		docker   bool
+		revision  string
+		denyIDs   []string
+		uplinks   []string
+		docker    bool
+		countries []string
 	}{}
 )
 
@@ -773,6 +871,17 @@ func applyFirewall(payload map[string]interface{}) (string, bool, error) {
 		return "", false, errors.New("iptables introuvable sur ce serveur")
 	}
 
+	// Country sets must exist (and be filled) before a rule references them.
+	countries := fwDesiredCountries(desired)
+	if len(countries) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		err := fwEnsureGeoSets(ctx, countries)
+		cancel()
+		if err != nil {
+			return "", true, err
+		}
+	}
+
 	uplinks4 := fwUplinks(false)
 	docker4 := iptablesChainExists("iptables", "filter", "DOCKER-USER")
 	if err := fwInstallPlan(buildFirewallPlan(desired, false, uplinks4, docker4)); err != nil {
@@ -789,7 +898,7 @@ func applyFirewall(payload map[string]interface{}) (string, bool, error) {
 			log.Printf("firewall: ipv6: %v", err)
 			note = " (IPv6 non filtré : " + err.Error() + ")"
 		}
-	} else if desired.publicActive() {
+	} else if desired.publicActive() || desired.outbound.active() {
 		note = " (ip6tables absent : IPv6 non filtré)"
 	}
 	if desired.publicActive() && len(uplinks4) == 0 && len(uplinks6) == 0 {
@@ -797,6 +906,7 @@ func applyFirewall(payload map[string]interface{}) (string, bool, error) {
 	}
 
 	fwCutBlockedConnections(desired)
+	fwCleanupGeoSets(countries)
 
 	_, denyIDs := fwDenyIndex(desired)
 	uplinks := append(append([]string{}, uplinks4...), uplinks6...)
@@ -806,6 +916,7 @@ func applyFirewall(payload map[string]interface{}) (string, bool, error) {
 	fwState.denyIDs = denyIDs
 	fwState.uplinks = fwDedupe(uplinks)
 	fwState.docker = docker4
+	fwState.countries = countries
 	fwStateMu.Unlock()
 
 	if desired.revision != "" {
@@ -820,9 +931,10 @@ func applyFirewall(payload map[string]interface{}) (string, bool, error) {
 	if desired.sshLimit != nil {
 		limiter = "on"
 	}
-	return fmt.Sprintf("firewall applied: private network %s (%d block(s), %d allow(s)), internet %s (%d block(s), %d allow(s)), ssh limit %s%s",
+	return fmt.Sprintf("firewall applied: private network %s (%d block(s), %d allow(s)), internet %s (%d block(s), %d allow(s)), outbound %s (%d block(s), %d allow(s)), ssh limit %s%s",
 		desired.mesh.mode, len(desired.mesh.denies), len(desired.mesh.allows),
-		desired.public.mode, len(desired.public.denies), len(desired.public.allows), limiter, note), true, nil
+		desired.public.mode, len(desired.public.denies), len(desired.public.allows),
+		desired.outbound.mode, len(desired.outbound.denies), len(desired.outbound.allows), limiter, note), true, nil
 }
 
 func fwDedupe(values []string) []string {
@@ -897,9 +1009,11 @@ type fwEvent struct {
 	Port     int    `json:"port,omitempty"`
 	Iface    string `json:"interface,omitempty"`
 	Docker   bool   `json:"docker,omitempty"`
-	Count    int    `json:"count"`
-	First    int64  `json:"firstSeen"`
-	Last     int64  `json:"lastSeen"`
+	// Sent by this server (outbound zone): Dest is the remote end.
+	Outbound bool  `json:"outbound,omitempty"`
+	Count    int   `json:"count"`
+	First    int64 `json:"firstSeen"`
+	Last     int64 `json:"lastSeen"`
 }
 
 type fwReport struct {
@@ -1071,6 +1185,10 @@ func fwParseLogLine(message string, denyIDs []string) (fwEvent, bool) {
 	}
 	tag := rest[:space]
 	event := fwEvent{Count: 1}
+	if strings.HasPrefix(tag, "X") {
+		event.Outbound = true
+		tag = strings.TrimPrefix(tag, "X")
+	}
 	if strings.HasSuffix(tag, "d") {
 		event.Docker = true
 		tag = strings.TrimSuffix(tag, "d")
@@ -1098,7 +1216,13 @@ func fwParseLogLine(message string, denyIDs []string) (fwEvent, bool) {
 	for _, match := range fwLogFieldPattern.FindAllStringSubmatch(rest[space:], -1) {
 		switch match[1] {
 		case "IN":
-			event.Iface = match[2]
+			if !event.Outbound {
+				event.Iface = match[2]
+			}
+		case "OUT":
+			if event.Outbound {
+				event.Iface = match[2]
+			}
 		case "SRC":
 			event.Source = match[2]
 		case "DST":
@@ -1119,7 +1243,7 @@ func fwParseLogLine(message string, denyIDs []string) (fwEvent, bool) {
 }
 
 func fwRecordEvent(event fwEvent, at time.Time) {
-	key := strings.Join([]string{event.Verdict, event.RuleID, event.Source, event.Dest, event.Protocol, strconv.Itoa(event.Port), event.Iface, strconv.FormatBool(event.Docker)}, "|")
+	key := strings.Join([]string{event.Verdict, event.RuleID, event.Source, event.Dest, event.Protocol, strconv.Itoa(event.Port), event.Iface, strconv.FormatBool(event.Docker), strconv.FormatBool(event.Outbound)}, "|")
 	fwEvents.Lock()
 	defer fwEvents.Unlock()
 	if existing := fwEvents.byKey[key]; existing != nil {

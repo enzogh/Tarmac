@@ -58,6 +58,7 @@ export type FirewallReport = {
   features?: string[];
   events?: Array<{
     verdict: string;
+    outbound?: boolean;
     ruleId?: string;
     source: string;
     destination?: string;
@@ -211,6 +212,7 @@ export class FirewallService {
           locationCity: true,
           agentVersion: true,
           firewallPublicMode: true,
+          firewallOutboundMode: true,
           firewallAppliedRevision: true,
           firewallApplyStatus: true,
           firewallApplyError: true,
@@ -235,7 +237,10 @@ export class FirewallService {
         vlanIp: node.vlanIp,
         labels: node.labels,
         publicMode: (node.firewallPublicMode as FwMode) ?? 'open',
+        outboundMode: (node.firewallOutboundMode as FwMode) ?? 'open',
         sshPorts: sshPorts.length > 0 ? sshPorts : [22],
+        // No report yet: assume a current agent; the first report corrects it.
+        features: report ? (report.features ?? []) : undefined,
       };
     });
     const system = await this.systemFlows(workspaceId, workspace, nodes, policyNodes);
@@ -264,6 +269,7 @@ export class FirewallService {
       sourceLabels: rule.sourceLabels,
       sourceCidrs: rule.sourceCidrs,
       sourceListIds: rule.sourceListIds,
+      sourceCountries: rule.sourceCountries,
       targetKind: rule.targetKind as PolicyRule['targetKind'],
       targetNodeIds: rule.targetNodeIds,
       targetLabels: rule.targetLabels,
@@ -562,6 +568,9 @@ export class FirewallService {
         locationCountryCode: node.locationCountryCode,
         locationCity: node.locationCity,
         publicMode: node.firewallPublicMode as FwMode,
+        outboundMode: node.firewallOutboundMode as FwMode,
+        // Protections its agent is too old for (shown as "update the agent").
+        missingFeatures: report ? ['outbound', 'countries'].filter((feature) => !(report.features ?? []).includes(feature)) : [],
         apply: this.applyState(node, wanted),
         // "unsupported": the agent's last report doesn't list the limiter.
         sshLimit: !ctx.sshLimit ? 'off' : report?.features?.includes(SSH_LIMIT_ID) ? 'on' : report ? 'unsupported' : 'unknown',
@@ -648,6 +657,7 @@ export class FirewallService {
       sourceLabels: rule.sourceLabels,
       sourceCidrs: rule.sourceCidrs,
       sourceListIds: rule.sourceListIds.filter((id) => (ctx.lists ?? []).some((list) => list.id === id)),
+      sourceCountries: rule.sourceCountries,
       targetKind: rule.targetKind,
       targetNodeIds: rule.targetNodeIds.filter((id) => nodeNames.has(id)),
       targetLabels: rule.targetLabels,
@@ -681,7 +691,7 @@ export class FirewallService {
       where: {
         workspaceId,
         lastSeenAt: { gte: new Date(Date.now() - hours * 3600 * 1000) },
-        ...(query.scope === 'mesh' || query.scope === 'public' ? { scope: query.scope } : {}),
+        ...(query.scope === 'mesh' || query.scope === 'public' || query.scope === 'outbound' ? { scope: query.scope } : {}),
         ...(query.verdict === 'blocked' || query.verdict === 'observed' ? { verdict: query.verdict } : {}),
         ...(query.nodeId ? { nodeId: query.nodeId } : {}),
       },
@@ -733,11 +743,17 @@ export class FirewallService {
       lastSeenAt: event.lastSeenAt,
       firstSeenAt: event.firstSeenAt,
       verdict: event.verdict === 'blocked' ? 'bloquée' : 'serait bloquée',
-      zone: event.scope === 'mesh' ? 'entre serveurs' : 'internet',
-      source: event.sourceNodeId ? (nodeName.get(event.sourceNodeId) ?? event.sourceIp) : event.sourceIp,
-      sourceIp: event.sourceIp,
-      otherSources: event.sources.filter((ip) => ip !== event.sourceIp).join(' '),
-      target: nodeName.get(event.nodeId) ?? '',
+      zone: event.scope === 'mesh' ? 'entre serveurs' : event.scope === 'outbound' ? 'vers internet' : 'depuis internet',
+      // Outbound: the server sent it, the address is where it was going.
+      source:
+        event.scope === 'outbound'
+          ? (nodeName.get(event.nodeId) ?? '')
+          : event.sourceNodeId
+            ? (nodeName.get(event.sourceNodeId) ?? event.sourceIp)
+            : event.sourceIp,
+      remoteIp: event.sourceIp,
+      otherAddresses: event.sources.filter((ip) => ip !== event.sourceIp).join(' '),
+      target: event.scope === 'outbound' ? event.sourceIp : (nodeName.get(event.nodeId) ?? ''),
       protocol: event.protocol,
       port: event.port ?? '',
       service: event.service ?? '',
@@ -788,7 +804,7 @@ export class FirewallService {
       where: {
         workspaceId: scope.workspaceId as string,
         bucketStart: { gte: new Date(Math.floor((Date.now() - hours * 3600 * 1000) / 3_600_000) * 3_600_000) },
-        ...(query.scope === 'mesh' || query.scope === 'public' ? { scope: query.scope } : {}),
+        ...(query.scope === 'mesh' || query.scope === 'public' || query.scope === 'outbound' ? { scope: query.scope } : {}),
         ...(query.nodeId ? { nodeId: query.nodeId } : {}),
       },
       _sum: { count: true },
@@ -804,20 +820,21 @@ export class FirewallService {
     if (dto.scope === 'mesh' && (!dto.sourceNodeId || !ctx.nodes.some((node) => node.id === dto.sourceNodeId))) {
       throw new BadRequestException('Choisissez le serveur d’origine.');
     }
-    if (dto.scope === 'public' && dto.sourceIp && !net.isIP(dto.sourceIp)) {
-      throw new BadRequestException('Adresse IP d’origine invalide.');
+    if (dto.scope !== 'mesh' && dto.sourceIp && !net.isIP(dto.sourceIp)) {
+      throw new BadRequestException(dto.scope === 'outbound' ? 'Adresse IP de destination invalide.' : 'Adresse IP d’origine invalide.');
     }
     if (dto.protocol !== 'icmp' && !dto.port) throw new BadRequestException('Indiquez un port.');
     const request = {
       scope: dto.scope,
       targetNodeId: dto.targetNodeId,
       sourceNodeId: dto.sourceNodeId,
-      sourceIp: dto.scope === 'public' ? dto.sourceIp || '203.0.113.10' : undefined,
+      sourceIp: dto.scope !== 'mesh' ? dto.sourceIp || '203.0.113.10' : undefined,
       protocol: dto.protocol,
       port: dto.port ?? null,
     } as const;
     const result = evaluate(ctx, request);
-    const mode = dto.scope === 'mesh' ? ctx.meshMode : ctx.nodes.find((node) => node.id === dto.targetNodeId)!.publicMode;
+    const targetNode = ctx.nodes.find((node) => node.id === dto.targetNodeId)!;
+    const mode = dto.scope === 'mesh' ? ctx.meshMode : dto.scope === 'outbound' ? (targetNode.outboundMode ?? 'open') : targetNode.publicMode;
     // "And once I switch to enforce?" - the question asked before doing it.
     const ifEnforced =
       mode === 'enforce'
@@ -825,7 +842,12 @@ export class FirewallService {
         : evaluate(
             dto.scope === 'mesh'
               ? { ...ctx, meshMode: 'enforce' }
-              : { ...ctx, nodes: ctx.nodes.map((node) => (node.id === dto.targetNodeId ? { ...node, publicMode: 'enforce' as FwMode } : node)) },
+              : {
+                  ...ctx,
+                  nodes: ctx.nodes.map((node) =>
+                    node.id === dto.targetNodeId ? { ...node, [dto.scope === 'outbound' ? 'outboundMode' : 'publicMode']: 'enforce' as FwMode } : node,
+                  ),
+                },
             request,
           );
     return { ...result, mode, ifEnforced };
@@ -861,19 +883,34 @@ export class FirewallService {
 
   async updateNodesMode(dto: BulkFirewallNodesDto, actor: Actor) {
     const workspaceId = actor.scope.workspaceId as string;
+    if (!dto.publicMode && !dto.outboundMode) throw new BadRequestException('Indiquez le mode à appliquer.');
     const nodes = await this.prisma.node.findMany({
       where: { id: { in: dto.nodeIds }, workspaceId },
-      select: { id: true, name: true, firewallPublicMode: true },
+      select: { id: true, name: true, firewallPublicMode: true, firewallOutboundMode: true },
     });
     if (nodes.length === 0) throw new NotFoundException('Serveur introuvable');
-    await this.prisma.node.updateMany({ where: { id: { in: nodes.map((node) => node.id) } }, data: { firewallPublicMode: dto.publicMode } });
+    await this.prisma.node.updateMany({
+      where: { id: { in: nodes.map((node) => node.id) } },
+      data: {
+        ...(dto.publicMode ? { firewallPublicMode: dto.publicMode } : {}),
+        ...(dto.outboundMode ? { firewallOutboundMode: dto.outboundMode } : {}),
+      },
+    });
     for (const node of nodes) {
-      if (node.firewallPublicMode === dto.publicMode) continue;
-      await this.audit(actor, 'firewall.node_mode', node.id, {
-        node: node.name,
-        from: MODE_LABEL[node.firewallPublicMode as FwMode],
-        to: MODE_LABEL[dto.publicMode],
-      });
+      if (dto.publicMode && node.firewallPublicMode !== dto.publicMode) {
+        await this.audit(actor, 'firewall.node_mode', node.id, {
+          node: node.name,
+          from: MODE_LABEL[node.firewallPublicMode as FwMode],
+          to: MODE_LABEL[dto.publicMode],
+        });
+      }
+      if (dto.outboundMode && node.firewallOutboundMode !== dto.outboundMode) {
+        await this.audit(actor, 'firewall.node_outbound_mode', node.id, {
+          node: node.name,
+          from: MODE_LABEL[node.firewallOutboundMode as FwMode],
+          to: MODE_LABEL[dto.outboundMode],
+        });
+      }
     }
     await this.changed(workspaceId);
     return this.overview(actor.scope);
@@ -884,7 +921,7 @@ export class FirewallService {
     workspaceId: string,
     current?: FirewallRule,
   ) {
-    const scope = input.scope as 'mesh' | 'public';
+    const scope = input.scope as 'mesh' | 'public' | 'outbound';
     const merged = {
       action: input.action ?? current?.action ?? 'allow',
       sourceKind: input.sourceKind ?? current?.sourceKind ?? 'any',
@@ -892,6 +929,7 @@ export class FirewallService {
       sourceLabels: normalizeList(input.sourceLabels ?? current?.sourceLabels, 20),
       sourceCidrs: input.sourceCidrs ?? current?.sourceCidrs ?? [],
       sourceListIds: input.sourceListIds ?? current?.sourceListIds ?? [],
+      sourceCountries: input.sourceCountries ?? current?.sourceCountries ?? [],
       targetKind: input.targetKind ?? current?.targetKind ?? 'any',
       targetNodeIds: input.targetNodeIds ?? current?.targetNodeIds ?? [],
       targetLabels: normalizeList(input.targetLabels ?? current?.targetLabels, 20),
@@ -899,12 +937,19 @@ export class FirewallService {
       ports: input.ports ?? current?.ports ?? [],
     };
 
-    if (scope === 'mesh' && (merged.sourceKind === 'cidrs' || merged.sourceKind === 'lists')) {
+    if (scope === 'mesh' && (merged.sourceKind === 'cidrs' || merged.sourceKind === 'lists' || merged.sourceKind === 'countries')) {
       throw new BadRequestException('Entre serveurs, l’origine est un serveur ou une étiquette, pas une adresse IP.');
     }
     if (scope === 'public' && (merged.sourceKind === 'nodes' || merged.sourceKind === 'labels')) {
       throw new BadRequestException('Depuis Internet, l’origine est « tout Internet » ou une liste d’adresses IP.');
     }
+    if (scope === 'outbound' && (merged.sourceKind === 'nodes' || merged.sourceKind === 'labels')) {
+      throw new BadRequestException('Vers Internet, la destination est « tout Internet », des adresses IP, une liste ou des pays.');
+    }
+    if (merged.sourceKind === 'countries') {
+      merged.sourceCountries = [...new Set(merged.sourceCountries.map((code) => code.trim().toUpperCase()).filter((code) => /^[A-Z]{2}$/.test(code)))];
+      if (merged.sourceCountries.length === 0) throw new BadRequestException('Choisissez au moins un pays.');
+    } else merged.sourceCountries = [];
     const ownIds = new Set(
       (
         await this.prisma.node.findMany({
@@ -1078,7 +1123,7 @@ export class FirewallService {
   private auditDetails(rule: FirewallRule) {
     return {
       name: rule.name,
-      scope: rule.scope === 'mesh' ? 'entre serveurs' : 'depuis Internet',
+      scope: rule.scope === 'mesh' ? 'entre serveurs' : rule.scope === 'outbound' ? 'vers Internet' : 'depuis Internet',
       action: rule.action === 'deny' ? 'bloquer' : 'autoriser',
       service: describeService({ protocol: rule.protocol as PolicyRule['protocol'], ports: rule.ports }),
     };
@@ -1244,7 +1289,12 @@ export class FirewallService {
     for (const event of events) {
       if (typeof event.source !== 'string' || !net.isIP(event.source)) continue;
       const verdict = event.verdict === 'observed' ? 'observed' : 'blocked';
-      const scope = event.interface === MESH_INTERFACE ? 'mesh' : 'public';
+      // Outbound: the server is the sender, the interesting address is the
+      // remote end (stored as sourceIp, "the other party").
+      const outbound = Boolean(event.outbound);
+      const remote = outbound ? event.destination : event.source;
+      if (typeof remote !== 'string' || !net.isIP(remote)) continue;
+      const scope = outbound ? 'outbound' : event.interface === MESH_INTERFACE ? 'mesh' : 'public';
       const protocol = ['tcp', 'udp', 'icmp'].includes(event.protocol) ? event.protocol : 'autre';
       const port = Number.isInteger(event.port) && event.port! > 0 && event.port! < 65536 ? event.port! : 0;
       const count = Math.max(1, Math.min(Number(event.count) || 1, 1_000_000));
@@ -1263,8 +1313,8 @@ export class FirewallService {
             data: {
               count: { increment: count },
               lastSeenAt: last,
-              sourceIp: event.source,
-              sources: existing.sources.includes(event.source) ? undefined : [...existing.sources, event.source].slice(-8),
+              sourceIp: remote,
+              sources: existing.sources.includes(remote) ? undefined : [...existing.sources, remote].slice(-8),
             },
           });
         } else {
@@ -1275,9 +1325,9 @@ export class FirewallService {
               scope,
               verdict,
               key,
-              sourceIp: event.source,
-              sourceNodeId: scope === 'mesh' ? (byIp.get(event.source) ?? null) : null,
-              sources: [event.source],
+              sourceIp: remote,
+              sourceNodeId: scope === 'mesh' ? (byIp.get(remote) ?? null) : null,
+              sources: [remote],
               protocol,
               port,
               docker: Boolean(event.docker),
@@ -1330,8 +1380,13 @@ export class FirewallService {
       where: {
         OR: [
           { firewallMeshMode: { not: 'open' } },
+          { firewallSshLimit: true },
           { firewallRules: { some: {} } },
-          { nodes: { some: { OR: [{ firewallPublicMode: { not: 'open' } }, { firewallAppliedRevision: { not: null } }] } } },
+          {
+            nodes: {
+              some: { OR: [{ firewallPublicMode: { not: 'open' } }, { firewallOutboundMode: { not: 'open' } }, { firewallAppliedRevision: { not: null } }] },
+            },
+          },
         ],
       },
       select: { id: true },

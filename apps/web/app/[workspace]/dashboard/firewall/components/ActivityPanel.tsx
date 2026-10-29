@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { animate, AnimatePresence, motion } from 'framer-motion';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
-import { ArrowRight, Ban, Check, ChevronDown, Container, Eye, EyeOff, Globe2, Network, Radar, RotateCcw, Search, ShieldCheck, X } from 'lucide-react';
+import { ArrowRight, Ban, Check, ChevronDown, Container, Eye, EyeOff, Globe2, Network, Radar, RotateCcw, Search, Send, ShieldCheck, X } from 'lucide-react';
 import { ExportMenu } from '@/components/ExportMenu';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -83,7 +83,7 @@ function draftsFor(event: FirewallEvent): { allow: RuleDraft; block: RuleDraft }
       targetKind: 'any',
       protocol: 'any',
       ports: [],
-      name: event.scope === 'public' ? `Bloquer ${event.sourceIp}` : undefined,
+      name: event.scope === 'public' ? `Bloquer ${event.sourceIp}` : event.scope === 'outbound' ? `Bloquer l’envoi vers ${event.sourceIp}` : undefined,
     },
   };
 }
@@ -162,15 +162,26 @@ export function EventRow({
         </span>
         <div className="min-w-0 flex-1">
           <p className="flex min-w-0 items-center gap-1.5 text-sm">
-            <span className={cn('truncate font-medium text-foreground', !sourceNode && 'font-mono text-[13px]')}>{sourceNode?.name ?? event.sourceIp}</span>
-            <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
-            <span className="truncate font-medium text-foreground">{target?.name ?? 'serveur supprimé'}</span>
+            {event.scope === 'outbound' ? (
+              // Sent by the server, towards the remote address.
+              <>
+                <span className="truncate font-medium text-foreground">{target?.name ?? 'serveur supprimé'}</span>
+                <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+                <span className="truncate font-mono text-[13px] font-medium text-foreground">{event.sourceIp}</span>
+              </>
+            ) : (
+              <>
+                <span className={cn('truncate font-medium text-foreground', !sourceNode && 'font-mono text-[13px]')}>{sourceNode?.name ?? event.sourceIp}</span>
+                <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+                <span className="truncate font-medium text-foreground">{target?.name ?? 'serveur supprimé'}</span>
+              </>
+            )}
           </p>
           <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
             <span className="rounded bg-surface-3 px-1.5 py-px font-mono text-[11px] text-foreground/80">{serviceText(event)}</span>
             <span className="inline-flex items-center gap-1">
-              {event.scope === 'mesh' ? <Network className="h-3 w-3" /> : <Globe2 className="h-3 w-3" />}
-              {event.scope === 'mesh' ? 'Entre serveurs' : 'Internet'}
+              {event.scope === 'mesh' ? <Network className="h-3 w-3" /> : event.scope === 'outbound' ? <Send className="h-3 w-3" /> : <Globe2 className="h-3 w-3" />}
+              {event.scope === 'mesh' ? 'Entre serveurs' : event.scope === 'outbound' ? 'Vers Internet' : 'Depuis Internet'}
             </span>
             {event.docker && (
               <span className="inline-flex items-center gap-1">
@@ -228,7 +239,7 @@ export function EventRow({
                   <dd className="mt-0.5 text-foreground">{new Date(event.lastSeenAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}</dd>
                 </div>
               </dl>
-              {event.scope === 'public' && event.sources.length > 0 && (
+              {event.scope !== 'mesh' && event.sources.length > 0 && (
                 <div>
                   <p className="text-2xs uppercase tracking-wider text-muted-foreground">Adresses vues</p>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -247,7 +258,7 @@ export function EventRow({
                 </Button>
                 <Button write size="sm" variant="secondary" className="gap-1.5 text-[hsl(var(--danger))]" onClick={() => onCreateRule(drafts.block)}>
                   <Ban className="h-3.5 w-3.5" />
-                  Bloquer cette source partout
+                  {event.scope === 'outbound' ? 'Bloquer cette destination partout' : 'Bloquer cette source partout'}
                 </Button>
                 {onTest && (
                   <Button
@@ -518,7 +529,11 @@ export function ActivityView({
             </TabsTrigger>
             <TabsTrigger value="public">
               <Globe2 className="h-3 w-3" />
-              Internet
+              Entrant
+            </TabsTrigger>
+            <TabsTrigger value="outbound">
+              <Send className="h-3 w-3" />
+              Sortant
             </TabsTrigger>
           </TabsList>
         </Tabs>

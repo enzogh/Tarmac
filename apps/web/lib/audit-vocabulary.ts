@@ -103,6 +103,7 @@ const ACTION_VERB: Record<string, string> = {
   'firewall_event.dismiss': 'a marqué comme vue la connexion',
   'firewall_event.restore': 'a remis à examiner la connexion',
   'firewall.node_mode': 'a changé le filtrage Internet du nœud',
+  'firewall.node_outbound_mode': 'a changé le filtrage sortant du nœud',
   'vpn_profile.create': 'a créé le profil VPN',
   'vpn_profile.update': 'a modifié le profil VPN',
   'vpn_profile.delete': 'a supprimé le profil VPN',

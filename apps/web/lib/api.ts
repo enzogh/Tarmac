@@ -679,7 +679,9 @@ export type VpnStatsLiveEvent = {
 // Mirrors API_KEY_RESOURCES in apps/api/src/api-keys/api-key-token.ts.
 // --- Firewall ---------------------------------------------------------
 export type FirewallMode = 'open' | 'observe' | 'enforce';
-export type FirewallScope = 'mesh' | 'public';
+// outbound: connections the servers open to the internet (target = the
+// servers, source* = the remote end).
+export type FirewallScope = 'mesh' | 'public' | 'outbound';
 export type FirewallProtocol = 'any' | 'tcp' | 'udp' | 'tcpudp' | 'icmp';
 export type FirewallVerdict = 'allowed' | 'blocked' | 'observed';
 export type FirewallExposure = 'public' | 'restricted' | 'closed' | 'observed' | 'local';
@@ -706,6 +708,10 @@ export type FirewallNode = {
   locationCountryCode: string | null;
   locationCity: string | null;
   publicMode: FirewallMode;
+  // Connections this server opens to the internet.
+  outboundMode: FirewallMode;
+  // Protections its agent is too old for ("outbound", "countries").
+  missingFeatures: string[];
   apply: { status: FirewallApplyStatus; message: string | null };
   // Whether this node's agent throttles SSH attempts (needs a recent agent).
   sshLimit: 'on' | 'off' | 'unsupported' | 'unknown';
@@ -728,12 +734,14 @@ export type FirewallRule = {
   enabled: boolean;
   expired: boolean;
   inert: boolean;
-  sourceKind: 'any' | 'nodes' | 'labels' | 'cidrs' | 'lists';
+  sourceKind: 'any' | 'nodes' | 'labels' | 'cidrs' | 'lists' | 'countries';
   sourceNodeIds: string[];
   sourceLabels: string[];
   sourceCidrs: string[];
   // Address lists (internet rules), see FirewallAddressList.
   sourceListIds: string[];
+  // ISO country codes (sourceKind countries).
+  sourceCountries: string[];
   targetKind: 'any' | 'nodes' | 'labels';
   targetNodeIds: string[];
   targetLabels: string[];
@@ -1637,6 +1645,8 @@ export const api = {
       request<FirewallTestResult>('/api/v1/firewall/test', { method: 'POST', body: JSON.stringify(payload) }),
     updateSettings: (payload: Partial<FirewallOverview['settings']>) =>
       request<FirewallOverview>('/api/v1/firewall/settings', { method: 'PATCH', body: JSON.stringify(payload) }),
+    setNodesOutboundMode: (nodeIds: string[], outboundMode: FirewallMode) =>
+      request<FirewallOverview>('/api/v1/firewall/nodes', { method: 'PATCH', body: JSON.stringify({ nodeIds, outboundMode }) }),
     setNodesMode: (nodeIds: string[], publicMode: FirewallMode) =>
       request<FirewallOverview>('/api/v1/firewall/nodes', { method: 'PATCH', body: JSON.stringify({ nodeIds, publicMode }) }),
     createRule: (payload: FirewallRulePayload) =>

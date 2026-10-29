@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { Activity, Bell, Building2, Database, Globe, Globe2, HardDrive, Layers, Network, RefreshCw, Search, Server, Settings, ShieldCheck, Tag, Users, type LucideIcon } from 'lucide-react';
+import { Activity, Bell, Building2, Database, Globe, Globe2, HardDrive, Layers, Network, RefreshCw, Search, Send, Server, Settings, ShieldCheck, Tag, Users, type LucideIcon } from 'lucide-react';
 import { api, setCurrentWorkspaceId } from '../lib/api';
 import { buildNavItems, navItemArea } from '../lib/nav-items';
 import { useWorkspaceAccess } from '../lib/access';
@@ -48,6 +48,7 @@ export function CommandPalette() {
             ? [
                 { key: 'nav:firewall-servers', label: 'Entre serveurs', sublabel: 'Pare-feu', href: `/${slug}/dashboard/firewall/servers`, icon: Network, group: 'Pages' },
                 { key: 'nav:firewall-internet', label: 'Depuis Internet', sublabel: 'Pare-feu', href: `/${slug}/dashboard/firewall/internet`, icon: Globe2, group: 'Pages' },
+                { key: 'nav:firewall-outbound', label: 'Vers Internet', sublabel: 'Pare-feu', href: `/${slug}/dashboard/firewall/outbound`, icon: Send, group: 'Pages' },
                 { key: 'nav:firewall-activity', label: 'Activité du pare-feu', sublabel: 'Pare-feu', href: `/${slug}/dashboard/firewall/activity`, icon: Activity, group: 'Pages' },
               ]
             : [],

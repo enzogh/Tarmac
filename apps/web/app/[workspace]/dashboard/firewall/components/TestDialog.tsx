@@ -117,7 +117,7 @@ export function TestDialog({
           scope,
           targetNodeId: target,
           sourceNodeId: scope === 'mesh' ? source : undefined,
-          sourceIp: scope === 'public' && sourceIp.trim() ? sourceIp.trim() : undefined,
+          sourceIp: scope !== 'mesh' && sourceIp.trim() ? sourceIp.trim() : undefined,
           protocol,
           port: protocol === 'icmp' ? undefined : Number(port),
         }),
@@ -130,19 +130,43 @@ export function TestDialog({
   };
 
   const targets = scope === 'mesh' ? meshNodes : nodes;
-  const ready = Boolean(target) && (scope === 'public' || (source && source !== target)) && (protocol === 'icmp' || /^\d{1,5}$/.test(port));
+  const ready = Boolean(target) && (scope !== 'mesh' || (source && source !== target)) && (protocol === 'icmp' || /^\d{1,5}$/.test(port));
   const ruleDraft = (action: 'allow' | 'deny'): RuleDraft => ({
     scope,
     action,
     sourceKind: scope === 'mesh' ? 'nodes' : sourceIp.trim() ? 'cidrs' : 'any',
     sourceNodeIds: scope === 'mesh' ? [source] : [],
-    sourceCidrs: scope === 'public' && sourceIp.trim() ? [sourceIp.trim()] : [],
+    sourceCidrs: scope !== 'mesh' && sourceIp.trim() ? [sourceIp.trim()] : [],
     targetKind: 'nodes',
     targetNodeIds: [target],
     protocol,
     ports: protocol === 'icmp' ? [] : [port],
   });
 
+  // Outbound reads the other way round: a server reaching an address.
+  const serverPicker = (label: string) => (
+    <div className="space-y-1.5">
+      <Label>{label}</Label>
+      <Select value={target} onValueChange={setTarget}>
+        <SelectTrigger className="h-9">
+          <SelectValue placeholder={scope === 'outbound' ? 'Serveur qui se connecte' : 'Serveur de destination'} />
+        </SelectTrigger>
+        <SelectContent>
+          {targets.map((node) => (
+            <SelectItem key={node.id} value={node.id}>
+              {node.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+  const addressPicker = (label: string, placeholder: string) => (
+    <div className="space-y-1.5">
+      <Label>{label}</Label>
+      <Input value={sourceIp} onChange={(event) => setSourceIp(event.target.value)} placeholder={placeholder} className="h-9 font-mono" />
+    </div>
+  );
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
@@ -161,13 +185,16 @@ export function TestDialog({
             <TabsList variant="segmented">
               <TabsTrigger value="mesh">Entre serveurs</TabsTrigger>
               <TabsTrigger value="public">Depuis Internet</TabsTrigger>
+              <TabsTrigger value="outbound">Vers Internet</TabsTrigger>
             </TabsList>
           </Tabs>
 
           <div className="grid items-end gap-2 sm:grid-cols-[1fr_auto_1fr]">
-            <div className="space-y-1.5">
-              <Label>Depuis</Label>
-              {scope === 'mesh' ? (
+            {scope === 'outbound' ? (
+              serverPicker('Depuis')
+            ) : scope === 'mesh' ? (
+              <div className="space-y-1.5">
+                <Label>Depuis</Label>
                 <Select value={source} onValueChange={setSource}>
                   <SelectTrigger className="h-9">
                     <SelectValue placeholder="Serveur d’origine" />
@@ -180,26 +207,12 @@ export function TestDialog({
                     ))}
                   </SelectContent>
                 </Select>
-              ) : (
-                <Input value={sourceIp} onChange={(event) => setSourceIp(event.target.value)} placeholder="N’importe qui (ou une IP)" className="h-9 font-mono" />
-              )}
-            </div>
+              </div>
+            ) : (
+              addressPicker('Depuis', 'N’importe qui (ou une IP)')
+            )}
             <ArrowRight className="mx-auto mb-2.5 hidden h-4 w-4 text-muted-foreground sm:block" />
-            <div className="space-y-1.5">
-              <Label>Vers</Label>
-              <Select value={target} onValueChange={setTarget}>
-                <SelectTrigger className="h-9">
-                  <SelectValue placeholder="Serveur de destination" />
-                </SelectTrigger>
-                <SelectContent>
-                  {targets.map((node) => (
-                    <SelectItem key={node.id} value={node.id}>
-                      {node.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {scope === 'outbound' ? addressPicker('Vers', 'N’importe où (ou une IP)') : serverPicker('Vers')}
           </div>
 
           <div className="space-y-1.5">

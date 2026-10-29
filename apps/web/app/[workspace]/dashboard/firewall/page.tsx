@@ -10,6 +10,7 @@ import {
   Eye,
   Globe2,
   Network,
+  Send,
   ShieldAlert,
   TriangleAlert,
   type LucideIcon,
@@ -91,6 +92,8 @@ export default function FirewallOverviewPage() {
   const meshNodes = data.nodes.filter((node) => node.vlanIp);
   const meshRules = data.rules.filter((rule) => rule.scope === 'mesh' && rule.enabled && !rule.expired);
   const publicRules = data.rules.filter((rule) => rule.scope === 'public' && rule.enabled && !rule.expired);
+  const outboundRules = data.rules.filter((rule) => rule.scope === 'outbound' && rule.enabled && !rule.expired);
+  const outboundFiltered = data.nodes.filter((node) => node.outboundMode !== 'open');
   const filtered = data.nodes.filter((node) => node.publicMode !== 'open');
   const exposed = data.nodes.flatMap((node) =>
     (node.report?.listening ?? []).filter((entry) => entry.exposure === 'public' && !entry.managedBy).map((entry) => ({ node, entry })),
@@ -174,7 +177,7 @@ export default function FirewallOverviewPage() {
         </Card>
       ) : (
         <>
-          <div className="stagger-in grid gap-4 lg:grid-cols-2">
+          <div className="stagger-in grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
             <ZoneCard
               icon={Network}
               title="Entre vos serveurs"
@@ -202,6 +205,22 @@ export default function FirewallOverviewPage() {
                 { value: publicRules.length, label: 'règles actives' },
               ]}
               href={`${base}/internet`}
+            />
+            <ZoneCard
+              icon={Send}
+              title="Vers Internet"
+              status={outboundFiltered.length === 0 ? 'Non filtré' : `${outboundFiltered.length} / ${data.nodes.length} filtré(s)`}
+              tone={outboundFiltered.length === 0 ? 'neutral' : outboundFiltered.length === data.nodes.length ? 'ok' : 'info'}
+              text={
+                outboundFiltered.length === 0
+                  ? 'Vos services contactent Internet librement. Filtrer limite ce qu’un service piraté pourrait faire.'
+                  : 'Les services des serveurs filtrés ne contactent Internet que là où une règle l’autorise.'
+              }
+              facts={[
+                { value: outboundFiltered.length, label: 'serveurs filtrés' },
+                { value: outboundRules.length, label: 'règles actives' },
+              ]}
+              href={`${base}/outbound`}
             />
           </div>
 

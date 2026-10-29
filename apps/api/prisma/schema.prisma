@@ -478,6 +478,8 @@ model Node {
   // "observe" or "enforce" - per node, since every server exposes
   // different things and filtering is best rolled out one at a time.
   firewallPublicMode           String    @default("open")
+  // Connections this server opens to the internet: open | observe | enforce.
+  firewallOutboundMode         String    @default("open")
   // Same contract as vpnAppliedRevision/vpnApplyStatus, for
   // command.apply_firewall ("active" | "error" | "outdated").
   firewallAppliedRevision      DateTime?
@@ -1168,13 +1170,18 @@ model FirewallRule {
   name            String
   description     String?
   enabled         Boolean   @default(true)
-  // any | nodes | labels (mesh) - any | cidrs | lists (public)
+  // scope: mesh | public (to the servers) | outbound (from the servers to
+  // the internet: target = the servers, source* = the remote end).
+  // any | nodes | labels (mesh) - any | cidrs | lists | countries (public, outbound)
   sourceKind      String    @default("any")
   sourceNodeIds   String[]  @default([])
   sourceLabels    String[]  @default([])
   sourceCidrs     String[]  @default([])
   // FirewallAddressList ids, resolved to their addresses at apply time.
   sourceListIds   String[]  @default([])
+  // ISO 3166 country codes (sourceKind countries), matched by the agents
+  // against the registries' ranges.
+  sourceCountries String[]  @default([])
   // any | nodes | labels
   targetKind      String    @default("any")
   targetNodeIds   String[]  @default([])

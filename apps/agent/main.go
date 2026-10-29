@@ -2132,6 +2132,7 @@ func ensureAgentSystemPackages(ctx context.Context, packages []string) ([]string
 		"pdns-server":          func() bool { return commandExists("pdns_server") },
 		"pdns-backend-sqlite3": func() bool { return pdnsSqliteBackendInstalled() },
 		"sqlite3":              func() bool { return commandExists("sqlite3") },
+		"ipset":                func() bool { return commandExists("ipset") },
 	}
 
 	for _, pkg := range packages {
@@ -4426,6 +4427,7 @@ func main() {
 	// right away instead of staying open until the control plane answers.
 	restoreFirewallAtStartup()
 	startFirewallLogReader()
+	startFirewallGeoRefresh()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

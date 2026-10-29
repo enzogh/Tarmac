@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Ban, Check, Globe2, LoaderCircle, Network, Search, ShieldCheck } from 'lucide-react';
+import { Ban, Check, Globe2, LoaderCircle, Network, Search, Send, ShieldCheck, X } from 'lucide-react';
 import { Callout } from '@/components/Callout';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -11,6 +11,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { api, FirewallAddressList, FirewallMode, FirewallNode, FirewallProtocol, FirewallRule, FirewallRulePayload, FirewallScope, FirewallSystemFlow } from '@/lib/api';
+import { countryName, countryOptions } from '@/lib/countries';
+import { flagFromCountryCode } from '@/lib/geo';
 import { cn } from '@/lib/utils';
 import { EXPIRY_CHOICES, expiryToIso, NodeName, presetFor, PROTOCOL_LABEL, ruleSentence, SERVICE_PRESETS } from './fw-ui';
 
@@ -25,6 +27,7 @@ const EMPTY: Omit<FirewallRulePayload, 'scope'> = {
   sourceLabels: [],
   sourceCidrs: [],
   sourceListIds: [],
+  sourceCountries: [],
   targetKind: 'any',
   targetNodeIds: [],
   targetLabels: [],
@@ -75,6 +78,68 @@ function Section({ step, title, hint, children }: { step: number; title: string;
       </div>
       <div className="min-w-0">{children}</div>
     </section>
+  );
+}
+
+/** Countries, searchable by French name or code; the picked ones show as removable chips. */
+function CountryPicker({ selected, onChange }: { selected: string[]; onChange: (codes: string[]) => void }) {
+  const [query, setQuery] = useState('');
+  const options = useMemo(() => countryOptions(), []);
+  const needle = query.trim().toLowerCase();
+  const shown = options.filter((option) => !needle || option.name.toLowerCase().includes(needle) || option.code.toLowerCase() === needle);
+  const toggle = (code: string) => onChange(selected.includes(code) ? selected.filter((item) => item !== code) : [...selected, code]);
+  return (
+    <div className="space-y-2">
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {selected.map((code) => (
+            <button
+              key={code}
+              type="button"
+              onClick={() => toggle(code)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 text-xs text-foreground transition-colors hover:border-[hsl(var(--danger))]/50"
+              aria-label={`Retirer ${countryName(code)}`}
+            >
+              <span aria-hidden>{flagFromCountryCode(code)}</span>
+              {countryName(code)}
+              <X className="h-3 w-3 text-muted-foreground" />
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="overflow-hidden rounded-lg border border-border bg-surface-2">
+        <div className="relative border-b border-border">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Rechercher un pays…"
+            className="h-9 w-full bg-transparent pl-8 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+          />
+        </div>
+        <div className="scroll-thin max-h-44 overflow-y-auto p-1">
+          {shown.length === 0 ? (
+            <p className="px-3 py-4 text-center text-xs text-muted-foreground">Aucun pays ne correspond.</p>
+          ) : (
+            shown.map((option) => (
+              <label
+                key={option.code}
+                className={cn('flex cursor-pointer items-center gap-3 rounded-md px-2.5 py-1.5 transition-colors hover:bg-surface-3', selected.includes(option.code) && 'bg-primary/[0.06]')}
+              >
+                <Checkbox checked={selected.includes(option.code)} onChange={() => toggle(option.code)} />
+                <span aria-hidden>{flagFromCountryCode(option.code)}</span>
+                <span className="flex-1 truncate text-sm text-foreground">{option.name}</span>
+                <span className="font-mono text-2xs text-muted-foreground">{option.code}</span>
+              </label>
+            ))
+          )}
+        </div>
+      </div>
+      <p className="text-2xs text-muted-foreground">
+        Les adresses attribuées à ces pays par les registres Internet, mises à jour chaque semaine par les serveurs. Un VPN ou un proxy peut masquer le
+        vrai pays : c’est un filtre utile contre les robots, pas une garantie.
+      </p>
+    </div>
   );
 }
 
@@ -258,6 +323,7 @@ export function RuleDialog({
           sourceLabels: rule.sourceLabels,
           sourceCidrs: rule.sourceCidrs,
           sourceListIds: rule.sourceListIds,
+          sourceCountries: rule.sourceCountries ?? [],
           targetKind: rule.targetKind,
           targetNodeIds: rule.targetNodeIds,
           targetLabels: rule.targetLabels,
@@ -265,7 +331,7 @@ export function RuleDialog({
           ports: rule.ports,
         }
       : { ...EMPTY, ...(draft ?? {}), scope: draft?.scope ?? 'mesh' };
-    if (!rule && base.scope === 'public' && base.sourceKind !== 'cidrs' && base.sourceKind !== 'lists') base.sourceKind = 'any';
+    if (!rule && base.scope !== 'mesh' && !['cidrs', 'lists', 'countries'].includes(base.sourceKind)) base.sourceKind = 'any';
     setForm(base);
     setNameTouched(Boolean(rule) || Boolean(draft?.name));
     setCustom(!presetFor(base.protocol, base.ports));
@@ -305,6 +371,7 @@ export function RuleDialog({
   if (effective.sourceKind === 'labels' && effective.sourceLabels.length === 0) problems.push('Choisissez au moins une étiquette d’origine.');
   if (effective.sourceKind === 'cidrs' && effective.sourceCidrs.length === 0) problems.push('Indiquez au moins une adresse IP.');
   if (effective.sourceKind === 'lists' && effective.sourceListIds.length === 0) problems.push('Choisissez au moins une liste d’adresses.');
+  if (effective.sourceKind === 'countries' && effective.sourceCountries.length === 0) problems.push('Choisissez au moins un pays.');
   if (effective.targetKind === 'nodes' && effective.targetNodeIds.length === 0) problems.push('Choisissez au moins un serveur protégé.');
   if (effective.targetKind === 'labels' && effective.targetLabels.length === 0) problems.push('Choisissez au moins une étiquette de destination.');
   if ((effective.protocol === 'tcp' || effective.protocol === 'udp' || effective.protocol === 'tcpudp') && custom && effective.ports.some((port) => !/^\d{1,5}(-\d{1,5})?$/.test(port))) {
@@ -360,6 +427,100 @@ export function RuleDialog({
   };
   const activePreset = custom ? 'custom' : (presetFor(form.protocol, form.ports)?.id ?? 'custom');
 
+  // Outbound rules read the other way round: the servers send, the remote
+  // end (any / addresses / lists / countries) receives.
+  const remoteSection = (
+    <Section
+      step={form.scope === 'outbound' ? 3 : 2}
+      title={form.scope === 'outbound' ? 'Vers' : 'Depuis'}
+      hint={form.scope === 'mesh' ? 'Le serveur qui ouvre la connexion' : form.scope === 'outbound' ? 'Où vont les connexions' : 'Qui sur Internet'}
+    >
+      <div className="space-y-2.5">
+        {form.scope === 'mesh' ? (
+          <KindTabs
+            value={form.sourceKind as 'any' | 'nodes' | 'labels'}
+            onChange={(sourceKind) => set({ sourceKind })}
+            options={[
+              { value: 'any', label: 'Tous les serveurs' },
+              { value: 'nodes', label: 'Serveurs choisis' },
+              { value: 'labels', label: 'Étiquettes' },
+            ]}
+          />
+        ) : (
+          <KindTabs
+            value={form.sourceKind as 'any' | 'cidrs' | 'lists' | 'countries'}
+            onChange={(sourceKind) => set({ sourceKind })}
+            options={[
+              { value: 'any', label: 'Tout Internet' },
+              { value: 'cidrs', label: 'Adresses IP' },
+              { value: 'lists', label: 'Listes d’adresses' },
+              { value: 'countries', label: 'Pays' },
+            ]}
+          />
+        )}
+        {form.sourceKind === 'nodes' && (
+          <NodeChecklist
+            nodes={sourceNodes}
+            selected={form.sourceNodeIds}
+            onChange={(sourceNodeIds) => set({ sourceNodeIds })}
+            emptyHint="Aucun serveur n’a rejoint le réseau privé."
+          />
+        )}
+        {form.sourceKind === 'labels' && (
+          <LabelPicker labels={labels} selected={form.sourceLabels} onChange={(sourceLabels) => set({ sourceLabels })} />
+        )}
+        {form.sourceKind === 'countries' && (
+          <CountryPicker selected={form.sourceCountries} onChange={(sourceCountries) => set({ sourceCountries })} />
+        )}
+        {form.sourceKind === 'lists' && (
+          <ListChecklist lists={lists} selected={form.sourceListIds} onChange={(sourceListIds) => set({ sourceListIds })} />
+        )}
+        {form.sourceKind === 'cidrs' && (
+          <div className="space-y-1">
+            <textarea
+              value={cidrText}
+              onChange={(event) => setCidrText(event.target.value)}
+              rows={3}
+              placeholder={'203.0.113.24\n198.51.100.0/24\n2001:db8::/32'}
+              className="w-full rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-sm text-foreground outline-none placeholder:text-muted-foreground/60 focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <p className="text-2xs text-muted-foreground">Une adresse ou une plage par ligne, IPv4 ou IPv6. Par exemple l’IP de votre bureau.</p>
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+  const serversSection = (
+    <Section
+      step={form.scope === 'outbound' ? 2 : 3}
+      title={form.scope === 'outbound' ? 'Depuis' : 'Vers'}
+      hint={form.scope === 'outbound' ? 'Les serveurs dont les connexions sortantes sont concernées' : 'Les serveurs protégés par la règle'}
+    >
+      <div className="space-y-2.5">
+        <KindTabs
+          value={form.targetKind}
+          onChange={(targetKind) => set({ targetKind })}
+          options={[
+            { value: 'any', label: 'Tous les serveurs' },
+            { value: 'nodes', label: 'Serveurs choisis' },
+            { value: 'labels', label: 'Étiquettes' },
+          ]}
+        />
+        {form.targetKind === 'nodes' && (
+          <NodeChecklist
+            nodes={targetNodes}
+            selected={form.targetNodeIds}
+            onChange={(targetNodeIds) => set({ targetNodeIds })}
+            emptyHint="Aucun serveur disponible."
+          />
+        )}
+        {form.targetKind === 'labels' && (
+          <LabelPicker labels={labels} selected={form.targetLabels} onChange={(targetLabels) => set({ targetLabels })} />
+        )}
+      </div>
+    </Section>
+  );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl">
@@ -372,11 +533,12 @@ export function RuleDialog({
 
         <div className="space-y-5">
           {!rule && (
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid gap-2 sm:grid-cols-3">
               {(
                 [
                   { value: 'mesh', icon: Network, title: 'Entre vos serveurs', text: 'Trafic du réseau privé Tarmac.' },
                   { value: 'public', icon: Globe2, title: 'Depuis Internet', text: 'Ports publics de vos serveurs.' },
+                  { value: 'outbound', icon: Send, title: 'Vers Internet', text: 'Ce que vos serveurs contactent.' },
                 ] as const
               ).map((option) => (
                 <button
@@ -433,82 +595,18 @@ export function RuleDialog({
             </div>
           </Section>
 
-          <Section step={2} title="Depuis" hint={form.scope === 'mesh' ? 'Le serveur qui ouvre la connexion' : 'Qui sur Internet'}>
-            <div className="space-y-2.5">
-              {form.scope === 'mesh' ? (
-                <KindTabs
-                  value={form.sourceKind as 'any' | 'nodes' | 'labels'}
-                  onChange={(sourceKind) => set({ sourceKind })}
-                  options={[
-                    { value: 'any', label: 'Tous les serveurs' },
-                    { value: 'nodes', label: 'Serveurs choisis' },
-                    { value: 'labels', label: 'Étiquettes' },
-                  ]}
-                />
-              ) : (
-                <KindTabs
-                  value={form.sourceKind as 'any' | 'cidrs' | 'lists'}
-                  onChange={(sourceKind) => set({ sourceKind })}
-                  options={[
-                    { value: 'any', label: 'Tout Internet' },
-                    { value: 'cidrs', label: 'Adresses IP précises' },
-                    { value: 'lists', label: 'Listes d’adresses' },
-                  ]}
-                />
-              )}
-              {form.sourceKind === 'nodes' && (
-                <NodeChecklist
-                  nodes={sourceNodes}
-                  selected={form.sourceNodeIds}
-                  onChange={(sourceNodeIds) => set({ sourceNodeIds })}
-                  emptyHint="Aucun serveur n’a rejoint le réseau privé."
-                />
-              )}
-              {form.sourceKind === 'labels' && (
-                <LabelPicker labels={labels} selected={form.sourceLabels} onChange={(sourceLabels) => set({ sourceLabels })} />
-              )}
-              {form.sourceKind === 'lists' && (
-                <ListChecklist lists={lists} selected={form.sourceListIds} onChange={(sourceListIds) => set({ sourceListIds })} />
-              )}
-              {form.sourceKind === 'cidrs' && (
-                <div className="space-y-1">
-                  <textarea
-                    value={cidrText}
-                    onChange={(event) => setCidrText(event.target.value)}
-                    rows={3}
-                    placeholder={'203.0.113.24\n198.51.100.0/24\n2001:db8::/32'}
-                    className="w-full rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-sm text-foreground outline-none placeholder:text-muted-foreground/60 focus-visible:ring-2 focus-visible:ring-ring"
-                  />
-                  <p className="text-2xs text-muted-foreground">Une adresse ou une plage par ligne, IPv4 ou IPv6. Par exemple l’IP de votre bureau.</p>
-                </div>
-              )}
-            </div>
-          </Section>
+          {form.scope === 'outbound' ? (
+            <>
+              {serversSection}
+              {remoteSection}
+            </>
+          ) : (
+            <>
+              {remoteSection}
+              {serversSection}
+            </>
+          )}
 
-          <Section step={3} title="Vers" hint="Les serveurs protégés par la règle">
-            <div className="space-y-2.5">
-              <KindTabs
-                value={form.targetKind}
-                onChange={(targetKind) => set({ targetKind })}
-                options={[
-                  { value: 'any', label: 'Tous les serveurs' },
-                  { value: 'nodes', label: 'Serveurs choisis' },
-                  { value: 'labels', label: 'Étiquettes' },
-                ]}
-              />
-              {form.targetKind === 'nodes' && (
-                <NodeChecklist
-                  nodes={targetNodes}
-                  selected={form.targetNodeIds}
-                  onChange={(targetNodeIds) => set({ targetNodeIds })}
-                  emptyHint="Aucun serveur disponible."
-                />
-              )}
-              {form.targetKind === 'labels' && (
-                <LabelPicker labels={labels} selected={form.targetLabels} onChange={(targetLabels) => set({ targetLabels })} />
-              )}
-            </div>
-          </Section>
 
           <Section step={4} title="Service" hint="Le port visé">
             <div className="space-y-2.5">

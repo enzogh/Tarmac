@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
+	"net"
 	"strconv"
 	"strings"
 	"testing"
@@ -359,5 +361,109 @@ func TestFirewallSSHLimitParse(t *testing.T) {
 	event, ok := fwParseLogLine("TFW:S IN=eth0 OUT= SRC=203.0.113.9 DST=198.51.100.1 PROTO=TCP SPT=50000 DPT=22", nil)
 	if !ok || event.Verdict != "blocked" || event.RuleID != "ssh-limit" || event.Port != 22 {
 		t.Errorf("bad SSH limit event: %+v", event)
+	}
+}
+
+func TestFirewallOutbound(t *testing.T) {
+	desired := fwTestPayload(t, `{"revision":"1","outbound":{"mode":"enforce",
+		"denies":[{"id":"no-smtp","protocol":"tcp","ports":["25"]}],
+		"allows":[{"id":"https","protocol":"tcp","ports":["443"]},{"id":"partner","protocol":"any","sources":["198.51.100.0/24"]}]}}`)
+	plan := buildFirewallPlan(desired, false, []string{"eth0"}, false)
+	out := fwChain(plan, fwChainOut)
+	egr := fwChain(plan, fwChainEgr)
+	if out == nil || egr == nil {
+		t.Fatal("outbound chains missing")
+	}
+	if got := fwJoin(out.rules); got != "-o lo -j RETURN\n-o eth0 -j TARMAC-FW-EGR" {
+		t.Errorf("OUTPUT jump wrong:\n%s", got)
+	}
+	body := fwJoin(egr.rules)
+	for _, want := range []string{
+		"-m owner --uid-owner 0 -j RETURN",
+		"-p udp --dport 53 -j RETURN",
+		"-p tcp --dport 25 -m limit --limit 30/min --limit-burst 20 -j LOG --log-prefix TFW:XR0 ",
+		"-p tcp --dport 25 -m comment --comment tarmac-fw:no-smtp -j DROP",
+		"-p tcp --dport 443 -m comment --comment tarmac-fw:https -j RETURN",
+		// The remote end is the destination.
+		"-d 198.51.100.0/24 -m comment --comment tarmac-fw:partner -j RETURN",
+		"--log-prefix TFW:XB ",
+		"--comment tarmac-fw:default -j DROP",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in:\n%s", want, body)
+		}
+	}
+	// System exemptions come before any user rule.
+	if strings.Index(body, "--uid-owner 0") > strings.Index(body, "no-smtp") {
+		t.Error("root exemption must precede the rules")
+	}
+	if fwChain(plan, fwChainIn) == nil || len(fwChain(plan, fwChainIn).rules) != 1 {
+		t.Error("inbound must stay untouched by an outbound-only payload")
+	}
+	// Observed outbound packets carry the X tag, parsed back as outbound.
+	event, ok := fwParseLogLine("TFW:XO IN= OUT=eth0 SRC=192.0.2.10 DST=203.0.113.9 LEN=60 PROTO=TCP SPT=40000 DPT=6667", nil)
+	if !ok || !event.Outbound || event.Verdict != "observed" || event.Iface != "eth0" || event.Dest != "203.0.113.9" || event.Port != 6667 {
+		t.Errorf("bad outbound event: %+v", event)
+	}
+	// Off: the chains go away.
+	plan = buildFirewallPlan(fwTestPayload(t, `{"revision":"2","outbound":{"mode":"open"}}`), false, []string{"eth0"}, false)
+	if fwChain(plan, fwChainOut) != nil {
+		t.Error("outbound chain must be removed when off")
+	}
+}
+
+func TestFirewallCountries(t *testing.T) {
+	desired := fwTestPayload(t, `{"revision":"1","public":{"mode":"open","denies":[{"id":"geo","protocol":"any","countries":["CN","ru"]}]}}`)
+	if got := fwDesiredCountries(desired); strings.Join(got, ",") != "CN,RU" {
+		t.Fatalf("countries: %v", got)
+	}
+	plan := buildFirewallPlan(desired, false, []string{"eth0"}, false)
+	body := fwJoin(fwChain(plan, fwChainPub).rules)
+	for _, want := range []string{
+		"-m set --match-set tarmac-geo4-CN src -m comment --comment tarmac-fw:geo -j DROP",
+		"-m set --match-set tarmac-geo4-RU src -m comment --comment tarmac-fw:geo -j DROP",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "-j DROP\n-m comment --comment tarmac-fw:geo") || strings.Contains(body, "\n-m comment --comment tarmac-fw:geo -j DROP") {
+		t.Errorf("a country rule must never become an any-source rule:\n%s", body)
+	}
+	body6 := fwJoin(fwChain(buildFirewallPlan(desired, true, []string{"eth0"}, false), fwChainPub).rules)
+	if !strings.Contains(body6, "--match-set tarmac-geo6-CN src") {
+		t.Errorf("IPv6 country set missing:\n%s", body6)
+	}
+	for _, raw := range []string{
+		`{"public":{"mode":"open","denies":[{"id":"x","protocol":"any","countries":["CHN"]}]}}`,
+		`{"public":{"mode":"open","denies":[{"id":"x","protocol":"any","countries":["CN"],"sources":["1.2.3.4"]}]}}`,
+		`{"public":{"mode":"open","denies":[{"id":"x","protocol":"any","countries":["  "]}]}}`,
+	} {
+		var payload map[string]interface{}
+		_ = json.Unmarshal([]byte(raw), &payload)
+		if _, err := parseFirewallPayload(payload); err == nil {
+			t.Errorf("expected an error for %s", raw)
+		}
+	}
+}
+
+func TestFirewallRangeToCIDRs(t *testing.T) {
+	cases := map[[2]string]string{
+		{"1.0.1.0", "1.0.3.255"}:       "1.0.1.0/24,1.0.2.0/23",
+		{"10.0.0.0", "10.0.0.255"}:     "10.0.0.0/24",
+		{"192.0.2.5", "192.0.2.5"}:     "192.0.2.5/32",
+		{"0.0.0.0", "255.255.255.255"}: "0.0.0.0/0",
+	}
+	for bounds, want := range cases {
+		got := strings.Join(fwRangeToCIDRs(net.ParseIP(bounds[0]), net.ParseIP(bounds[1])), ",")
+		if got != want {
+			t.Errorf("%v: got %s, want %s", bounds, got, want)
+		}
+	}
+	data := fwGeoData{}
+	scanner := bufio.NewScanner(strings.NewReader("ripencc|FR|ipv4|2.0.0.0|1048576|20100712|allocated\nripencc|FR|ipv6|2001:660::|32|19990101|allocated\nripencc|*|ipv4|*|1|summary\n"))
+	fwParseGeoLines(scanner, data)
+	if got := data["FR"]; strings.Join(got[0], ",") != "2.0.0.0/12" || strings.Join(got[1], ",") != "2001:660::/32" {
+		t.Errorf("parsed: %+v", got)
 	}
 }

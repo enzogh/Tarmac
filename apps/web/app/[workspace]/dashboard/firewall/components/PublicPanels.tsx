@@ -196,6 +196,7 @@ export function EnforcePreflight({
           sourceLabels: [],
           sourceCidrs: [],
           sourceListIds: [],
+          sourceCountries: [],
           targetKind: 'nodes',
           targetNodeIds: [node.id],
           targetLabels: [],

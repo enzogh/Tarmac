@@ -2,11 +2,13 @@
 // and the access matrix, so what the dashboard predicts is exactly what the
 // agents enforce (see apps/agent/firewall.go for the chains themselves).
 
-export type FwScope = 'mesh' | 'public';
+// outbound: connections the servers open to the internet (the rule's
+// target = those servers, its source* fields = the remote end).
+export type FwScope = 'mesh' | 'public' | 'outbound';
 export type FwMode = 'open' | 'observe' | 'enforce';
 export type FwAction = 'allow' | 'deny';
 export type FwProtocol = 'any' | 'tcp' | 'udp' | 'tcpudp' | 'icmp';
-export type FwSourceKind = 'any' | 'nodes' | 'labels' | 'cidrs' | 'lists';
+export type FwSourceKind = 'any' | 'nodes' | 'labels' | 'cidrs' | 'lists' | 'countries';
 export type FwTargetKind = 'any' | 'nodes' | 'labels';
 
 export const FW_MODES: FwMode[] = ['open', 'observe', 'enforce'];
@@ -18,9 +20,18 @@ export type PolicyNode = {
   vlanIp: string | null;
   labels: string[];
   publicMode: FwMode;
+  outboundMode?: FwMode;
   // Ports sshd listens on, as last reported (22 when unknown).
   sshPorts: number[];
+  // Optional protections its agent supports (its last report); undefined =
+  // unknown, treated as supporting everything (tests, fresh nodes).
+  features?: string[];
 };
+
+/** Whether a node's agent can apply a protection added after the firewall itself. */
+export function nodeSupports(node: Pick<PolicyNode, 'features'> | undefined, feature: string): boolean {
+  return !node?.features || node.features.includes(feature);
+}
 
 export type PolicyRule = {
   id: string;
@@ -34,6 +45,8 @@ export type PolicyRule = {
   sourceCidrs: string[];
   // Address lists (public rules), see PolicyContext.lists.
   sourceListIds: string[];
+  // ISO country codes (sourceKind countries).
+  sourceCountries?: string[];
   targetKind: FwTargetKind;
   targetNodeIds: string[];
   targetLabels: string[];
@@ -84,7 +97,9 @@ export function ruleCidrs(rule: Pick<PolicyRule, 'sourceKind' | 'sourceCidrs' | 
   return [...new Set(lists.filter((list) => wanted.has(list.id)).flatMap((list) => list.cidrs))];
 }
 
-export type AgentRule = { id: string; sources: string[]; protocol: FwProtocol; ports: string[] };
+// countries: matched by the agent against country address sets, instead of
+// sources (never both).
+export type AgentRule = { id: string; sources: string[]; countries?: string[]; protocol: FwProtocol; ports: string[] };
 export type AgentZone = { mode: FwMode; denies: AgentRule[]; allows: AgentRule[] };
 export type AgentPayload = {
   revision: string;
@@ -92,6 +107,7 @@ export type AgentPayload = {
   ping: boolean;
   mesh: AgentZone;
   public: AgentZone;
+  outbound: AgentZone;
   // Absent when off; exempt = addresses an SSH rule explicitly allows.
   sshLimit?: { ports: string[]; exempt: string[] };
 };
@@ -142,7 +158,7 @@ export function ruleSourceNodes(rule: PolicyRule, nodes: PolicyNode[]): PolicyNo
  */
 function agentSources(rule: PolicyRule, ctx: PolicyContext): string[] | null {
   if (rule.sourceKind === 'any') return [];
-  if (rule.scope === 'public') {
+  if (rule.scope === 'public' || rule.scope === 'outbound') {
     // An empty list (or every list deleted) must skip the rule, never widen
     // it to the whole internet.
     const cidrs = ruleCidrs(rule, ctx.lists);
@@ -171,6 +187,8 @@ export function buildAgentPayload(ctx: PolicyContext, nodeId: string, revision: 
     ping: ctx.publicPing,
     mesh: zone(node?.vlanIp ? ctx.meshMode : 'open'),
     public: zone(node?.publicMode ?? 'open'),
+    // An agent that predates outbound filtering would ignore it: say open.
+    outbound: zone(nodeSupports(node, 'outbound') ? (node?.outboundMode ?? 'open') : 'open'),
   };
   if (!node) return payload;
 
@@ -188,9 +206,19 @@ export function buildAgentPayload(ctx: PolicyContext, nodeId: string, revision: 
   for (const rule of ctx.rules) {
     if (!isRuleLive(rule, now)) continue;
     if (!ruleTargets(rule, ctx.nodes).some((target) => target.id === nodeId)) continue;
+    if (rule.scope === 'outbound' && !nodeSupports(node, 'outbound')) continue;
+    if (rule.sourceKind === 'countries') {
+      // An older agent would read a country rule as "any source": it must
+      // never receive one.
+      const countries = rule.sourceCountries ?? [];
+      if (countries.length === 0 || rule.scope === 'mesh' || !nodeSupports(node, 'countries')) continue;
+      const target = payload[rule.scope === 'outbound' ? 'outbound' : 'public'];
+      (rule.action === 'deny' ? target.denies : target.allows).push({ id: rule.id, sources: [], countries, protocol: rule.protocol, ports: rule.ports });
+      continue;
+    }
     const sources = agentSources(rule, ctx);
     if (sources === null) continue;
-    const target = payload[rule.scope === 'mesh' ? 'mesh' : 'public'];
+    const target = payload[rule.scope];
     (rule.action === 'deny' ? target.denies : target.allows).push({
       id: rule.id,
       sources,
@@ -222,7 +250,7 @@ export function sshLimitFor(ctx: PolicyContext, node: PolicyNode, now: Date): { 
 /** True when an apply would install nothing on the node. */
 export function payloadIsEmpty(payload: AgentPayload): boolean {
   const zoneActive = (zone: AgentZone) => zone.mode !== 'open' || zone.denies.length > 0;
-  return !zoneActive(payload.mesh) && !zoneActive(payload.public) && !payload.sshLimit;
+  return !zoneActive(payload.mesh) && !zoneActive(payload.public) && !zoneActive(payload.outbound) && !payload.sshLimit;
 }
 
 // ---------------------------------------------------------------------
@@ -315,7 +343,9 @@ export type Evaluation = {
 
 function sourceMatches(rule: PolicyRule, ctx: PolicyContext, source: { nodeId?: string; ip?: string }): boolean {
   if (rule.sourceKind === 'any') return true;
-  if (rule.scope === 'public') {
+  // The tester doesn't know which country an address belongs to.
+  if (rule.sourceKind === 'countries') return false;
+  if (rule.scope === 'public' || rule.scope === 'outbound') {
     return Boolean(source.ip) && ruleCidrs(rule, ctx.lists).some((cidr) => cidrContains(cidr, source.ip!));
   }
   const nodes = ruleSourceNodes(rule, ctx.nodes) ?? [];
@@ -328,7 +358,8 @@ export function evaluate(
 ): Evaluation {
   const now = ctx.now ?? new Date();
   const target = ctx.nodes.find((node) => node.id === request.targetNodeId);
-  const mode = request.scope === 'mesh' ? ctx.meshMode : (target?.publicMode ?? 'open');
+  const mode =
+    request.scope === 'mesh' ? ctx.meshMode : request.scope === 'outbound' ? (target?.outboundMode ?? 'open') : (target?.publicMode ?? 'open');
   const source = { nodeId: request.sourceNodeId, ip: request.sourceIp };
 
   if (request.scope === 'mesh' && request.protocol === 'icmp') {
@@ -345,6 +376,29 @@ export function evaluate(
       isRuleLive(rule, now) &&
       ruleTargets(rule, ctx.nodes).some((node) => node.id === request.targetNodeId),
   );
+  const result = evaluateRules(ctx, request, live, mode, source);
+  // Country rules can't be checked here: say so rather than overpromise.
+  const byCountry = live.filter((rule) => rule.sourceKind === 'countries' && protocolMatches(rule, request));
+  if (byCountry.length > 0 && result.match.type !== 'infrastructure') {
+    result.reason += ` À noter : ${byCountry.length === 1 ? `la règle par pays « ${byCountry[0].name} » peut` : `${byCountry.length} règles par pays peuvent`} aussi s’appliquer selon le pays de l’adresse, que ce test ne connaît pas.`;
+  }
+  return result;
+}
+
+function evaluateRules(
+  ctx: PolicyContext,
+  request: { scope: FwScope; targetNodeId: string } & Probe,
+  live: PolicyRule[],
+  mode: FwMode,
+  source: { nodeId?: string; ip?: string },
+): Evaluation {
+  if (request.scope === 'outbound' && mode !== 'open' && (request.protocol === 'icmp' || ((request.port === 53 || request.port === 123) && request.protocol === 'udp') || (request.port === 53 && request.protocol === 'tcp'))) {
+    return {
+      verdict: 'allowed',
+      reason: 'Le ping, le DNS et la mise à l’heure restent toujours permis vers Internet.',
+      match: { type: 'infrastructure' },
+    };
+  }
   const deny = live.find((rule) => rule.action === 'deny' && sourceMatches(rule, ctx, source) && protocolMatches(rule, request));
   if (deny) {
     return {
@@ -359,7 +413,9 @@ export function evaluate(
       reason:
         request.scope === 'mesh'
           ? 'Réseau privé en mode ouvert : tout ce qui n’est pas explicitement bloqué passe.'
-          : 'Internet en mode ouvert sur ce serveur : tout ce qui n’est pas explicitement bloqué passe.',
+          : request.scope === 'outbound'
+            ? 'Trafic sortant non filtré sur ce serveur : tout ce qui n’est pas explicitement bloqué passe.'
+            : 'Internet en mode ouvert sur ce serveur : tout ce qui n’est pas explicitement bloqué passe.',
       match: { type: 'mode' },
     };
   }
@@ -390,7 +446,12 @@ export function evaluate(
       match: { type: 'rule', id: allow.id, name: allow.name },
     };
   }
-  return modeDefault(mode, 'Aucune règle n’autorise cette connexion.');
+  return modeDefault(
+    mode,
+    request.scope === 'outbound'
+      ? 'Aucune règle n’autorise cette connexion sortante (les processus root, eux, restent toujours libres).'
+      : 'Aucune règle n’autorise cette connexion.',
+  );
 }
 
 function modeDefault(mode: FwMode, why: string): Evaluation {

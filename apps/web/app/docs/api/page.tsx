@@ -470,13 +470,18 @@ const MODULES: Module[] = [
           'Mode du réseau privé (open, observe, enforce), réponse au ping, protection anti-verrouillage SSH et limite des tentatives SSH depuis Internet.',
         isNew: true,
       },
-      { method: 'PATCH', path: '/firewall/nodes', body: 'nodeIds, publicMode', description: 'Filtrage Internet de plusieurs serveurs d’un coup (open, observe, enforce).' },
+      {
+        method: 'PATCH',
+        path: '/firewall/nodes',
+        body: 'nodeIds, publicMode?, outboundMode?',
+        description: 'Filtrage depuis Internet (publicMode) ou vers Internet (outboundMode) de plusieurs serveurs d’un coup : open, observe, enforce.',
+      },
       {
         method: 'POST',
         path: '/firewall/rules',
-        body: 'scope, action, name, sourceKind, sourceNodeIds?, sourceLabels?, sourceCidrs?, sourceListIds?, targetKind, targetNodeIds?, targetLabels?, protocol, ports, expiresAt?',
+        body: 'scope, action, name, sourceKind, sourceNodeIds?, sourceLabels?, sourceCidrs?, sourceListIds?, sourceCountries?, targetKind, targetNodeIds?, targetLabels?, protocol, ports, expiresAt?',
         description:
-          'Crée une règle. scope : mesh ou public ; action : allow ou deny ; sourceKind : any, nodes, labels (mesh), cidrs ou lists (public) ; ports : "22", "8000-8100".',
+          'Crée une règle. scope : mesh, public ou outbound (connexions sortantes : target = les serveurs, source* = la destination) ; action : allow ou deny ; sourceKind : any, nodes, labels (mesh), cidrs, lists ou countries (codes ISO, ex. CN) ; ports : "22", "8000-8100".',
       },
       { method: 'PATCH', path: '/firewall/rules/:id', description: 'Met à jour une règle (dont enabled pour la désactiver).' },
       { method: 'DELETE', path: '/firewall/rules/:id', description: 'Supprime une règle.' },

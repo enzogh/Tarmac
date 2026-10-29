@@ -3,7 +3,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useParams, usePathname } from 'next/navigation';
-import { Activity, Gauge, Globe2, Network, Plus, Radar, type LucideIcon } from 'lucide-react';
+import { Activity, Gauge, Globe2, Network, Plus, Radar, Send, type LucideIcon } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsCount, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -15,6 +15,7 @@ const TABS: Tab[] = [
   { slug: '', label: 'Synthèse', icon: Gauge },
   { slug: 'servers', label: 'Entre serveurs', icon: Network },
   { slug: 'internet', label: 'Depuis Internet', icon: Globe2 },
+  { slug: 'outbound', label: 'Vers Internet', icon: Send },
   { slug: 'activity', label: 'Activité', icon: Activity },
 ];
 
@@ -30,7 +31,7 @@ export function FirewallShell({ children }: { children: ReactNode }) {
   const base = `/${workspace}/dashboard/firewall`;
   const current = TABS.find((tab) => tab.slug && pathname.startsWith(`${base}/${tab.slug}`)) ?? TABS[0];
   // The dialogs can switch zone; the tab only picks the sensible default.
-  const scope = current.slug === 'internet' ? 'public' : 'mesh';
+  const scope = current.slug === 'internet' ? 'public' : current.slug === 'outbound' ? 'outbound' : 'mesh';
   const toReview = data.settings.meshMode === 'observe' ? data.stats.observed24h : 0;
 
   // On narrow screens the rail scrolls: keep the active tab in view.
