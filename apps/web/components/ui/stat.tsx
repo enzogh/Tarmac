@@ -49,7 +49,7 @@ export function Stat({ label, value, unit, hint, icon: Icon, iconNode, tone = 'n
   return (
     <div
       className={cn(
-        'relative flex min-w-0 flex-col justify-between gap-3 overflow-hidden rounded-xl border border-border bg-surface-1 p-4 transition-[border-color,background-color] duration-300 hover:border-white/[0.12] hover:bg-surface-1/80',
+        'relative flex min-w-0 flex-col justify-between gap-3 overflow-hidden rounded-xl border border-border bg-surface-1 [background-image:linear-gradient(180deg,rgba(255,255,255,0.025),transparent_40%)] p-4 transition-[border-color,background-color] duration-300 hover:border-white/[0.12] hover:bg-surface-1/80',
         className,
       )}
     >

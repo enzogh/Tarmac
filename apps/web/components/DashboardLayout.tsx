@@ -138,7 +138,7 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
         {/* Sidebar */}
         <aside
           className={cn(
-            'fixed inset-y-0 left-0 z-30 flex w-60 shrink-0 flex-col border-r border-border bg-surface-1 transition-transform duration-200 lg:static lg:z-10 lg:h-full lg:translate-x-0',
+            'fixed inset-y-0 left-0 z-30 flex w-60 shrink-0 flex-col border-r border-white/[0.06] bg-surface-1/80 backdrop-blur-xl backdrop-saturate-150 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] lg:static lg:z-10 lg:h-full lg:translate-x-0',
             mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
           )}
         >
@@ -243,7 +243,7 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
         {/* Main Content */}
         <div className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden">
           {/* Top Bar */}
-          <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border bg-surface-1 px-4 sm:px-6">
+          <header className="relative z-10 flex h-12 shrink-0 items-center justify-between gap-2 border-b border-white/[0.06] bg-surface-1/70 px-4 backdrop-blur-xl backdrop-saturate-150 sm:px-6">
             <div className="flex min-w-0 items-center gap-2">
               <button
                 type="button"
@@ -280,8 +280,12 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
           </header>
 
           {/* Content */}
-          <main className="flex-1 overflow-y-auto">
-            <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
+          <main className="relative flex-1 overflow-y-auto">
+            <div
+              className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-[radial-gradient(ellipse_70%_60%_at_50%_-10%,hsl(var(--primary)/0.10),transparent_70%)]"
+              aria-hidden
+            />
+            <div className="relative mx-auto max-w-[1600px] px-4 py-7 sm:px-6 lg:px-10">
               <NoWorkspaceAccessGate>
                 <div key={pathname} className="animate-page-in motion-reduce:animate-none">
                   <PageAccessGate pathname={pathname}>{children}</PageAccessGate>
