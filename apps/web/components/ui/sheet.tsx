@@ -31,11 +31,11 @@ export const SheetContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
 >(({ className, children, ...props }, ref) => (
   <DialogPrimitive.Portal>
-    <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-background/60 backdrop-blur-[1px]" />
+    <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-background/40 backdrop-blur-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed inset-y-0 right-0 z-50 flex w-full max-w-xl flex-col border-l border-border bg-popover shadow-overlay data-[state=open]:animate-sheet-in',
+        'fixed inset-y-0 right-0 z-50 flex w-full max-w-xl flex-col border-l border-white/[0.08] bg-popover/80 shadow-[-24px_0_80px_-12px_rgba(0,0,0,0.6)] backdrop-blur-2xl backdrop-saturate-150 data-[state=open]:animate-sheet-in',
         className,
       )}
       {...props}

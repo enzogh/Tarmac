@@ -72,7 +72,7 @@ export function ChartTooltipContent({ active, label, payload, valueFormatter }: 
   if (!active || !payload || payload.length === 0) return null;
 
   return (
-    <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-overlay">
+    <div className="rounded-lg border border-white/[0.08] bg-zinc-900/75 backdrop-blur-xl backdrop-saturate-150 px-3 py-2 text-xs shadow-overlay">
       {label !== undefined && <p className="mb-1.5 font-medium text-foreground">{label}</p>}
       <div className="space-y-1">
         {payload.map((item) => {
