@@ -12,7 +12,6 @@ import { VlanModule } from '../vlan/vlan.module';
 import { VpnModule } from '../vpn/vpn.module';
 import { AgentTokenService } from './agent-token.service';
 import { AgentsController } from './agents.controller';
-import { AgentsGateway } from './agents.gateway';
 import { AgentsService } from './agents.service';
 import { AgentsWsServer } from './agents.ws';
 
@@ -31,7 +30,7 @@ import { AgentsWsServer } from './agents.ws';
     forwardRef(() => FirewallModule),
   ],
   controllers: [AgentsController],
-  providers: [AgentsGateway, AgentsService, AgentsWsServer, AgentTokenService],
+  providers: [AgentsService, AgentsWsServer, AgentTokenService],
   exports: [AgentsService, AgentTokenService],
 })
 export class AgentsModule {}

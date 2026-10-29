@@ -93,6 +93,9 @@ export type NodeOnboardingStartResult = {
   onboardingId: string;
   expiresAt: string;
   node: NodeItem;
+  // SSH host key seen at the first connection ("SHA256:..."); the install
+  // step is refused if the server presents another one.
+  hostKeyFingerprint?: string;
   githubDeployKey: {
     title: string;
     publicKey: string;

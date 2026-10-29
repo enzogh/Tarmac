@@ -3,6 +3,7 @@ import { MountStatus, Prisma } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { AgentsService } from '../agents/agents.service';
 import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
+import { assertNodesInWorkspace } from '../common/workspace-ownership';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateMountDto } from './dto/create-mount.dto';
 import { UpdateMountDto } from './dto/update-mount.dto';
@@ -26,6 +27,7 @@ export class MountsService {
   }
 
   async create(dto: CreateMountDto, scope: WorkspaceScope, actorUserId?: string) {
+    await assertNodesInWorkspace(this.prisma, scope, dto.nodeId);
     const data: Prisma.MountCreateInput = {
       workspace: { connect: { id: scope.workspaceId } },
       name: dto.name,
@@ -54,6 +56,7 @@ export class MountsService {
 
   async update(id: string, dto: UpdateMountDto, scope: WorkspaceScope, actorUserId?: string) {
     await this.assertOwned(id, scope);
+    await assertNodesInWorkspace(this.prisma, scope, dto.nodeId);
     const data: Prisma.MountUpdateInput = {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
       ...(dto.sourcePath !== undefined ? { sourcePath: dto.sourcePath } : {}),

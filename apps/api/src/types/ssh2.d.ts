@@ -8,6 +8,8 @@ declare module 'ssh2' {
     passphrase?: string;
     readyTimeout?: number;
     tryKeyboard?: boolean;
+    /** Receives the raw host key; returning false aborts the connection. */
+    hostVerifier?: (key: Buffer) => boolean;
   };
 
   export type ParsedKey = {

@@ -73,11 +73,11 @@ export class NodesController {
   }
 
   @Post('onboarding/:id/install')
-  completeOnboarding(@Param('id') id: string, @Body() dto: CompleteNodeOnboardingDto) {
+  completeOnboarding(@Param('id') id: string, @Body() dto: CompleteNodeOnboardingDto, @CurrentWorkspace() scope: WorkspaceScope) {
     if (!dto.deployKeyConfirmed) {
       throw new BadRequestException('deployKeyConfirmed must be true');
     }
-    return this.nodeOnboardingService.completeOnboarding(id);
+    return this.nodeOnboardingService.completeOnboarding(id, scope);
   }
 
   @Patch(':id')

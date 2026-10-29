@@ -20,7 +20,7 @@ export type DnsJournalState = {
 // member rows and zone rows - a group's primary member and its zone share
 // the same nodeId, so this can't live inside just one section).
 export function useDnsPageState() {
-  const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
+  const { data: nodes = [] } = usePolling('nodes', api.nodes.list, { intervalMs: 30000 });
   // Overlay mesh has a single fleet-wide VLAN in practice - reused here only
   // to look up real WireGuard link latency between a group's servers (see
   // GroupsSection's GroupLinkLatency), same data source as the Network page.

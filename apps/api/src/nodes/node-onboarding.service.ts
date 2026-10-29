@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
+import { BlockList, isIPv4 } from 'net';
 import { Client, ConnectConfig, utils as sshUtils } from 'ssh2';
 import { AgentTokenService } from '../agents/agent-token.service';
 import { WorkspaceScope } from '../auth/workspace.guard';
@@ -26,6 +27,10 @@ type SshCredentials = {
 
 type NodeOnboardingSession = SshCredentials & {
   onboardingId: string;
+  workspaceId: string;
+  // SSH host key seen at the first connection ("SHA256:..."): the install
+  // step refuses a server presenting another one.
+  hostKeyFingerprint: string;
   createdAt: Date;
   expiresAt: Date;
   nodeId: string;
@@ -37,6 +42,32 @@ type NodeOnboardingSession = SshCredentials & {
   deployKeyPublic: string;
   agentToken: string;
 };
+
+// Addresses the control plane must not be pointed at by a workspace member:
+// loopback, private and link-local ranges (the internal network this API
+// runs on, cloud metadata endpoints), CGNAT, multicast and reserved space.
+const NON_PUBLIC = new BlockList();
+for (const [network, prefix] of [
+  ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12],
+  ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 4], ['240.0.0.0', 4],
+] as const) {
+  NON_PUBLIC.addSubnet(network, prefix, 'ipv4');
+}
+for (const [network, prefix] of [['::', 128], ['::1', 128], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8], ['64:ff9b::', 96]] as const) {
+  NON_PUBLIC.addSubnet(network, prefix, 'ipv6');
+}
+
+export function isPublicIp(ip: string): boolean {
+  // An IPv4-mapped IPv6 address (::ffff:10.0.0.1) is judged as the IPv4
+  // address it carries.
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip)?.[1];
+  const address = mapped ?? ip;
+  return !NON_PUBLIC.check(address, isIPv4(address) ? 'ipv4' : 'ipv6');
+}
+
+function fingerprint(key: Buffer): string {
+  return `SHA256:${createHash('sha256').update(key).digest('base64').replace(/=+$/, '')}`;
+}
 
 type RemoteCommandResult = {
   code: number;
@@ -64,6 +95,12 @@ export class NodeOnboardingService {
     }
 
     const credentials = this.credentialsFrom(dto);
+    // Platform admins may onboard a server over the internal network; a
+    // workspace member must not be able to make this API open SSH
+    // connections into it.
+    if (!scope.isPlatformAdmin && !isPublicIp(credentials.hostIp)) {
+      throw new BadRequestException('Indiquez l’adresse IP publique du serveur : les adresses privées ou internes ne sont pas acceptées.');
+    }
 
     const createNodeDto: CreateNodeDto = {
       name: dto.name,
@@ -78,7 +115,7 @@ export class NodeOnboardingService {
       data: { agentTokenHash: this.agentTokenService.hash(agentToken), agentTokenRotatedAt: new Date() },
     });
 
-    const deployKeyPublic = await this.ensureRemoteDeployKey(credentials);
+    const { publicKey: deployKeyPublic, hostKeyFingerprint } = await this.ensureRemoteDeployKey(credentials);
 
     // Added to the repository's deploy keys right away when the GitHub
     // integration is set up; otherwise (or if GitHub refuses) the user adds
@@ -93,6 +130,8 @@ export class NodeOnboardingService {
     const repoRef = 'main';
     this.sessions.set(onboardingId, {
       onboardingId,
+      workspaceId: scope.workspaceId as string,
+      hostKeyFingerprint,
       createdAt: now,
       expiresAt,
       nodeId: node.id,
@@ -112,6 +151,7 @@ export class NodeOnboardingService {
       onboardingId,
       expiresAt: expiresAt.toISOString(),
       node,
+      hostKeyFingerprint,
       githubDeployKey: {
         title: `tarmac-${node.name}-${node.id.slice(0, 8)}`,
         publicKey: deployKeyPublic,
@@ -122,9 +162,9 @@ export class NodeOnboardingService {
     };
   }
 
-  async completeOnboarding(onboardingId: string) {
+  async completeOnboarding(onboardingId: string, scope: WorkspaceScope) {
     const session = this.sessions.get(onboardingId);
-    if (!session) {
+    if (!session || session.workspaceId !== scope.workspaceId) {
       throw new NotFoundException('Session onboarding introuvable');
     }
     if (session.expiresAt.getTime() < Date.now()) {
@@ -243,8 +283,8 @@ export class NodeOnboardingService {
     return trimmed;
   }
 
-  private async ensureRemoteDeployKey(credentials: SshCredentials): Promise<string> {
-    const client = await this.openSshConnection(credentials);
+  private async ensureRemoteDeployKey(credentials: SshCredentials): Promise<{ publicKey: string; hostKeyFingerprint: string }> {
+    const { client, hostKeyFingerprint } = await this.openSshConnection(credentials);
     try {
       const result = await this.execRemote(
         client,
@@ -277,14 +317,14 @@ export class NodeOnboardingService {
       if (!publicKey.startsWith('ssh-ed25519 ')) {
         throw new Error('invalid deploy public key generated on remote host');
       }
-      return publicKey;
+      return { publicKey, hostKeyFingerprint };
     } finally {
       client.end();
     }
   }
 
   private async runRemoteInstall(session: NodeOnboardingSession): Promise<string> {
-    const client = await this.openSshConnection(session);
+    const { client } = await this.openSshConnection(session, session.hostKeyFingerprint);
     const logs: string[] = [];
     try {
       const nodeIdQuoted = this.shellQuote(session.nodeId);
@@ -384,7 +424,11 @@ export class NodeOnboardingService {
     return logs.join('\n');
   }
 
-  private openSshConnection(credentials: SshCredentials): Promise<Client> {
+  // The host key is recorded at the first connection and must match on the
+  // next one: whoever answers in between (a hijacked address) would
+  // otherwise receive the SSH and sudo passwords.
+  private openSshConnection(credentials: SshCredentials, expectedFingerprint?: string): Promise<{ client: Client; hostKeyFingerprint: string }> {
+    let seen = '';
     const config: ConnectConfig = {
       host: credentials.hostIp,
       port: 22,
@@ -395,11 +439,23 @@ export class NodeOnboardingService {
         ? { privateKey: credentials.sshPrivateKey, passphrase: credentials.sshKeyPassphrase }
         : { password: credentials.sshPassword }),
     };
+    config.hostVerifier = (key: Buffer) => {
+      seen = fingerprint(key);
+      return !expectedFingerprint || seen === expectedFingerprint;
+    };
     return new Promise((resolve, reject) => {
       const client = new Client();
       client
-        .on('ready', () => resolve(client))
+        .on('ready', () => resolve({ client, hostKeyFingerprint: seen }))
         .on('error', (error: Error & { level?: string }) => {
+          if (expectedFingerprint && seen && seen !== expectedFingerprint) {
+            reject(
+              new BadRequestException(
+                'L’identité SSH du serveur a changé depuis la première étape. Par sécurité, l’installation est interrompue : recommencez l’ajout.',
+              ),
+            );
+            return;
+          }
           if (error.level === 'client-authentication') {
             reject(
               new BadRequestException(

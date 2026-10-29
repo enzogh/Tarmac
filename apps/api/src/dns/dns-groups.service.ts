@@ -4,6 +4,7 @@ import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
 import { sealSecret } from '../common/secret-box';
+import { assertNodesInWorkspace } from '../common/workspace-ownership';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDnsGroupDto } from './dto/create-dns-group.dto';
 import { UpdateDnsGroupDto } from './dto/update-dns-group.dto';
@@ -103,6 +104,7 @@ export class DnsGroupsService {
 
   async upsertGroupMember(groupId: string, dto: UpsertDnsGroupMemberDto, scope: WorkspaceScope, actorUserId?: string) {
     await this.assertGroupOwned(groupId, scope);
+    await assertNodesInWorkspace(this.prisma, scope, dto.nodeId);
     const existing = await this.prisma.dnsServerGroupMember.findUnique({
       where: { groupId_nodeId: { groupId, nodeId: dto.nodeId } },
       select: { id: true },
@@ -133,6 +135,10 @@ export class DnsGroupsService {
 
   async removeGroupMember(groupId: string, nodeId: string, scope: WorkspaceScope, actorUserId?: string) {
     await this.assertGroupOwned(groupId, scope);
+    // Membership first: the uninstall command must only ever reach a node
+    // that is actually in this (owned) group, never any node id in the URL.
+    const member = await this.prisma.dnsServerGroupMember.findUnique({ where: { groupId_nodeId: { groupId, nodeId } }, select: { id: true } });
+    if (!member) throw new NotFoundException('dns server group member not found');
     const cleanupSent = this.sendUninstallDnsNode(nodeId);
     const deleted = await this.prisma.dnsServerGroupMember.delete({ where: { groupId_nodeId: { groupId, nodeId } } });
     await this.recomputeGroupStatus(groupId);

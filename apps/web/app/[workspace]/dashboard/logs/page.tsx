@@ -738,7 +738,7 @@ const JUMPS: Array<{ value: string; label: string; hours: number }> = [
 const LIVE = 'live';
 
 function AgentsTab() {
-  const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
+  const { data: nodes = [] } = usePolling('nodes', api.nodes.list, { intervalMs: 30000 });
   const [nodeFilter, setNodeFilter] = useState('all');
   const [levelFilter, setLevelFilter] = useState('all');
   const [search, setSearch] = useState('');

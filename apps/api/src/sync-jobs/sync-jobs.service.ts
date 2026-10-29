@@ -4,6 +4,7 @@ import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
 import { alertWorkspaceId } from '../alerts/alert-workspace';
+import { assertNodesInWorkspace } from '../common/workspace-ownership';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { UpdateSyncJobDto } from './dto/update-sync-job.dto';
@@ -92,6 +93,7 @@ export class SyncJobsService {
   }
 
   async create(dto: CreateSyncJobDto, scope: WorkspaceScope, actorUserId?: string) {
+    await assertNodesInWorkspace(this.prisma, scope, dto.nodeId);
     const triggerToken = this.syncJobTriggerService.generate();
     const created = await this.prisma.syncJob.create({
       data: {
@@ -115,6 +117,7 @@ export class SyncJobsService {
 
   async update(id: string, dto: UpdateSyncJobDto, scope: WorkspaceScope, actorUserId?: string) {
     await this.assertOwned(id, scope);
+    await assertNodesInWorkspace(this.prisma, scope, dto.nodeId);
     const updated = await this.prisma.syncJob.update({ where: { id }, data: dto });
     await this.auditLogsService.log({
       workspaceId: scope.workspaceId as string,

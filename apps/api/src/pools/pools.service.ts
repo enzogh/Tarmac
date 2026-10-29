@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PoolMemberStatus, Prisma } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
+import { assertNodesInWorkspace } from '../common/workspace-ownership';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePoolDto } from './dto/create-pool.dto';
 import { UpdatePoolDto } from './dto/update-pool.dto';
@@ -69,6 +70,7 @@ export class PoolsService {
 
   async upsertMember(poolId: string, dto: UpsertPoolMemberDto, scope: WorkspaceScope, actorUserId?: string) {
     await this.assertOwned(poolId, scope);
+    await assertNodesInWorkspace(this.prisma, scope, dto.nodeId);
     const member = await this.prisma.poolMember.upsert({
       where: { poolId_nodeId: { poolId, nodeId: dto.nodeId } },
       update: { role: dto.role, status: dto.status },

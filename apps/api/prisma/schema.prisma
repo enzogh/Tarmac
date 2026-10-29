@@ -836,7 +836,8 @@ model Alert {
   @@index([triggeredAt])
   @@index([status])
   @@index([nodeId])
-  @@index([workspaceId])
+  // Lists are per workspace, newest first.
+  @@index([workspaceId, triggeredAt])
   @@index([emailNotifiedAt])
 }
 
@@ -930,7 +931,8 @@ model AuditLog {
   @@index([actorUserId])
   @@index([action])
   @@index([resourceType])
-  @@index([workspaceId])
+  // The journal is read per workspace, newest first.
+  @@index([workspaceId, createdAt])
 }
 
 model AgentLog {
@@ -1103,6 +1105,19 @@ model VpnProfile {
   @@unique([entryNodeId, clientIp])
   @@index([workspaceId])
   @@index([exitNodeId])
+}
+
+// Sessions ended by a logout before their 12 h expiry. A signed session
+// token stays valid until it expires, so logging out records its id (jti)
+// here and SessionValidityService refuses it. Rows past expiresAt are useless
+// and swept hourly.
+model RevokedSession {
+  jti       String   @id
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
 }
 
 // Workspace-scoped API key for programmatic access (e.g. provisioning VPN

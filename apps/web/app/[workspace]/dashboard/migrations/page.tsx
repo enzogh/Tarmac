@@ -159,7 +159,7 @@ function RemoteEndpointFields({
 
 export default function MigrationsPage() {
   const { data: migrations = [], mutate: refreshMigrations, isLoading: migrationsLoading } = usePolling('migrations', api.migrations.list, { intervalMs: 20000 });
-  const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
+  const { data: nodes = [] } = usePolling('nodes', api.nodes.list, { intervalMs: 30000 });
   const nodeLabels = useNodeLabels();
   const [migrationsTab, setMigrationsTab] = useState('active');
   const [wizardOpen, setWizardOpen] = useState(false);

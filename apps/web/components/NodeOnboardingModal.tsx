@@ -1,7 +1,7 @@
 'use client';
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Check, CheckCircle, Copy, FileKey, KeyRound, Loader2, Plus, Upload } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle, Copy, FileKey, KeyRound, Loader2, Plus, ShieldCheck, Upload } from 'lucide-react';
 import { api, NodeOnboardingInstallResult, NodeOnboardingStartResult } from '../lib/api';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -206,8 +206,8 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="host-ip">IP serveur</Label>
-                  <Input id="host-ip" value={hostIp} onChange={(e) => setHostIp(e.target.value)} placeholder="10.0.0.10" required />
+                  <Label htmlFor="host-ip">Adresse IP publique</Label>
+                  <Input id="host-ip" value={hostIp} onChange={(e) => setHostIp(e.target.value)} placeholder="203.0.113.10" required />
                 </div>
               </div>
 
@@ -351,6 +351,18 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
                     : 'Ajoute la clé ci-dessous dans GitHub > Settings > Deploy keys (read-only suffit).'}
                 </p>
               </div>
+              {onboarding.hostKeyFingerprint && (
+                <div className="flex items-start gap-2.5 rounded-lg border border-white/[0.07] bg-white/[0.02] px-3 py-2.5">
+                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
+                  <div className="min-w-0 text-xs text-muted-foreground">
+                    <p>
+                      <span className="font-medium text-foreground">Identité du serveur enregistrée.</span> Tarmac vérifiera
+                      que c’est bien le même serveur au moment d’installer l’agent.
+                    </p>
+                    <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground/80">{onboarding.hostKeyFingerprint}</p>
+                  </div>
+                </div>
+              )}
               {onboarding.githubDeployKey.registrationError && (
                 <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
                   L’ajout automatique sur GitHub a échoué : {onboarding.githubDeployKey.registrationError} Ajoute la clé à la main.

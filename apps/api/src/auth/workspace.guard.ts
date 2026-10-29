@@ -47,6 +47,24 @@ export interface WorkspaceScope {
   permissions?: string[];
 }
 
+type AccessSnapshot =
+  | { isSuperuser: true; workspaces: Array<{ id: string; isDefault: boolean }> }
+  | { isSuperuser: false; memberships: Array<{ workspaceId: string; role: string; permissions: string[] }> }
+  | null;
+
+// Each dashboard tab polls several endpoints every few seconds, and every
+// one of those requests used to re-read the user and their memberships (or,
+// for a platform admin, every workspace). A few seconds of reuse removes
+// most of those queries; a changed membership or role applies after at most
+// ACCESS_TTL_MS, like SessionValidityService's own cache.
+const ACCESS_TTL_MS = 5_000;
+const accessCache = new Map<string, { at: number; snapshot: AccessSnapshot }>();
+
+export function forgetWorkspaceAccess(userId?: string) {
+  if (userId) accessCache.delete(userId);
+  else accessCache.clear();
+}
+
 interface RequestWithWorkspaceScope extends Request {
   user?: { userId?: string };
   apiKey?: AuthenticatedApiKey;
@@ -88,21 +106,28 @@ export class WorkspaceGuard implements CanActivate {
       throw new UnauthorizedException();
     }
 
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { isSuperuser: true },
-    });
-    if (!user) {
+    const cached = await this.loadAccess(userId);
+    try {
+      return this.authorize(context, request, cached.snapshot);
+    } catch (error) {
+      // A refusal based on a cached snapshot is checked again against the
+      // database: access granted seconds ago (a workspace just created, a
+      // member just added or promoted) applies at once.
+      if (!cached.fromCache || !(error instanceof ForbiddenException)) throw error;
+      const fresh = await this.loadAccess(userId, true);
+      return this.authorize(context, request, fresh.snapshot);
+    }
+  }
+
+  private authorize(context: ExecutionContext, request: RequestWithWorkspaceScope, access: AccessSnapshot): boolean {
+    if (!access) {
       throw new UnauthorizedException();
     }
 
     const requestedWorkspaceId = firstHeaderValue(request.headers[WORKSPACE_HEADER]);
 
-    if (user.isSuperuser) {
-      const workspaces = await this.prisma.workspace.findMany({
-        select: { id: true, isDefault: true },
-        orderBy: { createdAt: 'asc' },
-      });
+    if (access.isSuperuser) {
+      const workspaces = access.workspaces;
       const allWorkspaceIds = workspaces.map((w) => w.id);
       if (requestedWorkspaceId && !allWorkspaceIds.includes(requestedWorkspaceId)) {
         throw new ForbiddenException('Unknown workspace');
@@ -120,10 +145,7 @@ export class WorkspaceGuard implements CanActivate {
       return true;
     }
 
-    const memberships = await this.prisma.workspaceMembership.findMany({
-      where: { userId },
-      select: { workspaceId: true, role: true, permissions: true },
-    });
+    const memberships = access.memberships;
     const allowedWorkspaceIds = memberships.map((m) => m.workspaceId);
     if (allowedWorkspaceIds.length === 0) {
       const allowed = this.reflector.getAllAndOverride<boolean>(ALLOW_NO_WORKSPACE_METADATA, [
@@ -160,6 +182,30 @@ export class WorkspaceGuard implements CanActivate {
       );
     }
     return true;
+  }
+
+  private async loadAccess(userId: string, bypassCache = false): Promise<{ snapshot: AccessSnapshot; fromCache: boolean }> {
+    const cached = accessCache.get(userId);
+    if (!bypassCache && cached && Date.now() - cached.at < ACCESS_TTL_MS) return { snapshot: cached.snapshot, fromCache: true };
+
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { isSuperuser: true } });
+    let snapshot: AccessSnapshot = null;
+    if (user?.isSuperuser) {
+      const workspaces = await this.prisma.workspace.findMany({ select: { id: true, isDefault: true }, orderBy: { createdAt: 'asc' } });
+      snapshot = { isSuperuser: true, workspaces };
+    } else if (user) {
+      const memberships = await this.prisma.workspaceMembership.findMany({
+        where: { userId },
+        select: { workspaceId: true, role: true, permissions: true },
+      });
+      snapshot = { isSuperuser: false, memberships };
+    }
+
+    if (accessCache.size > 5_000) {
+      for (const [key, entry] of accessCache) if (Date.now() - entry.at >= ACCESS_TTL_MS) accessCache.delete(key);
+    }
+    accessCache.set(userId, { at: Date.now(), snapshot });
+    return { snapshot, fromCache: false };
   }
 }
 

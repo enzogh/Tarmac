@@ -11,6 +11,7 @@ import { Prisma } from '@prisma/client';
 import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
+import { assertNodesInWorkspace, assertShareInWorkspace } from '../common/workspace-ownership';
 import { PrismaService } from '../prisma/prisma.service';
 import { alertWorkspaceId } from '../alerts/alert-workspace';
 import { CreateMigrationDto } from './dto/create-migration.dto';
@@ -221,6 +222,8 @@ export class MigrationsService {
   }
 
   async create(dto: CreateMigrationDto, scope: WorkspaceScope, actorUserId?: string) {
+    await assertNodesInWorkspace(this.prisma, scope, dto.sourceNodeId, dto.targetNodeId);
+    await assertShareInWorkspace(this.prisma, scope, dto.shareId);
     const created = await this.prisma.migrationTask.create({
       data: {
         workspaceId: scope.workspaceId as string,
@@ -311,6 +314,7 @@ export class MigrationsService {
     if (updatesRouting && !['pending', 'failed'].includes(existing.status)) {
       throw new BadRequestException('only pending or failed migrations can be edited');
     }
+    await assertNodesInWorkspace(this.prisma, scope, dto.sourceNodeId, dto.targetNodeId);
 
     const payload: Prisma.MigrationTaskUpdateInput = { ...dto };
     if (dto.status === 'running') payload.startedAt = new Date();

@@ -56,7 +56,7 @@ const STATUS_BADGE: Record<string, { label: string; type: 'success' | 'warning' 
 };
 
 export default function ReplicationPage() {
-  const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
+  const { data: nodes = [] } = usePolling('nodes', api.nodes.list, { intervalMs: 30000 });
   const { data: jobs = [], mutate: refreshJobs, isLoading: jobsLoading } = usePolling('sync-jobs', api.syncJobs.list, { intervalMs: 20000 });
   const [wizardOpen, setWizardOpen] = useState(false);
   const [notice, setNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);

@@ -13,9 +13,11 @@ function cookieExtractor(req: Request): string | null {
 }
 
 interface JwtPayload {
-  sub: string;
-  email: string;
+  sub?: string;
+  email?: string;
   iat?: number;
+  jti?: string;
+  typ?: string;
 }
 
 @Injectable()
@@ -47,7 +49,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   // Authentik access group, loses its open sessions too (see
   // SessionValidityService and AuthentikAccessSyncService).
   async validate(payload: JwtPayload) {
-    const status = await this.sessionValidity.check(payload.sub, payload.iat);
+    // Other tokens signed with the same secret (the SSO state cookie) carry
+    // a `typ` and no user: never a session.
+    if (!payload.sub || payload.typ) throw new UnauthorizedException('Session invalide');
+    const status = await this.sessionValidity.check(payload.sub, payload.iat, payload.jti);
     if (status !== 'ok') {
       throw new UnauthorizedException(
         status === 'disabled' ? 'Ce compte a été désactivé.' : status === 'revoked' ? 'Votre accès à Tarmac a été retiré.' : 'Session invalide',

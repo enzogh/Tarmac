@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { WorkspaceScope } from '../auth/workspace.guard';
 import { extractExternalIp } from '../nodes/extract-external-ip';
+import { assertNodesInWorkspace } from '../common/workspace-ownership';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpsertDnsRecordDto } from './dto/upsert-dns-record.dto';
 import { DnsZonesService } from './dns-zones.service';
@@ -16,6 +17,7 @@ export class DnsRecordsService {
 
   async upsertRecord(zoneId: string, dto: UpsertDnsRecordDto, scope: WorkspaceScope, actorUserId?: string) {
     await this.dnsZonesService.assertZoneOwned(zoneId, scope);
+    await assertNodesInWorkspace(this.prisma, scope, ...dto.values.map((value) => value.nodeId));
     const ttl = dto.ttl ?? 3600;
     const isGeo = dto.isGeo ?? false;
 

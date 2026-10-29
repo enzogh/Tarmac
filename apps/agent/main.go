@@ -3211,6 +3211,27 @@ func listDirectories(payload map[string]interface{}) (directoryListData, error) 
 	}, nil
 }
 
+// Remote hosts (seedboxes, storage boxes, other nodes) are trusted on first
+// use and pinned in the agent's own known_hosts afterwards, instead of
+// accepting any key on every connection: a host answering later with
+// another key is refused rather than handed the password.
+func sshKnownHostsFile() string {
+	dir := envOrDefault("AGENT_SSH_KEY_DIR", "/var/lib/tarmac-agent/ssh")
+	_ = os.MkdirAll(dir, 0o700)
+	return filepath.Join(dir, "known_hosts")
+}
+
+func sshHostKeyArgs() []string {
+	return []string{"-o", "StrictHostKeyChecking=accept-new", "-o", "UserKnownHostsFile=" + sshKnownHostsFile()}
+}
+
+// sshpass reads the password from $SSHPASS with -e, so it never appears in
+// the process list the way `sshpass -p <password>` does.
+func withSSHPass(cmd *exec.Cmd, password string) *exec.Cmd {
+	cmd.Env = append(os.Environ(), "SSHPASS="+password)
+	return cmd
+}
+
 func shellSingleQuote(input string) string {
 	return "'" + strings.ReplaceAll(input, "'", `'"'"'`) + "'"
 }
@@ -3244,13 +3265,8 @@ func listStorageboxDirectories(host, username, password, basePath string, port, 
 	// Create SFTP batch script
 	batchScript := fmt.Sprintf("cd %s\nls -ahl\nquit\n", sftpDoubleQuote(basePath))
 
-	sftpArgs := []string{
-		"-P", strconv.Itoa(port),
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-		"-o", "ConnectTimeout=10",
-		fmt.Sprintf("%s@%s", username, host),
-	}
+	sftpArgs := append([]string{"-P", strconv.Itoa(port)}, sshHostKeyArgs()...)
+	sftpArgs = append(sftpArgs, "-o", "ConnectTimeout=10", fmt.Sprintf("%s@%s", username, host))
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
 	defer cancel()
@@ -3260,7 +3276,7 @@ func listStorageboxDirectories(host, username, password, basePath string, port, 
 		if !commandExists("sshpass") {
 			return nil, errors.New("sshpass not found on agent; reinstall or update the agent to enable password-based storagebox browsing")
 		}
-		cmd = exec.CommandContext(ctx, "sshpass", append([]string{"-p", password, "sftp"}, sftpArgs...)...)
+		cmd = withSSHPass(exec.CommandContext(ctx, "sshpass", append([]string{"-e", "sftp"}, sftpArgs...)...), password)
 	} else {
 		sshKeyPath := envOrDefault("AGENT_SSH_PRIVATE_KEY_PATH", "/var/lib/tarmac-agent/ssh/id_ed25519")
 		sftpArgs = append([]string{
@@ -3352,14 +3368,12 @@ func listRemoteDirectories(payload map[string]interface{}) (directoryListData, e
 		}
 		directories = listed
 	} else {
-		sshArgs := []string{
-			"-p", strconv.Itoa(port),
-			"-o", "StrictHostKeyChecking=no",
-			"-o", "UserKnownHostsFile=/dev/null",
+		sshArgs := append([]string{"-p", strconv.Itoa(port)}, sshHostKeyArgs()...)
+		sshArgs = append(sshArgs,
 			"-o", "ConnectTimeout=10",
 			fmt.Sprintf("%s@%s", username, host),
 			fmt.Sprintf("find %s -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null", shellSingleQuote(basePath)),
-		}
+		)
 
 		var cmd *exec.Cmd
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
@@ -3368,7 +3382,7 @@ func listRemoteDirectories(payload map[string]interface{}) (directoryListData, e
 			if !commandExists("sshpass") {
 				return directoryListData{}, errors.New("sshpass not found on agent; reinstall or update the agent to enable password-based seedbox browsing")
 			}
-			cmd = exec.CommandContext(ctx, "sshpass", append([]string{"-p", password, "ssh"}, sshArgs...)...)
+			cmd = withSSHPass(exec.CommandContext(ctx, "sshpass", append([]string{"-e", "ssh"}, sshArgs...)...), password)
 		} else {
 			sshKeyPath := envOrDefault("AGENT_SSH_PRIVATE_KEY_PATH", "/var/lib/tarmac-agent/ssh/id_ed25519")
 			sshArgs = append([]string{
@@ -3680,10 +3694,13 @@ func runRsyncWithProgress(sessionCtx context.Context, payload map[string]interfa
 	}
 
 	args := []string{"-a", "--delete", "--partial", "--append-verify", "--info=progress2", sourceArg, targetArg}
+	rsyncPassword := ""
+	knownHosts := sshKnownHostsFile()
 	if sourceHost != "" {
 		sshCommand := fmt.Sprintf(
-			"ssh -p %d -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=%d -o ServerAliveInterval=30 -o ServerAliveCountMax=120 -o TCPKeepAlive=yes",
+			"ssh -p %d -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=%s -o ConnectTimeout=%d -o ServerAliveInterval=30 -o ServerAliveCountMax=120 -o TCPKeepAlive=yes",
 			sourceSshPort,
+			knownHosts,
 			connectTimeoutSeconds,
 		)
 		usePassword := sourcePassword != ""
@@ -3698,13 +3715,14 @@ func runRsyncWithProgress(sessionCtx context.Context, payload map[string]interfa
 			if !commandExists("sshpass") {
 				return "", errors.New("sshpass not found on agent; reinstall or update the agent to enable password-based seedbox transfers")
 			}
-			args = append([]string{"-p", sourcePassword, "rsync"}, args...)
+			rsyncPassword = sourcePassword
 		}
 	}
 	if targetHost != "" {
 		sshCommand := fmt.Sprintf(
-			"ssh -p %d -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=%d -o ServerAliveInterval=30 -o ServerAliveCountMax=120 -o TCPKeepAlive=yes",
+			"ssh -p %d -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=%s -o ConnectTimeout=%d -o ServerAliveInterval=30 -o ServerAliveCountMax=120 -o TCPKeepAlive=yes",
 			targetSshPort,
+			knownHosts,
 			connectTimeoutSeconds,
 		)
 		usePassword := targetPassword != ""
@@ -3719,7 +3737,7 @@ func runRsyncWithProgress(sessionCtx context.Context, payload map[string]interfa
 			if !commandExists("sshpass") {
 				return "", errors.New("sshpass not found on agent; reinstall or update the agent to enable password-based seedbox transfers")
 			}
-			args = append([]string{"-p", targetPassword, "rsync"}, args...)
+			rsyncPassword = targetPassword
 		}
 	}
 
@@ -3741,11 +3759,10 @@ func runRsyncWithProgress(sessionCtx context.Context, payload map[string]interfa
 		ctx, timeoutCancel = context.WithTimeout(baseCtx, time.Duration(timeoutSeconds)*time.Second)
 	}
 	defer timeoutCancel()
-	cmdName := "rsync"
-	if len(args) > 0 && args[0] == "-p" {
-		cmdName = "sshpass"
+	cmd := exec.CommandContext(ctx, "rsync", args...)
+	if rsyncPassword != "" {
+		cmd = withSSHPass(exec.CommandContext(ctx, "sshpass", append([]string{"-e", "rsync"}, args...)...), rsyncPassword)
 	}
-	cmd := exec.CommandContext(ctx, cmdName, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", fmt.Errorf("cannot open rsync stdout: %w", err)

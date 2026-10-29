@@ -15,7 +15,9 @@ export function usePolling<T>(
   options?: SWRConfiguration & { intervalMs?: number; redirectOnError?: boolean },
 ) {
   const router = useRouter();
-  const { intervalMs = 5000, redirectOnError = true, ...swrOptions } = options ?? {};
+  // 15 s unless a caller needs fresher data; pages also get live updates over
+  // the WebSocket (useLiveSocket) for what changes often.
+  const { intervalMs = 15000, redirectOnError = true, ...swrOptions } = options ?? {};
 
   // Every caller's plain string key (e.g. 'activity:1h') gets namespaced by
   // the currently selected workspace. Without this, switching workspaces via

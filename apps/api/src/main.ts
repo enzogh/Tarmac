@@ -4,10 +4,9 @@ import { NestFactory } from '@nestjs/core';
 import { PrismaClient } from '@prisma/client';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
+import { allowedOrigins } from './common/allowed-origins';
 import { requestContext } from './common/request-context';
 import { DEFAULT_WORKSPACE_ID } from './workspaces/default-workspace';
-
-const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:3000', 'https://tarmac.casterot.com'];
 
 const crashAlertPrisma = new PrismaClient();
 
@@ -33,14 +32,34 @@ process.on('unhandledRejection', (reason) => {
   void reportCrashToAlerts('Unhandled promise rejection', reason);
 });
 
+// After an uncaught exception the process state is unknown (half-applied
+// writes, a listener gone): record it, then exit and let Docker restart a
+// clean API (restart: unless-stopped in docker-compose.yml).
 process.on('uncaughtException', (error) => {
-  void reportCrashToAlerts('Uncaught exception', error);
+  console.error('Uncaught exception, exiting', error);
+  const exit = () => process.exit(1);
+  setTimeout(exit, 3_000).unref();
+  void reportCrashToAlerts('Uncaught exception', error).finally(exit);
 });
+
+// Baseline hardening headers on every API response (the API only serves
+// JSON, so it never needs to be framed or sniffed as anything else).
+function securityHeaders(_req: unknown, res: { setHeader(name: string, value: string): void }, next: () => void) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  next();
+}
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  const allowedOrigins = (process.env.CORS_ORIGINS?.split(',').map((o) => o.trim()).filter(Boolean)) ?? DEFAULT_ALLOWED_ORIGINS;
-  app.enableCors({ origin: allowedOrigins, credentials: true });
+  app.getHttpAdapter().getInstance().disable('x-powered-by');
+  app.use(securityHeaders);
+  app.enableCors({ origin: allowedOrigins(), credentials: true });
   app.use(cookieParser());
   app.use((_req: unknown, _res: unknown, next: () => void) => requestContext.run(next));
   app.setGlobalPrefix('api/v1');

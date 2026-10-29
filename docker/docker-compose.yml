@@ -29,6 +29,9 @@ services:
     build:
       context: ..
       dockerfile: apps/api/Dockerfile
+    # Comes back after a crash (the API exits on an uncaught exception, see
+    # main.ts) and after a reboot of the host.
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-tarmac}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
@@ -84,6 +87,7 @@ services:
     build:
       context: ..
       dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
         NEXT_PUBLIC_APP_VERSION: ${GITHUB_SHA:-dev-local}

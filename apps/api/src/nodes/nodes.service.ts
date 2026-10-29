@@ -92,8 +92,14 @@ export class NodesService implements OnModuleInit {
     private readonly githubDeployKeys: GithubDeployKeysService,
   ) {}
 
+  // Polled by most pages: the firewall report and the PowerDNS state are the
+  // two big JSON columns, and they have their own endpoints.
   list(scope: WorkspaceScope) {
-    return this.prisma.node.findMany({ where: scopeWhere(scope), orderBy: { createdAt: 'desc' } });
+    return this.prisma.node.findMany({
+      where: scopeWhere(scope),
+      orderBy: { createdAt: 'desc' },
+      omit: { firewallReport: true, dnsServerState: true },
+    });
   }
 
   private async assertOwned(id: string, scope: WorkspaceScope) {
@@ -294,7 +300,7 @@ export class NodesService implements OnModuleInit {
     // (nodeId, diskName, collectedAt) / (nodeId, createdAt) indexes and
     // return only the handful of rows actually used.
     const [nodes, latestSamples, disks, smartReports] = (await Promise.all([
-      this.prisma.node.findMany({ where: scopeWhere(scope), orderBy: { createdAt: 'desc' } }),
+      this.prisma.node.findMany({ where: scopeWhere(scope), orderBy: { createdAt: 'desc' }, omit: { firewallReport: true, dnsServerState: true } }),
       this.prisma.$queryRaw<ActivitySample[]>`
         SELECT DISTINCT ON (s."nodeId")
           s."nodeId", s."cpu", s."ram", s."disk", s."networkRx", s."networkTx",
@@ -307,7 +313,6 @@ export class NodesService implements OnModuleInit {
       `,
       this.prisma.disk.findMany({
         where: scopeWhereViaNode(scope),
-        include: { node: true },
         orderBy: [{ nodeId: 'asc' }, { mountPath: 'asc' }],
       }),
       this.prisma.$queryRaw<ActivitySmartReport[]>`

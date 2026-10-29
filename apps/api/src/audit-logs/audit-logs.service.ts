@@ -124,10 +124,12 @@ export class AuditLogsService {
   // journal actually contains.
   async facets(scope: WorkspaceScope) {
     const where = { workspaceId: scope.workspaceId };
+    // groupBy runs as SQL GROUP BY; Prisma's `distinct` would read every
+    // journal row of the workspace into memory and dedupe there.
     const [actions, resourceTypes, actorRows] = await Promise.all([
-      this.prisma.auditLog.findMany({ where, distinct: ['action'], select: { action: true }, orderBy: { action: 'asc' } }),
-      this.prisma.auditLog.findMany({ where, distinct: ['resourceType'], select: { resourceType: true }, orderBy: { resourceType: 'asc' } }),
-      this.prisma.auditLog.findMany({ where: { ...where, actorUserId: { not: null } }, distinct: ['actorUserId'], select: { actorUserId: true } }),
+      this.prisma.auditLog.groupBy({ by: ['action'], where, orderBy: { action: 'asc' } }),
+      this.prisma.auditLog.groupBy({ by: ['resourceType'], where, orderBy: { resourceType: 'asc' } }),
+      this.prisma.auditLog.groupBy({ by: ['actorUserId'], where: { ...where, actorUserId: { not: null } } }),
     ]);
     const users = await this.prisma.user.findMany({
       where: { id: { in: actorRows.map((row) => row.actorUserId as string) } },

@@ -198,7 +198,7 @@ type Notice = { type: 'error' | 'success' | 'warning'; message: string } | null;
 
 export default function MountsPage() {
   const { data: mounts = [], mutate: refreshMounts, isLoading: mountsLoading } = usePolling('mounts', api.mounts.list, { intervalMs: 20000 });
-  const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
+  const { data: nodes = [] } = usePolling('nodes', api.nodes.list, { intervalMs: 30000 });
   const { data: vlanMembers = [] } = usePolling('vlan-members', async () => {
     const vlanData = await api.vlan.getAll().catch(() => ({ vlans: [] }));
     const members: VlanMember[] = [];

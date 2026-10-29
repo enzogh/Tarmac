@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
+import { assertNodesInWorkspace } from '../common/workspace-ownership';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAlertRuleDto } from './dto/create-alert-rule.dto';
 import { UpdateAlertRuleDto } from './dto/update-alert-rule.dto';
@@ -27,6 +28,7 @@ export class AlertRulesService {
   }
 
   async create(dto: CreateAlertRuleDto, scope: WorkspaceScope, actorUserId?: string) {
+    await assertNodesInWorkspace(this.prisma, scope, dto.nodeId);
     const created = await this.prisma.alertRule.create({ data: { ...dto, workspaceId: scope.workspaceId as string } });
     await this.auditLogsService.log({
       workspaceId: scope.workspaceId as string,
@@ -41,6 +43,7 @@ export class AlertRulesService {
 
   async update(id: string, dto: UpdateAlertRuleDto, scope: WorkspaceScope, actorUserId?: string) {
     await this.assertOwned(id, scope);
+    await assertNodesInWorkspace(this.prisma, scope, dto.nodeId);
     const updated = await this.prisma.alertRule.update({ where: { id }, data: dto });
     await this.auditLogsService.log({
       workspaceId: scope.workspaceId as string,

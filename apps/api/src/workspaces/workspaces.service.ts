@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { slugify } from '../common/slugify';
 import { PrismaService } from '../prisma/prisma.service';
-import { WorkspaceScope } from '../auth/workspace.guard';
+import { WorkspaceScope, forgetWorkspaceAccess } from '../auth/workspace.guard';
 import { VlanService } from '../vlan/vlan.service';
 import { workspaceCreationQuota } from './workspace-quota';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
@@ -590,6 +590,7 @@ export class WorkspacesService {
             ]
           : []),
       ]);
+      if (permissions) forgetWorkspaceAccess();
       await this.auditLogsService.log({
         workspaceId,
         actorUserId,
@@ -690,6 +691,7 @@ export class WorkspacesService {
           ]
         : []),
     ]);
+    forgetWorkspaceAccess();
     await this.auditLogsService.log({
       workspaceId,
       actorUserId,
@@ -750,6 +752,7 @@ export class WorkspacesService {
       data: access,
       include: { user: { select: MEMBER_USER_SELECT }, customRole: { select: { id: true, name: true } } },
     });
+    forgetWorkspaceAccess(updated.userId);
     await this.auditLogsService.log({
       workspaceId,
       actorUserId,
@@ -823,6 +826,7 @@ export class WorkspacesService {
     }
 
     await this.prisma.workspaceMembership.deleteMany({ where: { workspaceId, userId } });
+    forgetWorkspaceAccess(userId);
     await this.auditLogsService.log({
       workspaceId,
       actorUserId,
@@ -894,6 +898,7 @@ export class WorkspacesService {
       this.prisma.vlan.deleteMany({ where: { workspaceId } }),
       this.prisma.workspace.delete({ where: { id: workspaceId } }),
     ]);
+    forgetWorkspaceAccess();
     return { success: true };
   }
 

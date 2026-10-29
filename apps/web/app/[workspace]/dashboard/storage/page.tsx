@@ -75,7 +75,7 @@ const STATUS_BADGE: Record<string, { label: string; type: 'success' | 'warning' 
 };
 
 export default function StoragePage() {
-  const { data: nodes = [] } = usePolling('nodes', api.nodes.list);
+  const { data: nodes = [] } = usePolling('nodes', api.nodes.list, { intervalMs: 30000 });
   const { data: pools = [], mutate: refreshPools, isLoading: poolsLoading } = usePolling('pools', api.pools.list, { intervalMs: 20000 });
   const [wizardOpen, setWizardOpen] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState<PresetOption | null>(null);

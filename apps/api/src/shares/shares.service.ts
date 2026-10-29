@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, ShareClientAccess, ShareStatus } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
+import { assertNodesInWorkspace } from '../common/workspace-ownership';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateShareDto } from './dto/create-share.dto';
 import { UpdateShareDto } from './dto/update-share.dto';
@@ -27,6 +28,7 @@ export class SharesService {
   }
 
   async create(dto: CreateShareDto, scope: WorkspaceScope, actorUserId?: string) {
+    await assertNodesInWorkspace(this.prisma, scope, dto.nodeId);
     const data: Prisma.ShareCreateInput = {
       workspace: { connect: { id: scope.workspaceId } },
       name: dto.name,
@@ -48,6 +50,7 @@ export class SharesService {
 
   async update(id: string, dto: UpdateShareDto, scope: WorkspaceScope, actorUserId?: string) {
     await this.assertOwned(id, scope);
+    await assertNodesInWorkspace(this.prisma, scope, dto.nodeId);
     const data: Prisma.ShareUpdateInput = {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
       ...(dto.path !== undefined ? { path: dto.path } : {}),

@@ -12,6 +12,7 @@ import type { User } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
+import { randomUUID } from 'crypto';
 import * as jwt from 'jsonwebtoken';
 import { alertEmailAddress, alertEmailSource, internalMailDomain } from '../mail/alert-recipients';
 import { MailService } from '../mail/mail.service';
@@ -85,10 +86,8 @@ export class AuthService implements OnModuleInit {
   }
 
   async issueSession(user: User) {
-    const access_token = await this.jwtService.signAsync({
-      sub: user.id,
-      email: user.email,
-    });
+    // jwtid lets a logout end this one session (see SessionValidityService).
+    const access_token = await this.jwtService.signAsync({ sub: user.id, email: user.email }, { jwtid: randomUUID() });
 
     return { access_token };
   }
@@ -436,11 +435,12 @@ export class AuthService implements OnModuleInit {
   // live-updates WebSocket, which authenticates off the same cookie but
   // has no Express request/guard pipeline to hook into). Tries every
   // secret in the current rotation window, same as JwtStrategy.
-  verifyToken(rawToken: string): { userId: string; email: string; issuedAt?: number } | null {
+  verifyToken(rawToken: string): { userId: string; email: string; issuedAt?: number; expiresAt?: number; jti?: string } | null {
     for (const secret of getCandidateJwtSecrets(this.configService)) {
       try {
-        const payload = jwt.verify(rawToken, secret) as JwtPayload & { iat?: number };
-        return { userId: payload.sub, email: payload.email, issuedAt: payload.iat };
+        const payload = jwt.verify(rawToken, secret) as JwtPayload & { iat?: number; exp?: number; jti?: string; typ?: string };
+        if (!payload.sub || payload.typ) return null;
+        return { userId: payload.sub, email: payload.email, issuedAt: payload.iat, expiresAt: payload.exp, jti: payload.jti };
       } catch {
         continue;
       }
