@@ -774,7 +774,7 @@ export type FirewallMatrixCell = {
 };
 
 export type FirewallOverview = {
-  settings: { meshMode: FirewallMode; publicPing: boolean; sshGuard: boolean; sshLimit: boolean };
+  settings: { meshMode: FirewallMode; publicPing: boolean; sshGuard: boolean; sshLimit: boolean; eventRetentionDays: number };
   nodes: FirewallNode[];
   rules: FirewallRule[];
   lists: FirewallAddressList[];
@@ -891,6 +891,9 @@ export type WorkspaceDetail = {
   // Owner: counted in their creation limit, receives the weekly report.
   createdById: string | null;
   weeklyReportEnabled: boolean;
+  // Days the firewall Activity and the agents' logs are kept.
+  firewallEventRetentionDays: number;
+  agentLogRetentionDays: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -1682,7 +1685,10 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
-    update: (id: string, payload: { name?: string; slug?: string; ssoGroupClaim?: string; weeklyReportEnabled?: boolean }) =>
+    update: (
+      id: string,
+      payload: { name?: string; slug?: string; ssoGroupClaim?: string; weeklyReportEnabled?: boolean; firewallEventRetentionDays?: number; agentLogRetentionDays?: number },
+    ) =>
       request<WorkspaceDetail>(`/api/v1/workspaces/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(payload),

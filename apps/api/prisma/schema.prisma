@@ -230,6 +230,10 @@ model Workspace {
   // Monday-morning summary emailed to the owner (createdById, or the
   // administrators of workspaces that predate it) - see WeeklyReportService.
   weeklyReportEnabled Boolean   @default(true)
+  // How long the firewall Activity and the agents' logs are kept, in days
+  // (WORKSPACE_RETENTION_CHOICES).
+  firewallEventRetentionDays Int @default(14)
+  agentLogRetentionDays      Int @default(14)
   weeklyReportSentAt  DateTime?
   // Firewall between the workspace's servers (private network): "open"
   // (only explicit blocks apply), "observe" (would-be blocked traffic is

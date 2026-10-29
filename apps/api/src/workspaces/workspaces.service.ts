@@ -231,7 +231,14 @@ export class WorkspacesService {
     if (dto.ssoGroupClaim !== undefined && !scope.isPlatformAdmin) {
       throw new ForbiddenException('Seul un administrateur de la plateforme peut lier un groupe Authentik à un workspace.');
     }
-    if (dto.name === undefined && dto.ssoGroupClaim === undefined && dto.slug === undefined && dto.weeklyReportEnabled === undefined) {
+    if (
+      dto.name === undefined &&
+      dto.ssoGroupClaim === undefined &&
+      dto.slug === undefined &&
+      dto.weeklyReportEnabled === undefined &&
+      dto.firewallEventRetentionDays === undefined &&
+      dto.agentLogRetentionDays === undefined
+    ) {
       throw new BadRequestException('Nothing to update');
     }
 
@@ -250,6 +257,8 @@ export class WorkspacesService {
             ...(dto.ssoGroupClaim !== undefined ? { ssoGroupClaim: dto.ssoGroupClaim.trim() || null } : {}),
             ...(slugChanged ? { slug: dto.slug, previousSlugs } : {}),
             ...(dto.weeklyReportEnabled !== undefined ? { weeklyReportEnabled: dto.weeklyReportEnabled } : {}),
+            ...(dto.firewallEventRetentionDays !== undefined ? { firewallEventRetentionDays: dto.firewallEventRetentionDays } : {}),
+            ...(dto.agentLogRetentionDays !== undefined ? { agentLogRetentionDays: dto.agentLogRetentionDays } : {}),
           },
         }),
         // The Vlan was named after the slug when it was provisioned; keep the

@@ -2,7 +2,7 @@
 
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { AlertTriangle, BellRing, Building2, CalendarClock, Crown, Eye, Lock, Mail, Pencil, Save, Send, Tag, Trash2, UserCircle2, Users, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, Archive, BellRing, Building2, CalendarClock, Crown, Eye, Lock, Mail, Pencil, Save, Send, Tag, Trash2, UserCircle2, Users, type LucideIcon } from 'lucide-react';
 import { AdminProfile, api, WorkspaceDetail, WorkspaceListItem } from '../../../../lib/api';
 import { API_KEY_RESOURCES, scopesToPermissions } from '../../../../lib/api-key-permissions';
 import { usePolling } from '../../../../lib/hooks/usePolling';
@@ -20,7 +20,7 @@ import { CustomRolesSection } from './components/CustomRolesSection';
 import { MembersSection } from './components/MembersSection';
 import { RoleBadge, roleOf } from './components/roles';
 
-type SectionId = 'general' | 'members' | 'roles' | 'report' | 'access' | 'notifications' | 'danger';
+type SectionId = 'general' | 'members' | 'roles' | 'report' | 'retention' | 'access' | 'notifications' | 'danger';
 type SectionDef = { id: SectionId; label: string; description: string; icon: LucideIcon; group: 'Workspace' | 'Mon compte'; tone?: 'danger' };
 
 const SECTIONS: Record<SectionId, SectionDef> = {
@@ -44,6 +44,13 @@ const SECTIONS: Record<SectionId, SectionDef> = {
     label: 'Rapport hebdomadaire',
     description: 'Le résumé de la semaine envoyé chaque lundi matin au propriétaire du workspace.',
     icon: CalendarClock,
+    group: 'Workspace',
+  },
+  retention: {
+    id: 'retention',
+    label: 'Conservation des données',
+    description: 'Combien de temps Tarmac garde l’historique de ce workspace avant de l’effacer.',
+    icon: Archive,
     group: 'Workspace',
   },
   access: { id: 'access', label: 'Mon accès', description: 'Ce que votre rôle vous permet de faire dans ce workspace.', icon: Lock, group: 'Workspace' },
@@ -72,7 +79,7 @@ export default function WorkspaceSettingsPage() {
   const canManage = isSuperuser || workspace?.myRole === 'owner';
 
   const available: SectionId[] = canManage
-    ? ['general', 'members', 'roles', 'report', 'notifications', ...(workspace?.isDefault ? [] : (['danger'] as SectionId[]))]
+    ? ['general', 'members', 'roles', 'report', 'retention', 'notifications', ...(workspace?.isDefault ? [] : (['danger'] as SectionId[]))]
     : ['access', 'notifications'];
   const requested = searchParams.get('section') as SectionId | null;
   const active: SectionId = requested && available.includes(requested) ? requested : available[0];
@@ -168,6 +175,7 @@ export default function WorkspaceSettingsPage() {
           )}
           {active === 'roles' && <CustomRolesSection workspace={workspace} />}
           {active === 'report' && <WeeklyReportCard workspace={workspace} profile={profile} onSaved={() => void refreshWorkspaces()} />}
+          {active === 'retention' && <RetentionCard workspace={workspace} onSaved={() => void refreshWorkspaces()} />}
           {active === 'access' && <MyAccessCard workspace={workspace} />}
           {active === 'notifications' && <EmailNotificationsCard profile={profile} onSaved={() => void refreshProfile()} />}
           {active === 'danger' && (
@@ -233,6 +241,99 @@ function MyAccessCard({ workspace }: { workspace: WorkspaceListItem }) {
 }
 
 // On/off for the Monday summary, who gets it, and a way to see one now.
+const RETENTION_CHOICES = [7, 14, 30, 90, 180];
+
+function RetentionRow({
+  title,
+  text,
+  value,
+  saving,
+  onChange,
+}: {
+  title: string;
+  text: string;
+  value: number;
+  saving: boolean;
+  onChange: (days: number) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-4 p-5">
+      <div className="min-w-0 max-w-xl space-y-1">
+        <p className="text-sm text-foreground">{title}</p>
+        <p className="text-xs text-muted-foreground">{text}</p>
+      </div>
+      <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-surface-2 p-0.5" role="radiogroup" aria-label={title}>
+        {RETENTION_CHOICES.map((days) => (
+          <button
+            key={days}
+            type="button"
+            role="radio"
+            aria-checked={value === days}
+            disabled={saving}
+            onClick={() => value !== days && onChange(days)}
+            className={cn(
+              'rounded-[7px] px-3 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50',
+              value === days ? 'bg-surface-3 text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {days} j
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RetentionCard({ workspace, onSaved }: { workspace: WorkspaceListItem; onSaved: () => void }) {
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const save = async (patch: { firewallEventRetentionDays?: number; agentLogRetentionDays?: number }, shorter: boolean) => {
+    if (shorter && !window.confirm('Réduire la durée efface, dans l’heure qui suit, l’historique plus ancien que la nouvelle limite. Continuer ?')) return;
+    setSaving(true);
+    setNotice(null);
+    try {
+      await api.workspaces.update(workspace.id, patch);
+      onSaved();
+      setNotice({ type: 'success', message: 'Durée de conservation enregistrée.' });
+    } catch (error) {
+      setNotice({ type: 'error', message: error instanceof Error ? error.message : 'Impossible de modifier ce réglage.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <Card className="divide-y divide-border">
+        <RetentionRow
+          title="Activité du pare-feu"
+          text="Les connexions refusées, ou qui le seraient en mode observation. Une durée plus longue aide pour un audit ou une enquête après un incident."
+          value={workspace.firewallEventRetentionDays}
+          saving={saving}
+          onChange={(days) => void save({ firewallEventRetentionDays: days }, days < workspace.firewallEventRetentionDays)}
+        />
+        <RetentionRow
+          title="Journaux des agents"
+          text="Les messages remontés par les serveurs (onglet Agents du Journal). Ce sont les plus volumineux : allongez seulement si vous en avez besoin."
+          value={workspace.agentLogRetentionDays}
+          saving={saving}
+          onChange={(days) => void save({ agentLogRetentionDays: days }, days < workspace.agentLogRetentionDays)}
+        />
+      </Card>
+      <p className="px-1 text-xs text-muted-foreground">
+        Les actions de votre équipe (onglet Actions du Journal) sont gardées sans limite de durée. Les mesures détaillées des serveurs servent aux
+        graphiques des dernières 24 h ; leurs moyennes journalières sont gardées 120 jours.
+      </p>
+      {notice && (
+        <Alert variant={notice.type === 'error' ? 'destructive' : 'success'}>
+          <AlertDescription>{notice.message}</AlertDescription>
+        </Alert>
+      )}
+    </div>
+  );
+}
+
 function WeeklyReportCard({ workspace, profile, onSaved }: { workspace: WorkspaceListItem; profile: AdminProfile; onSaved: () => void }) {
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);

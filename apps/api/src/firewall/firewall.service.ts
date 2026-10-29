@@ -187,7 +187,14 @@ export class FirewallService {
     const [workspace, nodes, rules, lists] = await Promise.all([
       this.prisma.workspace.findUniqueOrThrow({
         where: { id: workspaceId },
-        select: { firewallMeshMode: true, firewallPublicPing: true, firewallSshGuard: true, firewallSshLimit: true, internalDnsNodeId: true },
+        select: {
+          firewallMeshMode: true,
+          firewallPublicPing: true,
+          firewallSshGuard: true,
+          firewallSshLimit: true,
+          firewallEventRetentionDays: true,
+          internalDnsNodeId: true,
+        },
       }),
       this.prisma.node.findMany({
         where: { workspaceId },
@@ -572,6 +579,8 @@ export class FirewallService {
         publicPing: workspace.firewallPublicPing,
         sshGuard: workspace.firewallSshGuard,
         sshLimit: workspace.firewallSshLimit,
+        // Days of Activity kept, chosen in Settings.
+        eventRetentionDays: workspace.firewallEventRetentionDays,
       },
       nodes: nodeRows,
       rules: rules.map((rule) => this.serializeRule(rule, nodeNames, ctx)),
@@ -660,9 +669,14 @@ export class FirewallService {
     };
   }
 
+  private async retentionHours(workspaceId: string) {
+    const workspace = await this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { firewallEventRetentionDays: true } });
+    return (workspace?.firewallEventRetentionDays ?? EVENT_RETENTION_DAYS) * 24;
+  }
+
   async events(scope: WorkspaceScope, query: { hours?: string; scope?: string; verdict?: string; nodeId?: string }) {
     const workspaceId = scope.workspaceId as string;
-    const hours = Math.min(Math.max(Number(query.hours) || 24, 1), EVENT_RETENTION_DAYS * 24);
+    const hours = Math.min(Math.max(Number(query.hours) || 24, 1), await this.retentionHours(workspaceId));
     const rows = await this.prisma.firewallEvent.findMany({
       where: {
         workspaceId,
@@ -768,7 +782,7 @@ export class FirewallService {
 
   /** Attempts per hour and verdict, for the Activity chart. */
   async timeline(scope: WorkspaceScope, query: { hours?: string; scope?: string; nodeId?: string }) {
-    const hours = Math.min(Math.max(Number(query.hours) || 24, 1), EVENT_RETENTION_DAYS * 24);
+    const hours = Math.min(Math.max(Number(query.hours) || 24, 1), await this.retentionHours(scope.workspaceId as string));
     const rows = await this.prisma.firewallEvent.groupBy({
       by: ['bucketStart', 'verdict'],
       where: {
@@ -1331,8 +1345,14 @@ export class FirewallService {
     }
   }
 
+  // Each workspace keeps its Activity as long as it chose (Settings).
   @Cron(CronExpression.EVERY_HOUR)
   async pruneEvents() {
-    await this.prisma.firewallEvent.deleteMany({ where: { lastSeenAt: { lt: new Date(Date.now() - EVENT_RETENTION_DAYS * 86400 * 1000) } } });
+    const workspaces = await this.prisma.workspace.findMany({ select: { id: true, firewallEventRetentionDays: true } });
+    const byDays = new Map<number, string[]>();
+    for (const workspace of workspaces) byDays.set(workspace.firewallEventRetentionDays, [...(byDays.get(workspace.firewallEventRetentionDays) ?? []), workspace.id]);
+    for (const [days, ids] of byDays) {
+      await this.prisma.firewallEvent.deleteMany({ where: { workspaceId: { in: ids }, lastSeenAt: { lt: new Date(Date.now() - days * 86400 * 1000) } } });
+    }
   }
 }

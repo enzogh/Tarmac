@@ -93,12 +93,27 @@ export class AgentLogsService {
     return { deleted: count };
   }
 
+  // Each workspace keeps its nodes' logs as long as it chose (Settings);
+  // lines of nodes that no longer exist go after RETENTION_DAYS.
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async pruneOldLogs() {
-    const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
-    const { count } = await this.prisma.agentLog.deleteMany({ where: { createdAt: { lt: cutoff } } });
-    if (count > 0) {
-      this.logger.log(`Pruned ${count} agent log line(s) older than ${RETENTION_DAYS} days`);
+    const nodes = await this.prisma.node.findMany({ select: { id: true, workspace: { select: { agentLogRetentionDays: true } } } });
+    const byDays = new Map<number, string[]>();
+    for (const node of nodes) {
+      const days = node.workspace?.agentLogRetentionDays ?? RETENTION_DAYS;
+      byDays.set(days, [...(byDays.get(days) ?? []), node.id]);
     }
+    const dayMs = 24 * 60 * 60 * 1000;
+    let total = 0;
+    for (const [days, nodeIds] of byDays) {
+      const { count } = await this.prisma.agentLog.deleteMany({ where: { nodeId: { in: nodeIds }, createdAt: { lt: new Date(Date.now() - days * dayMs) } } });
+      total += count;
+    }
+    const known = nodes.map((node) => node.id);
+    const { count: orphans } = await this.prisma.agentLog.deleteMany({
+      where: { nodeId: { notIn: known }, createdAt: { lt: new Date(Date.now() - RETENTION_DAYS * dayMs) } },
+    });
+    total += orphans;
+    if (total > 0) this.logger.log(`Pruned ${total} agent log line(s) past their workspace's retention`);
   }
 }

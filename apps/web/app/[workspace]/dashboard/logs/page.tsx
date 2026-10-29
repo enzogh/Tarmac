@@ -708,8 +708,8 @@ const LEVELS: Record<string, { label: string; badge: string; text: string }> = {
 };
 
 const OLDER_PAGE = 200;
-// Agent lines are pruned after this many days (AgentLogsService.RETENTION_DAYS).
-const AGENT_LOG_RETENTION_DAYS = 14;
+// Agent lines are pruned after the workspace's retention (Settings), 14 days by default.
+const DEFAULT_AGENT_LOG_RETENTION_DAYS = 14;
 const JUMPS: Array<{ value: string; label: string; hours: number }> = [
   { value: '1h', label: 'Il y a 1 h', hours: 1 },
   { value: '6h', label: 'Il y a 6 h', hours: 6 },
@@ -722,6 +722,9 @@ const LIVE = 'live';
 
 function AgentsTab() {
   const { data: nodes = [] } = usePolling('nodes', api.nodes.list, { intervalMs: 30000 });
+  const { currentWorkspaceId } = useWorkspace();
+  const { data: workspaces } = usePolling('workspaces', api.workspaces.list, { intervalMs: 60000, redirectOnError: false });
+  const retentionDays = workspaces?.find((item) => item.id === currentWorkspaceId)?.agentLogRetentionDays ?? DEFAULT_AGENT_LOG_RETENTION_DAYS;
   const [nodeFilter, setNodeFilter] = useState('all');
   const [levelFilter, setLevelFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -958,7 +961,7 @@ function AgentsTab() {
             <DropdownMenuItem onClick={() => openExport('csv', 1)}>Dernière heure</DropdownMenuItem>
             <DropdownMenuItem onClick={() => openExport('csv', 24)}>Dernières 24 h</DropdownMenuItem>
             <DropdownMenuItem onClick={() => openExport('csv', 24 * 7)}>7 derniers jours</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => openExport('csv', 24 * AGENT_LOG_RETENTION_DAYS)}>{AGENT_LOG_RETENTION_DAYS} derniers jours</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => openExport('csv', 24 * retentionDays)}>{retentionDays} derniers jours</DropdownMenuItem>
             <DropdownMenuLabel className="text-2xs font-normal text-muted-foreground">JSON</DropdownMenuLabel>
             <DropdownMenuItem onClick={() => openExport('json', 24)}>Dernières 24 h</DropdownMenuItem>
           </DropdownMenuContent>
@@ -1023,7 +1026,7 @@ function AgentsTab() {
                 </Button>
               ) : (
                 <span className="py-1 text-2xs text-muted-foreground">
-                  Début de l’historique — les logs des agents sont conservés {AGENT_LOG_RETENTION_DAYS} jours.
+                  Début de l’historique — les logs des agents sont conservés {retentionDays} jours.
                 </span>
               )}
             </div>

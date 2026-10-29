@@ -1,4 +1,7 @@
-import { IsBoolean, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+
+// Days the firewall Activity / agent logs may be kept.
+export const WORKSPACE_RETENTION_CHOICES = [7, 14, 30, 90, 180];
 
 export class UpdateWorkspaceDto {
   @IsOptional()
@@ -27,4 +30,12 @@ export class UpdateWorkspaceDto {
   @IsOptional()
   @IsBoolean()
   weeklyReportEnabled?: boolean;
+
+  @IsOptional()
+  @IsIn(WORKSPACE_RETENTION_CHOICES)
+  firewallEventRetentionDays?: number;
+
+  @IsOptional()
+  @IsIn(WORKSPACE_RETENTION_CHOICES)
+  agentLogRetentionDays?: number;
 }

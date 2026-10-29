@@ -369,14 +369,27 @@ function TopList({ title, items }: { title: string; items: Array<{ label: string
   );
 }
 
+// Periods offered, up to what the workspace keeps (Settings).
+const PERIODS: Array<{ hours: number; label: string }> = [
+  { hours: 1, label: '1 h' },
+  { hours: 24, label: '24 h' },
+  { hours: 168, label: '7 j' },
+  { hours: 336, label: '14 j' },
+  { hours: 720, label: '30 j' },
+  { hours: 2160, label: '90 j' },
+  { hours: 4320, label: '180 j' },
+];
+
 export function ActivityView({
   nodes,
   rules,
+  retentionDays = 14,
   onCreateRule,
   onTest,
 }: {
   nodes: FirewallNode[];
   rules: FirewallRule[];
+  retentionDays?: number;
   onCreateRule: (draft: RuleDraft) => void;
   onTest?: (preset: TestPreset) => void;
 }) {
@@ -489,10 +502,11 @@ export function ActivityView({
       <div className="sticky top-0 z-20 -mx-1 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-background/80 px-3 py-2.5 backdrop-blur-md">
         <Tabs value={hours} onValueChange={setHours}>
           <TabsList variant="segmented">
-            <TabsTrigger value="1">1 h</TabsTrigger>
-            <TabsTrigger value="24">24 h</TabsTrigger>
-            <TabsTrigger value="168">7 j</TabsTrigger>
-            <TabsTrigger value="336">14 j</TabsTrigger>
+            {PERIODS.filter((period) => period.hours <= retentionDays * 24).map((period) => (
+              <TabsTrigger key={period.hours} value={String(period.hours)}>
+                {period.label}
+              </TabsTrigger>
+            ))}
           </TabsList>
         </Tabs>
         <Tabs value={scope} onValueChange={(value) => setScope(value as typeof scope)}>
