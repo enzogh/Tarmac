@@ -2371,6 +2371,11 @@ func applyOverlay(payload map[string]interface{}) (string, error) {
 	if err := applyOverlayForwardFirewallRule(readBool(payload, "ipForward"), iface); err != nil {
 		return "", err
 	}
+	// Never fails the overlay: link supervision is a nice-to-have on top of
+	// a working tunnel.
+	if err := ensureOverlayProbeRule(iface); err != nil {
+		log.Printf("overlay: cannot allow supervision pings on %s: %v", iface, err)
+	}
 
 	return fmt.Sprintf("overlay applied on %s with %d peers", iface, len(peers)), nil
 }
@@ -2459,6 +2464,34 @@ func applyOverlayForwardFirewallRule(enabled bool, iface string) error {
 				return fmt.Errorf("cannot remove overlay forward rule from %s: %s", chain, strings.TrimSpace(string(out)))
 			}
 		}
+	}
+	return nil
+}
+
+// overlayProbeRuleComment tags the INPUT rule letting the other nodes'
+// supervision pings in over the private network.
+const overlayProbeRuleComment = "tarmac-overlay-probe"
+
+// ensureOverlayProbeRule accepts ICMP echo requests arriving on the overlay
+// interface, ahead of whatever the host's own firewall does (ufw, a DROP
+// policy, a hosting provider's template...). Without it a node that drops
+// incoming pings can't be measured by its peers: no latency for that
+// direction, and its links read as degraded although the tunnel works.
+// Only echo requests, only on the overlay interface - nothing else changes,
+// and the replies already go out as ESTABLISHED/RELATED traffic.
+func ensureOverlayProbeRule(iface string) error {
+	if !commandExists("iptables") {
+		return nil
+	}
+	if iface == "" {
+		iface = "tarmacwg0"
+	}
+	spec := []string{"-i", iface, "-p", "icmp", "--icmp-type", "echo-request", "-m", "comment", "--comment", overlayProbeRuleComment, "-j", "ACCEPT"}
+	if exec.Command("iptables", append([]string{"-C", "INPUT"}, spec...)...).Run() == nil {
+		return nil
+	}
+	if out, err := exec.Command("iptables", append([]string{"-I", "INPUT", "1"}, spec...)...).CombinedOutput(); err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 	return nil
 }
