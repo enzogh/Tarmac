@@ -594,6 +594,26 @@ export class NodesService implements OnModuleInit {
   // statement short enough to stay out of the way of live agent writes.
   private static readonly PRUNE_BATCH_SIZE = 20_000;
 
+  // Time-series tables are purged continuously (by age), which leaves their
+  // indexes full of dead pages that Postgres never gives back: in Oct. 2026
+  // VlanConnectionSample had 16 MB of rows and 1.6 GB of index. Rebuilding
+  // them online once a week keeps them at their real size.
+  private static readonly REINDEXED_TABLES = ['VlanConnectionSample', 'MetricSample', 'SmartReport', 'AgentLog', 'FirewallEvent'];
+
+  @Cron('0 30 4 * * 0')
+  async reindexTimeSeries() {
+    for (const table of NodesService.REINDEXED_TABLES) {
+      try {
+        // CONCURRENTLY: no lock against writes; can't run in a transaction,
+        // which $executeRawUnsafe isn't. The name comes from the list above.
+        await this.prisma.$executeRawUnsafe(`REINDEX TABLE CONCURRENTLY "${table}"`);
+        this.logger.log(`Reindexed ${table}`);
+      } catch (error) {
+        this.logger.warn(`Reindex of ${table} failed: ${error instanceof Error ? error.message : error}`);
+      }
+    }
+  }
+
   @Cron(CronExpression.EVERY_HOUR)
   async pruneOldSmartReports() {
     const cutoff = new Date(Date.now() - NodesService.SMART_REPORT_RETENTION_DAYS * 24 * 60 * 60 * 1000);

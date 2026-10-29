@@ -39,7 +39,7 @@ export class AuthService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    const shouldBootstrap = this.configService.get<string>('ENABLE_DEFAULT_ADMIN', 'true') !== 'false';
+    const shouldBootstrap = this.configService.get<string>('ENABLE_DEFAULT_ADMIN', 'false') === 'true';
 
     if (!shouldBootstrap) {
       return;
@@ -449,7 +449,7 @@ export class AuthService implements OnModuleInit {
   }
 
   private shouldBootstrapDefaultAdmin() {
-    return this.configService.get<string>('ENABLE_DEFAULT_ADMIN', 'true') !== 'false';
+    return this.configService.get<string>('ENABLE_DEFAULT_ADMIN', 'false') === 'true';
   }
 
   private getDefaultAdminEmail() {
@@ -457,27 +457,28 @@ export class AuthService implements OnModuleInit {
     return email.trim().toLowerCase();
   }
 
-  private getDefaultAdminPassword() {
-    return this.configService.get<string>('ADMIN_PASSWORD', 'admin123');
+  // Null when missing or too weak to be worth bootstrapping with: the
+  // account would be an open door (the old default was "admin123").
+  private getDefaultAdminPassword(): string | null {
+    const password = this.configService.get<string>('ADMIN_PASSWORD', '') ?? '';
+    if (password.length < 12 || password === 'admin123') return null;
+    return password;
   }
 
   private async ensureDefaultAdmin() {
     const email = this.getDefaultAdminEmail();
     const plainPassword = this.getDefaultAdminPassword();
-    const passwordHash = await bcrypt.hash(plainPassword, 10);
-    const defaultAdmin = await this.prisma.user.findUnique({ where: { email } });
-    if (defaultAdmin) {
-      await this.prisma.user.update({
-        where: { id: defaultAdmin.id },
-        data: { passwordHash, isSuperuser: true },
-      });
-      return true;
+    if (!plainPassword) {
+      this.logger.warn('ENABLE_DEFAULT_ADMIN is on but ADMIN_PASSWORD is missing or too weak (12 characters minimum): no bootstrap account created');
+      return false;
     }
-
+    // Only ever creates the very first account of an empty install. It used
+    // to also reset an existing account's password on every restart.
     const usersCount = await this.prisma.user.count();
     if (usersCount > 0) {
       return false;
     }
+    const passwordHash = await bcrypt.hash(plainPassword, 10);
 
     await this.prisma.user.create({
       data: { email, passwordHash, isSuperuser: true },

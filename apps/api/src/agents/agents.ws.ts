@@ -72,6 +72,7 @@ export class AgentsWsServer implements OnModuleInit {
     this.agentsService.register(nodeId, send);
 
     void this.agentTokenService.resendPendingRotationIfNeeded(nodeId);
+    void this.agentTokenService.migrateLegacyNode(nodeId);
 
     ws.on('message', async (raw) => {
       let msgType = 'unparsed';

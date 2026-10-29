@@ -37,8 +37,12 @@ services:
       # Chiffre au repos les clés VPN et secrets TSIG (voir common/secret-box.ts).
       TARMAC_SECRETS_KEY: ${TARMAC_SECRETS_KEY:?TARMAC_SECRETS_KEY must be set}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@tarmac.local}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
-      ENABLE_DEFAULT_ADMIN: ${ENABLE_DEFAULT_ADMIN:-true}
+      # Bootstrap account for a brand new install only (no user at all yet):
+      # off by default, and refused without an explicit password.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ENABLE_DEFAULT_ADMIN: ${ENABLE_DEFAULT_ADMIN:-false}
+      # Marks the session cookie Secure (HTTPS only), see auth-cookie.ts.
+      NODE_ENV: production
       PORT: 3001
       # .git is excluded from the build context (see ../.dockerignore), so
       # getControlPlaneVersion() can't detect the commit in-container and

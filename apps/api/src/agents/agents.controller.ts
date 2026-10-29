@@ -54,8 +54,10 @@ export class AgentsController {
     }
     // Building from another repository runs arbitrary code as root on the
     // node: a leaked automation key must not be enough for that.
-    if (scope.apiKey && (requestedRepo !== undefined || requestedService !== undefined)) {
-      throw new ForbiddenException('API keys can only update the agent from its configured repository (ref only)');
+    // Same for a member who can merely manage nodes: only platform admins
+    // may point an agent at another repository or service.
+    if ((scope.apiKey || !scope.isPlatformAdmin) && (requestedRepo !== undefined || requestedService !== undefined)) {
+      throw new ForbiddenException('Seuls les administrateurs de la plateforme peuvent mettre à jour un agent depuis un autre dépôt ou service.');
     }
 
     return this.agentsService.triggerAgentUpdate(nodeId, {

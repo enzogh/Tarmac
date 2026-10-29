@@ -36,8 +36,28 @@ export class AgentTokenService {
     return candidateHash.length === stored.length && crypto.timingSafeEqual(candidateHash, stored);
   }
 
+  // The global secret older nodes still use until their first rotation.
+  // No built-in fallback value, and AGENT_LEGACY_TOKEN=disabled turns it off
+  // once every node has its own token.
   private legacyTokenMatches(candidate: string): boolean {
-    return candidate === (process.env.AGENT_SHARED_TOKEN ?? 'agent-secret');
+    const shared = process.env.AGENT_SHARED_TOKEN;
+    if (!shared || process.env.AGENT_LEGACY_TOKEN === 'disabled') return false;
+    const a = Buffer.from(candidate);
+    const b = Buffer.from(shared);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  }
+
+  /**
+   * A node that just connected with the shared secret gets its own token
+   * right away, so the shared one stops being needed. If the agent can't
+   * apply it, AgentsService.onCommandResult puts the node back on the shared
+   * secret instead of locking it out once the grace window ends.
+   */
+  async migrateLegacyNode(nodeId: string): Promise<void> {
+    const node = await this.prisma.node.findUnique({ where: { id: nodeId }, select: { agentTokenHash: true } });
+    if (!node || node.agentTokenHash) return;
+    this.logger.log(`Node ${nodeId} still uses the shared agent token: issuing its own`);
+    await this.rotate(nodeId);
   }
 
   async verify(nodeId: string, presentedToken: string): Promise<boolean> {

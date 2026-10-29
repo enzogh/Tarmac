@@ -38,6 +38,9 @@ const RECONCILE_MAX_WAIT_MS = 2_000;
 const EVENT_RETENTION_DAYS = 14;
 const INTERNAL_DNS_PORT = 5300;
 const MESH_INTERFACE = 'tarmacwg0';
+// The dashboard polls every 10 s per open tab and refetches on every live
+// event: a short cache spares recomputing the whole policy each time.
+const CONTEXT_CACHE_MS = 3_000;
 
 export type FirewallReport = {
   revision?: string;
@@ -144,6 +147,7 @@ export class FirewallService {
   // Last hit counters per node, to turn the agents' cumulative counters
   // (reset on every apply) into deltas.
   private readonly lastCounters = new Map<string, Record<string, number>>();
+  private readonly contextCache = new Map<string, { at: number; value: ReturnType<FirewallService['loadContext']> }>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -156,6 +160,20 @@ export class FirewallService {
   // ---------------------------------------------------------------------
   // Context
   // ---------------------------------------------------------------------
+
+  /** loadContext, shared for CONTEXT_CACHE_MS by the read endpoints. */
+  private cachedContext(workspaceId: string) {
+    const hit = this.contextCache.get(workspaceId);
+    if (hit && Date.now() - hit.at < CONTEXT_CACHE_MS) return hit.value;
+    const value = this.loadContext(workspaceId);
+    this.contextCache.set(workspaceId, { at: Date.now(), value });
+    value.catch(() => this.contextCache.delete(workspaceId));
+    return value;
+  }
+
+  private invalidate(workspaceId: string) {
+    this.contextCache.delete(workspaceId);
+  }
 
   private async loadContext(workspaceId: string) {
     const [workspace, nodes, rules] = await Promise.all([
@@ -476,7 +494,7 @@ export class FirewallService {
 
   async overview(scope: WorkspaceScope) {
     const workspaceId = scope.workspaceId as string;
-    const { workspace, nodes, rules, ctx } = await this.loadContext(workspaceId);
+    const { workspace, nodes, rules, ctx } = await this.cachedContext(workspaceId);
     const since = new Date(Date.now() - 24 * 3600 * 1000);
     const eventTotals = await this.prisma.firewallEvent.groupBy({
       by: ['verdict', 'nodeId'],
@@ -673,7 +691,7 @@ export class FirewallService {
 
   async test(scope: WorkspaceScope, dto: TestFirewallDto) {
     const workspaceId = scope.workspaceId as string;
-    const { ctx } = await this.loadContext(workspaceId);
+    const { ctx } = await this.cachedContext(workspaceId);
     if (!ctx.nodes.some((node) => node.id === dto.targetNodeId)) throw new NotFoundException('Serveur introuvable');
     if (dto.scope === 'mesh' && (!dto.sourceNodeId || !ctx.nodes.some((node) => node.id === dto.sourceNodeId))) {
       throw new BadRequestException('Choisissez le serveur d’origine.');
@@ -880,6 +898,7 @@ export class FirewallService {
   }
 
   private async changed(workspaceId: string) {
+    this.invalidate(workspaceId);
     await this.reconcileWorkspace(workspaceId);
     this.live.broadcast('firewall.changed', {}, workspaceId);
   }
@@ -984,6 +1003,7 @@ export class FirewallService {
             },
     });
     if (result.outdated || cleared) this.sentRevisions.delete(nodeId);
+    this.invalidate(workspaceId);
     this.live.broadcast('firewall.changed', { nodeId }, workspaceId);
   }
 
@@ -994,6 +1014,7 @@ export class FirewallService {
   async ingestReport(nodeId: string, workspaceId: string, report: FirewallReport) {
     if (report.full) {
       await this.prisma.node.update({ where: { id: nodeId }, data: { firewallReport: sanitizeReport(report) as unknown as Prisma.InputJsonValue } });
+      this.invalidate(workspaceId);
       if (report.counters && typeof report.counters === 'object') await this.ingestCounters(nodeId, workspaceId, report.counters);
     }
     if (Array.isArray(report.events) && report.events.length > 0) await this.ingestEvents(nodeId, workspaceId, report.events.slice(0, 400));

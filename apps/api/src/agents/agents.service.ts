@@ -84,6 +84,8 @@ type PendingDnsZoneKeysRequest = {
 
 // Node is considered offline if no heartbeat received within this time
 const NODE_HEARTBEAT_TIMEOUT_MS = 60 * 1000; // 60 seconds
+// One stored metric sample per node per 30 s (heartbeats come every 5 s).
+const METRIC_SAMPLE_INTERVAL_MS = 30_000;
 // Every node is marked offline at boot until its agent reconnects: gateway
 // failover waits this long so a slow-reconnecting primary isn't taken for dead.
 const GATEWAY_FAILOVER_STARTUP_GRACE_MS = 3 * 60_000;
@@ -122,6 +124,7 @@ export class AgentsService implements OnModuleInit {
   private static readonly SMART_REPORT_HEARTBEAT_MS = 15 * 60 * 1000;
   private readonly logger = new Logger(AgentsService.name);
   private readonly senders = new Map<string, SendFn>();
+  private readonly metricSampledAt = new Map<string, number>();
   private readonly overlaySyncAt = new Map<string, number>();
   private readonly pendingDirectoryRequests = new Map<string, PendingDirectoryRequest>();
   private readonly pendingDirectoryScanRequests = new Map<string, PendingDirectoryScanRequest>();
@@ -666,7 +669,13 @@ export class AgentsService implements OnModuleInit {
       await this.closeAgentUpdateOnHeartbeat(node, version);
     }
 
-    await this.prisma.metricSample.create({
+    // Heartbeats arrive every 5 s; the dashboard gets each of them live over
+    // the socket (node.heartbeat below), the database only needs one sample
+    // per METRIC_SAMPLE_INTERVAL_MS for history, charts and alert rules.
+    const lastSample = this.metricSampledAt.get(nodeId) ?? 0;
+    if (Date.now() - lastSample >= METRIC_SAMPLE_INTERVAL_MS) {
+      this.metricSampledAt.set(nodeId, Date.now());
+      await this.prisma.metricSample.create({
       data: {
         nodeId,
         cpu: metrics.cpu,
@@ -678,6 +687,7 @@ export class AgentsService implements OnModuleInit {
         ioWrite: metrics.ioWrite ?? 0,
       },
     });
+    }
 
     // Lets the dashboard patch this node's status/metrics/version into its
     // local cache the instant a heartbeat lands, instead of waiting for its
@@ -1388,6 +1398,12 @@ export class AgentsService implements OnModuleInit {
 
     if (result.resourceType === 'agent') {
       this.logger.log(`Agent ${result.command} on node ${result.resourceId}: ${result.message ?? '(no message)'}`);
+      if (result.command === 'rotate_token' && !result.success) await this.keepOnSharedTokenAfterFailedRotation(nodeId);
+      return;
+    }
+    // Agents too old to know rotate_token answer "unknown command".
+    if (!result.success && result.message?.includes('unknown command command.rotate_token')) {
+      await this.keepOnSharedTokenAfterFailedRotation(nodeId);
       return;
     }
 
@@ -1480,6 +1496,17 @@ export class AgentsService implements OnModuleInit {
         },
       });
     }
+  }
+
+  // A node's very first token could not be saved: put it back on the shared
+  // secret it still uses, rather than locking it out when the grace window
+  // closes (see AgentTokenService.migrateLegacyNode).
+  private async keepOnSharedTokenAfterFailedRotation(nodeId: string) {
+    const { count } = await this.prisma.node.updateMany({
+      where: { id: nodeId, agentTokenPreviousHash: null, agentTokenGraceUntil: { gt: new Date() } },
+      data: { agentTokenHash: null, agentTokenGraceUntil: null, agentTokenRotatedAt: null },
+    });
+    if (count > 0) this.logger.warn(`Token rotation failed on node ${nodeId}: kept on the shared agent token`);
   }
 
   sendCommand(nodeId: string, command: CommandPayload) {
