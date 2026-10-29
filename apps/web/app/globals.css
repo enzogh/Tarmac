@@ -272,3 +272,20 @@
   0% { background-color: hsl(var(--primary) / 0.14); }
   100% { background-color: transparent; }
 }
+
+/* A row of tiles or cards appears in a short cascade rather than all at once. */
+.stagger-in > * {
+  animation: fade-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.stagger-in > *:nth-child(2) { animation-delay: 50ms; }
+.stagger-in > *:nth-child(3) { animation-delay: 100ms; }
+.stagger-in > *:nth-child(4) { animation-delay: 150ms; }
+.stagger-in > *:nth-child(5) { animation-delay: 200ms; }
+.stagger-in > *:nth-child(n + 6) { animation-delay: 240ms; }
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stagger-in > * { animation: none; }
+}

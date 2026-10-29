@@ -194,7 +194,7 @@ export default function FirewallOverviewPage() {
         </Card>
       ) : (
         <>
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="stagger-in grid gap-4 lg:grid-cols-2">
             <ZoneCard
               icon={Network}
               title="Entre vos serveurs"

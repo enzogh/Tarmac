@@ -63,7 +63,7 @@ export function InternetServerList({
   const { readOnly } = useReadOnly();
   return (
     <Card className="overflow-hidden">
-      <ul className="divide-y divide-border">
+      <ul className="stagger-in divide-y divide-border">
         {nodes.map((node) => {
           const ports = exposed(node);
           const open = ports.filter((entry) => entry.exposure === 'public');

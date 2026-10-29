@@ -45,7 +45,7 @@ export function Callout({ variant = 'info', className, children }: CalloutProps)
   const v = VARIANTS[variant];
   const Icon = v.icon;
   return (
-    <div className={cn('flex items-start gap-3 rounded-2xl border p-4', v.border, v.bg, className)}>
+    <div className={cn('flex items-start gap-3 rounded-2xl border p-4 animate-fade-in', v.border, v.bg, className)}>
       <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', v.iconColor)} />
       <div className={cn('text-sm', v.text)}>{children}</div>
     </div>

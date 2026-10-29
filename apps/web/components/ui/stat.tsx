@@ -49,7 +49,7 @@ export function Stat({ label, value, unit, hint, icon: Icon, iconNode, tone = 'n
   return (
     <div
       className={cn(
-        'relative flex min-w-0 flex-col justify-between gap-3 overflow-hidden rounded-xl border border-border bg-surface-1 p-4',
+        'relative flex min-w-0 flex-col justify-between gap-3 overflow-hidden rounded-xl border border-border bg-surface-1 p-4 transition-[border-color,background-color] duration-300 hover:border-white/[0.12] hover:bg-surface-1/80',
         className,
       )}
     >
@@ -90,6 +90,6 @@ export function Stat({ label, value, unit, hint, icon: Icon, iconNode, tone = 'n
 /** A row of Stat tiles that keeps the same rhythm on every page. */
 export function StatRow({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn('grid gap-3 sm:grid-cols-2 xl:grid-cols-4', className)}>{children}</div>
+    <div className={cn('stagger-in grid gap-3 sm:grid-cols-2 xl:grid-cols-4', className)}>{children}</div>
   );
 }

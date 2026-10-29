@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { motion } from 'framer-motion';
 import { usePathname, useParams, useRouter } from 'next/navigation';
 import { ReactNode, useEffect, useMemo, useState } from 'react';
 import { LogOut, BookOpen, ChevronDown, Eye, Lock, Search, Menu, ShieldAlert, X } from 'lucide-react';
@@ -91,14 +92,21 @@ function DashboardLayoutInner({ children }: { children: ReactNode }) {
         aria-current={isActive ? 'page' : undefined}
         className={cn(
           'relative flex items-center gap-2.5 rounded-md py-1.5 pl-3 pr-2 text-sm transition-colors',
-          isActive
-            ? 'bg-surface-2 font-medium text-foreground'
-            : 'text-muted-foreground hover:bg-surface-2/60 hover:text-foreground',
+          isActive ? 'font-medium text-foreground' : 'text-muted-foreground hover:bg-surface-2/60 hover:text-foreground',
         )}
       >
-        {isActive && <span className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-primary" aria-hidden />}
-        <Icon className={cn('h-4 w-4 shrink-0', isActive ? 'text-primary' : 'text-muted-foreground/70')} />
-        <span className="min-w-0 flex-1 truncate">{item.label}</span>
+        {isActive && (
+          <motion.span
+            layoutId="nav-active"
+            className="absolute inset-0 rounded-md bg-surface-2 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.04)]"
+            transition={{ type: 'spring', stiffness: 520, damping: 40, mass: 0.8 }}
+            aria-hidden
+          >
+            <span className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-primary shadow-[0_0_8px_hsl(var(--primary)/0.8)]" />
+          </motion.span>
+        )}
+        <Icon className={cn('relative h-4 w-4 shrink-0 transition-colors', isActive ? 'text-primary' : 'text-muted-foreground/70')} />
+        <span className="relative min-w-0 flex-1 truncate">{item.label}</span>
         {(() => {
           const area = navItemArea(item);
           return area && isRestrictedToRead(area, access.level(area)) ? (
