@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ReactNode, useState } from 'react';
-import { ArrowLeft, ArrowRight, BookOpen, Boxes, ChevronDown, Code2, Globe, KeyRound, LayoutGrid } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bell, BookOpen, Boxes, BrickWallFire, ChevronDown, Code2, Database, Globe, KeyRound, LayoutGrid, Network, ShieldCheck } from 'lucide-react';
 import { SiteHeader } from '../../components/SiteHeader';
 import { DiagramDefs } from '../../components/docs/Diagram';
 import { cn } from '../../lib/utils';
@@ -24,7 +24,12 @@ const DOCS_GROUPS: { label: string; items: DocLink[] }[] = [
     label: 'Guides',
     items: [
       { href: '/docs/workspaces', label: 'Membres et rôles', icon: LayoutGrid, badge: 'Rôles' },
+      { href: '/docs/network', label: 'Réseau privé', icon: Network },
+      { href: '/docs/firewall', label: 'Pare-feu', icon: BrickWallFire },
+      { href: '/docs/vpn', label: 'VPN', icon: ShieldCheck },
       { href: '/docs/dns', label: 'DNS', icon: Globe },
+      { href: '/docs/storage', label: 'Stockage et réplication', icon: Database },
+      { href: '/docs/alerts', label: 'Alertes', icon: Bell },
     ],
   },
   {

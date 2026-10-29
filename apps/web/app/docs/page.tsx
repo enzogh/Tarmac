@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import {
+  BrickWallFire,
   ArrowRight,
   Server,
   Database,
@@ -49,29 +50,36 @@ const MODULES: { group: string; items: { icon: typeof Server; title: string; tex
     group: 'Infrastructure',
     items: [
       { icon: Server, title: 'Nœuds', text: 'Onboarding SSH, agents, matériel, RAM et swap, disques et santé SMART.', href: '/docs/concepts' },
-      { icon: Network, title: 'Réseau', text: 'Mesh WireGuard, graphe, carte du monde, passerelles régionales, ping/traceroute.', href: '/docs/concepts' },
+      { icon: Network, title: 'Réseau', text: 'Mesh WireGuard, graphe, carte du monde, passerelles régionales, ping/traceroute.', href: '/docs/network' },
+      {
+        icon: BrickWallFire,
+        title: 'Pare-feu',
+        text: 'Entre serveurs, depuis et vers Internet : observation avant application, listes d’adresses, pays, limite SSH.',
+        href: '/docs/firewall',
+        isNew: true,
+      },
       { icon: Globe, title: 'DNS', text: 'Groupes primaire/secondaire, zones, DNSSEC, délégation vérifiée, GeoDNS.', href: '/docs/dns' },
       {
         icon: ShieldCheck,
         title: 'VPN',
         text: "Profils WireGuard par appareil : entrée et sortie choisies parmi toute la flotte, sortie changée à chaud.",
-        href: '/docs/api#vpn',
+        href: '/docs/vpn',
       },
     ],
   },
   {
     group: 'Stockage',
     items: [
-      { icon: Database, title: 'Stockage', text: 'Partages NFS, capacité agrégée et prévision de saturation.', href: '/docs/concepts' },
-      { icon: HardDrive, title: 'Montages', text: 'Sources NFS, CIFS ou SFTP montées sur un nœud, avec sources de secours.', href: '/docs/concepts' },
-      { icon: RefreshCw, title: 'Réplication', text: 'Pools de nœuds, rôles primary/replica et tâches de synchronisation planifiées.', href: '/docs/concepts' },
-      { icon: ArrowRightLeft, title: 'Migrations', text: 'Déplacement de volumes entre nœuds, seedbox ou Storage Box.', href: '/docs/concepts' },
+      { icon: Database, title: 'Stockage', text: 'Partages NFS, capacité agrégée et prévision de saturation.', href: '/docs/storage' },
+      { icon: HardDrive, title: 'Montages', text: 'Sources NFS, CIFS ou SFTP montées sur un nœud, avec sources de secours.', href: '/docs/storage' },
+      { icon: RefreshCw, title: 'Réplication', text: 'Pools de nœuds, rôles primaire/réplique et copies rsync lancées à la demande ou par un appel HTTP.', href: '/docs/storage' },
+      { icon: ArrowRightLeft, title: 'Migrations', text: 'Déplacement de volumes entre nœuds, seedbox ou Storage Box.', href: '/docs/storage' },
     ],
   },
   {
     group: 'Supervision & organisation',
     items: [
-      { icon: Bell, title: 'Alertes', text: 'Règles de seuil évaluées chaque minute, canaux e-mail / webhook / Slack.', href: '/docs/concepts' },
+      { icon: Bell, title: 'Alertes', text: 'Supervision automatique, règles de seuil évaluées chaque minute, e-mails regroupés.', href: '/docs/alerts' },
       { icon: ScrollText, title: 'Journal', text: "Actions de l'équipe et logs d'agents en direct, avec tout l'historique, filtrables et exportables.", href: '/docs/concepts' },
       { icon: LayoutGrid, title: 'Workspaces', text: 'Cloisonnement multi-flottes, membres et rôles (lecteur, éditeur, droits par page), connexion SSO.', href: '/docs/workspaces', isNew: true },
       {
