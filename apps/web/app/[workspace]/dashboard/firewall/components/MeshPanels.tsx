@@ -137,10 +137,7 @@ export function AccessMatrix({
   return (
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
-        <div>
-          <h3 className="text-sm font-medium text-foreground">Qui peut joindre qui</h3>
-          <p className="text-xs text-muted-foreground">Lignes : serveur d’origine · colonnes : serveur joint. Cliquez sur une case pour le détail.</p>
-        </div>
+        <p className="text-xs text-muted-foreground">Lignes : serveur d’origine · colonnes : serveur joint.</p>
         <div className="flex flex-wrap items-center gap-3 text-2xs text-muted-foreground">
           {(['open', 'partial', mode === 'observe' ? 'observed' : 'blocked'] as const).map((status) => {
             const Icon = CELL[status].icon;
