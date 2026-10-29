@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { WorkspaceScope } from '../auth/workspace.guard';
 import { extractExternalIp } from '../nodes/extract-external-ip';
@@ -6,6 +7,16 @@ import { assertNodesInWorkspace } from '../common/workspace-ownership';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpsertDnsRecordDto } from './dto/upsert-dns-record.dto';
 import { DnsZonesService } from './dns-zones.service';
+
+export type DnsRecordSnapshot = {
+  zoneId: string;
+  name: string;
+  type: UpsertDnsRecordDto['type'];
+  absent?: boolean;
+  ttl?: number;
+  isGeo?: boolean;
+  values?: Array<{ content: string; nodeId: string | null; priority: number | null }>;
+};
 
 @Injectable()
 export class DnsRecordsService {
@@ -35,6 +46,9 @@ export class DnsRecordsService {
         .map((node) => [extractExternalIp(node.overlayEndpoint), node.id] as const)
         .filter((entry): entry is [string, string] => entry[0] !== null),
     );
+
+    // "Before" state, so the change can be undone from the Journal.
+    const before = await this.recordSnapshot(zoneId, dto.name, dto.type);
 
     const recordId = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.dnsRecord.findUnique({
@@ -67,12 +81,18 @@ export class DnsRecordsService {
       resourceType: 'dns_record',
       resourceId: recordId,
       details: { zoneId, name: dto.name, type: dto.type },
+      snapshot: before as unknown as Prisma.InputJsonValue,
     });
     return this.prisma.dnsRecord.findUnique({ where: { id: recordId }, include: { values: true } });
   }
 
   async deleteRecord(zoneId: string, recordId: string, scope: WorkspaceScope, actorUserId?: string) {
     await this.dnsZonesService.assertZoneOwned(zoneId, scope);
+    // The record must belong to this (owned) zone: a record id from another
+    // zone - or another workspace - is not found here.
+    const record = await this.prisma.dnsRecord.findFirst({ where: { id: recordId, zoneId }, select: { name: true, type: true } });
+    if (!record) throw new NotFoundException('dns record not found');
+    const before = await this.recordSnapshot(zoneId, record.name, record.type);
     const deleted = await this.prisma.dnsRecord.delete({ where: { id: recordId } });
     await this.dnsZonesService.markZonePending(zoneId);
     await this.auditLogsService.log({
@@ -81,9 +101,49 @@ export class DnsRecordsService {
       action: 'dns.record.delete',
       resourceType: 'dns_record',
       resourceId: deleted.id,
-      details: { zoneId },
+      details: { zoneId, name: record.name, type: record.type },
+      snapshot: before as unknown as Prisma.InputJsonValue,
     });
     return deleted;
+  }
+
+  /** A record (name + type) as it is now, or `absent` when there is none. */
+  private async recordSnapshot(zoneId: string, name: string, type: UpsertDnsRecordDto['type']): Promise<DnsRecordSnapshot> {
+    const record = await this.prisma.dnsRecord.findUnique({ where: { zoneId_name_type: { zoneId, name, type } }, include: { values: true } });
+    if (!record) return { zoneId, name, type, absent: true };
+    return {
+      zoneId,
+      name,
+      type,
+      ttl: record.ttl,
+      isGeo: record.isGeo,
+      values: record.values.map((value) => ({ content: value.content, nodeId: value.nodeId, priority: value.priority })),
+    };
+  }
+
+  /** Undo from the Journal: put a record back as it was (or remove it if it didn't exist). */
+  async restoreRecord(snapshot: DnsRecordSnapshot, scope: WorkspaceScope, actorUserId?: string): Promise<string> {
+    const zone = await this.prisma.dnsZone.findFirst({ where: { id: snapshot.zoneId, workspaceId: scope.workspaceId } });
+    if (!zone) throw new NotFoundException('La zone de cet enregistrement n’existe plus : restaurez d’abord la zone.');
+    const label = `${snapshot.name === '@' ? zone.name : `${snapshot.name}.${zone.name}`} (${snapshot.type})`;
+    if (snapshot.absent) {
+      const current = await this.prisma.dnsRecord.findUnique({ where: { zoneId_name_type: { zoneId: zone.id, name: snapshot.name, type: snapshot.type } } });
+      if (current) await this.deleteRecord(zone.id, current.id, scope, actorUserId);
+      return label;
+    }
+    await this.upsertRecord(
+      zone.id,
+      {
+        name: snapshot.name,
+        type: snapshot.type,
+        ttl: snapshot.ttl,
+        isGeo: snapshot.isGeo,
+        values: (snapshot.values ?? []).map((value) => ({ content: value.content, nodeId: value.nodeId ?? undefined, priority: value.priority ?? undefined })),
+      },
+      scope,
+      actorUserId,
+    );
+    return label;
   }
 
   async recordsForNode(nodeId: string, scope: WorkspaceScope) {

@@ -96,10 +96,12 @@ const ACTION_VERB: Record<string, string> = {
   'firewall_rule.enable': 'a activé la règle de pare-feu',
   'firewall_rule.disable': 'a désactivé la règle de pare-feu',
   'firewall_rule.expire': 'a désactivé à expiration la règle de pare-feu',
+  'firewall_rule.restore': 'a restauré l’état d’avant de la règle de pare-feu',
   'firewall.settings': 'a modifié les réglages du pare-feu',
   'firewall_list.create': 'a créé la liste d’adresses',
   'firewall_list.update': 'a modifié la liste d’adresses',
   'firewall_list.delete': 'a supprimé la liste d’adresses',
+  'firewall_list.restore': 'a restauré la liste d’adresses',
   'firewall_event.dismiss': 'a marqué comme vue la connexion',
   'firewall_event.restore': 'a remis à examiner la connexion',
   'firewall.node_mode': 'a changé le filtrage Internet du nœud',
@@ -137,6 +139,7 @@ const ACTION_VERB: Record<string, string> = {
   'dns.group_member.retry_maintenance': 'a relancé la maintenance PowerDNS sur un serveur du groupe DNS',
   'dns.zone.create': 'a créé la zone DNS',
   'dns.zone.delete': 'a supprimé la zone DNS',
+  'dns.zone.restore': 'a restauré la zone DNS',
   'dns.zone.reapply': 'a redéployé la zone DNS',
   'dns.zone.dnssec.enable': 'a activé DNSSEC sur la zone DNS',
   'dns.zone.dnssec.disable': 'a désactivé DNSSEC sur la zone DNS',
@@ -193,6 +196,8 @@ const SELF_CONTAINED = new Set([
   'alert.resolve',
   'alert.delete',
   'alert.bulk_delete',
+  // The workspace's own firewall settings: nothing else to name.
+  'firewall.settings',
 ]);
 
 export function auditCategory(resourceType: string): AuditCategory {

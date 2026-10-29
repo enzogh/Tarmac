@@ -867,6 +867,9 @@ export type AuditLogItem = {
   resourceType: string;
   resourceId?: string | null;
   details?: unknown;
+  // The change can be undone from the Journal (its "before" state was kept).
+  restorable?: boolean;
+  restoredAt?: string | null;
   createdAt: string;
 };
 
@@ -1577,6 +1580,11 @@ export const api = {
     // Superusers only. Either `ids`, or everything matching the filters.
     remove: (payload: { ids?: string[]; from?: string; actorUserId?: string; resourceType?: string; q?: string }) =>
       request<{ deleted: number }>('/api/v1/audit-logs/delete', { method: 'POST', body: JSON.stringify(payload) }),
+  },
+
+  history: {
+    // Puts back what a Journal entry's change replaced.
+    restore: (auditLogId: string) => request<{ restored: string }>(`/api/v1/history/${auditLogId}/restore`, { method: 'POST' }),
   },
 
   agentLogs: {

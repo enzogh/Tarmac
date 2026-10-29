@@ -673,6 +673,13 @@ const MODULES: Module[] = [
         isNew: true,
       },
       {
+        method: 'POST',
+        path: '/history/:auditLogId/restore',
+        description:
+          "Annule une action du journal en remettant l'élément dans son état d'avant (règles et listes du pare-feu, réglages du pare-feu, enregistrements et zones DNS). Demande la permission d'écriture sur l'élément concerné.",
+        isNew: true,
+      },
+      {
         method: 'GET',
         path: '/agent-logs?nodeId=&level=&before=&from=&limit=',
         description: 'Logs remontés par les agents, filtrables par nœud, niveau et période.',

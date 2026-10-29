@@ -323,10 +323,11 @@ function TimelineChart({ hours, scope, nodeId }: { hours: number; scope?: Firewa
       className="h-40"
       config={{ blocked: { label: 'Bloquées', color: 'hsl(var(--danger))' }, observed: { label: 'Seraient bloquées', color: 'hsl(var(--info))' } }}
     >
-      <BarChart data={points} margin={{ top: 4, right: 4, bottom: 0, left: -24 }} barCategoryGap="18%">
+      <BarChart data={points} margin={{ top: 4, right: 4, bottom: 0, left: 0 }} barCategoryGap="18%">
         <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
         <XAxis dataKey="label" tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={32} />
-        <YAxis tickLine={false} axisLine={false} allowDecimals={false} width={48} />
+        {/* Sized to the largest count, so 4-5 digit values aren't clipped. */}
+        <YAxis tickLine={false} axisLine={false} allowDecimals={false} width={Math.max(24, String(Math.max(0, ...points.map((point) => (point.blocked ?? 0) + (point.observed ?? 0)))).length * 8 + 12)} />
         <ChartTooltip
           cursor={{ fill: 'hsl(var(--surface-3, 0 0% 50%) / 0.25)' }}
           content={({ active, payload, label }) =>

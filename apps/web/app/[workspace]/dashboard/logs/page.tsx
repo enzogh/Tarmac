@@ -17,6 +17,7 @@ import {
   Network,
   PauseCircle,
   PlayCircle,
+  RotateCcw,
   Search,
   Server,
   ShieldCheck,
@@ -225,8 +226,23 @@ function AuditRow({ entry, refs, slug, onDelete }: { entry: AuditLogItem; refs: 
   const detailsName = (entry.details as { name?: unknown } | null)?.name;
   const resourceName =
     (entry.resourceId && refs[entry.resourceId]) || (typeof detailsName === 'string' ? detailsName : null) || (entry.resourceId ? entry.resourceId.slice(0, 8) : null);
+  // Only server names are hostnames worth shortening ("web-1.example.net" ->
+  // "web-1"); a DNS zone, a rule or an address must read in full.
+  const displayName = resourceName && entry.resourceType === 'node' ? shortHostname(resourceName) : resourceName;
   const deleted = entry.resourceId && !refs[entry.resourceId];
   const route = RESOURCE_ROUTES[entry.resourceType];
+  // Undo: put back what this change replaced (see HistoryService).
+  const [restore, setRestore] = useState<{ state: 'idle' | 'busy' | 'done' | 'error'; message?: string }>({ state: 'idle' });
+  const runRestore = async () => {
+    if (!window.confirm('Remettre cet élément dans l’état où il était juste avant cette action ? La restauration est elle-même notée au journal.')) return;
+    setRestore({ state: 'busy' });
+    try {
+      const result = await api.history.restore(entry.id);
+      setRestore({ state: 'done', message: `« ${result.restored} » est revenu à son état d’avant.` });
+    } catch (caught) {
+      setRestore({ state: 'error', message: caught instanceof Error ? caught.message : 'La restauration a échoué.' });
+    }
+  };
 
   return (
     <li className="group flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2/40 lg:px-5">
@@ -244,16 +260,33 @@ function AuditRow({ entry, refs, slug, onDelete }: { entry: AuditLogItem; refs: 
               {' '}
               {route && !deleted ? (
                 <Link href={`/${slug}/dashboard${route}`} className="font-medium text-foreground underline-offset-2 hover:text-primary hover:underline">
-                  {shortHostname(resourceName)}
+                  {displayName}
                 </Link>
               ) : (
-                <span className="font-medium text-foreground">{shortHostname(resourceName)}</span>
+                <span className="font-medium text-foreground">{displayName}</span>
               )}
             </>
           )}
         </p>
         {open && <AuditDetails entry={entry} refs={refs} />}
+        {restore.message && (
+          <p role="status" className={cn('mt-1 text-xs', restore.state === 'error' ? 'text-[hsl(var(--danger))]' : 'text-[hsl(var(--ok))]')}>
+            {restore.message}
+          </p>
+        )}
       </div>
+      {entry.restorable && restore.state !== 'done' && (
+        <button
+          type="button"
+          onClick={() => void runRestore()}
+          disabled={restore.state === 'busy'}
+          className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-2xs text-muted-foreground opacity-60 transition-opacity hover:bg-surface-2 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-50"
+          title="Remettre l’élément dans son état d’avant cette action"
+        >
+          {restore.state === 'busy' ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+          Restaurer
+        </button>
+      )}
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}

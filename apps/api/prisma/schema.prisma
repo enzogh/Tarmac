@@ -937,6 +937,11 @@ model AuditLog {
   resourceType String
   resourceId   String?
   details      Json?
+  // The resource as it was just before this change, for the changes that
+  // can be undone from the Journal (see HistoryService). Never exported.
+  snapshot     Json?
+  // Set once that "before" state has been put back.
+  restoredAt   DateTime?
   createdAt    DateTime   @default(now())
 
   @@index([createdAt])

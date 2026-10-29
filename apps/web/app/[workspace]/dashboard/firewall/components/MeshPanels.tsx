@@ -405,7 +405,16 @@ export function RulesTable({
                   )}
                 </span>
                 <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                  {sourceSummary(rule, nodes, 2, lists)} <span className="text-muted-foreground/60">→</span> {targetSummary(rule, nodes)}
+                  {rule.scope === 'outbound' ? (
+                    // Outbound: the servers send, the remote end receives.
+                    <>
+                      {targetSummary(rule, nodes)} <span className="text-muted-foreground/60">→</span> {rule.sourceKind === 'any' ? 'Tout Internet' : sourceSummary(rule, nodes, 2, lists)}
+                    </>
+                  ) : (
+                    <>
+                      {sourceSummary(rule, nodes, 2, lists)} <span className="text-muted-foreground/60">→</span> {targetSummary(rule, nodes)}
+                    </>
+                  )}
                   <span className="mx-1.5 text-muted-foreground/40">·</span>
                   {serviceLabel(rule)}
                 </span>

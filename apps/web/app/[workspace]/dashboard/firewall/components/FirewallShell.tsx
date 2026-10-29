@@ -51,7 +51,7 @@ export function FirewallShell({ children }: { children: ReactNode }) {
       <div className="space-y-5">
         <PageHeader
           title="Pare-feu"
-          description="Choisissez qui peut joindre vos serveurs, entre eux et depuis Internet. Chaque serveur applique lui-même ses règles."
+          description="Choisissez qui peut joindre vos serveurs, entre eux et depuis Internet, et ce qu’ils peuvent contacter. Chaque serveur applique lui-même ses règles."
           actionsReadOnlySafe
           actions={
             <>

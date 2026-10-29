@@ -54,7 +54,12 @@ export class AuditLogsService {
 
     const { actors, refs } = await this.resolve(items, scope);
     return {
-      items: items.map((item) => ({ ...item, actor: item.actorUserId ? (actors.get(item.actorUserId) ?? null) : null })),
+      items: items.map(({ snapshot, ...item }) => ({
+        ...item,
+        // Undoable from the Journal: a "before" state kept, not used yet.
+        restorable: Boolean(snapshot) && !item.restoredAt,
+        actor: item.actorUserId ? (actors.get(item.actorUserId) ?? null) : null,
+      })),
       // id -> display name for every resource id and id found in details,
       // so the journal reads "ns320594" instead of "cmr5c2odb".
       refs: Object.fromEntries(refs),
@@ -180,6 +185,10 @@ export class AuditLogsService {
             this.prisma.dnsZone.findMany({ where: { ...byIds, workspaceId }, select: named }),
             this.prisma.dnsServerGroup.findMany({ where: { ...byIds, workspaceId }, select: named }),
             this.prisma.pool.findMany({ where: { ...byIds, workspaceId }, select: named }),
+            this.prisma.firewallRule.findMany({ where: { ...byIds, workspaceId }, select: named }),
+            this.prisma.firewallAddressList.findMany({ where: { ...byIds, workspaceId }, select: named }),
+            // The workspace itself (settings changes name it as their resource).
+            this.prisma.workspace.findMany({ where: { AND: [{ id: workspaceId }, byIds] }, select: named }),
           ]),
     ]);
     const actors = new Map<string, Actor>(users.map((user) => [user.id, { id: user.id, name: actorDisplayName(user), email: user.email }]));
@@ -205,7 +214,7 @@ export class AuditLogsService {
       select: { id: true, name: true, email: true },
     });
     const names = new Map(users.map((user) => [user.id, actorDisplayName(user)]));
-    return rows.map((row) => ({ ...row, actorName: row.actorUserId ? (names.get(row.actorUserId) ?? null) : null }));
+    return rows.map(({ snapshot: _snapshot, ...row }) => ({ ...row, actorName: row.actorUserId ? (names.get(row.actorUserId) ?? null) : null }));
   }
 
   // workspaceId is required (not inferred from a WorkspaceScope here) since
@@ -221,6 +230,8 @@ export class AuditLogsService {
     resourceType: string;
     resourceId?: string;
     details?: Prisma.InputJsonValue;
+    // "Before" state, when the change can be undone (HistoryService).
+    snapshot?: Prisma.InputJsonValue;
   }) {
     // Changes made with a workspace API key have no user behind them: the
     // key is recorded instead, so the journal still says who did what.
@@ -238,12 +249,13 @@ export class AuditLogsService {
           }
         : input;
     const entry = await this.prisma.auditLog.create({ data });
+    const { snapshot: _snapshot, ...shown } = entry;
     const user = entry.actorUserId
       ? await this.prisma.user.findUnique({ where: { id: entry.actorUserId }, select: { id: true, name: true, email: true } })
       : null;
     this.live.broadcast(
       'audit.new',
-      { ...entry, actor: user ? { id: user.id, name: actorDisplayName(user), email: user.email } : null },
+      { ...shown, restorable: Boolean(entry.snapshot), actor: user ? { id: user.id, name: actorDisplayName(user), email: user.email } : null },
       input.workspaceId,
     );
     return entry;

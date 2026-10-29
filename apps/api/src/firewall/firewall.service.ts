@@ -863,6 +863,7 @@ export class FirewallService {
       where: { id: workspaceId },
       select: { firewallMeshMode: true, firewallPublicPing: true, firewallSshGuard: true, firewallSshLimit: true },
     });
+    const snapshot = { meshMode: before.firewallMeshMode, publicPing: before.firewallPublicPing, sshGuard: before.firewallSshGuard, sshLimit: before.firewallSshLimit };
     const data: Prisma.WorkspaceUpdateInput = {};
     if (dto.meshMode !== undefined) data.firewallMeshMode = dto.meshMode;
     if (dto.publicPing !== undefined) data.firewallPublicPing = dto.publicPing;
@@ -876,7 +877,7 @@ export class FirewallService {
       ...(dto.publicPing !== undefined ? { publicPing: dto.publicPing } : {}),
       ...(dto.sshGuard !== undefined ? { sshGuard: dto.sshGuard } : {}),
       ...(dto.sshLimit !== undefined ? { sshLimit: dto.sshLimit } : {}),
-    });
+    }, snapshot);
     await this.changed(workspaceId);
     return this.overview(actor.scope);
   }
@@ -1029,7 +1030,13 @@ export class FirewallService {
         ...(dto.expiresAt !== undefined ? { expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null } : {}),
       },
     });
-    await this.audit(actor, dto.enabled !== undefined && Object.keys(dto).length === 1 ? (dto.enabled ? 'firewall_rule.enable' : 'firewall_rule.disable') : 'firewall_rule.update', id, this.auditDetails(rule));
+    await this.audit(
+      actor,
+      dto.enabled !== undefined && Object.keys(dto).length === 1 ? (dto.enabled ? 'firewall_rule.enable' : 'firewall_rule.disable') : 'firewall_rule.update',
+      id,
+      this.auditDetails(rule),
+      current,
+    );
     await this.changed(workspaceId);
     return rule;
   }
@@ -1038,7 +1045,7 @@ export class FirewallService {
     const workspaceId = actor.scope.workspaceId as string;
     const current = await this.findOwned(id, workspaceId);
     await this.prisma.firewallRule.delete({ where: { id } });
-    await this.audit(actor, 'firewall_rule.delete', id, this.auditDetails(current));
+    await this.audit(actor, 'firewall_rule.delete', id, this.auditDetails(current), current);
     await this.changed(workspaceId);
     return { success: true };
   }
@@ -1094,7 +1101,7 @@ export class FirewallService {
         ...(dto.cidrs !== undefined ? { cidrs: this.normalizeCidrs(dto.cidrs) } : {}),
       },
     });
-    await this.audit(actor, 'firewall_list.update', id, { name: list.name, count: list.cidrs.length });
+    await this.audit(actor, 'firewall_list.update', id, { name: list.name, count: list.cidrs.length }, current);
     // Every rule using it is re-applied with the new addresses.
     await this.changed(workspaceId);
     return list;
@@ -1115,9 +1122,61 @@ export class FirewallService {
       );
     }
     await this.prisma.firewallAddressList.delete({ where: { id } });
-    await this.audit(actor, 'firewall_list.delete', id, { name: current.name });
+    await this.audit(actor, 'firewall_list.delete', id, { name: current.name }, current);
     await this.changed(workspaceId);
     return { success: true };
+  }
+
+  // ---------------------------------------------------------------------
+  // Undo from the Journal (HistoryService): put a snapshot back
+  // ---------------------------------------------------------------------
+
+  /** A rule as it was (edited or deleted since): re-validated, then rewritten or recreated under its id. */
+  async restoreRule(snapshot: FirewallRule, actor: Actor): Promise<string> {
+    const workspaceId = actor.scope.workspaceId as string;
+    const existing = await this.prisma.firewallRule.findFirst({ where: { id: snapshot.id, workspaceId } });
+    const normalized = await this.normalizeRule(
+      { ...(snapshot as unknown as CreateFirewallRuleDto), scope: snapshot.scope as CreateFirewallRuleDto['scope'] },
+      workspaceId,
+    );
+    const data = {
+      ...normalized,
+      name: snapshot.name,
+      description: snapshot.description,
+      enabled: snapshot.enabled,
+      expiresAt: snapshot.expiresAt ? new Date(snapshot.expiresAt) : null,
+    };
+    const rule = existing
+      ? await this.prisma.firewallRule.update({ where: { id: snapshot.id }, data })
+      : await this.prisma.firewallRule.create({
+          data: { ...data, id: snapshot.id, workspaceId, scope: snapshot.scope, createdByUserId: snapshot.createdByUserId ?? actor.userId ?? null },
+        });
+    await this.audit(actor, 'firewall_rule.restore', rule.id, this.auditDetails(rule), existing ?? undefined);
+    await this.changed(workspaceId);
+    return rule.name;
+  }
+
+  /** An address list as it was: rewritten, or recreated under its id. */
+  async restoreList(snapshot: { id: string; name: string; description: string | null; cidrs: string[] }, actor: Actor): Promise<string> {
+    const workspaceId = actor.scope.workspaceId as string;
+    const existing = await this.prisma.firewallAddressList.findFirst({ where: { id: snapshot.id, workspaceId } });
+    await this.assertListNameFree(workspaceId, snapshot.name, snapshot.id);
+    const data = { name: snapshot.name, description: snapshot.description, cidrs: this.normalizeCidrs(snapshot.cidrs) };
+    const list = existing
+      ? await this.prisma.firewallAddressList.update({ where: { id: snapshot.id }, data })
+      : await this.prisma.firewallAddressList.create({ data: { ...data, id: snapshot.id, workspaceId } });
+    await this.audit(actor, 'firewall_list.restore', list.id, { name: list.name, count: list.cidrs.length }, existing ?? undefined);
+    await this.changed(workspaceId);
+    return list.name;
+  }
+
+  /** The general settings as they were (modes, ping, SSH protections). */
+  async restoreSettings(snapshot: UpdateFirewallSettingsDto, actor: Actor): Promise<string> {
+    await this.updateSettings(
+      { meshMode: snapshot.meshMode, publicPing: snapshot.publicPing, sshGuard: snapshot.sshGuard, sshLimit: snapshot.sshLimit },
+      actor,
+    );
+    return 'réglages du pare-feu';
   }
 
   private auditDetails(rule: FirewallRule) {
@@ -1141,7 +1200,9 @@ export class FirewallService {
     this.live.broadcast('firewall.changed', {}, workspaceId);
   }
 
-  private async audit(actor: Actor, action: string, resourceId: string, details: Record<string, unknown>) {
+  // snapshot: the state before the change, when it can be undone from the
+  // Journal (see HistoryService and restore* below).
+  private async audit(actor: Actor, action: string, resourceId: string, details: Record<string, unknown>, snapshot?: unknown) {
     await this.auditLogsService.log({
       workspaceId: actor.scope.workspaceId as string,
       actorUserId: actor.userId,
@@ -1149,6 +1210,7 @@ export class FirewallService {
       resourceType: 'firewall',
       resourceId,
       details: details as Prisma.InputJsonValue,
+      ...(snapshot !== undefined ? { snapshot: JSON.parse(JSON.stringify(snapshot)) as Prisma.InputJsonValue } : {}),
     });
   }
 
