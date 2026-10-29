@@ -28,6 +28,11 @@ export class FirewallController {
     return this.firewallService.overview(scope);
   }
 
+  @Get('events/timeline')
+  timeline(@CurrentWorkspace() scope: WorkspaceScope, @Query() query: { hours?: string; scope?: string; nodeId?: string }) {
+    return this.firewallService.timeline(scope, query);
+  }
+
   @Get('events')
   events(
     @CurrentWorkspace() scope: WorkspaceScope,

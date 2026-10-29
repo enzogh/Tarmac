@@ -654,6 +654,23 @@ export class FirewallService {
     }));
   }
 
+  /** Attempts per hour and verdict, for the Activity chart. */
+  async timeline(scope: WorkspaceScope, query: { hours?: string; scope?: string; nodeId?: string }) {
+    const hours = Math.min(Math.max(Number(query.hours) || 24, 1), EVENT_RETENTION_DAYS * 24);
+    const rows = await this.prisma.firewallEvent.groupBy({
+      by: ['bucketStart', 'verdict'],
+      where: {
+        workspaceId: scope.workspaceId as string,
+        bucketStart: { gte: new Date(Math.floor((Date.now() - hours * 3600 * 1000) / 3_600_000) * 3_600_000) },
+        ...(query.scope === 'mesh' || query.scope === 'public' ? { scope: query.scope } : {}),
+        ...(query.nodeId ? { nodeId: query.nodeId } : {}),
+      },
+      _sum: { count: true },
+      orderBy: { bucketStart: 'asc' },
+    });
+    return rows.map((row) => ({ bucketStart: row.bucketStart.toISOString(), verdict: row.verdict, count: row._sum.count ?? 0 }));
+  }
+
   async test(scope: WorkspaceScope, dto: TestFirewallDto) {
     const workspaceId = scope.workspaceId as string;
     const { ctx } = await this.loadContext(workspaceId);

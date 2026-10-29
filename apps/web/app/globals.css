@@ -266,3 +266,9 @@
   filter: drop-shadow(0 0 3px rgba(161, 161, 170, 0.35));
 }
 
+
+/* Firewall activity: a row that just arrived glows briefly. */
+@keyframes fw-fresh {
+  0% { background-color: hsl(var(--primary) / 0.14); }
+  100% { background-color: transparent; }
+}

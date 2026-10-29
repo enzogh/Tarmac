@@ -1563,6 +1563,12 @@ export const api = {
       ).toString();
       return request<FirewallEvent[]>(`/api/v1/firewall/events${query ? `?${query}` : ''}`);
     },
+    timeline: (params: { hours?: number; scope?: FirewallScope; nodeId?: string } = {}) => {
+      const query = new URLSearchParams(
+        Object.entries(params).filter(([, value]) => value !== undefined && value !== '').map(([key, value]) => [key, String(value)]),
+      ).toString();
+      return request<Array<{ bucketStart: string; verdict: 'blocked' | 'observed'; count: number }>>(`/api/v1/firewall/events/timeline${query ? `?${query}` : ''}`);
+    },
     test: (payload: FirewallTestRequest) =>
       request<FirewallTestResult>('/api/v1/firewall/test', { method: 'POST', body: JSON.stringify(payload) }),
     updateSettings: (payload: Partial<FirewallOverview['settings']>) =>
