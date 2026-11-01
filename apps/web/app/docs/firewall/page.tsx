@@ -106,6 +106,11 @@ export default function FirewallDocsPage() {
             Une même adresse peut ouvrir 20 connexions SSH d’affilée, puis 10 par minute ; au-delà elle est ralentie, jamais bloquée. Les adresses
             qu’une règle SSH autorise ne sont jamais limitées. Active par défaut, y compris sur les serveurs non filtrés.
           </DocCard>
+          <DocCard icon={Network} title="rpcbind réservé au réseau privé">
+            Le port 111 (rpcbind, utilisé par NFS) n’est joignable que depuis le réseau privé : depuis Internet, il dévoile les services du serveur et
+            sert à amplifier des attaques DDoS. Les montages NFS entre vos serveurs passent par le réseau privé et ne sont pas concernés. Une adresse
+            qu’une règle autorise sur ce port reste acceptée. Active par défaut, y compris sur les serveurs non filtrés.
+          </DocCard>
           <DocCard icon={Send} title="Ce que le filtrage sortant laisse passer">
             Les processus système (root) — dont l’agent Tarmac et les mises à jour —, le DNS, l’heure et le ping restent toujours libres : un serveur ne
             perd jamais le contact avec Tarmac. Les conteneurs Docker ne sont pas concernés.
@@ -121,7 +126,7 @@ export default function FirewallDocsPage() {
         <SectionLabel>Dépannage</SectionLabel>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <DocCard icon={Wrench} title="« Agent à mettre à jour »" tone="warn">
-            Le pare-feu sortant, les règles par pays et la limite SSH demandent un agent récent. Un agent trop ancien ne reçoit pas ces règles — jamais une
+            Le pare-feu sortant, les règles par pays, la limite SSH et la protection rpcbind demandent un agent récent. Un agent trop ancien ne reçoit pas ces règles — jamais une
             version élargie — et l’interface le signale. Mettez-le à jour depuis la page Nœuds.
           </DocCard>
           <DocCard icon={Ban} title="Une application ne marche plus" tone="warn">

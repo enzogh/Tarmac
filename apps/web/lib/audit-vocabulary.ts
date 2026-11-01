@@ -244,6 +244,7 @@ export const DETAIL_LABEL: Record<string, string> = {
   publicPing: 'Réponse au ping',
   sshGuard: 'Anti-verrouillage SSH',
   sshLimit: 'Limite des tentatives SSH',
+  rpcGuard: 'rpcbind réservé au réseau privé',
 };
 
 // Field names in `changes` arrays.

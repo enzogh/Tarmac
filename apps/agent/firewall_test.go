@@ -364,6 +364,101 @@ func TestFirewallSSHLimitParse(t *testing.T) {
 	}
 }
 
+func TestFirewallRPCGuard(t *testing.T) {
+	desired := fwTestPayload(t, `{"revision":"1","mesh":{"mode":"open"},"public":{"mode":"open","allows":[]},
+		"rpcGuard":{"ports":["111"],"exempt":["198.51.100.7","2001:db8::/48"]}}`)
+	if !desired.active() {
+		t.Fatal("the rpcbind guard alone must activate the firewall")
+	}
+
+	plan := buildFirewallPlan(desired, false, []string{"eth0"}, false)
+	pub := fwChain(plan, fwChainPub)
+	rpc := fwChain(plan, fwChainRPC)
+	if pub == nil || rpc == nil {
+		t.Fatal("an open public zone with the rpcbind guard on must still install it")
+	}
+	body := fwJoin(pub.rules)
+	for _, want := range []string{
+		"-p tcp --dport 111 -j TARMAC-FW-RPC",
+		"-p udp --dport 111 -j TARMAC-FW-RPC",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "DROP") {
+		t.Errorf("the public chain itself must drop nothing in open mode:\n%s", body)
+	}
+	guard := fwJoin(rpc.rules)
+	if !strings.HasPrefix(guard, "-s 198.51.100.7/32 -j RETURN\n") || strings.Contains(guard, "2001:db8") {
+		t.Errorf("IPv4 exemption must come first, alone:\n%s", guard)
+	}
+	if !strings.Contains(guard, "TFW:P ") || !strings.HasSuffix(guard, "--comment tarmac-fw:rpc-guard -j DROP") {
+		t.Errorf("rpcbind from the internet must be logged then dropped:\n%s", guard)
+	}
+	// Only uplinks go through the public chain: the mesh keeps rpcbind.
+	in := fwJoin(fwChain(plan, fwChainIn).rules)
+	if !strings.Contains(in, "-i eth0 -j TARMAC-FW-PUB") || strings.Contains(in, "tarmacwg0 -j TARMAC-FW-PUB") {
+		t.Errorf("only the uplink may reach the guard:\n%s", in)
+	}
+	order := map[string]int{}
+	for i, chain := range plan.chains {
+		order[chain.chain] = i
+	}
+	if !(order[fwChainRPC] < order[fwChainPub]) {
+		t.Errorf("guard chain must exist before the public chain jumps to it: %v", order)
+	}
+
+	// Enforce mode: the guard comes before the zone's allows, so an
+	// "everything from anyone" rule can't reopen rpcbind.
+	enforce := fwTestPayload(t, `{"revision":"2","public":{"mode":"enforce","allows":[{"id":"all","protocol":"any"}]},
+		"rpcGuard":{"ports":["111"]}}`)
+	pubRules := fwJoin(fwChain(buildFirewallPlan(enforce, false, []string{"eth0"}, false), fwChainPub).rules)
+	if strings.Index(pubRules, "TARMAC-FW-RPC") > strings.Index(pubRules, "tarmac-fw:all") {
+		t.Errorf("guard must come before the allows:\n%s", pubRules)
+	}
+
+	plan6 := buildFirewallPlan(desired, true, []string{"eth0"}, false)
+	guard6 := fwJoin(fwChain(plan6, fwChainRPC).rules)
+	if !strings.HasPrefix(guard6, "-s 2001:db8::/48 -j RETURN\n") || strings.Contains(guard6, "198.51.100.7") {
+		t.Errorf("IPv6 guard wrong:\n%s", guard6)
+	}
+
+	// Off again: the chain is removed.
+	off := fwTestPayload(t, `{"revision":"3","public":{"mode":"enforce"}}`)
+	plan = buildFirewallPlan(off, false, []string{"eth0"}, false)
+	if fwChain(plan, fwChainRPC) != nil || strings.Contains(fwJoin(fwChain(plan, fwChainPub).rules), fwChainRPC) {
+		t.Error("guard must be gone when off")
+	}
+	removed := false
+	for _, chain := range plan.obsolete {
+		removed = removed || chain.chain == fwChainRPC
+	}
+	if !removed {
+		t.Error("guard chain must be listed as obsolete")
+	}
+}
+
+func TestFirewallRPCGuardParse(t *testing.T) {
+	if desired := fwTestPayload(t, `{"rpcGuard":{"ports":[]}}`); desired.rpcGuard != nil || desired.active() {
+		t.Error("a guard without ports is off")
+	}
+	for _, raw := range []string{
+		`{"rpcGuard":{"ports":["111;rm"]}}`,
+		`{"rpcGuard":{"ports":["111"],"exempt":["nope"]}}`,
+	} {
+		var payload map[string]interface{}
+		_ = json.Unmarshal([]byte(raw), &payload)
+		if _, err := parseFirewallPayload(payload); err == nil {
+			t.Errorf("expected an error for %s", raw)
+		}
+	}
+	event, ok := fwParseLogLine("TFW:P IN=eth0 OUT= SRC=203.0.113.9 DST=198.51.100.1 PROTO=UDP SPT=50000 DPT=111", nil)
+	if !ok || event.Verdict != "blocked" || event.RuleID != "rpc-guard" || event.Port != 111 || event.Protocol != "udp" {
+		t.Errorf("bad rpcbind guard event: %+v", event)
+	}
+}
+
 func TestFirewallOutbound(t *testing.T) {
 	desired := fwTestPayload(t, `{"revision":"1","outbound":{"mode":"enforce",
 		"denies":[{"id":"no-smtp","protocol":"tcp","ports":["25"]}],

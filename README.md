@@ -94,8 +94,9 @@ et les vues topologiques.
 - Règles par serveur, étiquette, adresse IP, liste d'adresses réutilisable ou pays (plages des registres Internet, chargées dans ipset et rafraîchies chaque semaine), temporaires si besoin ; les blocages passent avant les autorisations
 - Filtrage sortant : les services d'un serveur ne contactent Internet que là où une règle l'autorise ; root (dont l'agent), DNS, heure et ping restent libres
 - Protection anti-verrouillage SSH et limite des tentatives SSH par adresse (20 d'affilée puis 10/min, connexions ralenties, jamais bloquées)
+- rpcbind (port 111, TCP et UDP) réservé au réseau privé sur tous les serveurs, même non filtrés (chaîne `TARMAC-FW-RPC`) : depuis Internet il dévoile les services et sert d'amplificateur DDoS ; les montages NFS passent par le maillage et ne sont pas touchés, une adresse autorisée par une règle sur ce port reste acceptée
 - Activité en direct (connexions refusées ou qui le seraient), « Vu, rien à faire », test d'une connexion avant de l'appliquer, matrice « qui peut joindre qui »
-- Les protections récentes (sortant, pays, limite SSH) ne sont envoyées qu'aux agents qui les connaissent : un agent trop ancien est signalé « à mettre à jour »
+- Les protections récentes (sortant, pays, limite SSH, rpcbind) ne sont envoyées qu'aux agents qui les connaissent : un agent trop ancien est signalé « à mettre à jour »
 
 **Accès distant (VPN WireGuard)**
 - Profils par appareil : connexion à un nœud d'entrée (UDP `51821`, `VPN_LISTEN_PORT` côté API), configuration en fichier ou QR code

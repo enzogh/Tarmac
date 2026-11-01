@@ -76,6 +76,9 @@ export type PolicyContext = {
   sshGuard: boolean;
   // Throttle new SSH connections from the internet (see the agent's TARMAC-FW-SSH).
   sshLimit: boolean;
+  // Keep rpcbind (port 111) reachable from the private mesh only (the agent's
+  // TARMAC-FW-RPC). Optional so older callers read it as off.
+  rpcGuard?: boolean;
   nodes: PolicyNode[];
   rules: PolicyRule[];
   system: SystemFlow[];
@@ -110,7 +113,16 @@ export type AgentPayload = {
   outbound: AgentZone;
   // Absent when off; exempt = addresses an SSH rule explicitly allows.
   sshLimit?: { ports: string[]; exempt: string[] };
+  // Absent when off; exempt = addresses an internet rule explicitly allows on these ports.
+  rpcGuard?: { ports: string[]; exempt: string[] };
 };
+
+// Agent feature and rule id (logs, counters) of the rpcbind guard.
+export const RPC_GUARD_ID = 'rpc-guard';
+// rpcbind: tells clients where RPC services (NFSv3, NIS...) listen. Only
+// the private mesh ever needs it, and open to the internet it leaks the
+// server's services and serves as a DDoS amplifier.
+export const RPC_GUARD_PORTS = [111];
 
 const PORT_PATTERN = /^(\d{1,5})(?:-(\d{1,5}))?$/;
 
@@ -228,7 +240,32 @@ export function buildAgentPayload(ctx: PolicyContext, nodeId: string, revision: 
   }
   if (!node.vlanIp) payload.mesh = zone('open');
   if (ctx.sshLimit) payload.sshLimit = sshLimitFor(ctx, node, now);
+  if (ctx.rpcGuard) payload.rpcGuard = { ports: RPC_GUARD_PORTS.map(String), exempt: rpcGuardExempt(ctx, node, now) };
   return payload;
+}
+
+/**
+ * Internet addresses the rpcbind guard lets through on a node: those a live
+ * internet rule explicitly allows on port 111 (a deliberate, named source -
+ * never "anyone").
+ */
+export function rpcGuardExempt(ctx: PolicyContext, node: PolicyNode, now: Date): string[] {
+  const exempt = new Set<string>();
+  for (const rule of ctx.rules) {
+    if (rule.scope !== 'public' || rule.action !== 'allow' || rule.sourceKind === 'any' || !isRuleLive(rule, now)) continue;
+    if (!ruleTargets(rule, ctx.nodes).some((target) => target.id === node.id)) continue;
+    if (!RPC_GUARD_PORTS.some((port) => protocolMatches(rule, { protocol: 'tcp', port }) || protocolMatches(rule, { protocol: 'udp', port }))) continue;
+    for (const cidr of ruleCidrs(rule, ctx.lists)) exempt.add(cidr);
+  }
+  return [...exempt];
+}
+
+/** Whether the rpcbind guard drops this internet probe on this node. */
+function rpcGuardDrops(ctx: PolicyContext, node: PolicyNode | undefined, probe: Probe, sourceIp?: string): boolean {
+  if (!ctx.rpcGuard || !node || !nodeSupports(node, RPC_GUARD_ID)) return false;
+  if (probe.protocol === 'icmp' || !probe.port || !RPC_GUARD_PORTS.includes(probe.port)) return false;
+  if (!sourceIp) return true;
+  return !rpcGuardExempt(ctx, node, ctx.now ?? new Date()).some((cidr) => cidrContains(cidr, sourceIp));
 }
 
 /**
@@ -250,7 +287,7 @@ export function sshLimitFor(ctx: PolicyContext, node: PolicyNode, now: Date): { 
 /** True when an apply would install nothing on the node. */
 export function payloadIsEmpty(payload: AgentPayload): boolean {
   const zoneActive = (zone: AgentZone) => zone.mode !== 'open' || zone.denies.length > 0;
-  return !zoneActive(payload.mesh) && !zoneActive(payload.public) && !zoneActive(payload.outbound) && !payload.sshLimit;
+  return !zoneActive(payload.mesh) && !zoneActive(payload.public) && !zoneActive(payload.outbound) && !payload.sshLimit && !payload.rpcGuard;
 }
 
 // ---------------------------------------------------------------------
@@ -405,6 +442,14 @@ function evaluateRules(
       verdict: 'blocked',
       reason: `Bloqué par la règle « ${deny.name} ». Les blocages passent avant toute autorisation.`,
       match: { type: 'rule', id: deny.id, name: deny.name },
+    };
+  }
+  if (request.scope === 'public' && rpcGuardDrops(ctx, ctx.nodes.find((node) => node.id === request.targetNodeId), request, source.ip)) {
+    return {
+      verdict: 'blocked',
+      reason:
+        'rpcbind (port 111) n’est joignable que depuis le réseau privé Tarmac (protection automatique). Pour une adresse précise, autorisez-la par une règle sur ce port.',
+      match: { type: 'infrastructure', id: RPC_GUARD_ID, name: 'rpcbind réservé au réseau privé' },
     };
   }
   if (mode === 'open') {
@@ -623,6 +668,7 @@ export function publicExposure(
   // Banning a few addresses doesn't make a port any less public: only a
   // block of every source closes it.
   if (live.some((rule) => rule.action === 'deny' && rule.sourceKind === 'any')) return 'closed';
+  if (rpcGuardDrops(ctx, node, probe)) return node && rpcGuardExempt(ctx, node, now).length > 0 ? 'restricted' : 'closed';
   if (mode === 'open') return 'public';
   const allows = live.filter((rule) => rule.action === 'allow');
   if (managedBy(ctx, nodeId, listen) || allows.some((rule) => rule.sourceKind === 'any')) return 'public';

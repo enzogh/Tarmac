@@ -35,6 +35,10 @@ export class UpdateFirewallSettingsDto {
   @IsOptional()
   @IsBoolean()
   sshLimit?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  rpcGuard?: boolean;
 }
 
 export class UpdateFirewallNodeDto {

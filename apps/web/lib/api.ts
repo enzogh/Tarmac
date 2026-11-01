@@ -715,6 +715,8 @@ export type FirewallNode = {
   apply: { status: FirewallApplyStatus; message: string | null };
   // Whether this node's agent throttles SSH attempts (needs a recent agent).
   sshLimit: 'on' | 'off' | 'unsupported' | 'unknown';
+  // Whether this node's agent keeps rpcbind (port 111) off the internet.
+  rpcGuard: 'on' | 'off' | 'unsupported' | 'unknown';
   blocked24h: number;
   report: {
     uplinks: string[];
@@ -782,7 +784,7 @@ export type FirewallMatrixCell = {
 };
 
 export type FirewallOverview = {
-  settings: { meshMode: FirewallMode; publicPing: boolean; sshGuard: boolean; sshLimit: boolean; eventRetentionDays: number };
+  settings: { meshMode: FirewallMode; publicPing: boolean; sshGuard: boolean; sshLimit: boolean; rpcGuard: boolean; eventRetentionDays: number };
   nodes: FirewallNode[];
   rules: FirewallRule[];
   lists: FirewallAddressList[];

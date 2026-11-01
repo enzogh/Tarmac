@@ -46,6 +46,9 @@ const (
 	// through SSH, whose excess is logged and dropped by SSH-X.
 	fwChainSSH  = "TARMAC-FW-SSH"
 	fwChainSSHX = "TARMAC-FW-SSH-X"
+	// rpcbind guard: services meant for the private network only (rpcbind,
+	// port 111) are dropped when they arrive from the internet.
+	fwChainRPC = "TARMAC-FW-RPC"
 	// Outbound: connections this server opens towards the internet, jumped
 	// to from OUTPUT for the uplinks.
 	fwChainOut = "TARMAC-FW-OUT"
@@ -67,11 +70,13 @@ const (
 	fwSSHBurst = "20"
 	// Rule id in logs and counters for packets the limiter dropped.
 	fwSSHLimitID = "ssh-limit"
+	// Rule id in logs and counters for packets the rpcbind guard dropped.
+	fwRPCGuardID = "rpc-guard"
 )
 
 // Features this agent supports beyond the base firewall, reported so the
 // dashboard never claims a protection an older agent ignores.
-var fwFeatures = []string{"ssh-limit", "outbound", "countries"}
+var fwFeatures = []string{"ssh-limit", "outbound", "countries", "rpc-guard"}
 
 var (
 	fwPortPattern  = regexp.MustCompile(`^([0-9]{1,5})(?:-([0-9]{1,5}))?$`)
@@ -101,6 +106,13 @@ type fwSSHLimit struct {
 	exempt []string // CIDRs never limited (allowed by an SSH rule)
 }
 
+// Ports reachable from the private mesh only: anything arriving on an
+// uplink is dropped, TCP and UDP, except from the exempt addresses.
+type fwRPCGuard struct {
+	ports  []string
+	exempt []string // CIDRs an internet rule explicitly allows on these ports
+}
+
 type fwDesired struct {
 	revision  string
 	meshIface string
@@ -112,10 +124,12 @@ type fwDesired struct {
 	ping bool
 	// Throttle new SSH connections from the internet; nil = off.
 	sshLimit *fwSSHLimit
+	// Keep rpcbind off the internet; nil = off.
+	rpcGuard *fwRPCGuard
 }
 
 func (d fwDesired) publicActive() bool {
-	return d.public.active() || d.sshLimit != nil
+	return d.public.active() || d.sshLimit != nil || d.rpcGuard != nil
 }
 
 func (d fwDesired) active() bool {
@@ -301,6 +315,26 @@ func parseFirewallPayload(payload map[string]interface{}) (fwDesired, error) {
 		}
 		if len(limit.ports) > 0 {
 			desired.sshLimit = limit
+		}
+	}
+	if raw, ok := payload["rpcGuard"].(map[string]interface{}); ok {
+		guard := &fwRPCGuard{}
+		for _, port := range readStringSlice(raw, "ports") {
+			port = strings.TrimSpace(port)
+			if !fwValidPort(port) {
+				return desired, fmt.Errorf("rpcGuard: invalid port %q", port)
+			}
+			guard.ports = append(guard.ports, port)
+		}
+		for _, source := range readStringSlice(raw, "exempt") {
+			normalized, ok := fwNormalizeSource(source)
+			if !ok {
+				return desired, fmt.Errorf("rpcGuard: invalid exempt source %q", source)
+			}
+			guard.exempt = append(guard.exempt, normalized)
+		}
+		if len(guard.ports) > 0 {
+			desired.rpcGuard = guard
 		}
 	}
 	return desired, nil
@@ -498,14 +532,16 @@ func buildFirewallPlan(desired fwDesired, v6 bool, uplinks []string, docker bool
 	pubD := spec(fwChainPubD, nil)
 	ssh := spec(fwChainSSH, nil)
 	sshX := spec(fwChainSSHX, nil)
+	rpc := spec(fwChainRPC, nil)
 	out := spec(fwChainOut, []string{"OUTPUT"})
 	egr := spec(fwChainEgr, nil)
-	all := []vpnChainSpec{in, mesh, pub, dnatIn, meshD, pubD, ssh, sshX, out, egr}
+	all := []vpnChainSpec{in, mesh, pub, dnatIn, meshD, pubD, ssh, sshX, rpc, out, egr}
 
 	// The private mesh is IPv4 only.
 	meshOn := !v6 && desired.mesh.active()
 	pubOn := desired.publicActive() && len(uplinks) > 0
 	sshOn := pubOn && desired.sshLimit != nil
+	rpcOn := pubOn && desired.rpcGuard != nil
 	outOn := desired.outbound.active() && len(uplinks) > 0
 	if !meshOn && !pubOn && !outOn {
 		return fwPlan{obsolete: all}
@@ -566,6 +602,26 @@ func buildFirewallPlan(desired fwDesired, v6 bool, uplinks []string, docker bool
 			} else {
 				pre = append(pre, []string{"-p", "icmp", "!", "--icmp-type", "echo-request", "-j", "RETURN"})
 			}
+		}
+		if rpcOn {
+			// Before the zone rules: an allow-everything rule must not
+			// reopen rpcbind; exempt addresses RETURN to the zone rules.
+			for _, port := range desired.rpcGuard.ports {
+				dport := strings.Replace(port, "-", ":", 1)
+				pub.rules = append(pub.rules,
+					[]string{"-p", "tcp", "--dport", dport, "-j", fwChainRPC},
+					[]string{"-p", "udp", "--dport", dport, "-j", fwChainRPC},
+				)
+			}
+			for _, source := range desired.rpcGuard.exempt {
+				if fwIsV6(source) == v6 {
+					rpc.rules = append(rpc.rules, []string{"-s", source, "-j", "RETURN"})
+				}
+			}
+			rpc.rules = append(rpc.rules,
+				fwLogRule(fwLogTag+"P"),
+				append(fwComment(fwRPCGuardID), "-j", "DROP"),
+			)
 		}
 		if sshOn {
 			// Before the zone rules: the SSH guard allows SSH from anyone,
@@ -637,6 +693,11 @@ func buildFirewallPlan(desired fwDesired, v6 bool, uplinks []string, docker bool
 		plan.chains = append(plan.chains, sshX, ssh)
 	} else {
 		plan.obsolete = append(plan.obsolete, ssh, sshX)
+	}
+	if rpcOn {
+		plan.chains = append(plan.chains, rpc)
+	} else {
+		plan.obsolete = append(plan.obsolete, rpc)
 	}
 	if meshOn {
 		plan.chains = append(plan.chains, mesh)
@@ -1201,6 +1262,9 @@ func fwParseLogLine(message string, denyIDs []string) (fwEvent, bool) {
 	case tag == "S":
 		event.Verdict = "blocked"
 		event.RuleID = fwSSHLimitID
+	case tag == "P":
+		event.Verdict = "blocked"
+		event.RuleID = fwRPCGuardID
 	case strings.HasPrefix(tag, "R"):
 		index, err := strconv.Atoi(tag[1:])
 		if err != nil {

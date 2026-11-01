@@ -247,6 +247,9 @@ model Workspace {
   firewallSshGuard    Boolean   @default(true)
   // Throttle new SSH connections from the internet, per source address.
   firewallSshLimit    Boolean   @default(true)
+  // Keep rpcbind (port 111) off the internet: reachable from the private
+  // mesh only, on every node.
+  firewallRpcGuard    Boolean   @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

@@ -465,9 +465,9 @@ const MODULES: Module[] = [
       {
         method: 'PATCH',
         path: '/firewall/settings',
-        body: 'meshMode?, publicPing?, sshGuard?, sshLimit?',
+        body: 'meshMode?, publicPing?, sshGuard?, sshLimit?, rpcGuard?',
         description:
-          'Mode du réseau privé (open, observe, enforce), réponse au ping, protection anti-verrouillage SSH et limite des tentatives SSH depuis Internet.',
+          'Mode du réseau privé (open, observe, enforce), réponse au ping, protection anti-verrouillage SSH, limite des tentatives SSH depuis Internet et rpcbind (port 111) réservé au réseau privé.',
         isNew: true,
       },
       {

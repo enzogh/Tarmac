@@ -51,6 +51,7 @@ export default function FirewallInternetPage() {
   const rules = data.rules.filter((rule) => rule.scope === 'public');
   // Agents too old to throttle SSH: the setting says so instead of overpromising.
   const sshLimitPending = data.nodes.filter((node) => node.sshLimit === 'unsupported');
+  const rpcGuardPending = data.nodes.filter((node) => node.rpcGuard === 'unsupported');
 
   const onMode = async (node: FirewallNode, mode: FirewallMode) => {
     if (mode !== 'open') {
@@ -150,6 +151,22 @@ export default function FirewallInternetPage() {
             }
             checked={data.settings.sshLimit}
             onChange={(sshLimit) => void setSetting({ sshLimit })}
+            disabled={readOnly}
+          />
+          <SettingRow
+            title="rpcbind réservé au réseau privé"
+            text="Le port 111 (rpcbind, utilisé par NFS) n’est joignable que depuis le réseau privé Tarmac : depuis Internet, il dévoile vos services et sert à amplifier des attaques DDoS. Vos montages NFS ne sont pas concernés. Une adresse autorisée par une règle sur ce port reste acceptée. S’applique aussi aux serveurs non filtrés."
+            note={
+              data.settings.rpcGuard && rpcGuardPending.length > 0 ? (
+                <p className="mt-2 text-xs text-[hsl(var(--warn))]">
+                  {rpcGuardPending.length === 1
+                    ? `${rpcGuardPending[0].name} doit mettre à jour son agent pour en profiter (page Nœuds).`
+                    : `${rpcGuardPending.length} serveurs doivent mettre à jour leur agent pour en profiter (page Nœuds).`}
+                </p>
+              ) : undefined
+            }
+            checked={data.settings.rpcGuard}
+            onChange={(rpcGuard) => void setSetting({ rpcGuard })}
             disabled={readOnly}
           />
           <div className="grid divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">

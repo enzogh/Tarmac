@@ -251,3 +251,38 @@ test('countries: only agents that support them receive country rules', () => {
   const verdict = evaluate(ctx({ nodes: current, rules: [geo] }), { scope: 'public', targetNodeId: 'dev', sourceIp: '203.0.113.5', protocol: 'tcp', port: 443 });
   assert.match(verdict.reason, /par pays/);
 });
+
+test('rpcbind guard: port 111 kept off the internet on every node, mesh untouched', () => {
+  const office = rule({ id: 'office', scope: 'public', sourceKind: 'cidrs', sourceCidrs: ['198.51.100.7/32'], protocol: 'udp', ports: ['100-200'] });
+  const anyone = rule({ id: 'anyone', scope: 'public', sourceKind: 'any', protocol: 'any' });
+  const elsewhere = rule({ id: 'elsewhere', scope: 'public', sourceKind: 'cidrs', sourceCidrs: ['192.0.2.9/32'], protocol: 'tcp', ports: ['443'] });
+  const c = ctx({ rpcGuard: true, rules: [office, anyone, elsewhere] });
+
+  // Sent to every node; only a named source allowed on 111 is exempt.
+  assert.deepEqual(buildAgentPayload(c, 'dev', 'r').rpcGuard, { ports: ['111'], exempt: ['198.51.100.7/32'] });
+  assert.deepEqual(buildAgentPayload(ctx({ rpcGuard: true }), 'off', 'r').rpcGuard, { ports: ['111'], exempt: [] });
+  // The guard alone makes the payload worth sending; off, nothing changes.
+  assert.equal(payloadIsEmpty(buildAgentPayload(ctx({ rpcGuard: true }), 'dev', 'r')), false);
+  assert.equal(buildAgentPayload(ctx({}), 'dev', 'r').rpcGuard, undefined);
+
+  // Tester: blocked from the internet even with an "everything" rule, except
+  // the exempt office; the mesh keeps rpcbind.
+  const probe = (sourceIp: string, protocol: 'tcp' | 'udp' = 'tcp') =>
+    evaluate(c, { scope: 'public', targetNodeId: 'dev', sourceIp, protocol, port: 111 });
+  assert.equal(probe('203.0.113.5').verdict, 'blocked');
+  assert.equal(probe('203.0.113.5', 'udp').match.id, 'rpc-guard');
+  assert.equal(probe('198.51.100.7', 'udp').verdict, 'allowed');
+  assert.equal(evaluate(c, { scope: 'public', targetNodeId: 'dev', sourceIp: '203.0.113.5', protocol: 'tcp', port: 112 }).verdict, 'allowed');
+  assert.equal(evaluate(c, { scope: 'mesh', sourceNodeId: 'web', targetNodeId: 'dev', protocol: 'tcp', port: 111 }).verdict, 'allowed');
+
+  // Exposure of a listening rpcbind.
+  const rpcbind = { protocol: 'tcp' as const, port: 111, addresses: ['*'] };
+  assert.equal(publicExposure(ctx({ rpcGuard: true }), 'dev', rpcbind), 'closed');
+  assert.equal(publicExposure(c, 'dev', rpcbind), 'restricted');
+  assert.equal(publicExposure(ctx({}), 'dev', rpcbind), 'public');
+
+  // An agent too old to apply it gets no false promise.
+  const old = nodes.map((node) => ({ ...node, features: ['ssh-limit', 'outbound', 'countries'] }));
+  assert.equal(publicExposure(ctx({ rpcGuard: true, nodes: old }), 'dev', rpcbind), 'public');
+  assert.equal(evaluate(ctx({ rpcGuard: true, nodes: old }), { scope: 'public', targetNodeId: 'dev', sourceIp: '203.0.113.5', protocol: 'tcp', port: 111 }).verdict, 'allowed');
+});

@@ -58,6 +58,7 @@ function AnimatedNumber({ value, className }: { value: number; className?: strin
 
 // Rule id the agents put on SSH attempts dropped by the brute-force limiter.
 const SSH_LIMIT_ID = 'ssh-limit';
+const RPC_GUARD_ID = 'rpc-guard';
 
 function draftsFor(event: FirewallEvent): { allow: RuleDraft; block: RuleDraft } {
   const source =
@@ -74,7 +75,12 @@ function draftsFor(event: FirewallEvent): { allow: RuleDraft; block: RuleDraft }
       protocol: event.protocol === 'icmp' ? 'icmp' : event.protocol === 'udp' ? 'udp' : 'tcp',
       ports: event.port && event.protocol !== 'icmp' ? [String(event.port)] : [],
       // An SSH rule naming this address also exempts it from the limiter.
-      name: event.ruleId === SSH_LIMIT_ID ? `SSH sans limite depuis ${event.sourceIp}` : undefined,
+      name:
+        event.ruleId === SSH_LIMIT_ID
+          ? `SSH sans limite depuis ${event.sourceIp}`
+          : event.ruleId === RPC_GUARD_ID
+            ? `rpcbind depuis ${event.sourceIp}`
+            : undefined,
     },
     block: {
       scope: event.scope,
@@ -130,6 +136,7 @@ export function EventRow({
   const sourceNode = event.sourceNodeId ? nodes.get(event.sourceNodeId) : null;
   const rule = event.ruleId ? rules.get(event.ruleId) : null;
   const sshLimited = event.ruleId === SSH_LIMIT_ID;
+  const rpcGuarded = event.ruleId === RPC_GUARD_ID;
   const blocked = event.verdict === 'blocked';
   const drafts = draftsFor(event);
   const expandable = !compact;
@@ -223,11 +230,13 @@ export function EventRow({
                   <dd className="mt-0.5 text-foreground">
                     {sshLimited
                       ? 'Trop de tentatives SSH : ralentie'
-                      : rule
-                        ? `Règle « ${rule.name} »`
-                        : blocked
-                          ? 'Aucune règle ne l’autorise'
-                          : 'Mode observation'}
+                      : rpcGuarded
+                        ? 'rpcbind réservé au réseau privé'
+                        : rule
+                          ? `Règle « ${rule.name} »`
+                          : blocked
+                            ? 'Aucune règle ne l’autorise'
+                            : 'Mode observation'}
                   </dd>
                 </div>
                 <div>
@@ -254,7 +263,13 @@ export function EventRow({
               <div className="flex flex-wrap gap-2">
                 <Button write size="sm" className="gap-1.5" onClick={() => onCreateRule(drafts.allow)}>
                   <ShieldCheck className="h-3.5 w-3.5" />
-                  {sshLimited ? 'Ne plus limiter cette adresse' : rule ? 'Autoriser malgré tout' : 'Autoriser cette connexion'}
+                  {sshLimited
+                    ? 'Ne plus limiter cette adresse'
+                    : rpcGuarded
+                      ? 'Autoriser cette adresse sur rpcbind'
+                      : rule
+                        ? 'Autoriser malgré tout'
+                        : 'Autoriser cette connexion'}
                 </Button>
                 <Button write size="sm" variant="secondary" className="gap-1.5 text-[hsl(var(--danger))]" onClick={() => onCreateRule(drafts.block)}>
                   <Ban className="h-3.5 w-3.5" />

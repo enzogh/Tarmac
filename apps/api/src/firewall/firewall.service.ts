@@ -31,6 +31,7 @@ import {
   PolicyNode,
   PolicyRule,
   publicExposure,
+  RPC_GUARD_ID,
   serviceName,
   SystemFlow,
 } from './firewall-policy';
@@ -193,6 +194,7 @@ export class FirewallService {
           firewallPublicPing: true,
           firewallSshGuard: true,
           firewallSshLimit: true,
+          firewallRpcGuard: true,
           firewallEventRetentionDays: true,
           internalDnsNodeId: true,
         },
@@ -249,6 +251,7 @@ export class FirewallService {
       publicPing: workspace.firewallPublicPing,
       sshGuard: workspace.firewallSshGuard,
       sshLimit: workspace.firewallSshLimit,
+      rpcGuard: workspace.firewallRpcGuard,
       nodes: policyNodes,
       rules: rules.map((rule) => this.toPolicyRule(rule)),
       system,
@@ -574,6 +577,7 @@ export class FirewallService {
         apply: this.applyState(node, wanted),
         // "unsupported": the agent's last report doesn't list the limiter.
         sshLimit: !ctx.sshLimit ? 'off' : report?.features?.includes(SSH_LIMIT_ID) ? 'on' : report ? 'unsupported' : 'unknown',
+        rpcGuard: !ctx.rpcGuard ? 'off' : report?.features?.includes(RPC_GUARD_ID) ? 'on' : report ? 'unsupported' : 'unknown',
         blocked24h: blockedByNode.get(node.id) ?? 0,
         report: report
           ? { uplinks: report.uplinks, docker: report.docker, logging: report.logging, reportedAt: report.reportedAt, listening }
@@ -588,6 +592,7 @@ export class FirewallService {
         publicPing: workspace.firewallPublicPing,
         sshGuard: workspace.firewallSshGuard,
         sshLimit: workspace.firewallSshLimit,
+        rpcGuard: workspace.firewallRpcGuard,
         // Days of Activity kept, chosen in Settings.
         eventRetentionDays: workspace.firewallEventRetentionDays,
       },
@@ -758,7 +763,11 @@ export class FirewallService {
       port: event.port ?? '',
       service: event.service ?? '',
       decision:
-        event.ruleId === SSH_LIMIT_ID ? 'trop de tentatives SSH' : event.ruleId ? `règle « ${ruleName.get(event.ruleId) ?? event.ruleId} »` : event.verdict === 'blocked' ? 'aucune règle ne l’autorise' : 'mode observation',
+        event.ruleId === SSH_LIMIT_ID
+          ? 'trop de tentatives SSH'
+          : event.ruleId === RPC_GUARD_ID
+            ? 'rpcbind réservé au réseau privé'
+            : event.ruleId ? `règle « ${ruleName.get(event.ruleId) ?? event.ruleId} »` : event.verdict === 'blocked' ? 'aucune règle ne l’autorise' : 'mode observation',
       attempts: event.count,
       seen: event.dismissed ? 'oui' : 'non',
     }));
@@ -861,14 +870,21 @@ export class FirewallService {
     const workspaceId = actor.scope.workspaceId as string;
     const before = await this.prisma.workspace.findUniqueOrThrow({
       where: { id: workspaceId },
-      select: { firewallMeshMode: true, firewallPublicPing: true, firewallSshGuard: true, firewallSshLimit: true },
+      select: { firewallMeshMode: true, firewallPublicPing: true, firewallSshGuard: true, firewallSshLimit: true, firewallRpcGuard: true },
     });
-    const snapshot = { meshMode: before.firewallMeshMode, publicPing: before.firewallPublicPing, sshGuard: before.firewallSshGuard, sshLimit: before.firewallSshLimit };
+    const snapshot = {
+      meshMode: before.firewallMeshMode,
+      publicPing: before.firewallPublicPing,
+      sshGuard: before.firewallSshGuard,
+      sshLimit: before.firewallSshLimit,
+      rpcGuard: before.firewallRpcGuard,
+    };
     const data: Prisma.WorkspaceUpdateInput = {};
     if (dto.meshMode !== undefined) data.firewallMeshMode = dto.meshMode;
     if (dto.publicPing !== undefined) data.firewallPublicPing = dto.publicPing;
     if (dto.sshGuard !== undefined) data.firewallSshGuard = dto.sshGuard;
     if (dto.sshLimit !== undefined) data.firewallSshLimit = dto.sshLimit;
+    if (dto.rpcGuard !== undefined) data.firewallRpcGuard = dto.rpcGuard;
     await this.prisma.workspace.update({ where: { id: workspaceId }, data });
     await this.audit(actor, 'firewall.settings', workspaceId, {
       ...(dto.meshMode !== undefined && dto.meshMode !== before.firewallMeshMode
@@ -877,6 +893,7 @@ export class FirewallService {
       ...(dto.publicPing !== undefined ? { publicPing: dto.publicPing } : {}),
       ...(dto.sshGuard !== undefined ? { sshGuard: dto.sshGuard } : {}),
       ...(dto.sshLimit !== undefined ? { sshLimit: dto.sshLimit } : {}),
+      ...(dto.rpcGuard !== undefined ? { rpcGuard: dto.rpcGuard } : {}),
     }, snapshot);
     await this.changed(workspaceId);
     return this.overview(actor.scope);
@@ -1173,7 +1190,7 @@ export class FirewallService {
   /** The general settings as they were (modes, ping, SSH protections). */
   async restoreSettings(snapshot: UpdateFirewallSettingsDto, actor: Actor): Promise<string> {
     await this.updateSettings(
-      { meshMode: snapshot.meshMode, publicPing: snapshot.publicPing, sshGuard: snapshot.sshGuard, sshLimit: snapshot.sshLimit },
+      { meshMode: snapshot.meshMode, publicPing: snapshot.publicPing, sshGuard: snapshot.sshGuard, sshLimit: snapshot.sshLimit, rpcGuard: snapshot.rpcGuard },
       actor,
     );
     return 'réglages du pare-feu';
@@ -1326,7 +1343,7 @@ export class FirewallService {
     const deltas: Array<[string, number]> = [];
     for (const [id, raw] of Object.entries(counters)) {
       const value = Number(raw);
-      if (!Number.isFinite(value) || id === 'default' || id === SSH_LIMIT_ID || id.startsWith('sys:')) continue;
+      if (!Number.isFinite(value) || id === 'default' || id === SSH_LIMIT_ID || id === RPC_GUARD_ID || id.startsWith('sys:')) continue;
       const before = previous[id];
       // Counters restart from zero on every apply.
       const delta = before === undefined ? 0 : value >= before ? value - before : value;
@@ -1363,7 +1380,7 @@ export class FirewallService {
       const last = new Date((Number(event.lastSeen) || Date.now() / 1000) * 1000);
       const first = new Date((Number(event.firstSeen) || Number(event.lastSeen) || Date.now() / 1000) * 1000);
       const bucketStart = new Date(Math.floor(last.getTime() / 3_600_000) * 3_600_000);
-      const ruleId = event.ruleId && (ruleIds.has(event.ruleId) || event.ruleId === SSH_LIMIT_ID) ? event.ruleId : null;
+      const ruleId = event.ruleId && (ruleIds.has(event.ruleId) || event.ruleId === SSH_LIMIT_ID || event.ruleId === RPC_GUARD_ID) ? event.ruleId : null;
       // Mesh: one row per source. Internet: one row per port, sources sampled.
       const key = [verdict, scope, protocol, port, event.docker ? 'd' : '', ruleId ?? '', scope === 'mesh' ? event.source : ''].join('|');
       const where = { nodeId_key_bucketStart: { nodeId, key, bucketStart } };
@@ -1443,6 +1460,7 @@ export class FirewallService {
         OR: [
           { firewallMeshMode: { not: 'open' } },
           { firewallSshLimit: true },
+          { firewallRpcGuard: true },
           { firewallRules: { some: {} } },
           {
             nodes: {
