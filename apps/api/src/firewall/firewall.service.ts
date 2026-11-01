@@ -32,7 +32,9 @@ import {
   PolicyRule,
   publicExposure,
   RPC_GUARD_ID,
+  RPC_BAN_ID,
   serviceName,
+  SSH_BAN_ID,
   SystemFlow,
 } from './firewall-policy';
 
@@ -57,6 +59,9 @@ export type FirewallReport = {
   counters?: Record<string, number>;
   // Optional protections this agent knows how to apply (e.g. "ssh-limit").
   features?: string[];
+  // Addresses banned right now: from SSH, from the whole server.
+  sshBans?: number;
+  rpcBans?: number;
   events?: Array<{
     verdict: string;
     outbound?: boolean;
@@ -78,6 +83,8 @@ type StoredReport = {
   docker: boolean;
   logging: boolean;
   features?: string[];
+  sshBans?: number;
+  rpcBans?: number;
   listening: Array<{ protocol: 'tcp' | 'udp'; port: number; addresses: string[]; processes: string[] }>;
   reportedAt: string;
 };
@@ -85,6 +92,17 @@ type StoredReport = {
 type Actor = { userId?: string; scope: WorkspaceScope };
 
 const MODE_LABEL: Record<FwMode, string> = { open: 'ouvert', observe: 'observation', enforce: 'appliqué' };
+
+/** The address of a WireGuard endpoint ("198.51.100.1:51820", "[2001:db8::1]:51820"); null if not an IP. */
+function endpointHost(endpoint: string | null | undefined): string | null {
+  if (!endpoint) return null;
+  const trimmed = endpoint.trim();
+  let host = trimmed;
+  if (trimmed.startsWith('[')) host = trimmed.slice(1, trimmed.indexOf(']'));
+  // One colon: IPv4 with a port. More: a bare IPv6 address.
+  else if (trimmed.split(':').length === 2) host = trimmed.slice(0, trimmed.indexOf(':'));
+  return net.isIP(host) ? host : null;
+}
 
 function hostOf(source: string): string | null {
   // "10.16.0.5:/data", "host.tarmac.local:/x", "[fd00::1]:/x"
@@ -112,6 +130,8 @@ function sanitizeReport(report: FirewallReport): StoredReport {
     docker: Boolean(report.docker),
     logging: Boolean(report.logging),
     features: (report.features ?? []).filter((value) => typeof value === 'string').slice(0, 20).map((value) => value.slice(0, 40)),
+    sshBans: Number.isInteger(report.sshBans) && report.sshBans! > 0 ? Math.min(report.sshBans!, 1_000_000) : 0,
+    rpcBans: Number.isInteger(report.rpcBans) && report.rpcBans! > 0 ? Math.min(report.rpcBans!, 1_000_000) : 0,
     listening,
     reportedAt: new Date().toISOString(),
   };
@@ -194,7 +214,13 @@ export class FirewallService {
           firewallPublicPing: true,
           firewallSshGuard: true,
           firewallSshLimit: true,
+          firewallSshBan: true,
+          firewallSshBanAttempts: true,
+          firewallSshBanMinutes: true,
+          firewallSshBanEscalate: true,
           firewallRpcGuard: true,
+          firewallRpcBan: true,
+          firewallRpcBanAttempts: true,
           firewallEventRetentionDays: true,
           internalDnsNodeId: true,
         },
@@ -210,6 +236,7 @@ export class FirewallService {
           labels: true,
           dnsHostname: true,
           overlayListenPort: true,
+          overlayEndpoint: true,
           locationCountryCode: true,
           locationCity: true,
           agentVersion: true,
@@ -241,6 +268,7 @@ export class FirewallService {
         publicMode: (node.firewallPublicMode as FwMode) ?? 'open',
         outboundMode: (node.firewallOutboundMode as FwMode) ?? 'open',
         sshPorts: sshPorts.length > 0 ? sshPorts : [22],
+        publicIp: endpointHost(node.overlayEndpoint),
         // No report yet: assume a current agent; the first report corrects it.
         features: report ? (report.features ?? []) : undefined,
       };
@@ -251,7 +279,13 @@ export class FirewallService {
       publicPing: workspace.firewallPublicPing,
       sshGuard: workspace.firewallSshGuard,
       sshLimit: workspace.firewallSshLimit,
+      sshBan: workspace.firewallSshBan
+        ? { attempts: workspace.firewallSshBanAttempts, minutes: workspace.firewallSshBanMinutes, escalate: workspace.firewallSshBanEscalate }
+        : null,
       rpcGuard: workspace.firewallRpcGuard,
+      rpcBan: workspace.firewallRpcBan
+        ? { attempts: workspace.firewallRpcBanAttempts, minutes: workspace.firewallSshBanMinutes, escalate: workspace.firewallSshBanEscalate }
+        : null,
       nodes: policyNodes,
       rules: rules.map((rule) => this.toPolicyRule(rule)),
       system,
@@ -578,6 +612,11 @@ export class FirewallService {
         // "unsupported": the agent's last report doesn't list the limiter.
         sshLimit: !ctx.sshLimit ? 'off' : report?.features?.includes(SSH_LIMIT_ID) ? 'on' : report ? 'unsupported' : 'unknown',
         rpcGuard: !ctx.rpcGuard ? 'off' : report?.features?.includes(RPC_GUARD_ID) ? 'on' : report ? 'unsupported' : 'unknown',
+        sshBan: !ctx.sshLimit || !ctx.sshBan ? 'off' : report?.features?.includes(SSH_BAN_ID) ? 'on' : report ? 'unsupported' : 'unknown',
+        // Addresses this node's agent bans from SSH right now (last report).
+        sshBans: report?.sshBans ?? 0,
+        rpcBan: !ctx.rpcGuard || !ctx.rpcBan ? 'off' : report?.features?.includes(RPC_BAN_ID) ? 'on' : report ? 'unsupported' : 'unknown',
+        rpcBans: report?.rpcBans ?? 0,
         blocked24h: blockedByNode.get(node.id) ?? 0,
         report: report
           ? { uplinks: report.uplinks, docker: report.docker, logging: report.logging, reportedAt: report.reportedAt, listening }
@@ -592,7 +631,13 @@ export class FirewallService {
         publicPing: workspace.firewallPublicPing,
         sshGuard: workspace.firewallSshGuard,
         sshLimit: workspace.firewallSshLimit,
+        sshBan: workspace.firewallSshBan,
+        sshBanAttempts: workspace.firewallSshBanAttempts,
+        sshBanMinutes: workspace.firewallSshBanMinutes,
+        sshBanEscalate: workspace.firewallSshBanEscalate,
         rpcGuard: workspace.firewallRpcGuard,
+        rpcBan: workspace.firewallRpcBan,
+        rpcBanAttempts: workspace.firewallRpcBanAttempts,
         // Days of Activity kept, chosen in Settings.
         eventRetentionDays: workspace.firewallEventRetentionDays,
       },
@@ -767,7 +812,11 @@ export class FirewallService {
           ? 'trop de tentatives SSH'
           : event.ruleId === RPC_GUARD_ID
             ? 'rpcbind réservé au réseau privé'
-            : event.ruleId ? `règle « ${ruleName.get(event.ruleId) ?? event.ruleId} »` : event.verdict === 'blocked' ? 'aucune règle ne l’autorise' : 'mode observation',
+            : event.ruleId === SSH_BAN_ID
+              ? 'adresse bannie (échecs de connexion SSH)'
+              : event.ruleId === RPC_BAN_ID
+                ? 'adresse bannie de tout le serveur (spam rpcbind)'
+                : event.ruleId ? `règle « ${ruleName.get(event.ruleId) ?? event.ruleId} »` : event.verdict === 'blocked' ? 'aucune règle ne l’autorise' : 'mode observation',
       attempts: event.count,
       seen: event.dismissed ? 'oui' : 'non',
     }));
@@ -870,14 +919,32 @@ export class FirewallService {
     const workspaceId = actor.scope.workspaceId as string;
     const before = await this.prisma.workspace.findUniqueOrThrow({
       where: { id: workspaceId },
-      select: { firewallMeshMode: true, firewallPublicPing: true, firewallSshGuard: true, firewallSshLimit: true, firewallRpcGuard: true },
+      select: {
+        firewallMeshMode: true,
+        firewallPublicPing: true,
+        firewallSshGuard: true,
+        firewallSshLimit: true,
+        firewallSshBan: true,
+        firewallSshBanAttempts: true,
+        firewallSshBanMinutes: true,
+        firewallSshBanEscalate: true,
+        firewallRpcGuard: true,
+        firewallRpcBan: true,
+        firewallRpcBanAttempts: true,
+      },
     });
     const snapshot = {
       meshMode: before.firewallMeshMode,
       publicPing: before.firewallPublicPing,
       sshGuard: before.firewallSshGuard,
       sshLimit: before.firewallSshLimit,
+      sshBan: before.firewallSshBan,
+      sshBanAttempts: before.firewallSshBanAttempts,
+      sshBanMinutes: before.firewallSshBanMinutes,
+      sshBanEscalate: before.firewallSshBanEscalate,
       rpcGuard: before.firewallRpcGuard,
+      rpcBan: before.firewallRpcBan,
+      rpcBanAttempts: before.firewallRpcBanAttempts,
     };
     const data: Prisma.WorkspaceUpdateInput = {};
     if (dto.meshMode !== undefined) data.firewallMeshMode = dto.meshMode;
@@ -885,6 +952,12 @@ export class FirewallService {
     if (dto.sshGuard !== undefined) data.firewallSshGuard = dto.sshGuard;
     if (dto.sshLimit !== undefined) data.firewallSshLimit = dto.sshLimit;
     if (dto.rpcGuard !== undefined) data.firewallRpcGuard = dto.rpcGuard;
+    if (dto.sshBan !== undefined) data.firewallSshBan = dto.sshBan;
+    if (dto.sshBanAttempts !== undefined) data.firewallSshBanAttempts = dto.sshBanAttempts;
+    if (dto.sshBanMinutes !== undefined) data.firewallSshBanMinutes = dto.sshBanMinutes;
+    if (dto.sshBanEscalate !== undefined) data.firewallSshBanEscalate = dto.sshBanEscalate;
+    if (dto.rpcBan !== undefined) data.firewallRpcBan = dto.rpcBan;
+    if (dto.rpcBanAttempts !== undefined) data.firewallRpcBanAttempts = dto.rpcBanAttempts;
     await this.prisma.workspace.update({ where: { id: workspaceId }, data });
     await this.audit(actor, 'firewall.settings', workspaceId, {
       ...(dto.meshMode !== undefined && dto.meshMode !== before.firewallMeshMode
@@ -894,6 +967,18 @@ export class FirewallService {
       ...(dto.sshGuard !== undefined ? { sshGuard: dto.sshGuard } : {}),
       ...(dto.sshLimit !== undefined ? { sshLimit: dto.sshLimit } : {}),
       ...(dto.rpcGuard !== undefined ? { rpcGuard: dto.rpcGuard } : {}),
+      ...(dto.sshBan !== undefined ? { sshBan: dto.sshBan } : {}),
+      ...(dto.sshBanAttempts !== undefined && dto.sshBanAttempts !== before.firewallSshBanAttempts
+        ? { sshBanAttempts: { from: before.firewallSshBanAttempts, to: dto.sshBanAttempts } }
+        : {}),
+      ...(dto.sshBanMinutes !== undefined && dto.sshBanMinutes !== before.firewallSshBanMinutes
+        ? { sshBanMinutes: { from: before.firewallSshBanMinutes, to: dto.sshBanMinutes } }
+        : {}),
+      ...(dto.sshBanEscalate !== undefined ? { sshBanEscalate: dto.sshBanEscalate } : {}),
+      ...(dto.rpcBan !== undefined ? { rpcBan: dto.rpcBan } : {}),
+      ...(dto.rpcBanAttempts !== undefined && dto.rpcBanAttempts !== before.firewallRpcBanAttempts
+        ? { rpcBanAttempts: { from: before.firewallRpcBanAttempts, to: dto.rpcBanAttempts } }
+        : {}),
     }, snapshot);
     await this.changed(workspaceId);
     return this.overview(actor.scope);
@@ -1190,7 +1275,19 @@ export class FirewallService {
   /** The general settings as they were (modes, ping, SSH protections). */
   async restoreSettings(snapshot: UpdateFirewallSettingsDto, actor: Actor): Promise<string> {
     await this.updateSettings(
-      { meshMode: snapshot.meshMode, publicPing: snapshot.publicPing, sshGuard: snapshot.sshGuard, sshLimit: snapshot.sshLimit, rpcGuard: snapshot.rpcGuard },
+      {
+        meshMode: snapshot.meshMode,
+        publicPing: snapshot.publicPing,
+        sshGuard: snapshot.sshGuard,
+        sshLimit: snapshot.sshLimit,
+        sshBan: snapshot.sshBan,
+        sshBanAttempts: snapshot.sshBanAttempts,
+        sshBanMinutes: snapshot.sshBanMinutes,
+        sshBanEscalate: snapshot.sshBanEscalate,
+        rpcGuard: snapshot.rpcGuard,
+        rpcBan: snapshot.rpcBan,
+        rpcBanAttempts: snapshot.rpcBanAttempts,
+      },
       actor,
     );
     return 'réglages du pare-feu';
@@ -1343,7 +1440,7 @@ export class FirewallService {
     const deltas: Array<[string, number]> = [];
     for (const [id, raw] of Object.entries(counters)) {
       const value = Number(raw);
-      if (!Number.isFinite(value) || id === 'default' || id === SSH_LIMIT_ID || id === RPC_GUARD_ID || id.startsWith('sys:')) continue;
+      if (!Number.isFinite(value) || id === 'default' || id === SSH_LIMIT_ID || id === RPC_GUARD_ID || id === SSH_BAN_ID || id === RPC_BAN_ID || id.startsWith('sys:')) continue;
       const before = previous[id];
       // Counters restart from zero on every apply.
       const delta = before === undefined ? 0 : value >= before ? value - before : value;
@@ -1380,7 +1477,7 @@ export class FirewallService {
       const last = new Date((Number(event.lastSeen) || Date.now() / 1000) * 1000);
       const first = new Date((Number(event.firstSeen) || Number(event.lastSeen) || Date.now() / 1000) * 1000);
       const bucketStart = new Date(Math.floor(last.getTime() / 3_600_000) * 3_600_000);
-      const ruleId = event.ruleId && (ruleIds.has(event.ruleId) || event.ruleId === SSH_LIMIT_ID || event.ruleId === RPC_GUARD_ID) ? event.ruleId : null;
+      const ruleId = event.ruleId && (ruleIds.has(event.ruleId) || event.ruleId === SSH_LIMIT_ID || event.ruleId === RPC_GUARD_ID || event.ruleId === SSH_BAN_ID || event.ruleId === RPC_BAN_ID) ? event.ruleId : null;
       // Mesh: one row per source. Internet: one row per port, sources sampled.
       const key = [verdict, scope, protocol, port, event.docker ? 'd' : '', ruleId ?? '', scope === 'mesh' ? event.source : ''].join('|');
       const where = { nodeId_key_bucketStart: { nodeId, key, bucketStart } };

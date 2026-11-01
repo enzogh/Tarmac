@@ -23,6 +23,8 @@ export type PolicyNode = {
   outboundMode?: FwMode;
   // Ports sshd listens on, as last reported (22 when unknown).
   sshPorts: number[];
+  // Public address (from its WireGuard endpoint): never banned elsewhere.
+  publicIp?: string | null;
   // Optional protections its agent supports (its last report); undefined =
   // unknown, treated as supporting everything (tests, fresh nodes).
   features?: string[];
@@ -76,9 +78,15 @@ export type PolicyContext = {
   sshGuard: boolean;
   // Throttle new SSH connections from the internet (see the agent's TARMAC-FW-SSH).
   sshLimit: boolean;
+  // Ban addresses that keep failing to log in over SSH (needs sshLimit);
+  // null or absent = off.
+  sshBan?: SshBanSettings | null;
   // Keep rpcbind (port 111) reachable from the private mesh only (the agent's
   // TARMAC-FW-RPC). Optional so older callers read it as off.
   rpcGuard?: boolean;
+  // Ban from the whole server an address over `attempts` TCP tries an hour on
+  // rpcbind (needs rpcGuard); null or absent = off.
+  rpcBan?: SshBanSettings | null;
   nodes: PolicyNode[];
   rules: PolicyRule[];
   system: SystemFlow[];
@@ -88,6 +96,16 @@ export type PolicyContext = {
 };
 
 export type AddressList = { id: string; name: string; cidrs: string[] };
+
+export type SshBanSettings = { attempts: number; minutes: number; escalate: boolean };
+// Agent feature and rule id (logs, counters) of SSH bans.
+export const SSH_BAN_ID = 'ssh-ban';
+// Agent feature and rule id of whole-server bans for rpcbind spam.
+export const RPC_BAN_ID = 'rpc-ban';
+// Repeat offences multiply the ban by this factor, up to the ceiling (see
+// the agent's firewall_sshban.go).
+export const SSH_BAN_FACTOR = 6;
+export const SSH_BAN_MAX_MINUTES = 7 * 24 * 60;
 
 /**
  * The internet addresses a public rule names: its own CIDRs, or the union
@@ -111,10 +129,11 @@ export type AgentPayload = {
   mesh: AgentZone;
   public: AgentZone;
   outbound: AgentZone;
-  // Absent when off; exempt = addresses an SSH rule explicitly allows.
-  sshLimit?: { ports: string[]; exempt: string[] };
+  // Absent when off; exempt = addresses an SSH rule explicitly allows (never
+  // throttled nor banned); ban absent = no bans.
+  sshLimit?: { ports: string[]; exempt: string[]; ban?: SshBanSettings };
   // Absent when off; exempt = addresses an internet rule explicitly allows on these ports.
-  rpcGuard?: { ports: string[]; exempt: string[] };
+  rpcGuard?: { ports: string[]; exempt: string[]; ban?: SshBanSettings & { exempt: string[] } };
 };
 
 // Agent feature and rule id (logs, counters) of the rpcbind guard.
@@ -240,8 +259,30 @@ export function buildAgentPayload(ctx: PolicyContext, nodeId: string, revision: 
   }
   if (!node.vlanIp) payload.mesh = zone('open');
   if (ctx.sshLimit) payload.sshLimit = sshLimitFor(ctx, node, now);
-  if (ctx.rpcGuard) payload.rpcGuard = { ports: RPC_GUARD_PORTS.map(String), exempt: rpcGuardExempt(ctx, node, now) };
+  if (ctx.rpcGuard) {
+    payload.rpcGuard = { ports: RPC_GUARD_PORTS.map(String), exempt: rpcGuardExempt(ctx, node, now) };
+    if (ctx.rpcBan) payload.rpcGuard.ban = { ...ctx.rpcBan, exempt: rpcBanExempt(ctx, node, now) };
+  }
   return payload;
+}
+
+/**
+ * Addresses a whole-server ban must never hit on a node: the other Tarmac
+ * servers (the mesh rides on their public addresses) and every address a
+ * live internet rule allows to reach it, whatever the port.
+ */
+export function rpcBanExempt(ctx: PolicyContext, node: PolicyNode, now: Date): string[] {
+  const exempt = new Set<string>();
+  for (const other of ctx.nodes) {
+    if (other.id === node.id || !other.publicIp) continue;
+    exempt.add(other.publicIp.includes(':') ? `${other.publicIp}/128` : `${other.publicIp}/32`);
+  }
+  for (const rule of ctx.rules) {
+    if (rule.scope !== 'public' || rule.action !== 'allow' || rule.sourceKind === 'any' || !isRuleLive(rule, now)) continue;
+    if (!ruleTargets(rule, ctx.nodes).some((target) => target.id === node.id)) continue;
+    for (const cidr of ruleCidrs(rule, ctx.lists)) exempt.add(cidr);
+  }
+  return [...exempt];
 }
 
 /**
@@ -273,7 +314,7 @@ function rpcGuardDrops(ctx: PolicyContext, node: PolicyNode | undefined, probe: 
  * those a live internet rule explicitly allows to reach SSH ("SSH from the
  * office"), so a known admin address is never slowed down.
  */
-export function sshLimitFor(ctx: PolicyContext, node: PolicyNode, now: Date): { ports: string[]; exempt: string[] } {
+export function sshLimitFor(ctx: PolicyContext, node: PolicyNode, now: Date): NonNullable<AgentPayload['sshLimit']> {
   const exempt = new Set<string>();
   for (const rule of ctx.rules) {
     if (rule.scope !== 'public' || rule.action !== 'allow' || rule.sourceKind === 'any' || !isRuleLive(rule, now)) continue;
@@ -281,7 +322,15 @@ export function sshLimitFor(ctx: PolicyContext, node: PolicyNode, now: Date): { 
     if (!node.sshPorts.some((port) => protocolMatches(rule, { protocol: 'tcp', port }))) continue;
     for (const cidr of ruleCidrs(rule, ctx.lists)) exempt.add(cidr);
   }
-  return { ports: node.sshPorts.map(String), exempt: [...exempt] };
+  const limit: NonNullable<AgentPayload['sshLimit']> = { ports: node.sshPorts.map(String), exempt: [...exempt] };
+  if (ctx.sshBan) limit.ban = { ...ctx.sshBan };
+  return limit;
+}
+
+/** How long the n-th ban (1-based) of an address lasts, in minutes. */
+export function sshBanMinutes(settings: SshBanSettings, offence: number): number {
+  if (!settings.escalate) return settings.minutes;
+  return Math.min(settings.minutes * SSH_BAN_FACTOR ** Math.max(0, offence - 1), SSH_BAN_MAX_MINUTES);
 }
 
 /** True when an apply would install nothing on the node. */

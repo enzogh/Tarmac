@@ -4428,6 +4428,7 @@ func main() {
 	restoreFirewallAtStartup()
 	startFirewallLogReader()
 	startFirewallGeoRefresh()
+	startSSHAuthLogReader()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -245,6 +245,12 @@ export const DETAIL_LABEL: Record<string, string> = {
   sshGuard: 'Anti-verrouillage SSH',
   sshLimit: 'Limite des tentatives SSH',
   rpcGuard: 'rpcbind réservé au réseau privé',
+  sshBan: 'Bannissement SSH',
+  sshBanAttempts: 'Échecs avant bannissement',
+  sshBanMinutes: 'Durée du bannissement (min)',
+  sshBanEscalate: 'Bannissement progressif',
+  rpcBan: 'Bannissement du spam rpcbind',
+  rpcBanAttempts: 'Tentatives rpcbind par heure avant bannissement',
 };
 
 // Field names in `changes` arrays.

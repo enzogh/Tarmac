@@ -247,9 +247,21 @@ model Workspace {
   firewallSshGuard    Boolean   @default(true)
   // Throttle new SSH connections from the internet, per source address.
   firewallSshLimit    Boolean   @default(true)
+  // Ban from SSH, for firewallSshBanMinutes, an address failing to log in
+  // firewallSshBanAttempts times within an hour; with escalation every
+  // repeat offence lasts 6 times longer (up to 7 days). Needs the limit.
+  firewallSshBan         Boolean @default(true)
+  firewallSshBanAttempts Int     @default(5)
+  firewallSshBanMinutes  Int     @default(10)
+  firewallSshBanEscalate Boolean @default(true)
   // Keep rpcbind (port 111) off the internet: reachable from the private
   // mesh only, on every node.
   firewallRpcGuard    Boolean   @default(true)
+  // Ban from the whole server (SSH included) an address making more than
+  // firewallRpcBanAttempts TCP attempts an hour on rpcbind; durations and
+  // escalation are the SSH ban's. UDP never counts (forgeable source).
+  firewallRpcBan         Boolean @default(true)
+  firewallRpcBanAttempts Int     @default(10)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

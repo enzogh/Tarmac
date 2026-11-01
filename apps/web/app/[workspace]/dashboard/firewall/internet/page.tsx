@@ -4,6 +4,7 @@ import { useState, type ReactNode } from 'react';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { api, FirewallMode, FirewallNode, FirewallOverview } from '@/lib/api';
 import { useReadOnly } from '@/lib/read-only';
 import { useFirewall, useRuleActions } from '../components/FirewallContext';
@@ -40,6 +41,62 @@ function SettingRow({
   );
 }
 
+const BAN_ATTEMPTS = [3, 5, 10, 20];
+const RPC_BAN_ATTEMPTS = [5, 10, 20, 50];
+const BAN_MINUTES = [5, 10, 30, 60, 180, 720, 1440];
+// Mirrors the agent (firewall_sshban.go): x6 per repeat offence, 7 days at most.
+const BAN_FACTOR = 6;
+const BAN_MAX_MINUTES = 7 * 24 * 60;
+
+function formatMinutes(minutes: number): string {
+  if (minutes >= BAN_MAX_MINUTES) return '7 jours';
+  if (minutes >= 1440 && minutes % 1440 === 0) return minutes === 1440 ? '24 h' : `${minutes / 1440} jours`;
+  if (minutes >= 60) return minutes % 60 === 0 ? `${minutes / 60} h` : `${Math.floor(minutes / 60)} h ${minutes % 60}`;
+  return `${minutes} min`;
+}
+
+/** "10 min, puis 1 h, 6 h, 36 h, jusqu’à 7 jours". */
+function escalationSteps(minutes: number): string {
+  const steps: string[] = [];
+  for (let current = minutes; steps.length < 5; current *= BAN_FACTOR) {
+    if (current >= BAN_MAX_MINUTES) break;
+    steps.push(formatMinutes(current));
+  }
+  return `${steps.join(', puis ')}${steps.length > 0 ? ', ' : ''}jusqu’à 7 jours`;
+}
+
+function NumberChoice({
+  value,
+  options,
+  format,
+  onChange,
+  disabled,
+  label,
+}: {
+  value: number;
+  options: number[];
+  format: (value: number) => string;
+  onChange: (value: number) => void;
+  disabled?: boolean;
+  label: string;
+}) {
+  const choices = options.includes(value) ? options : [...options, value].sort((a, b) => a - b);
+  return (
+    <Select value={String(value)} onValueChange={(next) => onChange(Number(next))} disabled={disabled}>
+      <SelectTrigger className="h-8 w-[7.5rem] text-xs" aria-label={label}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {choices.map((choice) => (
+          <SelectItem key={choice} value={String(choice)}>
+            {format(choice)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 export default function FirewallInternetPage() {
   const { data, replace, refresh, notify, fail, openRule } = useFirewall();
   const onRuleAction = useRuleActions();
@@ -52,6 +109,13 @@ export default function FirewallInternetPage() {
   // Agents too old to throttle SSH: the setting says so instead of overpromising.
   const sshLimitPending = data.nodes.filter((node) => node.sshLimit === 'unsupported');
   const rpcGuardPending = data.nodes.filter((node) => node.rpcGuard === 'unsupported');
+  const sshBanPending = data.nodes.filter((node) => node.sshBan === 'unsupported');
+  const bannedNow = data.nodes.reduce((total, node) => total + (node.sshBans ?? 0), 0);
+  const settings = data.settings;
+  const banActive = settings.sshLimit && settings.sshBan;
+  const rpcBanActive = settings.rpcGuard && settings.rpcBan;
+  const rpcBanPending = data.nodes.filter((node) => node.rpcBan === 'unsupported');
+  const rpcBannedNow = data.nodes.reduce((total, node) => total + (node.rpcBans ?? 0), 0);
 
   const onMode = async (node: FirewallNode, mode: FirewallMode) => {
     if (mode !== 'open') {
@@ -154,6 +218,64 @@ export default function FirewallInternetPage() {
             disabled={readOnly}
           />
           <SettingRow
+            title="Bannir les adresses qui échouent"
+            text={`Une adresse qui rate ${settings.sshBanAttempts} connexions SSH en une heure (mauvais mot de passe, utilisateur inconnu) est bannie de SSH pendant ${formatMinutes(settings.sshBanMinutes)}${settings.sshBanEscalate ? ', puis de plus en plus longtemps si elle recommence' : ''}. Attrape aussi les robots lents, qui passent sous la limite ci-dessus. Les adresses du réseau privé et celles qu’une règle SSH autorise ne sont jamais bannies : créer une telle règle lève aussitôt un bannissement.`}
+            note={
+              <div className="mt-3 space-y-3">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">
+                  <span>Bannir après</span>
+                  <NumberChoice
+                    label="Échecs avant bannissement"
+                    value={settings.sshBanAttempts}
+                    options={BAN_ATTEMPTS}
+                    format={(value) => `${value} échecs`}
+                    onChange={(sshBanAttempts) => void setSetting({ sshBanAttempts })}
+                    disabled={readOnly || !banActive}
+                  />
+                  <span>pendant</span>
+                  <NumberChoice
+                    label="Durée du premier bannissement"
+                    value={settings.sshBanMinutes}
+                    options={BAN_MINUTES}
+                    format={formatMinutes}
+                    onChange={(sshBanMinutes) => void setSetting({ sshBanMinutes })}
+                    disabled={readOnly || !banActive}
+                  />
+                </div>
+                <div className="flex items-start gap-3">
+                  <Switch
+                    checked={settings.sshBanEscalate}
+                    onChange={(sshBanEscalate) => void setSetting({ sshBanEscalate })}
+                    label="Bannissement progressif"
+                    disabled={readOnly || !banActive}
+                  />
+                  <div className="text-sm">
+                    <p className="text-foreground">Bannissement progressif</p>
+                    <p className="text-muted-foreground">
+                      Chaque récidive dure 6 fois plus longtemps : {escalationSteps(settings.sshBanMinutes)}. Oublié après 7 jours sans nouvel abus.
+                    </p>
+                  </div>
+                </div>
+                {!settings.sshLimit ? (
+                  <p className="text-xs text-[hsl(var(--warn))]">Activez « Limiter les tentatives SSH » pour bannir des adresses.</p>
+                ) : banActive && sshBanPending.length > 0 ? (
+                  <p className="text-xs text-[hsl(var(--warn))]">
+                    {sshBanPending.length === 1
+                      ? `${sshBanPending[0].name} doit mettre à jour son agent pour en profiter (page Nœuds).`
+                      : `${sshBanPending.length} serveurs doivent mettre à jour leur agent pour en profiter (page Nœuds).`}
+                  </p>
+                ) : banActive && bannedNow > 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    {bannedNow === 1 ? '1 adresse bannie en ce moment' : `${bannedNow} adresses bannies en ce moment`} sur vos serveurs (détail dans l’Activité).
+                  </p>
+                ) : null}
+              </div>
+            }
+            checked={settings.sshBan}
+            onChange={(sshBan) => void setSetting({ sshBan })}
+            disabled={readOnly || !settings.sshLimit}
+          />
+          <SettingRow
             title="rpcbind réservé au réseau privé"
             text="Le port 111 (rpcbind, utilisé par NFS) n’est joignable que depuis le réseau privé Tarmac : depuis Internet, il dévoile vos services et sert à amplifier des attaques DDoS. Vos montages NFS ne sont pas concernés. Une adresse autorisée par une règle sur ce port reste acceptée. S’applique aussi aux serveurs non filtrés."
             note={
@@ -168,6 +290,41 @@ export default function FirewallInternetPage() {
             checked={data.settings.rpcGuard}
             onChange={(rpcGuard) => void setSetting({ rpcGuard })}
             disabled={readOnly}
+          />
+          <SettingRow
+            title="Bannir les adresses qui spamment rpcbind"
+            text={`Une adresse qui tente plus de ${settings.rpcBanAttempts} connexions TCP par heure sur rpcbind est bannie de tout le serveur, SSH compris, pendant ${formatMinutes(settings.sshBanMinutes)}${settings.sshBanEscalate ? ', puis de plus en plus longtemps' : ''} (durées du bannissement SSH ci-dessus). Seul le TCP compte : en UDP, n’importe qui peut se faire passer pour une autre adresse. Les serveurs Tarmac, le réseau privé et les adresses qu’une règle autorise ne sont jamais bannis.`}
+            note={
+              <div className="mt-3 space-y-2">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">
+                  <span>Bannir au-delà de</span>
+                  <NumberChoice
+                    label="Tentatives rpcbind par heure avant bannissement"
+                    value={settings.rpcBanAttempts}
+                    options={RPC_BAN_ATTEMPTS}
+                    format={(value) => `${value} par heure`}
+                    onChange={(rpcBanAttempts) => void setSetting({ rpcBanAttempts })}
+                    disabled={readOnly || !rpcBanActive}
+                  />
+                </div>
+                {!settings.rpcGuard ? (
+                  <p className="text-xs text-[hsl(var(--warn))]">Activez « rpcbind réservé au réseau privé » pour bannir ces adresses.</p>
+                ) : rpcBanActive && rpcBanPending.length > 0 ? (
+                  <p className="text-xs text-[hsl(var(--warn))]">
+                    {rpcBanPending.length === 1
+                      ? `${rpcBanPending[0].name} doit mettre à jour son agent pour en profiter (page Nœuds).`
+                      : `${rpcBanPending.length} serveurs doivent mettre à jour leur agent pour en profiter (page Nœuds).`}
+                  </p>
+                ) : rpcBanActive && rpcBannedNow > 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    {rpcBannedNow === 1 ? '1 adresse bannie de tout le serveur' : `${rpcBannedNow} adresses bannies de tout le serveur`} en ce moment (détail dans l’Activité).
+                  </p>
+                ) : null}
+              </div>
+            }
+            checked={settings.rpcBan}
+            onChange={(rpcBan) => void setSetting({ rpcBan })}
+            disabled={readOnly || !settings.rpcGuard}
           />
           <div className="grid divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">
             <SettingRow

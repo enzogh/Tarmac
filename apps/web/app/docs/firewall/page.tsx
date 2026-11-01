@@ -106,10 +106,18 @@ export default function FirewallDocsPage() {
             Une même adresse peut ouvrir 20 connexions SSH d’affilée, puis 10 par minute ; au-delà elle est ralentie, jamais bloquée. Les adresses
             qu’une règle SSH autorise ne sont jamais limitées. Active par défaut, y compris sur les serveurs non filtrés.
           </DocCard>
+          <DocCard icon={Ban} title="Bannissement SSH">
+            Une adresse qui rate 5 connexions SSH en une heure (mauvais mot de passe, utilisateur inconnu) est bannie de SSH pendant 10 minutes ; chaque
+            récidive dure 6 fois plus longtemps (1 h, 6 h, 36 h, jusqu’à 7 jours), oubliée après 7 jours sans abus. Nombre d’échecs, durée et
+            progression se règlent dans Depuis Internet › Réglages. Une clé refusée ne compte pas. Le réseau privé et les adresses qu’une règle SSH
+            autorise ne sont jamais bannis : créer cette règle lève un bannissement en cours. Demande la limite des tentatives SSH.
+          </DocCard>
           <DocCard icon={Network} title="rpcbind réservé au réseau privé">
             Le port 111 (rpcbind, utilisé par NFS) n’est joignable que depuis le réseau privé : depuis Internet, il dévoile les services du serveur et
             sert à amplifier des attaques DDoS. Les montages NFS entre vos serveurs passent par le réseau privé et ne sont pas concernés. Une adresse
-            qu’une règle autorise sur ce port reste acceptée. Active par défaut, y compris sur les serveurs non filtrés.
+            qu’une règle autorise sur ce port reste acceptée. Active par défaut, y compris sur les serveurs non filtrés. Une adresse qui insiste (plus
+            de 10 connexions TCP par heure, réglable) est bannie de tout le serveur, SSH compris, avec les durées du bannissement SSH. Seul le TCP
+            compte, car une adresse UDP se falsifie trop facilement ; les serveurs Tarmac et les adresses qu’une règle autorise ne sont jamais bannis.
           </DocCard>
           <DocCard icon={Send} title="Ce que le filtrage sortant laisse passer">
             Les processus système (root) — dont l’agent Tarmac et les mises à jour —, le DNS, l’heure et le ping restent toujours libres : un serveur ne
@@ -126,7 +134,7 @@ export default function FirewallDocsPage() {
         <SectionLabel>Dépannage</SectionLabel>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <DocCard icon={Wrench} title="« Agent à mettre à jour »" tone="warn">
-            Le pare-feu sortant, les règles par pays, la limite SSH et la protection rpcbind demandent un agent récent. Un agent trop ancien ne reçoit pas ces règles — jamais une
+            Le pare-feu sortant, les règles par pays, la limite SSH, le bannissement SSH et la protection rpcbind demandent un agent récent. Un agent trop ancien ne reçoit pas ces règles — jamais une
             version élargie — et l’interface le signale. Mettez-le à jour depuis la page Nœuds.
           </DocCard>
           <DocCard icon={Ban} title="Une application ne marche plus" tone="warn">

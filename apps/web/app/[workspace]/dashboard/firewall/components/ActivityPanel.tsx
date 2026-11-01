@@ -59,6 +59,29 @@ function AnimatedNumber({ value, className }: { value: number; className?: strin
 // Rule id the agents put on SSH attempts dropped by the brute-force limiter.
 const SSH_LIMIT_ID = 'ssh-limit';
 const RPC_GUARD_ID = 'rpc-guard';
+const SSH_BAN_ID = 'ssh-ban';
+const RPC_BAN_ID = 'rpc-ban';
+
+// What decided an event, and the button lifting it, for the built-in protections.
+const PROTECTIONS: Record<string, { decision: string; allow: string }> = {
+  [SSH_LIMIT_ID]: { decision: 'Trop de tentatives SSH : ralentie', allow: 'Ne plus limiter cette adresse' },
+  [RPC_GUARD_ID]: { decision: 'rpcbind réservé au réseau privé', allow: 'Autoriser cette adresse sur rpcbind' },
+  [SSH_BAN_ID]: { decision: 'Bannie : trop d’échecs de connexion SSH', allow: 'Lever le bannissement (règle SSH)' },
+  [RPC_BAN_ID]: { decision: 'Bannie de tout le serveur : spam sur rpcbind', allow: 'Lever le bannissement (règle)' },
+};
+
+function decisionLabel(event: FirewallEvent, ruleName: string | undefined, blocked: boolean): string {
+  const protection = event.ruleId ? PROTECTIONS[event.ruleId] : undefined;
+  if (protection) return protection.decision;
+  if (ruleName) return `Règle « ${ruleName} »`;
+  return blocked ? 'Aucune règle ne l’autorise' : 'Mode observation';
+}
+
+function allowLabel(event: FirewallEvent, byRule: boolean): string {
+  const protection = event.ruleId ? PROTECTIONS[event.ruleId] : undefined;
+  if (protection) return protection.allow;
+  return byRule ? 'Autoriser malgré tout' : 'Autoriser cette connexion';
+}
 
 function draftsFor(event: FirewallEvent): { allow: RuleDraft; block: RuleDraft } {
   const source =
@@ -80,7 +103,11 @@ function draftsFor(event: FirewallEvent): { allow: RuleDraft; block: RuleDraft }
           ? `SSH sans limite depuis ${event.sourceIp}`
           : event.ruleId === RPC_GUARD_ID
             ? `rpcbind depuis ${event.sourceIp}`
-            : undefined,
+            : event.ruleId === SSH_BAN_ID
+              ? `SSH sans bannissement depuis ${event.sourceIp}`
+              : event.ruleId === RPC_BAN_ID
+                ? `Jamais bannir ${event.sourceIp}`
+                : undefined,
     },
     block: {
       scope: event.scope,
@@ -135,8 +162,6 @@ export function EventRow({
   const target = nodes.get(event.nodeId);
   const sourceNode = event.sourceNodeId ? nodes.get(event.sourceNodeId) : null;
   const rule = event.ruleId ? rules.get(event.ruleId) : null;
-  const sshLimited = event.ruleId === SSH_LIMIT_ID;
-  const rpcGuarded = event.ruleId === RPC_GUARD_ID;
   const blocked = event.verdict === 'blocked';
   const drafts = draftsFor(event);
   const expandable = !compact;
@@ -228,15 +253,7 @@ export function EventRow({
                 <div>
                   <dt className="text-2xs uppercase tracking-wider text-muted-foreground">Décision</dt>
                   <dd className="mt-0.5 text-foreground">
-                    {sshLimited
-                      ? 'Trop de tentatives SSH : ralentie'
-                      : rpcGuarded
-                        ? 'rpcbind réservé au réseau privé'
-                        : rule
-                          ? `Règle « ${rule.name} »`
-                          : blocked
-                            ? 'Aucune règle ne l’autorise'
-                            : 'Mode observation'}
+                    {decisionLabel(event, rule?.name, blocked)}
                   </dd>
                 </div>
                 <div>
@@ -263,13 +280,7 @@ export function EventRow({
               <div className="flex flex-wrap gap-2">
                 <Button write size="sm" className="gap-1.5" onClick={() => onCreateRule(drafts.allow)}>
                   <ShieldCheck className="h-3.5 w-3.5" />
-                  {sshLimited
-                    ? 'Ne plus limiter cette adresse'
-                    : rpcGuarded
-                      ? 'Autoriser cette adresse sur rpcbind'
-                      : rule
-                        ? 'Autoriser malgré tout'
-                        : 'Autoriser cette connexion'}
+                  {allowLabel(event, Boolean(rule))}
                 </Button>
                 <Button write size="sm" variant="secondary" className="gap-1.5 text-[hsl(var(--danger))]" onClick={() => onCreateRule(drafts.block)}>
                   <Ban className="h-3.5 w-3.5" />

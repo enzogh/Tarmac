@@ -717,6 +717,12 @@ export type FirewallNode = {
   sshLimit: 'on' | 'off' | 'unsupported' | 'unknown';
   // Whether this node's agent keeps rpcbind (port 111) off the internet.
   rpcGuard: 'on' | 'off' | 'unsupported' | 'unknown';
+  // Whether this node's agent bans addresses failing SSH logins, and how many right now.
+  sshBan: 'on' | 'off' | 'unsupported' | 'unknown';
+  sshBans: number;
+  // Whether this node's agent bans rpcbind spammers from the whole server, and how many right now.
+  rpcBan: 'on' | 'off' | 'unsupported' | 'unknown';
+  rpcBans: number;
   blocked24h: number;
   report: {
     uplinks: string[];
@@ -784,7 +790,23 @@ export type FirewallMatrixCell = {
 };
 
 export type FirewallOverview = {
-  settings: { meshMode: FirewallMode; publicPing: boolean; sshGuard: boolean; sshLimit: boolean; rpcGuard: boolean; eventRetentionDays: number };
+  settings: {
+    meshMode: FirewallMode;
+    publicPing: boolean;
+    sshGuard: boolean;
+    sshLimit: boolean;
+    // Ban from SSH, for sshBanMinutes, an address failing sshBanAttempts logins within an hour.
+    sshBan: boolean;
+    sshBanAttempts: number;
+    sshBanMinutes: number;
+    // Every repeat offence lasts 6 times longer, up to 7 days.
+    sshBanEscalate: boolean;
+    rpcGuard: boolean;
+    // Ban from the whole server (SSH included) an address over rpcBanAttempts TCP tries an hour on rpcbind.
+    rpcBan: boolean;
+    rpcBanAttempts: number;
+    eventRetentionDays: number;
+  };
   nodes: FirewallNode[];
   rules: FirewallRule[];
   lists: FirewallAddressList[];

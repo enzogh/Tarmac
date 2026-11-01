@@ -46,9 +46,14 @@ const (
 	// through SSH, whose excess is logged and dropped by SSH-X.
 	fwChainSSH  = "TARMAC-FW-SSH"
 	fwChainSSHX = "TARMAC-FW-SSH-X"
+	// New SSH connections from a banned address (see firewall_sshban.go).
+	fwChainSSHB = "TARMAC-FW-SSH-B"
 	// rpcbind guard: services meant for the private network only (rpcbind,
 	// port 111) are dropped when they arrive from the internet.
 	fwChainRPC = "TARMAC-FW-RPC"
+	// Addresses banned from the whole server (rpcbind spam), checked first
+	// on every packet from the internet.
+	fwChainBan = "TARMAC-FW-BAN"
 	// Outbound: connections this server opens towards the internet, jumped
 	// to from OUTPUT for the uplinks.
 	fwChainOut = "TARMAC-FW-OUT"
@@ -72,11 +77,15 @@ const (
 	fwSSHLimitID = "ssh-limit"
 	// Rule id in logs and counters for packets the rpcbind guard dropped.
 	fwRPCGuardID = "rpc-guard"
+	// Rule id of bans (the ban itself, then the attempts it drops).
+	fwSSHBanID = "ssh-ban"
+	// Rule id of whole-server bans for rpcbind spam.
+	fwRPCBanID = "rpc-ban"
 )
 
 // Features this agent supports beyond the base firewall, reported so the
 // dashboard never claims a protection an older agent ignores.
-var fwFeatures = []string{"ssh-limit", "outbound", "countries", "rpc-guard"}
+var fwFeatures = []string{"ssh-limit", "outbound", "countries", "rpc-guard", "ssh-ban", "rpc-ban"}
 
 var (
 	fwPortPattern  = regexp.MustCompile(`^([0-9]{1,5})(?:-([0-9]{1,5}))?$`)
@@ -103,7 +112,9 @@ func (z fwZone) active() bool {
 
 type fwSSHLimit struct {
 	ports  []string // sshd ports
-	exempt []string // CIDRs never limited (allowed by an SSH rule)
+	exempt []string // CIDRs never limited nor banned (allowed by an SSH rule)
+	// Ban addresses that keep failing to log in; nil = off.
+	ban *fwSSHBan
 }
 
 // Ports reachable from the private mesh only: anything arriving on an
@@ -111,6 +122,9 @@ type fwSSHLimit struct {
 type fwRPCGuard struct {
 	ports  []string
 	exempt []string // CIDRs an internet rule explicitly allows on these ports
+	// Ban from the whole server an address knocking too often over TCP;
+	// attempts = per hour, nil = off.
+	ban *fwSSHBan
 }
 
 type fwDesired struct {
@@ -313,6 +327,16 @@ func parseFirewallPayload(payload map[string]interface{}) (fwDesired, error) {
 			}
 			limit.exempt = append(limit.exempt, normalized)
 		}
+		if ban, ok := raw["ban"].(map[string]interface{}); ok {
+			parsed := &fwSSHBan{attempts: readInt(ban, "attempts", 5), minutes: readInt(ban, "minutes", 10), escalate: readBool(ban, "escalate")}
+			if parsed.attempts < 1 || parsed.attempts > 100 {
+				return desired, fmt.Errorf("sshLimit.ban: invalid attempts %d", parsed.attempts)
+			}
+			if parsed.minutes < 1 || parsed.minutes > 10080 {
+				return desired, fmt.Errorf("sshLimit.ban: invalid minutes %d", parsed.minutes)
+			}
+			limit.ban = parsed
+		}
 		if len(limit.ports) > 0 {
 			desired.sshLimit = limit
 		}
@@ -332,6 +356,23 @@ func parseFirewallPayload(payload map[string]interface{}) (fwDesired, error) {
 				return desired, fmt.Errorf("rpcGuard: invalid exempt source %q", source)
 			}
 			guard.exempt = append(guard.exempt, normalized)
+		}
+		if ban, ok := raw["ban"].(map[string]interface{}); ok {
+			parsed := &fwSSHBan{attempts: readInt(ban, "attempts", 10), minutes: readInt(ban, "minutes", 10), escalate: readBool(ban, "escalate")}
+			if parsed.attempts < 1 || parsed.attempts > 1000 {
+				return desired, fmt.Errorf("rpcGuard.ban: invalid attempts %d", parsed.attempts)
+			}
+			if parsed.minutes < 1 || parsed.minutes > 10080 {
+				return desired, fmt.Errorf("rpcGuard.ban: invalid minutes %d", parsed.minutes)
+			}
+			for _, source := range readStringSlice(ban, "exempt") {
+				normalized, ok := fwNormalizeSource(source)
+				if !ok {
+					return desired, fmt.Errorf("rpcGuard.ban: invalid exempt source %q", source)
+				}
+				parsed.exempt = append(parsed.exempt, normalized)
+			}
+			guard.ban = parsed
 		}
 		if len(guard.ports) > 0 {
 			desired.rpcGuard = guard
@@ -532,16 +573,24 @@ func buildFirewallPlan(desired fwDesired, v6 bool, uplinks []string, docker bool
 	pubD := spec(fwChainPubD, nil)
 	ssh := spec(fwChainSSH, nil)
 	sshX := spec(fwChainSSHX, nil)
+	sshB := spec(fwChainSSHB, nil)
 	rpc := spec(fwChainRPC, nil)
+	ban := spec(fwChainBan, nil)
 	out := spec(fwChainOut, []string{"OUTPUT"})
 	egr := spec(fwChainEgr, nil)
-	all := []vpnChainSpec{in, mesh, pub, dnatIn, meshD, pubD, ssh, sshX, rpc, out, egr}
+	all := []vpnChainSpec{in, mesh, pub, dnatIn, meshD, pubD, ssh, sshX, sshB, rpc, ban, out, egr}
 
 	// The private mesh is IPv4 only.
 	meshOn := !v6 && desired.mesh.active()
 	pubOn := desired.publicActive() && len(uplinks) > 0
 	sshOn := pubOn && desired.sshLimit != nil
+	banOn := sshOn && desired.sshLimit.ban != nil
 	rpcOn := pubOn && desired.rpcGuard != nil
+	banAllOn := rpcOn && desired.rpcGuard.ban != nil
+	banSet := fwBanAllSet4
+	if v6 {
+		banSet = fwBanAllSet6
+	}
 	outOn := desired.outbound.active() && len(uplinks) > 0
 	if !meshOn && !pubOn && !outOn {
 		return fwPlan{obsolete: all}
@@ -577,6 +626,16 @@ func buildFirewallPlan(desired fwDesired, v6 bool, uplinks []string, docker bool
 			dnatIn.rules = append(dnatIn.rules, []string{"-i", uplink, "-j", fwChainPubD})
 		}
 		pub.rules = [][]string{established}
+		if banAllOn {
+			// Before "established": a ban also cuts what is already open.
+			pub.rules = [][]string{{"-m", "set", "--match-set", banSet, "src", "-j", fwChainBan}, established}
+			for _, source := range append(append([]string{}, desired.rpcGuard.ban.exempt...), desired.rpcGuard.exempt...) {
+				if fwIsV6(source) == v6 {
+					ban.rules = append(ban.rules, []string{"-s", source, "-j", "RETURN"})
+				}
+			}
+			ban.rules = append(ban.rules, fwLogRule(fwLogTag+"A"), append(fwComment(fwRPCBanID), "-j", "DROP"))
+		}
 		var pre [][]string
 		if v6 {
 			// Neighbour discovery, router adverts and path MTU all ride on
@@ -618,6 +677,24 @@ func buildFirewallPlan(desired fwDesired, v6 bool, uplinks []string, docker bool
 					rpc.rules = append(rpc.rules, []string{"-s", source, "-j", "RETURN"})
 				}
 			}
+			if banAllOn {
+				// Over N new TCP attempts an hour from one address (/64 in
+				// IPv6): reported once a minute (TFW:Q), and the agent bans
+				// it. UDP never counts: its source is too easily forged.
+				name, mask := "tarmac-rpc4", "32"
+				if v6 {
+					name, mask = "tarmac-rpc6", "64"
+				}
+				attempts := strconv.Itoa(desired.rpcGuard.ban.attempts)
+				rpc.rules = append(rpc.rules, []string{
+					"-p", "tcp", "--syn",
+					"-m", "hashlimit", "--hashlimit-above", attempts + "/hour", "--hashlimit-burst", attempts,
+					"--hashlimit-mode", "srcip", "--hashlimit-srcmask", mask, "--hashlimit-name", name,
+					"-m", "hashlimit", "--hashlimit-upto", "1/min", "--hashlimit-burst", "1",
+					"--hashlimit-mode", "srcip", "--hashlimit-srcmask", mask, "--hashlimit-name", name + "q",
+					"-j", "LOG", "--log-prefix", fwLogTag + "Q ", "--log-level", "4",
+				})
+			}
 			rpc.rules = append(rpc.rules,
 				fwLogRule(fwLogTag+"P"),
 				append(fwComment(fwRPCGuardID), "-j", "DROP"),
@@ -638,6 +715,19 @@ func buildFirewallPlan(desired fwDesired, v6 bool, uplinks []string, docker bool
 			if v6 {
 				name, mask = "tarmac-ssh6", "64"
 			}
+			if banOn {
+				// After the exemptions: an SSH rule naming an address lifts
+				// its ban at once.
+				set := fwSSHBanSet4
+				if v6 {
+					set = fwSSHBanSet6
+				}
+				ssh.rules = append(ssh.rules, []string{"-m", "set", "--match-set", set, "src", "-j", fwChainSSHB})
+				sshB.rules = [][]string{
+					fwLogRule(fwLogTag + "K"),
+					append(fwComment(fwSSHBanID), "-j", "DROP"),
+				}
+			}
 			ssh.rules = append(ssh.rules, []string{
 				"-m", "hashlimit", "--hashlimit-above", fwSSHRate, "--hashlimit-burst", fwSSHBurst,
 				"--hashlimit-mode", "srcip", "--hashlimit-srcmask", mask, "--hashlimit-name", name,
@@ -650,6 +740,10 @@ func buildFirewallPlan(desired fwDesired, v6 bool, uplinks []string, docker bool
 		}
 		pub.rules = append(pub.rules, fwZoneRules(desired.public, v6, false, denyIndex, pre)...)
 		pubD.rules = fwZoneRules(desired.public, v6, true, denyIndex, nil)
+		if banAllOn {
+			// Ports published by Docker never reach INPUT: banned there too.
+			pubD.rules = append([][]string{{"-m", "set", "--match-set", banSet, "src", "-j", fwChainBan}}, pubD.rules...)
+		}
 	}
 
 	if outOn {
@@ -689,6 +783,11 @@ func buildFirewallPlan(desired fwDesired, v6 bool, uplinks []string, docker bool
 	} else {
 		plan.obsolete = append(plan.obsolete, out, egr)
 	}
+	if banOn {
+		plan.chains = append(plan.chains, sshB)
+	} else {
+		plan.obsolete = append(plan.obsolete, sshB)
+	}
 	if sshOn {
 		plan.chains = append(plan.chains, sshX, ssh)
 	} else {
@@ -698,6 +797,11 @@ func buildFirewallPlan(desired fwDesired, v6 bool, uplinks []string, docker bool
 		plan.chains = append(plan.chains, rpc)
 	} else {
 		plan.obsolete = append(plan.obsolete, rpc)
+	}
+	if banAllOn {
+		plan.chains = append(plan.chains, ban)
+	} else {
+		plan.obsolete = append(plan.obsolete, ban)
 	}
 	if meshOn {
 		plan.chains = append(plan.chains, mesh)
@@ -932,6 +1036,30 @@ func applyFirewall(payload map[string]interface{}) (string, bool, error) {
 		return "", false, errors.New("iptables introuvable sur ce serveur")
 	}
 
+	note := ""
+	// Ban sets must exist before a rule references them; without them the
+	// limiter and the guard still apply, bans don't.
+	if desired.rpcGuard != nil && desired.rpcGuard.ban != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		err := fwEnsureBanSets(ctx, fwBanAll)
+		cancel()
+		if err != nil {
+			log.Printf("firewall: rpcbind bans unavailable: %v", err)
+			note += " (bannissement rpcbind indisponible : " + err.Error() + ")"
+			desired.rpcGuard.ban = nil
+		}
+	}
+	if desired.sshLimit != nil && desired.sshLimit.ban != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		err := fwEnsureSSHBanSets(ctx)
+		cancel()
+		if err != nil {
+			log.Printf("firewall: ssh bans unavailable: %v", err)
+			note += " (bannissement SSH indisponible : " + err.Error() + ")"
+			desired.sshLimit.ban = nil
+		}
+	}
+
 	// Country sets must exist (and be filled) before a rule references them.
 	countries := fwDesiredCountries(desired)
 	if len(countries) > 0 {
@@ -949,7 +1077,6 @@ func applyFirewall(payload map[string]interface{}) (string, bool, error) {
 		return "", true, err
 	}
 
-	note := ""
 	uplinks6 := []string{}
 	if commandExists("ip6tables") {
 		uplinks6 = fwUplinks(true)
@@ -968,6 +1095,13 @@ func applyFirewall(payload map[string]interface{}) (string, bool, error) {
 
 	fwCutBlockedConnections(desired)
 	fwCleanupGeoSets(countries)
+	fwConfigureBans(desired.sshLimit, desired.rpcGuard)
+	if desired.sshLimit == nil || desired.sshLimit.ban == nil {
+		fwDestroySSHBanSets()
+	}
+	if desired.rpcGuard == nil || desired.rpcGuard.ban == nil {
+		fwDestroyBanSets(fwBanAll)
+	}
 
 	_, denyIDs := fwDenyIndex(desired)
 	uplinks := append(append([]string{}, uplinks4...), uplinks6...)
@@ -991,6 +1125,18 @@ func applyFirewall(payload map[string]interface{}) (string, bool, error) {
 	limiter := "off"
 	if desired.sshLimit != nil {
 		limiter = "on"
+		if ban := desired.sshLimit.ban; ban != nil {
+			limiter = fmt.Sprintf("on, ban after %d failure(s) for %d min", ban.attempts, ban.minutes)
+			if ban.escalate {
+				limiter += " (escalating)"
+			}
+		}
+	}
+	if desired.rpcGuard != nil {
+		limiter += ", rpcbind guard on"
+		if ban := desired.rpcGuard.ban; ban != nil {
+			limiter += fmt.Sprintf(" (ban over %d TCP attempt(s)/h)", ban.attempts)
+		}
 	}
 	return fmt.Sprintf("firewall applied: private network %s (%d block(s), %d allow(s)), internet %s (%d block(s), %d allow(s)), outbound %s (%d block(s), %d allow(s)), ssh limit %s%s",
 		desired.mesh.mode, len(desired.mesh.denies), len(desired.mesh.allows),
@@ -1075,6 +1221,8 @@ type fwEvent struct {
 	Count    int   `json:"count"`
 	First    int64 `json:"firstSeen"`
 	Last     int64 `json:"lastSeen"`
+	// TFW:Q: the source crossed the rpcbind threshold and must be banned.
+	trigger bool
 }
 
 type fwReport struct {
@@ -1086,6 +1234,9 @@ type fwReport struct {
 	Counters  map[string]uint64 `json:"counters,omitempty"`
 	Events    []fwEvent         `json:"events,omitempty"`
 	Features  []string          `json:"features,omitempty"`
+	// Addresses banned right now: from SSH, from the whole server.
+	SSHBans int `json:"sshBans"`
+	RPCBans int `json:"rpcBans"`
 	// False on heartbeats carrying only events (see collectFirewallReport).
 	Full bool `json:"full"`
 }
@@ -1265,6 +1416,17 @@ func fwParseLogLine(message string, denyIDs []string) (fwEvent, bool) {
 	case tag == "P":
 		event.Verdict = "blocked"
 		event.RuleID = fwRPCGuardID
+	case tag == "K":
+		event.Verdict = "blocked"
+		event.RuleID = fwSSHBanID
+	case tag == "Q":
+		// rpcbind spam: the agent bans the source (see fwRPCBanTrigger).
+		event.Verdict = "blocked"
+		event.RuleID = fwRPCBanID
+		event.trigger = true
+	case tag == "A":
+		event.Verdict = "blocked"
+		event.RuleID = fwRPCBanID
 	case strings.HasPrefix(tag, "R"):
 		index, err := strconv.Atoi(tag[1:])
 		if err != nil {
@@ -1390,6 +1552,11 @@ func startFirewallLogReader() {
 			denyIDs := fwState.denyIDs
 			fwStateMu.Unlock()
 			if event, ok := fwParseLogLine(message, denyIDs); ok {
+				if event.trigger {
+					if ip := net.ParseIP(event.Source); ip != nil {
+						fwRPCBanTrigger(ip, time.Now())
+					}
+				}
 				fwRecordEvent(event, time.Now())
 			}
 		}
@@ -1415,6 +1582,8 @@ func collectFirewallReport(full bool) *fwReport {
 	report := &fwReport{Revision: revision, Events: events, Logging: logging, Full: full}
 	if full {
 		report.Features = fwFeatures
+		report.SSHBans = fwSSHBanCount()
+		report.RPCBans = fwBanCount(fwBanAll)
 	}
 	if full {
 		report.Listening = fwListeningPorts()

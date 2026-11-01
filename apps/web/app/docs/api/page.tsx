@@ -465,9 +465,9 @@ const MODULES: Module[] = [
       {
         method: 'PATCH',
         path: '/firewall/settings',
-        body: 'meshMode?, publicPing?, sshGuard?, sshLimit?, rpcGuard?',
+        body: 'meshMode?, publicPing?, sshGuard?, sshLimit?, sshBan?, sshBanAttempts?, sshBanMinutes?, sshBanEscalate?, rpcGuard?, rpcBan?, rpcBanAttempts?',
         description:
-          'Mode du réseau privé (open, observe, enforce), réponse au ping, protection anti-verrouillage SSH, limite des tentatives SSH depuis Internet et rpcbind (port 111) réservé au réseau privé.',
+          'Mode du réseau privé (open, observe, enforce), réponse au ping, protection anti-verrouillage SSH, limite des tentatives SSH depuis Internet, bannissement des adresses qui échouent à se connecter (nombre d’échecs en une heure, durée en minutes, progressif) et rpcbind (port 111) réservé au réseau privé, avec bannissement de tout le serveur des adresses qui le spamment en TCP.',
         isNew: true,
       },
       {

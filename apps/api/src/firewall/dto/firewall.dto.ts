@@ -39,6 +39,39 @@ export class UpdateFirewallSettingsDto {
   @IsOptional()
   @IsBoolean()
   rpcGuard?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  sshBan?: boolean;
+
+  // Failed logins within an hour before a ban.
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  sshBanAttempts?: number;
+
+  // First ban, in minutes (up to 7 days).
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(10080)
+  sshBanMinutes?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  sshBanEscalate?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  rpcBan?: boolean;
+
+  // TCP attempts an hour on rpcbind before a whole-server ban.
+  @IsOptional()
+  @IsInt()
+  @Min(3)
+  @Max(1000)
+  rpcBanAttempts?: number;
 }
 
 export class UpdateFirewallNodeDto {

@@ -10,6 +10,7 @@ import {
   PolicyContext,
   PolicyRule,
   publicExposure,
+  sshBanMinutes,
 } from '../src/firewall/firewall-policy';
 
 const nodes = [
@@ -285,4 +286,34 @@ test('rpcbind guard: port 111 kept off the internet on every node, mesh untouche
   const old = nodes.map((node) => ({ ...node, features: ['ssh-limit', 'outbound', 'countries'] }));
   assert.equal(publicExposure(ctx({ rpcGuard: true, nodes: old }), 'dev', rpcbind), 'public');
   assert.equal(evaluate(ctx({ rpcGuard: true, nodes: old }), { scope: 'public', targetNodeId: 'dev', sourceIp: '203.0.113.5', protocol: 'tcp', port: 111 }).verdict, 'allowed');
+});
+
+test('SSH bans: carried with the limit, escalating up to 7 days', () => {
+  const ban = { attempts: 5, minutes: 10, escalate: true };
+  const office = rule({ id: 'office', scope: 'public', sourceKind: 'cidrs', sourceCidrs: ['198.51.100.7/32'], protocol: 'tcp', ports: ['22'] });
+  const payload = buildAgentPayload(ctx({ sshLimit: true, sshBan: ban, rules: [office] }), 'dev', 'r');
+  // Addresses an SSH rule allows are neither throttled nor banned.
+  assert.deepEqual(payload.sshLimit, { ports: ['22'], exempt: ['198.51.100.7/32'], ban });
+  // Bans ride on the limiter: no limit, no bans; no ban settings, limit only.
+  assert.equal(buildAgentPayload(ctx({ sshLimit: false, sshBan: ban }), 'dev', 'r').sshLimit, undefined);
+  assert.equal(buildAgentPayload(ctx({ sshLimit: true, sshBan: null }), 'dev', 'r').sshLimit?.ban, undefined);
+
+  assert.deepEqual([1, 2, 3, 4, 5, 6].map((offence) => sshBanMinutes(ban, offence)), [10, 60, 360, 2160, 10080, 10080]);
+  assert.equal(sshBanMinutes({ ...ban, escalate: false }, 4), 10);
+});
+
+test('rpcbind bans: whole-server, never against Tarmac servers nor allowed addresses', () => {
+  const withIps = nodes.map((node, i) => ({ ...node, publicIp: node.id === 'web' ? '2001:db8::5' : `198.51.100.${10 + i}` }));
+  const panel = rule({ id: 'panel', scope: 'public', sourceKind: 'cidrs', sourceCidrs: ['203.0.113.0/24'], protocol: 'tcp', ports: ['8443'] });
+  const ban = { attempts: 10, minutes: 10, escalate: true };
+  const c = ctx({ nodes: withIps, rpcGuard: true, rpcBan: ban, rules: [panel] });
+  const payload = buildAgentPayload(c, 'dev', 'r');
+  assert.deepEqual(payload.rpcGuard?.ban, {
+    ...ban,
+    // The other servers (not dev itself), then addresses a rule allows on any port.
+    exempt: ['2001:db8::5/128', '198.51.100.12/32', '198.51.100.13/32', '203.0.113.0/24'],
+  });
+  // No guard, no ban; guard without ban settings: guard only.
+  assert.equal(buildAgentPayload(ctx({ nodes: withIps, rpcGuard: false, rpcBan: ban }), 'dev', 'r').rpcGuard, undefined);
+  assert.equal(buildAgentPayload(ctx({ nodes: withIps, rpcGuard: true, rpcBan: null }), 'dev', 'r').rpcGuard?.ban, undefined);
 });
