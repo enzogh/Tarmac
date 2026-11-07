@@ -58,8 +58,12 @@ const (
 	fwSSHBanSet6 = "tarmac-sshban6"
 	fwBanAllSet4 = "tarmac-ban4"
 	fwBanAllSet6 = "tarmac-ban6"
-	// Failed logins are counted over this sliding window.
+	// Failed logins are counted over this sliding window...
 	fwSSHBanWindow = time.Hour
+	// ...and over this one too, where twice as many ban: robots trying once
+	// an hour around the clock never reach the hourly bar.
+	fwSSHBanSlowWindow = 24 * time.Hour
+	fwSSHBanSlowFactor = 2
 	// Each repeat offence multiplies the previous ban by this factor...
 	fwSSHBanFactor = 6
 	// ...up to this ceiling.
@@ -191,15 +195,21 @@ func fwSSHBanRecord(entry *fwSSHBanEntry, cfg fwSSHBan, now time.Time) time.Dura
 		// Already banned: a failure here comes from a session opened before.
 		return 0
 	}
+	slowCutoff := now.Add(-fwSSHBanSlowWindow).Unix()
 	cutoff := now.Add(-fwSSHBanWindow).Unix()
 	kept := entry.Failures[:0]
+	recent := 0
 	for _, at := range entry.Failures {
-		if at > cutoff {
+		if at > slowCutoff {
 			kept = append(kept, at)
+			if at > cutoff {
+				recent++
+			}
 		}
 	}
 	entry.Failures = append(kept, now.Unix())
-	if len(entry.Failures) < cfg.attempts {
+	recent++
+	if recent < cfg.attempts && len(entry.Failures) < cfg.attempts*fwSSHBanSlowFactor {
 		return 0
 	}
 	if entry.Until == 0 || now.Unix()-entry.Until > int64(fwSSHBanMemory/time.Second) {
@@ -328,7 +338,7 @@ func fwBanOffence(kind fwBanKind, ip net.IP, now time.Time) {
 // aggressive (the table is full), also those only counting failures.
 func fwSSHBanPruneLocked(now time.Time, aggressive bool) {
 	forget := now.Add(-fwSSHBanMemory).Unix()
-	cutoff := now.Add(-fwSSHBanWindow).Unix()
+	cutoff := now.Add(-fwSSHBanSlowWindow).Unix()
 	for key, entry := range fwSSHBans.byKey {
 		recent := len(entry.Failures) > 0 && entry.Failures[len(entry.Failures)-1] > cutoff
 		if entry.Until < forget && (aggressive || !recent) {

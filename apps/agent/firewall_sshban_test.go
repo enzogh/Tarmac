@@ -72,11 +72,12 @@ func TestSSHBanEscalation(t *testing.T) {
 	if fail(now.Add(45*time.Minute)) != 0 {
 		t.Error("a failure during a ban must not re-ban")
 	}
-	// Slow failures, more than an hour apart, never add up.
+	// Slow failures, more than an hour apart, don't reach the hourly bar
+	// (the daily one, twice as high, is TestSSHBanCatchesSlowRobots).
 	slow := &fwSSHBanEntry{}
-	for i := 0; i < 10; i++ {
+	for i := 0; i < cfg.attempts*fwSSHBanSlowFactor-1; i++ {
 		if fwSSHBanRecord(slow, cfg, now.Add(time.Duration(i)*61*time.Minute)) != 0 {
-			t.Fatal("failures spread over more than the window must not ban")
+			t.Fatal("failures spread over more than the hour must not ban before the daily bar")
 		}
 	}
 
@@ -347,6 +348,34 @@ func TestBanAddress(t *testing.T) {
 	for _, bad := range []string{"2001:db8::/48", "0.0.0.0/0", "x", "2001:db8::1"} {
 		if _, _, ok := fwBanAddress(bad); ok {
 			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+func TestSSHBanCatchesSlowRobots(t *testing.T) {
+	cfg := fwSSHBan{attempts: 5, minutes: 10}
+	start := time.Unix(1_800_000_000, 0)
+	// One failure an hour: never 5 in an hour, banned at the 10th.
+	entry := &fwSSHBanEntry{}
+	for i := 0; i < 10; i++ {
+		got := fwSSHBanRecord(entry, cfg, start.Add(time.Duration(i)*time.Hour))
+		if (i < 9) != (got == 0) {
+			t.Fatalf("failure %d: ban %v", i+1, got)
+		}
+	}
+	// Spread over more than a day, 10 failures never add up.
+	entry = &fwSSHBanEntry{}
+	for i := 0; i < 20; i++ {
+		if got := fwSSHBanRecord(entry, cfg, start.Add(time.Duration(i)*3*time.Hour)); got != 0 {
+			t.Fatalf("one failure every 3 h banned at #%d", i+1)
+		}
+	}
+	// The hourly bar still bans fast robots at the 5th failure.
+	entry = &fwSSHBanEntry{}
+	for i := 0; i < 5; i++ {
+		got := fwSSHBanRecord(entry, cfg, start.Add(time.Duration(i)*time.Minute))
+		if (i < 4) != (got == 0) {
+			t.Fatalf("fast failure %d: ban %v", i+1, got)
 		}
 	}
 }

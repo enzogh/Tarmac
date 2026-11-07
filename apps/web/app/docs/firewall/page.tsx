@@ -107,7 +107,7 @@ export default function FirewallDocsPage() {
             qu’une règle SSH autorise ne sont jamais limitées. Active par défaut, y compris sur les serveurs non filtrés.
           </DocCard>
           <DocCard icon={Ban} title="Bannissement SSH">
-            Une adresse qui rate 5 connexions SSH en une heure (mauvais mot de passe, utilisateur inconnu, connexion abandonnée sans se connecter, ce
+            Une adresse qui rate 5 connexions SSH en une heure, ou 10 en 24 heures pour les robots lents (mauvais mot de passe, utilisateur inconnu, connexion abandonnée sans se connecter, ce
             qui couvre les serveurs sans mot de passe) est bannie de SSH pendant 10 minutes, sur tous les serveurs du workspace à la fois ; chaque
             récidive dure 6 fois plus longtemps (1 h, 6 h, 36 h, jusqu’à 7 jours), oubliée après 7 jours sans abus. Nombre d’échecs, durée et
             progression se règlent dans Depuis Internet › Réglages. Une clé refusée suivie d’une connexion réussie ne compte pas. Le réseau privé et les adresses qu’une règle SSH
