@@ -3952,6 +3952,9 @@ func handleCommand(ctx context.Context, cmd commandPayload, onProgress func(prog
 			result.Message = err.Error()
 		} else {
 			result.Message = message
+			// Kept for the next boot: see overlay_boot.go.
+			overlayPersist(cmd.Payload)
+			ensureOverlayBootUnit()
 		}
 	case "command.apply_vpn":
 		result.Command = "apply_vpn"
@@ -4390,6 +4393,12 @@ func runSession(ctx context.Context, wsURL string, nodeID string) error {
 }
 
 func main() {
+	// Boot unit mode (tarmac-overlay-restore.service): bring the private
+	// network back from disk, then exit. See overlay_boot.go.
+	if len(os.Args) > 1 && os.Args[1] == overlayRestoreFlag {
+		os.Exit(runOverlayRestoreCommand())
+	}
+
 	controlPlane := envOrDefault("CONTROL_PLANE_WS", "ws://localhost:3001/agents-ws")
 	token := envOrDefault("AGENT_TOKEN", "agent-secret")
 	nodeID := envOrDefault("NODE_ID", "node-local")
@@ -4433,6 +4442,10 @@ func main() {
 	// Before connecting: a rebooted node gets its last firewall rules back
 	// right away instead of staying open until the control plane answers.
 	restoreFirewallAtStartup()
+	// Same for the private network: services bound to the overlay IP and
+	// the NFS mounts must not wait for the control plane, which may itself
+	// only be reachable through this overlay.
+	restoreOverlayAtStartup()
 	startFirewallLogReader()
 	startFirewallGeoRefresh()
 	startSSHAuthLogReader()

@@ -1,6 +1,9 @@
 services:
   postgres:
     image: postgres:16
+    # Like api and web: without it the database stays down after a reboot of
+    # the host and the API waits for it forever.
+    restart: unless-stopped
     entrypoint: ["/bin/sh", "/docker-entrypoint-tarmac.sh"]
     command: ["postgres"]
     environment:
@@ -20,6 +23,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "127.0.0.1:${REDIS_PORT:?REDIS_PORT must be set}:6379"
     volumes:
