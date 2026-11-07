@@ -3,6 +3,9 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
+import { alertKey } from '../alerts/alert-keys';
+import { raiseAlert } from '../alerts/alert-lifecycle';
+import { isMuted, isNodeFresh } from '../alerts/node-availability';
 import { chainSegments, LinkHistoryPoint, relayGateways, uptimePercent } from './link-history';
 import { activeGateways } from './overlay-topology';
 import { Region, resolveRegion } from './region';
@@ -51,7 +54,6 @@ function resolveSubnetCidr(workspace: SubnetWorkspace): string {
 
 const CONNECTION_OFFLINE_TIMEOUT_MS = 60_000;
 const CONNECTION_DEGRADED_TIMEOUT_MS = 20_000;
-const CONNECTION_ALERT_COOLDOWN_MS = 10 * 60_000;
 // A link has to stay offline this long before it raises an alert: an agent
 // reconnecting (restart, update, brief network blip) comes back well within it.
 const CONNECTION_OFFLINE_ALERT_DELAY_MS = 90_000;
@@ -97,7 +99,6 @@ const floorToDate = (date: Date, step: number) => new Date(floorTo(date.getTime(
 @Injectable()
 export class VlanService implements OnModuleInit {
   private readonly logger = new Logger(VlanService.name);
-  private readonly connectionAlertCooldownAt = new Map<string, number>();
   private readonly connectionSampleWrittenAt = new Map<string, number>();
   // Links currently offline but not yet alerted on, keyed source:target.
   private readonly pendingOfflineAlerts = new Map<string, { vlanId: string; sourceNodeId: string; targetNodeId: string; since: number }>();
@@ -425,7 +426,11 @@ export class VlanService implements OnModuleInit {
       if (now - pending.since < CONNECTION_OFFLINE_ALERT_DELAY_MS) continue;
       this.pendingOfflineAlerts.delete(directionKey);
       try {
-        await this.raiseOfflineAlert(pending.vlanId, pending.sourceNodeId, pending.targetNodeId);
+        const outcome = await this.raiseOfflineAlert(pending.vlanId, pending.sourceNodeId, pending.targetNodeId);
+        // An endpoint is down: its own alert covers the link. Keep watching
+        // it, so a link still dead once the node is back alerts after the
+        // same delay.
+        if (outcome === 'endpoint-down') this.pendingOfflineAlerts.set(directionKey, { ...pending, since: now });
       } catch (error) {
         this.logger.warn(
           `Failed to raise VLAN offline alert for ${directionKey}: ${error instanceof Error ? error.message : String(error)}`,
@@ -434,42 +439,45 @@ export class VlanService implements OnModuleInit {
     }
   }
 
-  private async raiseOfflineAlert(vlanId: string, sourceNodeId: string, targetNodeId: string): Promise<void> {
+  private async raiseOfflineAlert(
+    vlanId: string,
+    sourceNodeId: string,
+    targetNodeId: string,
+  ): Promise<'raised' | 'skipped' | 'endpoint-down'> {
     // Re-read the link: it may have recovered through a path that skipped the
     // transition hook (e.g. the row was rewritten by a membership change).
     const connection = await this.prisma.vlanConnection.findUnique({
       where: { vlanId_sourceNodeId_targetNodeId: { vlanId, sourceNodeId, targetNodeId } },
       select: { status: true },
     });
-    if (connection?.status !== 'offline') return;
+    if (connection?.status !== 'offline') return 'skipped';
 
-    const pairKey = [sourceNodeId, targetNodeId].sort().join('__');
-    const cooldownKey = `${pairKey}:offline`;
-    const lastAlertAt = this.connectionAlertCooldownAt.get(cooldownKey) ?? 0;
-    if (Date.now() - lastAlertAt < CONNECTION_ALERT_COOLDOWN_MS) return;
-    this.connectionAlertCooldownAt.set(cooldownKey, Date.now());
-
+    const select = { name: true, workspaceId: true, vlanIp: true, mutedUntil: true, status: true, lastSeenAt: true } as const;
     const [source, target] = await Promise.all([
-      this.prisma.node.findUnique({ where: { id: sourceNodeId }, select: { name: true, workspaceId: true, vlanIp: true, mutedUntil: true } }),
-      this.prisma.node.findUnique({ where: { id: targetNodeId }, select: { name: true, vlanIp: true, mutedUntil: true } }),
+      this.prisma.node.findUnique({ where: { id: sourceNodeId }, select }),
+      this.prisma.node.findUnique({ where: { id: targetNodeId }, select }),
     ]);
 
     const now = Date.now();
-    if ((source?.mutedUntil && source.mutedUntil.getTime() > now) || (target?.mutedUntil && target.mutedUntil.getTime() > now)) {
-      return;
-    }
+    if ((source && isMuted(source, now)) || (target && isMuted(target, now))) return 'skipped';
+    // A node that stopped heartbeating takes every one of its links down
+    // with it: that is one "node unreachable" alert (AlertSupervisorService),
+    // not one per peer.
+    if (!source || !target || !isNodeFresh(source, now) || !isNodeFresh(target, now)) return 'endpoint-down';
 
-    const sourceLabel = `${source?.name ?? sourceNodeId} (${source?.vlanIp ?? '?'})`;
-    const targetLabel = `${target?.name ?? targetNodeId} (${target?.vlanIp ?? '?'})`;
+    const sourceLabel = `${source.name} (${source.vlanIp ?? '?'})`;
+    const targetLabel = `${target.name} (${target.vlanIp ?? '?'})`;
 
-    await this.prisma.alert.create({
-      data: {
-        workspaceId: source?.workspaceId ?? DEFAULT_WORKSPACE_ID,
-        nodeId: sourceNodeId,
-        severity: 'high',
-        message: `Lien VLAN hors ligne : ${sourceLabel} ↔ ${targetLabel}`,
-      },
+    // Both directions of a pair share the key: one alert per pair, closed
+    // by AlertSupervisorService once the link has been back for a while.
+    const created = await raiseAlert(this.prisma, {
+      workspaceId: source.workspaceId ?? DEFAULT_WORKSPACE_ID,
+      fingerprint: alertKey.vlanLink(vlanId, sourceNodeId, targetNodeId),
+      nodeId: sourceNodeId,
+      severity: 'high',
+      message: `Lien VLAN hors ligne : ${sourceLabel} ↔ ${targetLabel}`,
     });
+    return created ? 'raised' : 'skipped';
   }
 
   async getConnectionHistory(

@@ -4,6 +4,8 @@ import { AgentsService } from '../agents/agents.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { scopeWhere, WorkspaceScope } from '../auth/workspace.guard';
 import { alertWorkspaceId } from '../alerts/alert-workspace';
+import { alertKey } from '../alerts/alert-keys';
+import { nodeOutageExplains, raiseAlert } from '../alerts/alert-lifecycle';
 import { assertNodesInWorkspace } from '../common/workspace-ownership';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
@@ -52,15 +54,13 @@ export class SyncJobsService {
     nodeId?: string | null;
     errorMessage: string;
   }) {
-    const message = `Réplication "${params.syncJobName}" en échec : ${params.errorMessage}`;
-
-    await this.prisma.alert.create({
-      data: {
-        workspaceId: await alertWorkspaceId(this.prisma, params.nodeId),
-        nodeId: params.nodeId ?? null,
-        severity: 'high',
-        message,
-      },
+    // One open alert per job, closed by its next successful run.
+    await raiseAlert(this.prisma, {
+      workspaceId: await alertWorkspaceId(this.prisma, params.nodeId),
+      fingerprint: alertKey.syncJob(params.syncJobId),
+      nodeId: params.nodeId ?? null,
+      severity: 'high',
+      message: `Réplication "${params.syncJobName}" en échec : ${params.errorMessage}`,
     });
   }
 
@@ -196,14 +196,20 @@ export class SyncJobsService {
         },
       });
     } else {
-      const offlineMessage = this.normalizeFailureMessage('Agent offline - run simulated as failed');
+      const offlineMessage = this.normalizeFailureMessage(
+        job.nodeId ? "l'agent du nœud est hors ligne, la copie n'a pas pu démarrer" : "aucun nœud n'est associé à cette réplication",
+      );
       await this.completeRun(run.id, false, 0, offlineMessage);
-      await this.createSyncJobFailureAlert({
-        syncJobId: job.id,
-        syncJobName: job.name,
-        nodeId: job.nodeId,
-        errorMessage: offlineMessage,
-      });
+      // The run is still recorded as failed; the alert is left to the
+      // node's own outage alert when that is the reason.
+      if (!(await nodeOutageExplains(this.prisma, job.nodeId))) {
+        await this.createSyncJobFailureAlert({
+          syncJobId: job.id,
+          syncJobName: job.name,
+          nodeId: job.nodeId,
+          errorMessage: offlineMessage,
+        });
+      }
     }
 
     await this.auditLogsService.log({

@@ -1,4 +1,4 @@
-import { Bell, BellRing, Cable, Code2, Gauge, HardDrive, Mail, RefreshCw, Server } from 'lucide-react';
+import { Bell, BellRing, Cable, CheckCircle2, Code2, Gauge, HardDrive, Mail, RefreshCw, Server, ServerOff } from 'lucide-react';
 import Link from 'next/link';
 import { PageHeader } from '../../../components/PageHeader';
 import { Callout } from '../../../components/Callout';
@@ -14,18 +14,23 @@ export default function AlertsDocsPage() {
       />
 
       <Callout>
-        Une alerte reste <strong className="text-violet-100">à traiter</strong> tant qu’elle n’est pas résolue. Les alertes de seuil se résolvent seules
-        dès que la mesure revient à la normale ; les autres se résolvent depuis la page Alertes une fois le problème traité.
+        Une alerte reste <strong className="text-violet-100">à traiter</strong> tant qu’elle n’est pas résolue. Quand le problème disparaît de lui-même
+        (nœud de retour, lien rétabli, réplication repassée au vert…), Tarmac la ferme tout seul et l’affiche{' '}
+        <strong className="text-violet-100">résolue automatiquement</strong>. Les événements ponctuels (migration échouée, plantage) se résolvent depuis la
+        page Alertes une fois traités.
       </Callout>
 
       <section className="space-y-4">
         <SectionLabel>Ce que Tarmac surveille de lui-même</SectionLabel>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <DocCard icon={ServerOff} title="Nœuds injoignables">
+            Un nœud dont l’agent ne donne plus signe de vie depuis 3 minutes. Plusieurs nœuds tombés en même temps donnent une seule alerte.
+          </DocCard>
           <DocCard icon={Cable} title="Liens du réseau privé">
-            Un lien coupé plus de 90 secondes. Les 3 minutes qui suivent un redémarrage de Tarmac sont ignorées, le temps que les agents se reconnectent.
+            Un lien coupé plus de 90 secondes alors que les deux nœuds répondent. Si c’est un nœud qui est tombé, seule son alerte apparaît.
           </DocCard>
           <DocCard icon={HardDrive} title="Santé des disques">
-            Un disque dont l’état SMART se dégrade, au plus une alerte par heure et par disque.
+            Un disque dont l’état SMART se dégrade : une alerte par disque, fermée quand il redevient sain.
           </DocCard>
           <DocCard icon={RefreshCw} title="Copies et migrations">
             Une tâche de réplication ou une migration qui échoue.
@@ -37,10 +42,30 @@ export default function AlertsDocsPage() {
       </section>
 
       <section className="space-y-4">
+        <SectionLabel>Éviter les fausses alertes</SectionLabel>
+        <DocTable
+          head={['Situation', 'Ce que fait Tarmac']}
+          rows={[
+            ['Redémarrage ou mise à jour d’un agent', 'Rien tant que le silence dure moins de 3 minutes.'],
+            ['Redémarrage de Tarmac', 'Les 3 premières minutes sont ignorées, le temps que les agents se reconnectent.'],
+            ['Un nœud tombe', 'Une seule alerte pour le nœud, pas une par lien, montage ou réplication qui en dépend.'],
+            ['Plusieurs nœuds tombent ensemble', 'Une seule alerte qui les liste : panne commune probable (hébergeur, réseau).'],
+            ['Lien ou nœud qui revient puis retombe', 'L’alerte ne se ferme qu’après quelques minutes de stabilité (2 min pour un nœud, 5 min pour un lien).'],
+            ['Pic ponctuel de CPU ou de mémoire', 'Une règle de seuil ne se déclenche qu’après 2 mesures de suite au-dessus du seuil.'],
+            ['Nœud en sourdine', 'Aucune alerte le concernant jusqu’à la fin de la sourdine.'],
+          ]}
+        />
+        <DocCard icon={CheckCircle2} title="Pas d’e-mail pour un problème déjà réglé">
+          Une alerte qui se ferme avant le départ de l’e-mail (environ une minute) n’est pas envoyée, et un problème toujours ouvert n’est envoyé
+          qu’une fois.
+        </DocCard>
+      </section>
+
+      <section className="space-y-4">
         <SectionLabel>Règles de seuil</SectionLabel>
         <DocCard icon={Gauge} title="CPU, mémoire et disque">
           Une règle compare chaque minute la dernière mesure d’un nœud (ou de tous) à un seuil — par exemple « disque au-dessus de 90 % » — avec une
-          gravité de faible à critique. Les règles se gèrent pour l’instant par l’API (<code>/alert-rules</code>), voir la{' '}
+          gravité de faible à critique. Elle se déclenche après 2 mesures de suite au-dessus du seuil et se ferme après 2 mesures revenues à la normale. Les règles se gèrent pour l’instant par l’API (<code>/alert-rules</code>), voir la{' '}
           <Link href="/docs/api" className="text-primary underline-offset-2 hover:underline">
             référence API
           </Link>

@@ -855,6 +855,15 @@ model Alert {
   // Set once the alert has gone out in an email digest (or was deliberately
   // skipped) - null means AlertDigestService still has to pick it up.
   emailNotifiedAt DateTime?
+  // The condition this alert is about ("node-offline:<nodeId>", see
+  // alerts/alert-keys.ts): at most one unresolved alert per key, and
+  // AlertSupervisorService closes it once the condition has cleared. Null
+  // for one-off events (a crash, a failed migration) that only a person
+  // can close.
+  fingerprint    String?
+  // Closed by AlertSupervisorService because the problem went away, not by
+  // someone clicking "Résoudre".
+  autoResolved   Boolean       @default(false)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   rule           AlertRule?    @relation(fields: [ruleId], references: [id], onDelete: SetNull)
@@ -866,6 +875,7 @@ model Alert {
   // Lists are per workspace, newest first.
   @@index([workspaceId, triggeredAt])
   @@index([emailNotifiedAt])
+  @@index([fingerprint, status])
 }
 
 model SyncJob {

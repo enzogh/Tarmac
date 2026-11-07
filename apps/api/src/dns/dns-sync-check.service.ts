@@ -4,6 +4,8 @@ import { AgentsService } from '../agents/agents.service';
 import { LiveWsServer } from '../live/live.ws';
 import { extractExternalIp } from '../nodes/extract-external-ip';
 import { PrismaService } from '../prisma/prisma.service';
+import { alertKey } from '../alerts/alert-keys';
+import { nodeOutageExplains, raiseAlert } from '../alerts/alert-lifecycle';
 
 const CHECK_INTERVAL_MS = 2 * 60_000;
 const QUERY_TIMEOUT_MS = 4000;
@@ -153,24 +155,32 @@ export class DnsSyncCheckService implements OnModuleInit {
 
     for (const entry of detail) {
       if (entry.role !== 'secondary' || !entry.behindSince) continue;
-      // Alert once per episode: on the check where the lag crosses the bar.
       const since = new Date(entry.behindSince).getTime();
       const lagMs = now.getTime() - since;
-      const lagAtLastCheck = zone.syncCheckedAt ? zone.syncCheckedAt.getTime() - since : -1;
-      if (lagMs < SYNC_LAG_ALERT_MS || lagAtLastCheck >= SYNC_LAG_ALERT_MS) continue;
+      if (lagMs < SYNC_LAG_ALERT_MS) continue;
+      // A secondary that is down is not lagging, it is down: its node's
+      // own alert says so.
+      if (await nodeOutageExplains(this.prisma, entry.nodeId)) continue;
+      // Once per episode: nothing raised for this secondary since it fell
+      // behind. AlertSupervisorService closes it when it catches up.
+      const fingerprint = alertKey.dnsSync(zoneId, entry.nodeId);
+      const alreadyRaised = await this.prisma.alert.findFirst({
+        where: { fingerprint, triggeredAt: { gte: new Date(since) } },
+        select: { id: true },
+      });
+      if (alreadyRaised) continue;
       const member = members.find((m) => m.nodeId === entry.nodeId)!;
       const minutes = Math.round(lagMs / 60_000);
-      await this.prisma.alert.create({
-        data: {
-          workspaceId: zone.workspaceId,
-          nodeId: entry.nodeId,
-          severity: 'high',
-          message: entry.error
+      await raiseAlert(this.prisma, {
+        workspaceId: zone.workspaceId,
+        fingerprint,
+        nodeId: entry.nodeId,
+        severity: 'high',
+        message: entry.error
             ? `Zone ${zone.name} : le secondaire ${member.node.name} ${entry.error} depuis ${minutes} min`
             : entry.serial === primarySerial
               ? `Zone ${zone.name} : le secondaire ${member.node.name} sert le même serial (${entry.serial}) que le primaire mais un contenu différent depuis ${minutes} min (modification appliquée sans incrément du serial ?)`
               : `Zone ${zone.name} : le secondaire ${member.node.name} sert le serial ${entry.serial} au lieu de ${primarySerial} depuis ${minutes} min (transfert AXFR bloqué ?)`,
-        },
       });
     }
 

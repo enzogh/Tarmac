@@ -54,11 +54,12 @@ const SEVERITY_ICON: Record<string, typeof AlertCircle> = { critical: AlertCircl
 /**
  * One row per recurring alert, not per occurrence.
  *
- * A rule that keeps firing writes a new row every time it does, so a fleet
- * with one flapping VLAN link produced dozens of byte-identical "Lien VLAN
- * hors ligne : A <-> B" alerts. Collapsing on the message gives one line per
- * distinct problem, carrying how many times it fired and when it first and
- * last did; the occurrences are still there, one click away.
+ * A problem that comes back writes a new row every time it does, so a fleet
+ * with one flapping VLAN link produced dozens of "Lien VLAN hors ligne :
+ * A <-> B" alerts. Collapsing on the condition's key (or on the message for
+ * alerts that have none) gives one line per distinct problem, carrying how
+ * many times it fired and when it first and last did; the occurrences are
+ * still there, one click away.
  */
 type AlertGroup = {
   key: string;
@@ -68,6 +69,8 @@ type AlertGroup = {
   severity: string;
   /** Worst status across the group: an unread occurrence outranks a read one. */
   status: string;
+  /** Resolved, and closed by the supervision rather than by someone. */
+  autoResolved: boolean;
   firstTriggeredAt: string;
   lastTriggeredAt: string;
   node: { id: string; name: string } | null;
@@ -84,16 +87,20 @@ function splitMessage(message: string): { title: string; detail: string | null }
 }
 
 function groupAlerts(alerts: AlertItem[]): AlertGroup[] {
-  const byMessage = new Map<string, AlertItem[]>();
+  const byKey = new Map<string, AlertItem[]>();
   for (const alert of alerts) {
-    const list = byMessage.get(alert.message) ?? [];
+    const key = alert.fingerprint ?? alert.message;
+    const list = byKey.get(key) ?? [];
     list.push(alert);
-    byMessage.set(alert.message, list);
+    byKey.set(key, list);
   }
 
-  return [...byMessage.entries()]
-    .map(([message, occurrences]) => {
+  return [...byKey.entries()]
+    .map(([key, occurrences]) => {
       const sorted = [...occurrences].sort((left, right) => new Date(right.triggeredAt).getTime() - new Date(left.triggeredAt).getTime());
+      // The latest wording: a condition keeps its key while its details
+      // (a lag in minutes, a measured value) move.
+      const message = sorted[0].message;
       const status = sorted.some((alert) => alert.status === 'open')
         ? 'open'
         : sorted.some((alert) => alert.status === 'acknowledged')
@@ -105,11 +112,12 @@ function groupAlerts(alerts: AlertItem[]): AlertGroup[] {
       );
       const withNode = sorted.find((alert) => alert.node);
       return {
-        key: message,
+        key,
         message,
         ...splitMessage(message),
         severity,
         status,
+        autoResolved: status === 'resolved' && sorted[0].autoResolved === true,
         firstTriggeredAt: sorted[sorted.length - 1].triggeredAt,
         lastTriggeredAt: sorted[0].triggeredAt,
         node: withNode?.node ?? null,
@@ -189,7 +197,18 @@ function AlertRow({
             <StatusPill tone={severity.tone} dot={false}>
               {severity.label}
             </StatusPill>
-            {group.status !== 'open' && <StatusPill tone={status.tone}>{status.label}</StatusPill>}
+            {group.autoResolved ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="cursor-default">
+                    <StatusPill tone="ok">Résolue automatiquement</StatusPill>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>La supervision a constaté le retour à la normale et a fermé l’alerte d’elle-même.</TooltipContent>
+              </Tooltip>
+            ) : (
+              group.status !== 'open' && <StatusPill tone={status.tone}>{status.label}</StatusPill>
+            )}
           </div>
           {group.detail && <p className="mt-0.5 break-words text-xs text-muted-foreground">{group.detail}</p>}
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-muted-foreground">
@@ -264,7 +283,12 @@ function AlertRow({
                   {occurrenceStatus.label}
                 </StatusPill>
                 {alert.acknowledgedAt && <span>prise en compte {formatDateTime(alert.acknowledgedAt)}</span>}
-                {alert.resolvedAt && <span>résolue {formatDateTime(alert.resolvedAt)}</span>}
+                {alert.resolvedAt && (
+                  <span>
+                    {alert.autoResolved ? 'rétablie' : 'résolue'} {formatDateTime(alert.resolvedAt)}
+                    {alert.autoResolved ? ' · fermée automatiquement' : ''}
+                  </span>
+                )}
               </li>
             );
           })}
@@ -297,6 +321,7 @@ export default function AlertsPage() {
       high: open.filter((group) => group.severity === 'high').length,
       minor: open.filter((group) => group.severity === 'medium' || group.severity === 'low').length,
       resolvedWeek: groups.filter((group) => group.status === 'resolved' && now - new Date(group.lastTriggeredAt).getTime() < RESOLVED_WINDOW_MS).length,
+      autoResolvedWeek: groups.filter((group) => group.autoResolved && now - new Date(group.lastTriggeredAt).getTime() < RESOLVED_WINDOW_MS).length,
     };
   }, [groups, open]);
 
@@ -374,7 +399,7 @@ export default function AlertsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Alertes"
-        description="Les problèmes détectés sur la flotte par vos règles de seuil et par la supervision (liens, disques, agents). Résolvez-les une fois traités."
+        description="Les problèmes détectés sur la flotte par vos règles de seuil et par la supervision (nœuds, liens, disques…). Elles se ferment d’elles-mêmes au retour à la normale ; les autres se résolvent une fois traitées."
         actionsReadOnlySafe
         actions={<ExportMenu onExport={(format) => api.alerts.download({ format })} hint="Alertes des 30 derniers jours" />}
         meta={
@@ -399,7 +424,16 @@ export default function AlertsPage() {
           <Stat label="Critiques" value={counts.critical} icon={AlertCircle} tone={counts.critical > 0 ? 'danger' : 'ok'} hint={counts.critical > 0 ? 'Intervention immédiate' : 'Aucune'} />
           <Stat label="Élevées" value={counts.high} icon={AlertCircle} tone={counts.high > 0 ? 'danger' : 'ok'} hint={counts.high > 0 ? 'À traiter rapidement' : 'Aucune'} />
           <Stat label="Moyennes et faibles" value={counts.minor} icon={AlertTriangle} tone={counts.minor > 0 ? 'warn' : 'ok'} hint={counts.minor > 0 ? 'À surveiller' : 'Aucune'} />
-          <Stat label="Résolues sur 7 jours" value={counts.resolvedWeek} icon={ShieldCheck} hint={`${alerts.length} déclenchement${alerts.length > 1 ? 's' : ''} conservé${alerts.length > 1 ? 's' : ''}`} />
+          <Stat
+            label="Résolues sur 7 jours"
+            value={counts.resolvedWeek}
+            icon={ShieldCheck}
+            hint={
+              counts.autoResolvedWeek > 0
+                ? `dont ${counts.autoResolvedWeek} automatique${counts.autoResolvedWeek > 1 ? 's' : ''}`
+                : `${alerts.length} déclenchement${alerts.length > 1 ? 's' : ''} conservé${alerts.length > 1 ? 's' : ''}`
+            }
+          />
         </StatRow>
       )}
 

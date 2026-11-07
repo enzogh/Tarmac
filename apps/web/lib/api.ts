@@ -284,6 +284,10 @@ export type AlertItem = {
   triggeredAt: string;
   acknowledgedAt?: string | null;
   resolvedAt?: string | null;
+  /** The condition the alert is about; the same key means the same problem. */
+  fingerprint?: string | null;
+  /** Closed by the supervision because the problem went away. */
+  autoResolved?: boolean;
   node?: { id: string; name: string } | null;
   rule?: { id: string; name: string; metric: string; threshold: number } | null;
 };

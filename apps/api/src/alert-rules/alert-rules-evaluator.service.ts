@@ -2,8 +2,18 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Comparator } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { alertKey } from '../alerts/alert-keys';
+import { Streak } from '../alerts/node-availability';
 
 const SUPPORTED_METRICS = ['cpu', 'ram', 'disk'] as const;
+// Consecutive evaluations (one a minute) a rule has to breach before it
+// fires, and to stay clean before its alert closes: a single CPU spike
+// during a backup is not an incident, nor is one quiet minute its end.
+const BREACHES_TO_FIRE = 2;
+const CLEAN_TO_RESOLVE = 2;
+// Agents send metrics every few seconds: an older sample belongs to a node
+// that stopped reporting, whose outage is its own alert.
+const SAMPLE_MAX_AGE_MS = 3 * 60_000;
 type SupportedMetric = (typeof SUPPORTED_METRICS)[number];
 
 function isSupportedMetric(metric: string): metric is SupportedMetric {
@@ -24,12 +34,13 @@ function breaches(value: number, comparator: Comparator, threshold: number): boo
 }
 
 // Evaluates every enabled AlertRule against the latest metric sample per node.
-// Alerts are created/resolved based on whether an open Alert already exists
-// for that (ruleId, nodeId) pair, so this is idempotent across ticks without
-// needing an in-memory cooldown map.
+// Alerts are created/resolved based on whether an unresolved Alert already
+// exists for that (ruleId, nodeId) pair, once the verdict has held for a few
+// evaluations in a row (see BREACHES_TO_FIRE).
 @Injectable()
 export class AlertRulesEvaluatorService {
   private readonly logger = new Logger(AlertRulesEvaluatorService.name);
+  private readonly streak = new Streak();
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -51,12 +62,14 @@ export class AlertRulesEvaluatorService {
     const [nodes, latestSamples, openAlerts] = await Promise.all([
       this.prisma.node.findMany({ select: { id: true, workspaceId: true, name: true, mutedUntil: true } }),
       this.prisma.metricSample.findMany({
-        where: { createdAt: { gte: new Date(Date.now() - 10 * 60_000) } },
+        where: { createdAt: { gte: new Date(Date.now() - SAMPLE_MAX_AGE_MS) } },
         orderBy: [{ nodeId: 'asc' }, { createdAt: 'desc' }],
         distinct: ['nodeId'],
       }),
+      // Taken into account is still unresolved: only looking at "open" ones
+      // raised a fresh alert every minute once someone acknowledged it.
       this.prisma.alert.findMany({
-        where: { status: 'open', ruleId: { in: rules.map((rule) => rule.id) } },
+        where: { status: { not: 'resolved' }, ruleId: { in: rules.map((rule) => rule.id) } },
       }),
     ]);
 
@@ -67,8 +80,16 @@ export class AlertRulesEvaluatorService {
     // Collect breaches/recoveries while scanning, then flush with a single createMany +
     // updateMany — a mass outage or mass-recovery (many nodes crossing a threshold at once)
     // would otherwise mean one sequential DB round trip per (rule, node) pair in this tick.
-    const toCreate: { workspaceId: string; ruleId: string; nodeId: string; severity: typeof rules[number]['severity']; message: string }[] = [];
+    const toCreate: {
+      workspaceId: string;
+      ruleId: string;
+      nodeId: string;
+      fingerprint: string;
+      severity: typeof rules[number]['severity'];
+      message: string;
+    }[] = [];
     const toResolveIds: string[] = [];
+    const observed = new Set<string>();
 
     for (const rule of rules) {
       if (!isSupportedMetric(rule.metric)) continue;
@@ -88,20 +109,25 @@ export class AlertRulesEvaluatorService {
 
         const value = sample[rule.metric];
         const isBreached = breaches(value, rule.comparator, rule.threshold);
+        const key = `${rule.id}:${node.id}`;
+        observed.add(key);
+        const inARow = this.streak.observe(key, isBreached);
 
-        if (isBreached && !openAlert) {
+        if (isBreached && !openAlert && inARow >= BREACHES_TO_FIRE) {
           toCreate.push({
             workspaceId: rule.workspaceId,
             ruleId: rule.id,
             nodeId: node.id,
+            fingerprint: alertKey.rule(rule.id, node.id),
             severity: rule.severity,
             message: `Règle "${rule.name}" déclenchée sur ${node.name} : ${rule.metric} = ${value.toFixed(1)} (seuil ${rule.comparator} ${rule.threshold})`,
           });
-        } else if (!isBreached && openAlert) {
+        } else if (!isBreached && openAlert && inARow >= CLEAN_TO_RESOLVE) {
           toResolveIds.push(openAlert.id);
         }
       }
     }
+    this.streak.retain(observed);
 
     await Promise.all([
       toCreate.length > 0
@@ -112,7 +138,7 @@ export class AlertRulesEvaluatorService {
       toResolveIds.length > 0
         ? this.prisma.alert.updateMany({
             where: { id: { in: toResolveIds } },
-            data: { status: 'resolved', resolvedAt: new Date() },
+            data: { status: 'resolved', resolvedAt: new Date(), autoResolved: true },
           })
         : Promise.resolve(),
     ]);

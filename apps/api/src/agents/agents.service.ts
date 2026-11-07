@@ -21,6 +21,8 @@ import { AgentLogsService } from '../agent-logs/agent-logs.service';
 import { LiveWsServer } from '../live/live.ws';
 import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
 import { alertWorkspaceId } from '../alerts/alert-workspace';
+import { alertKey } from '../alerts/alert-keys';
+import { autoResolveAlerts, raiseAlert } from '../alerts/alert-lifecycle';
 import { getControlPlaneVersion, isKnownControlPlaneVersion } from '../common/build-info';
 import {
   AgentLogPayload,
@@ -226,15 +228,13 @@ export class AgentsService implements OnModuleInit {
     nodeId?: string | null;
     errorMessage: string;
   }) {
-    const message = `Réplication "${params.syncJobName}" en échec : ${params.errorMessage}`;
-
-    await this.prisma.alert.create({
-      data: {
-        workspaceId: await alertWorkspaceId(this.prisma, params.nodeId),
-        nodeId: params.nodeId ?? null,
-        severity: 'high',
-        message,
-      },
+    // One open alert per job, closed by its next successful run.
+    await raiseAlert(this.prisma, {
+      workspaceId: await alertWorkspaceId(this.prisma, params.nodeId),
+      fingerprint: alertKey.syncJob(params.syncJobId),
+      nodeId: params.nodeId ?? null,
+      severity: 'high',
+      message: `Réplication "${params.syncJobName}" en échec : ${params.errorMessage}`,
     });
   }
 
@@ -250,17 +250,18 @@ export class AgentsService implements OnModuleInit {
     const node = params.nodeName?.trim() || 'unknown-node';
     const message = `Montage "${params.mountName}" en erreur sur ${node} (${params.sourcePath} -> ${params.targetPath}): ${params.errorMessage}`;
 
-    await this.prisma.alert.create({
-      data: {
-        workspaceId: await alertWorkspaceId(this.prisma, params.nodeId),
-        nodeId: params.nodeId ?? null,
-        severity: 'high',
-        message,
-      },
+    // Closed once the mount is applied successfully.
+    await raiseAlert(this.prisma, {
+      workspaceId: await alertWorkspaceId(this.prisma, params.nodeId),
+      fingerprint: alertKey.mountError(params.mountId),
+      nodeId: params.nodeId ?? null,
+      severity: 'high',
+      message,
     });
   }
 
   private async createDnsPortConflictAlert(params: {
+    source: 'group' | 'forwarder';
     nodeId: string;
     nodeName?: string | null;
     port: number;
@@ -272,20 +273,14 @@ export class AgentsService implements OnModuleInit {
     const process = params.processName ? `${params.processName}${params.pid ? ` (pid ${params.pid})` : ''}` : 'un autre process';
     const message = `DNS : le port ${params.port}/${params.protocol} est déjà utilisé sur ${node} par ${process} - PowerDNS n'a pas pu démarrer.`;
     // The conflict is re-reported on every DNS check (every 30 s): one open
-    // alert per conflict is enough, not one per check.
-    const existing = await this.prisma.alert.findFirst({
-      where: { nodeId: params.nodeId, message, status: { not: 'resolved' } },
-      select: { id: true },
-    });
-    if (existing) return;
-
-    await this.prisma.alert.create({
-      data: {
-        workspaceId: await alertWorkspaceId(this.prisma, params.nodeId),
-        nodeId: params.nodeId,
-        severity: 'high',
-        message,
-      },
+    // alert per conflict is enough, closed once the port is free again.
+    await raiseAlert(this.prisma, {
+      workspaceId: await alertWorkspaceId(this.prisma, params.nodeId),
+      fingerprint:
+        params.source === 'group' ? alertKey.dnsPortGroup(params.nodeId) : alertKey.dnsPortForwarder(params.nodeId),
+      nodeId: params.nodeId,
+      severity: 'high',
+      message,
     });
   }
 
@@ -317,16 +312,17 @@ export class AgentsService implements OnModuleInit {
     const label = params.overall === 'critical' ? 'en échec' : 'dégradé';
     const message = `SMART : disque "${params.diskName}" sur ${nodeName} ${label} (secteurs réalloués: ${params.reallocatedSectors}, en attente: ${params.pendingSectors}, température: ${params.temperatureC}°C)`;
 
-    await this.prisma.alert.create({
-      data: {
-        workspaceId: node?.workspaceId ?? DEFAULT_WORKSPACE_ID,
-        nodeId: params.nodeId,
-        severity,
-        message,
-      },
+    // Stays open while the disk reports this level, closed once it reports
+    // healthy again (or monitoring is turned off for the node).
+    const created = await raiseAlert(this.prisma, {
+      workspaceId: node?.workspaceId ?? DEFAULT_WORKSPACE_ID,
+      fingerprint: alertKey.smart(params.nodeId, params.overall, params.diskName),
+      nodeId: params.nodeId,
+      severity,
+      message,
     });
 
-    if (params.overall === 'critical') {
+    if (created && params.overall === 'critical') {
       const disk = await this.prisma.disk.findFirst({
         where: { nodeId: params.nodeId, physicalDisks: { has: params.diskName } },
       });
@@ -477,12 +473,28 @@ export class AgentsService implements OnModuleInit {
           data: { status: 'offline' },
         });
       }
+      if (this.heartbeatMonitorAlerted) {
+        await autoResolveAlerts(this.prisma, alertKey.heartbeatMonitor());
+        this.heartbeatMonitorAlerted = false;
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error('Error checking node heartbeats:', error);
-      await this.createSystemAlert(`Heartbeat monitor failed: ${message}`, 'high');
+      // A database blip fails every tick (twice a minute): one alert for
+      // the episode, closed by the next tick that works.
+      this.heartbeatMonitorAlerted = true;
+      await raiseAlert(this.prisma, {
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        fingerprint: alertKey.heartbeatMonitor(),
+        severity: 'high',
+        message: this.normalizeFailureMessage(`Surveillance des heartbeats en échec : ${message}`),
+      }).catch(() => undefined);
     }
   }
+
+  // True at boot so the first tick that works closes an alert left open by
+  // a previous run.
+  private heartbeatMonitorAlerted = true;
 
   // When each gateway was last seen coming back up, for the failback delay.
   private readonly gatewayUpSince = new Map<string, number>();
@@ -543,18 +555,23 @@ export class AgentsService implements OnModuleInit {
         if (next === usingBackup) continue;
         this.vlanService.setFailedOver(vlanId, region, next);
         changedVlans.add(vlanId);
-        const message = next
-          ? `Passerelle ${primary!.name} injoignable : ${backup!.name} prend le relais pour sa région`
-          : `Passerelle ${primary?.name ?? ''} de retour : elle reprend le relais${backup ? ` de ${backup.name}` : ''}`;
-        this.logger.warn(message);
-        await this.prisma.alert.create({
-          data: {
-            workspaceId: (primary ?? backup)!.workspaceId,
-            nodeId: (primary ?? backup)!.id,
-            severity: next ? 'high' : 'medium',
+        const fingerprint = alertKey.gatewayFailover(vlanId, region);
+        if (next) {
+          const message = `Passerelle ${primary!.name} injoignable : ${backup!.name} prend le relais pour sa région`;
+          this.logger.warn(message);
+          await raiseAlert(this.prisma, {
+            workspaceId: primary!.workspaceId,
+            fingerprint,
+            nodeId: primary!.id,
+            severity: 'high',
             message,
-          },
-        });
+          });
+        } else {
+          // The primary is back: that closes the failover alert rather than
+          // opening a second one to say so.
+          this.logger.warn(`Passerelle ${primary?.name ?? ''} de retour : elle reprend le relais${backup ? ` de ${backup.name}` : ''}`);
+          await autoResolveAlerts(this.prisma, fingerprint);
+        }
       }
       for (const vlanId of changedVlans) {
         await this.reconcileOverlayForVlan(vlanId);
@@ -1055,6 +1072,7 @@ export class AgentsService implements OnModuleInit {
       if (!result.success && portConflict) {
         const node = await this.prisma.node.findUnique({ where: { id: nodeId }, select: { name: true } });
         await this.createDnsPortConflictAlert({
+          source: 'group',
           nodeId,
           nodeName: node?.name,
           port: portConflict.port,
@@ -1119,6 +1137,7 @@ export class AgentsService implements OnModuleInit {
         const node = await this.prisma.node.findUnique({ where: { id: nodeId }, select: { name: true } });
         const conflict = data.conflict as { port: number; protocol: string; processName?: string | null; pid?: number | null };
         await this.createDnsPortConflictAlert({
+          source: 'forwarder',
           nodeId,
           nodeName: node?.name,
           port: conflict.port,
@@ -1921,13 +1940,12 @@ export class AgentsService implements OnModuleInit {
     for (const task of tasks) {
       if (gaveUp(previous, task)) continue;
       const label = task === 'upgrade' ? 'La mise à jour de PowerDNS' : 'La migration de la base PowerDNS vers lmdb';
-      await this.prisma.alert.create({
-        data: {
-          workspaceId: node.workspaceId,
-          nodeId,
-          severity: 'high',
-          message: `${label} a échoué ${state.maxAttempts} fois sur ${node.name} : l'agent ne réessaiera plus seul. Dernière erreur : ${state.tasks[task].error ?? 'inconnue'}`,
-        },
+      await raiseAlert(this.prisma, {
+        workspaceId: node.workspaceId,
+        fingerprint: alertKey.dnsMaintenance(nodeId, task),
+        nodeId,
+        severity: 'high',
+        message: `${label} a échoué ${state.maxAttempts} fois sur ${node.name} : l'agent ne réessaiera plus seul. Dernière erreur : ${state.tasks[task].error ?? 'inconnue'}`,
       });
     }
   }

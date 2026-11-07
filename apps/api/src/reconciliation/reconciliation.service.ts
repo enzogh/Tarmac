@@ -10,13 +10,21 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SharesService } from '../shares/shares.service';
 import { VlanService } from '../vlan/vlan.service';
 import { DEFAULT_WORKSPACE_ID } from '../workspaces/default-workspace';
+import { alertKey } from '../alerts/alert-keys';
+import { autoResolveAlerts, nodeOutageExplains, raiseAlert } from '../alerts/alert-lifecycle';
 
-const STUCK_MOUNT_ALERT_COOLDOWN_MS = 5 * 60 * 1000;
+// A mount waiting on its agent is normal for the time an agent takes to
+// reconnect (restart, update, reboot): only one still waiting after this
+// is worth an alert.
+const STUCK_MOUNT_ALERT_AFTER_MS = 5 * 60 * 1000;
 
 @Injectable()
 export class ReconciliationService implements OnModuleInit {
   private readonly logger = new Logger(ReconciliationService.name);
-  private readonly stuckMountAlertAt = new Map<string, number>();
+  // When each pending mount was first seen unable to reach its agent.
+  private readonly stuckMountSince = new Map<string, number>();
+  // True at boot so the first clean tick closes an alert a previous run left.
+  private tickAlerted = true;
 
   constructor(
     private readonly sharesService: SharesService,
@@ -65,12 +73,14 @@ export class ReconciliationService implements OnModuleInit {
       this.logger.debug(`Sent export command for share ${share.id}`);
     }
 
+    const pendingMountIds = new Set(pendingMounts.map((mount) => mount.id));
+    for (const id of this.stuckMountSince.keys()) if (!pendingMountIds.has(id)) this.stuckMountSince.delete(id);
     for (const mount of pendingMounts) {
       if (!mount.nodeId || !this.agentsService.isConnected(mount.nodeId)) {
         await this.reportStuckMount(mount.id, mount.name, mount.nodeId, mount.workspaceId);
         continue;
       }
-      this.stuckMountAlertAt.delete(mount.id);
+      this.stuckMountSince.delete(mount.id);
       this.agentsService.sendCommand(mount.nodeId, {
         type: 'command.apply_mount',
         payload: {
@@ -212,36 +222,44 @@ export class ReconciliationService implements OnModuleInit {
         this.logger.debug(`Sent DNS zone slave command for zone ${zone.id} to secondary ${secondary.nodeId}`);
       }
     }
+    if (this.tickAlerted) {
+      await autoResolveAlerts(this.prisma, alertKey.reconciliation());
+      this.tickAlerted = false;
+    }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown error';
       this.logger.warn(`Reconciliation tick skipped: ${message}`);
-      await this.prisma.alert.create({
-        data: {
-          workspaceId: DEFAULT_WORKSPACE_ID,
-          severity: 'medium',
-          message: `Reconciliation tick skipped: ${message}`,
-        },
-      });
+      // Every 15 s while the database is unreachable: one alert for the
+      // episode, closed by the next tick that goes through.
+      this.tickAlerted = true;
+      await raiseAlert(this.prisma, {
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        fingerprint: alertKey.reconciliation(),
+        severity: 'medium',
+        message: `Réconciliation interrompue : ${message.replace(/\s+/g, ' ').slice(0, 600)}`,
+      }).catch(() => undefined);
     }
   }
 
   private async reportStuckMount(mountId: string, mountName: string, nodeId: string | null, workspaceId: string) {
-    const lastAlertAt = this.stuckMountAlertAt.get(mountId) ?? 0;
-    if (Date.now() - lastAlertAt < STUCK_MOUNT_ALERT_COOLDOWN_MS) return;
-    this.stuckMountAlertAt.set(mountId, Date.now());
+    const since = this.stuckMountSince.get(mountId) ?? Date.now();
+    this.stuckMountSince.set(mountId, since);
+    if (Date.now() - since < STUCK_MOUNT_ALERT_AFTER_MS) return;
+    // The node being down is the whole story, and its own alert tells it.
+    if (await nodeOutageExplains(this.prisma, nodeId)) return;
 
+    const node = nodeId ? await this.prisma.node.findUnique({ where: { id: nodeId }, select: { name: true } }) : null;
     const reason = nodeId
-      ? `l'agent du nœud ${nodeId} n'est pas connecté`
+      ? `l'agent du nœud ${node?.name ?? 'associé'} n'est pas connecté`
       : 'aucun nœud n\'est associé à ce montage';
     const message = `Montage "${mountName}" bloqué en attente : ${reason}.`;
-    this.logger.warn(message);
-    await this.prisma.alert.create({
-      data: {
-        workspaceId,
-        nodeId: nodeId ?? null,
-        severity: 'medium',
-        message,
-      },
+    const created = await raiseAlert(this.prisma, {
+      workspaceId,
+      fingerprint: alertKey.mountStuck(mountId),
+      nodeId: nodeId ?? null,
+      severity: 'medium',
+      message,
     });
+    if (created) this.logger.warn(message);
   }
 }
