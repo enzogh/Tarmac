@@ -85,7 +85,7 @@ const (
 
 // Features this agent supports beyond the base firewall, reported so the
 // dashboard never claims a protection an older agent ignores.
-var fwFeatures = []string{"ssh-limit", "outbound", "countries", "rpc-guard", "ssh-ban", "rpc-ban"}
+var fwFeatures = []string{"ssh-limit", "outbound", "countries", "rpc-guard", "ssh-ban", "rpc-ban", "ban-share"}
 
 var (
 	fwPortPattern  = regexp.MustCompile(`^([0-9]{1,5})(?:-([0-9]{1,5}))?$`)
@@ -140,6 +140,8 @@ type fwDesired struct {
 	sshLimit *fwSSHLimit
 	// Keep rpcbind off the internet; nil = off.
 	rpcGuard *fwRPCGuard
+	// Bans decided by the other servers of the workspace, still running.
+	sharedBans []fwSharedBan
 }
 
 func (d fwDesired) publicActive() bool {
@@ -341,6 +343,7 @@ func parseFirewallPayload(payload map[string]interface{}) (fwDesired, error) {
 			desired.sshLimit = limit
 		}
 	}
+	desired.sharedBans = fwParseSharedBans(payload["sharedBans"])
 	if raw, ok := payload["rpcGuard"].(map[string]interface{}); ok {
 		guard := &fwRPCGuard{}
 		for _, port := range readStringSlice(raw, "ports") {
@@ -1096,6 +1099,7 @@ func applyFirewall(payload map[string]interface{}) (string, bool, error) {
 	fwCutBlockedConnections(desired)
 	fwCleanupGeoSets(countries)
 	fwConfigureBans(desired.sshLimit, desired.rpcGuard)
+	fwApplySharedBans(desired.sharedBans, time.Now())
 	if desired.sshLimit == nil || desired.sshLimit.ban == nil {
 		fwDestroySSHBanSets()
 	}
@@ -1237,6 +1241,8 @@ type fwReport struct {
 	// Addresses banned right now: from SSH, from the whole server.
 	SSHBans int `json:"sshBans"`
 	RPCBans int `json:"rpcBans"`
+	// Bans decided here since the last report, shared with the workspace.
+	NewBans []fwSharedBan `json:"newBans,omitempty"`
 	// False on heartbeats carrying only events (see collectFirewallReport).
 	Full bool `json:"full"`
 }
@@ -1568,18 +1574,19 @@ func startFirewallLogReader() {
 // ports and counters, which shell out, only with the periodic state report.
 func collectFirewallReport(full bool) *fwReport {
 	events := fwDrainEvents()
+	newBans := fwDrainNewBans()
 	fwStateMu.Lock()
 	revision := fwState.revision
 	uplinks := append([]string{}, fwState.uplinks...)
 	docker := fwState.docker
 	fwStateMu.Unlock()
-	if !full && len(events) == 0 {
+	if !full && len(events) == 0 && len(newBans) == 0 {
 		return nil
 	}
 	fwEvents.Lock()
 	logging := fwEvents.logging
 	fwEvents.Unlock()
-	report := &fwReport{Revision: revision, Events: events, Logging: logging, Full: full}
+	report := &fwReport{Revision: revision, Events: events, NewBans: newBans, Logging: logging, Full: full}
 	if full {
 		report.Features = fwFeatures
 		report.SSHBans = fwSSHBanCount()

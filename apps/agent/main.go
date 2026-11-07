@@ -3966,6 +3966,12 @@ func handleCommand(ctx context.Context, cmd commandPayload, onProgress func(prog
 		} else {
 			result.Message = message
 		}
+	case "command.firewall_bans":
+		// Bans decided on another server of the workspace.
+		result.Command = "firewall_bans"
+		result.ResourceType = "firewall_bans"
+		added := fwApplySharedBans(fwParseSharedBans(cmd.Payload["bans"]), time.Now())
+		result.Message = fmt.Sprintf("%d added", added)
 	case "command.apply_firewall":
 		result.Command = "apply_firewall"
 		result.ResourceType = "firewall"
@@ -4142,6 +4148,7 @@ func handleCommand(ctx context.Context, cmd commandPayload, onProgress func(prog
 // "received/ok" pairs twice a minute, so they're only logged when their
 // outcome changes.
 var routineCommands = map[string]bool{
+	"command.firewall_bans":             true,
 	"command.ensure_internal_dns_route": true,
 }
 

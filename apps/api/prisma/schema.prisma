@@ -1263,6 +1263,9 @@ model FirewallEvent {
   sourceIp     String
   sourceNodeId String?
   sources      String[] @default([])
+  // Internet rows add up every address hitting the port: how many attempts
+  // each of the busiest made ({ "203.0.113.9": 1200 }, top 16).
+  sourceCounts Json?
   protocol     String
   port         Int      @default(0)
   docker       Boolean  @default(false)
@@ -1275,6 +1278,26 @@ model FirewallEvent {
   @@unique([nodeId, key, bucketStart])
   @@index([workspaceId, lastSeenAt])
   @@index([lastSeenAt])
+}
+
+// An address banned by one server's firewall (failed SSH logins, rpcbind
+// spam), applied by every server of the workspace until it runs out.
+model FirewallBan {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  // "ssh": banned from SSH; "all": from the whole server.
+  kind         String
+  // An IPv4 address or an IPv6 /64.
+  address      String
+  until        DateTime
+  strikes      Int      @default(1)
+  sourceNodeId String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([workspaceId, kind, address])
+  @@index([workspaceId, until])
+  @@index([until])
 }
 
 // A flow someone looked at and decided was fine to leave blocked: its

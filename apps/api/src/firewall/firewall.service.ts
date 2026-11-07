@@ -48,6 +48,14 @@ const SSH_LIMIT_ID = 'ssh-limit';
 // The dashboard polls every 10 s per open tab and refetches on every live
 // event: a short cache spares recomputing the whole policy each time.
 const CONTEXT_CACHE_MS = 3_000;
+// Agent feature: applies bans decided by the other servers of the workspace.
+const BAN_SHARE_FEATURE = 'ban-share';
+// No ban outlives an agent's own ceiling (a week).
+const MAX_BAN_MS = 7 * 24 * 3600 * 1000;
+// Shared bans sent with each firewall payload, the most recent first.
+const MAX_SHARED_BANS = 5000;
+// Busiest addresses kept per internet event row.
+const MAX_SOURCE_COUNTS = 16;
 
 export type FirewallReport = {
   revision?: string;
@@ -62,6 +70,8 @@ export type FirewallReport = {
   // Addresses banned right now: from SSH, from the whole server.
   sshBans?: number;
   rpcBans?: number;
+  // Bans this agent decided since its last report, for the other servers.
+  newBans?: Array<{ kind: string; address: string; until: number; strikes?: number }>;
   events?: Array<{
     verdict: string;
     outbound?: boolean;
@@ -135,6 +145,27 @@ function sanitizeReport(report: FirewallReport): StoredReport {
     listening,
     reportedAt: new Date().toISOString(),
   };
+}
+
+/** A ban key as agents write it: an IPv4 address, or an IPv6 /64. */
+function validBanAddress(address: unknown): address is string {
+  if (typeof address !== 'string' || address.length > 64) return false;
+  if (net.isIPv4(address)) return true;
+  const [ip, prefix] = address.split('/');
+  return prefix === '64' && net.isIPv6(ip);
+}
+
+/** Adds counts per address and keeps the busiest. */
+function mergeSourceCounts(...maps: Array<Record<string, number> | null | undefined>): Record<string, number> {
+  const total = new Map<string, number>();
+  for (const map of maps) {
+    if (!map || typeof map !== 'object') continue;
+    for (const [ip, value] of Object.entries(map)) {
+      const count = Number(value);
+      if (Number.isFinite(count) && count > 0) total.set(ip, (total.get(ip) ?? 0) + count);
+    }
+  }
+  return Object.fromEntries([...total.entries()].sort((a, b) => b[1] - a[1]).slice(0, MAX_SOURCE_COUNTS));
 }
 
 function normalizeList(values: string[] | undefined, max: number): string[] {
@@ -762,6 +793,7 @@ export class FirewallService {
       existing.buckets += 1;
       if (row.firstSeenAt < existing.firstSeenAt) existing.firstSeenAt = row.firstSeenAt;
       existing.sources = [...new Set([...existing.sources, ...row.sources])].slice(0, 8);
+      existing.sourceCounts = mergeSourceCounts(existing.sourceCounts as Record<string, number> | null, row.sourceCounts as Record<string, number> | null);
     }
     return [...merged.values()].map((row) => ({
       id: row.id,
@@ -771,6 +803,11 @@ export class FirewallService {
       sourceIp: row.sourceIp,
       sourceNodeId: row.sourceNodeId,
       sources: row.sources,
+      // Busiest addresses first, with their own attempts: the row's count
+      // adds up every address (internet rows are one per port).
+      topSources: Object.entries(mergeSourceCounts(row.sourceCounts as Record<string, number> | null))
+        .slice(0, 8)
+        .map(([ip, count]) => ({ ip, count })),
       protocol: row.protocol,
       port: row.port || null,
       service: row.port ? serviceName(row.port) : null,
@@ -1356,6 +1393,7 @@ export class FirewallService {
   private async pushWorkspace(workspaceId: string, onlyNodeId?: string) {
     const { nodes, ctx } = await this.loadContext(workspaceId);
     const revision = new Date().toISOString();
+    const sharedBans = await this.activeBans(workspaceId);
     for (const node of nodes) {
       if (onlyNodeId && node.id !== onlyNodeId) continue;
       const payload = buildAgentPayload(ctx, node.id, revision);
@@ -1370,9 +1408,12 @@ export class FirewallService {
         // an old agent would only answer "unknown command" again.
         continue;
       }
+      // Bans still running elsewhere in the workspace: a server that was
+      // offline (or just joined) catches up with them here.
+      const withBans = sharedBans.length > 0 ? { ...payload, sharedBans } : payload;
       // Offline nodes keep the revision as "to apply": they get it when they
       // reconnect (onAgentConnected), and the dashboard says so meanwhile.
-      this.agentsService.sendCommand(node.id, { type: 'command.apply_firewall', payload: payload as unknown as Record<string, unknown> });
+      this.agentsService.sendCommand(node.id, { type: 'command.apply_firewall', payload: withBans as unknown as Record<string, unknown> });
       this.sentRevisions.set(node.id, revision);
     }
   }
@@ -1432,6 +1473,70 @@ export class FirewallService {
       if (report.counters && typeof report.counters === 'object') await this.ingestCounters(nodeId, workspaceId, report.counters);
     }
     if (Array.isArray(report.events) && report.events.length > 0) await this.ingestEvents(nodeId, workspaceId, report.events.slice(0, 400));
+    if (Array.isArray(report.newBans) && report.newBans.length > 0) await this.shareBans(nodeId, workspaceId, report.newBans.slice(0, 500));
+  }
+
+  // ---------------------------------------------------------------------
+  // Shared bans
+  // ---------------------------------------------------------------------
+
+  private async activeBans(workspaceId: string) {
+    const bans = await this.prisma.firewallBan.findMany({
+      where: { workspaceId, until: { gt: new Date() } },
+      orderBy: { until: 'desc' },
+      take: MAX_SHARED_BANS,
+      select: { kind: true, address: true, until: true, strikes: true },
+    });
+    return bans.map((ban) => ({ kind: ban.kind, address: ban.address, until: Math.floor(ban.until.getTime() / 1000), strikes: ban.strikes }));
+  }
+
+  /**
+   * A server banned addresses: record them for the workspace and have every
+   * other server of it ban them too. The servers' own public addresses are
+   * never shared (the mesh and Tarmac's own traffic ride on them); each
+   * server also skips the addresses its own rules exempt.
+   */
+  private async shareBans(nodeId: string, workspaceId: string, reported: NonNullable<FirewallReport['newBans']>) {
+    const now = Date.now();
+    const fleet = await this.prisma.node.findMany({ select: { id: true, workspaceId: true, overlayEndpoint: true, status: true, firewallReport: true } });
+    const fleetIps = new Set(fleet.map((node) => endpointHost(node.overlayEndpoint)).filter((ip): ip is string => Boolean(ip)));
+
+    const bans: Array<{ kind: string; address: string; until: number; strikes: number }> = [];
+    for (const ban of reported) {
+      if ((ban.kind !== 'ssh' && ban.kind !== 'all') || !validBanAddress(ban.address)) continue;
+      if (fleetIps.has(ban.address)) continue;
+      const untilMs = Math.min(Number(ban.until) * 1000, now + MAX_BAN_MS);
+      if (!Number.isFinite(untilMs) || untilMs <= now) continue;
+      const strikes = Math.max(1, Math.min(Number(ban.strikes) || 1, 99));
+      const until = new Date(untilMs);
+      const existing = await this.prisma.firewallBan.findUnique({
+        where: { workspaceId_kind_address: { workspaceId, kind: ban.kind, address: ban.address } },
+        select: { until: true, strikes: true },
+      });
+      await this.prisma.firewallBan.upsert({
+        where: { workspaceId_kind_address: { workspaceId, kind: ban.kind, address: ban.address } },
+        create: { workspaceId, kind: ban.kind, address: ban.address, until, strikes, sourceNodeId: nodeId },
+        update: {
+          until: existing && existing.until > until ? existing.until : until,
+          strikes: Math.max(existing?.strikes ?? 0, strikes),
+          sourceNodeId: nodeId,
+        },
+      });
+      bans.push({ kind: ban.kind, address: ban.address, until: Math.floor(untilMs / 1000), strikes });
+    }
+    if (bans.length === 0) return;
+
+    let sent = 0;
+    for (const node of fleet) {
+      if (node.workspaceId !== workspaceId || node.id === nodeId || node.status === 'offline') continue;
+      // Older agents would answer "unknown command": they get the bans with
+      // their next firewall payload once updated.
+      const features = (node.firewallReport as StoredReport | null)?.features ?? [];
+      if (!features.includes(BAN_SHARE_FEATURE)) continue;
+      if (this.agentsService.sendCommand(node.id, { type: 'command.firewall_bans', payload: { bans } })) sent++;
+    }
+    this.logger.log(`Shared ${bans.length} ban(s) from node ${nodeId} with ${sent} other server(s)`);
+    this.live.broadcast('firewall.changed', { nodeId }, workspaceId);
   }
 
   private async ingestCounters(nodeId: string, workspaceId: string, counters: Record<string, number>) {
@@ -1482,7 +1587,7 @@ export class FirewallService {
       const key = [verdict, scope, protocol, port, event.docker ? 'd' : '', ruleId ?? '', scope === 'mesh' ? event.source : ''].join('|');
       const where = { nodeId_key_bucketStart: { nodeId, key, bucketStart } };
       try {
-        const existing = await this.prisma.firewallEvent.findUnique({ where, select: { sources: true } });
+        const existing = await this.prisma.firewallEvent.findUnique({ where, select: { sources: true, sourceCounts: true } });
         if (existing) {
           await this.prisma.firewallEvent.update({
             where,
@@ -1491,6 +1596,7 @@ export class FirewallService {
               lastSeenAt: last,
               sourceIp: remote,
               sources: existing.sources.includes(remote) ? undefined : [...existing.sources, remote].slice(-8),
+              sourceCounts: mergeSourceCounts(existing.sourceCounts as Record<string, number> | null, { [remote]: count }),
             },
           });
         } else {
@@ -1504,6 +1610,7 @@ export class FirewallService {
               sourceIp: remote,
               sourceNodeId: scope === 'mesh' ? (byIp.get(remote) ?? null) : null,
               sources: [remote],
+              sourceCounts: { [remote]: count },
               protocol,
               port,
               docker: Boolean(event.docker),
@@ -1580,6 +1687,7 @@ export class FirewallService {
   // Each workspace keeps its Activity as long as it chose (Settings).
   @Cron(CronExpression.EVERY_HOUR)
   async pruneEvents() {
+    await this.prisma.firewallBan.deleteMany({ where: { until: { lt: new Date() } } });
     const workspaces = await this.prisma.workspace.findMany({ select: { id: true, firewallEventRetentionDays: true } });
     const byDays = new Map<number, string[]>();
     for (const workspace of workspaces) byDays.set(workspace.firewallEventRetentionDays, [...(byDays.get(workspace.firewallEventRetentionDays) ?? []), workspace.id]);

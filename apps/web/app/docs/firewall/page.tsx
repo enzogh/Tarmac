@@ -107,16 +107,17 @@ export default function FirewallDocsPage() {
             qu’une règle SSH autorise ne sont jamais limitées. Active par défaut, y compris sur les serveurs non filtrés.
           </DocCard>
           <DocCard icon={Ban} title="Bannissement SSH">
-            Une adresse qui rate 5 connexions SSH en une heure (mauvais mot de passe, utilisateur inconnu) est bannie de SSH pendant 10 minutes ; chaque
+            Une adresse qui rate 5 connexions SSH en une heure (mauvais mot de passe, utilisateur inconnu, connexion abandonnée sans se connecter, ce
+            qui couvre les serveurs sans mot de passe) est bannie de SSH pendant 10 minutes, sur tous les serveurs du workspace à la fois ; chaque
             récidive dure 6 fois plus longtemps (1 h, 6 h, 36 h, jusqu’à 7 jours), oubliée après 7 jours sans abus. Nombre d’échecs, durée et
-            progression se règlent dans Depuis Internet › Réglages. Une clé refusée ne compte pas. Le réseau privé et les adresses qu’une règle SSH
+            progression se règlent dans Depuis Internet › Réglages. Une clé refusée suivie d’une connexion réussie ne compte pas. Le réseau privé et les adresses qu’une règle SSH
             autorise ne sont jamais bannis : créer cette règle lève un bannissement en cours. Demande la limite des tentatives SSH.
           </DocCard>
           <DocCard icon={Network} title="rpcbind réservé au réseau privé">
             Le port 111 (rpcbind, utilisé par NFS) n’est joignable que depuis le réseau privé : depuis Internet, il dévoile les services du serveur et
             sert à amplifier des attaques DDoS. Les montages NFS entre vos serveurs passent par le réseau privé et ne sont pas concernés. Une adresse
             qu’une règle autorise sur ce port reste acceptée. Active par défaut, y compris sur les serveurs non filtrés. Une adresse qui insiste (plus
-            de 10 connexions TCP par heure, réglable) est bannie de tout le serveur, SSH compris, avec les durées du bannissement SSH. Seul le TCP
+            de 10 connexions TCP par heure, réglable) est bannie de tous les serveurs du workspace, SSH compris, avec les durées du bannissement SSH. Seul le TCP
             compte, car une adresse UDP se falsifie trop facilement ; les serveurs Tarmac et les adresses qu’une règle autorise ne sont jamais bannis.
           </DocCard>
           <DocCard icon={Send} title="Ce que le filtrage sortant laisse passer">

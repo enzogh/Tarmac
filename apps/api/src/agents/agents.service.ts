@@ -934,6 +934,9 @@ export class AgentsService implements OnModuleInit {
   }
 
   async onCommandResult(nodeId: string, result: CommandResultPayload) {
+    // Shared bans land in batches all day long: the agent logs them itself,
+    // nothing to record here.
+    if (result.resourceType === 'firewall_bans') return;
     if (await this.isUnchangedInternalDnsRoute(nodeId, result)) {
       // Re-sent to every node on InternalDnsService's 30 s self-heal tick:
       // an identical outcome is neither news for the node's log nor the UI.

@@ -257,3 +257,96 @@ func TestBanKindsAreIndependent(t *testing.T) {
 		t.Error("bad kinded key")
 	}
 }
+
+func TestSSHConnectionsCountEachFailedConnectionOnce(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	c := &fwSSHConnections{}
+	count := func(lines ...string) int {
+		n := 0
+		for _, line := range lines {
+			if _, ok := c.observe(line, now); ok {
+				n++
+			}
+		}
+		return n
+	}
+	// Key-only server: robots only ever leave the closing line.
+	if got := count(
+		"Invalid user admin from 203.0.113.9 port 40001",
+		"Connection closed by invalid user admin 203.0.113.9 port 40001 [preauth]",
+		"Connection closed by authenticating user root 203.0.113.9 port 40002 [preauth]",
+		"Disconnected from invalid user oracle 203.0.113.9 port 40003 [preauth]",
+		"Connection reset by authenticating user root 203.0.113.9 port 40004 [preauth]",
+	); got != 4 {
+		t.Errorf("connections given up: got %d, want 4", got)
+	}
+	// Password server: each wrong password counts, the close line doesn't add one.
+	if got := count(
+		"Failed password for root from 198.51.100.4 port 5000 ssh2",
+		"Failed password for root from 198.51.100.4 port 5000 ssh2",
+		"Connection closed by authenticating user root 198.51.100.4 port 5000 [preauth]",
+	); got != 2 {
+		t.Errorf("wrong passwords: got %d, want 2", got)
+	}
+	// Port probes and ssh-keyscan name no user: not counted.
+	if got := count(
+		"Connection closed by 192.0.2.7 port 6000 [preauth]",
+		"Received disconnect from 192.0.2.7 port 6001:11: Bye Bye [preauth]",
+		"error: kex_exchange_identification: Connection closed by remote host",
+		"Accepted publickey for ubuntu from 192.0.2.8 port 6002 ssh2",
+	); got != 0 {
+		t.Errorf("probes: got %d, want 0", got)
+	}
+	// A crafted user name can't frame another address.
+	ip, ok := c.observe("Connection closed by invalid user x 192.0.2.66 port 1 203.0.113.50 port 7000 [preauth]", now)
+	if !ok || ip.String() != "203.0.113.50" {
+		t.Errorf("crafted user name: got %v", ip)
+	}
+	// An empty user name.
+	ip, ok = c.observe("Connection closed by invalid user  203.0.113.51 port 7001 [preauth]", now)
+	if !ok || ip.String() != "203.0.113.51" {
+		t.Errorf("empty user name: got %v", ip)
+	}
+}
+
+func TestSharedBansApplyOnlyWhereTheKindIsOn(t *testing.T) {
+	t.Setenv("AGENT_SSH_BAN_STATE_PATH", t.TempDir()+"/bans.json")
+	fwConfigureBans(&fwSSHLimit{ports: []string{"22"}, exempt: []string{"203.0.113.0/24"}, ban: &fwSSHBan{attempts: 5, minutes: 10}}, nil)
+	defer fwConfigureBans(nil, nil)
+	now := time.Now()
+	bans := fwParseSharedBans([]interface{}{
+		map[string]interface{}{"kind": "all", "address": "198.51.100.9", "until": float64(now.Add(time.Hour).Unix()), "strikes": float64(1)},
+		map[string]interface{}{"kind": "ssh", "address": "203.0.113.9", "until": float64(now.Add(time.Hour).Unix()), "strikes": float64(1)},
+		map[string]interface{}{"kind": "ssh", "address": "10.1.2.3", "until": float64(now.Add(time.Hour).Unix()), "strikes": float64(1)},
+		map[string]interface{}{"kind": "ssh", "address": "198.51.100.10", "until": float64(now.Add(-time.Minute).Unix()), "strikes": float64(1)},
+		map[string]interface{}{"kind": "ssh", "address": "not-an-ip", "until": float64(now.Add(time.Hour).Unix()), "strikes": float64(1)},
+	})
+	if len(bans) != 5 {
+		t.Fatalf("parsed %d bans", len(bans))
+	}
+	// None of these may reach ipset: rpc bans are off here, the rest is
+	// exempt, private, expired or invalid.
+	if added := fwApplySharedBans(bans, now); added != 0 {
+		t.Errorf("added %d", added)
+	}
+	fwSSHBans.Lock()
+	_, tracked := fwSSHBans.byKey[fwBanEntryKey(fwBanSSH, "203.0.113.9")]
+	fwSSHBans.Unlock()
+	if tracked {
+		t.Error("an exempt address was tracked")
+	}
+}
+
+func TestBanAddress(t *testing.T) {
+	if ip, v6, ok := fwBanAddress("198.51.100.9"); !ok || v6 || ip.String() != "198.51.100.9" {
+		t.Errorf("ipv4: %v %v %v", ip, v6, ok)
+	}
+	if ip, v6, ok := fwBanAddress("2001:db8:1:2::/64"); !ok || !v6 || ip.String() != "2001:db8:1:2::" {
+		t.Errorf("ipv6: %v %v %v", ip, v6, ok)
+	}
+	for _, bad := range []string{"2001:db8::/48", "0.0.0.0/0", "x", "2001:db8::1"} {
+		if _, _, ok := fwBanAddress(bad); ok {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

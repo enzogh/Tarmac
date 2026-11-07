@@ -219,7 +219,7 @@ export default function FirewallInternetPage() {
           />
           <SettingRow
             title="Bannir les adresses qui échouent"
-            text={`Une adresse qui rate ${settings.sshBanAttempts} connexions SSH en une heure (mauvais mot de passe, utilisateur inconnu) est bannie de SSH pendant ${formatMinutes(settings.sshBanMinutes)}${settings.sshBanEscalate ? ', puis de plus en plus longtemps si elle recommence' : ''}. Attrape aussi les robots lents, qui passent sous la limite ci-dessus. Les adresses du réseau privé et celles qu’une règle SSH autorise ne sont jamais bannies : créer une telle règle lève aussitôt un bannissement.`}
+            text={`Une adresse qui rate ${settings.sshBanAttempts} connexions SSH en une heure (mauvais mot de passe, utilisateur inconnu, connexion abandonnée sans se connecter) est bannie de SSH pendant ${formatMinutes(settings.sshBanMinutes)}${settings.sshBanEscalate ? ', puis de plus en plus longtemps si elle recommence' : ''}, sur tous les serveurs du workspace à la fois. Attrape aussi les robots lents, qui passent sous la limite ci-dessus. Les adresses du réseau privé et celles qu’une règle SSH autorise ne sont jamais bannies : créer une telle règle lève aussitôt un bannissement.`}
             note={
               <div className="mt-3 space-y-3">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">
@@ -293,7 +293,7 @@ export default function FirewallInternetPage() {
           />
           <SettingRow
             title="Bannir les adresses qui spamment rpcbind"
-            text={`Une adresse qui tente plus de ${settings.rpcBanAttempts} connexions TCP par heure sur rpcbind est bannie de tout le serveur, SSH compris, pendant ${formatMinutes(settings.sshBanMinutes)}${settings.sshBanEscalate ? ', puis de plus en plus longtemps' : ''} (durées du bannissement SSH ci-dessus). Seul le TCP compte : en UDP, n’importe qui peut se faire passer pour une autre adresse. Les serveurs Tarmac, le réseau privé et les adresses qu’une règle autorise ne sont jamais bannis.`}
+            text={`Une adresse qui tente plus de ${settings.rpcBanAttempts} connexions TCP par heure sur rpcbind est bannie de tous les serveurs du workspace, SSH compris, pendant ${formatMinutes(settings.sshBanMinutes)}${settings.sshBanEscalate ? ', puis de plus en plus longtemps' : ''} (durées du bannissement SSH ci-dessus). Seul le TCP compte : en UDP, n’importe qui peut se faire passer pour une autre adresse. Les serveurs Tarmac, le réseau privé et les adresses qu’une règle autorise ne sont jamais bannis.`}
             note={
               <div className="mt-3 space-y-2">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">

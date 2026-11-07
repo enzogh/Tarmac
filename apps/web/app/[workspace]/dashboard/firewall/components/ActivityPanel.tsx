@@ -70,6 +70,18 @@ const PROTECTIONS: Record<string, { decision: string; allow: string }> = {
   [RPC_BAN_ID]: { decision: 'Bannie de tout le serveur : spam sur rpcbind', allow: 'Lever le bannissement (règle)' },
 };
 
+// The address an internet row is shown under: the busiest one (the row adds
+// up every address that hit this port), not merely the last one seen.
+function primarySource(event: FirewallEvent): string {
+  return event.topSources?.[0]?.ip ?? event.sourceIp;
+}
+
+// Distinct addresses behind a row, as far as it knows (lists are capped).
+function addressCount(event: FirewallEvent): { count: number; capped: boolean } {
+  const known = new Set([...(event.topSources ?? []).map((entry) => entry.ip), ...event.sources]);
+  return { count: Math.max(known.size, 1), capped: (event.topSources?.length ?? 0) >= 8 || event.sources.length >= 8 };
+}
+
 function decisionLabel(event: FirewallEvent, ruleName: string | undefined, blocked: boolean): string {
   const protection = event.ruleId ? PROTECTIONS[event.ruleId] : undefined;
   if (protection) return protection.decision;
@@ -87,7 +99,7 @@ function draftsFor(event: FirewallEvent): { allow: RuleDraft; block: RuleDraft }
   const source =
     event.scope === 'mesh'
       ? { sourceKind: event.sourceNodeId ? ('nodes' as const) : ('any' as const), sourceNodeIds: event.sourceNodeId ? [event.sourceNodeId] : [] }
-      : { sourceKind: 'cidrs' as const, sourceCidrs: [event.sourceIp] };
+      : { sourceKind: 'cidrs' as const, sourceCidrs: [primarySource(event)] };
   return {
     allow: {
       scope: event.scope,
@@ -100,13 +112,13 @@ function draftsFor(event: FirewallEvent): { allow: RuleDraft; block: RuleDraft }
       // An SSH rule naming this address also exempts it from the limiter.
       name:
         event.ruleId === SSH_LIMIT_ID
-          ? `SSH sans limite depuis ${event.sourceIp}`
+          ? `SSH sans limite depuis ${primarySource(event)}`
           : event.ruleId === RPC_GUARD_ID
-            ? `rpcbind depuis ${event.sourceIp}`
+            ? `rpcbind depuis ${primarySource(event)}`
             : event.ruleId === SSH_BAN_ID
-              ? `SSH sans bannissement depuis ${event.sourceIp}`
+              ? `SSH sans bannissement depuis ${primarySource(event)}`
               : event.ruleId === RPC_BAN_ID
-                ? `Jamais bannir ${event.sourceIp}`
+                ? `Jamais bannir ${primarySource(event)}`
                 : undefined,
     },
     block: {
@@ -116,7 +128,7 @@ function draftsFor(event: FirewallEvent): { allow: RuleDraft; block: RuleDraft }
       targetKind: 'any',
       protocol: 'any',
       ports: [],
-      name: event.scope === 'public' ? `Bloquer ${event.sourceIp}` : event.scope === 'outbound' ? `Bloquer l’envoi vers ${event.sourceIp}` : undefined,
+      name: event.scope === 'public' ? `Bloquer ${primarySource(event)}` : event.scope === 'outbound' ? `Bloquer l’envoi vers ${event.sourceIp}` : undefined,
     },
   };
 }
@@ -165,6 +177,8 @@ export function EventRow({
   const blocked = event.verdict === 'blocked';
   const drafts = draftsFor(event);
   const expandable = !compact;
+  const addresses = event.scope === 'public' ? addressCount(event) : { count: 1, capped: false };
+  const many = addresses.count > 1;
 
   return (
     <motion.li
@@ -203,7 +217,15 @@ export function EventRow({
               </>
             ) : (
               <>
-                <span className={cn('truncate font-medium text-foreground', !sourceNode && 'font-mono text-[13px]')}>{sourceNode?.name ?? event.sourceIp}</span>
+                <span className={cn('truncate font-medium text-foreground', !sourceNode && 'shrink-0 font-mono text-[13px]')}>
+                  {sourceNode?.name ?? (event.scope === 'public' ? primarySource(event) : event.sourceIp)}
+                </span>
+                {many && (
+                  <span className="hidden shrink-0 rounded bg-surface-3 px-1.5 py-px text-[11px] text-muted-foreground sm:inline" title="Cette ligne additionne toutes les adresses qui ont visé ce port">
+                    +{addresses.count - 1}
+                    {addresses.capped ? '+' : ''} {addresses.count - 1 > 1 || addresses.capped ? 'autres' : 'autre'}
+                  </span>
+                )}
                 <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
                 <span className="truncate font-medium text-foreground">{target?.name ?? 'serveur supprimé'}</span>
               </>
@@ -231,7 +253,7 @@ export function EventRow({
         </div>
         <div className="hidden text-right sm:block">
           <p className="tabular text-sm font-semibold text-foreground">{event.count.toLocaleString('fr-FR')}</p>
-          <p className="text-2xs text-muted-foreground">{event.count > 1 ? 'tentatives' : 'tentative'}</p>
+          <p className="text-2xs text-muted-foreground">{many ? 'tentatives au total' : event.count > 1 ? 'tentatives' : 'tentative'}</p>
         </div>
         <p className="w-20 shrink-0 text-right text-xs text-muted-foreground" title={new Date(event.lastSeenAt).toLocaleString('fr-FR')}>
           {formatRelative(event.lastSeenAt)}
@@ -265,17 +287,37 @@ export function EventRow({
                   <dd className="mt-0.5 text-foreground">{new Date(event.lastSeenAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}</dd>
                 </div>
               </dl>
-              {event.scope !== 'mesh' && event.sources.length > 0 && (
+              {event.scope !== 'mesh' && (event.topSources?.length ?? 0) > 0 ? (
                 <div>
-                  <p className="text-2xs uppercase tracking-wider text-muted-foreground">Adresses vues</p>
+                  <p className="text-2xs uppercase tracking-wider text-muted-foreground">Adresses les plus actives</p>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    {event.sources.map((ip) => (
-                      <span key={ip} className="rounded-md border border-border bg-surface-2 px-2 py-0.5 font-mono text-xs text-foreground">
-                        {ip}
+                    {event.topSources!.map((entry) => (
+                      <span key={entry.ip} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-0.5 text-xs">
+                        <span className="font-mono text-foreground">{entry.ip}</span>
+                        <span className="tabular text-muted-foreground">{entry.count.toLocaleString('fr-FR')}</span>
                       </span>
                     ))}
                   </div>
+                  {many && (
+                    <p className="mt-1.5 text-2xs text-muted-foreground">
+                      Le total de la ligne additionne toutes les adresses qui ont visé ce port ; chaque adresse a son propre nombre de tentatives.
+                    </p>
+                  )}
                 </div>
+              ) : (
+                event.scope !== 'mesh' &&
+                event.sources.length > 0 && (
+                  <div>
+                    <p className="text-2xs uppercase tracking-wider text-muted-foreground">Adresses vues</p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {event.sources.map((ip) => (
+                        <span key={ip} className="rounded-md border border-border bg-surface-2 px-2 py-0.5 font-mono text-xs text-foreground">
+                          {ip}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )
               )}
               <div className="flex flex-wrap gap-2">
                 <Button write size="sm" className="gap-1.5" onClick={() => onCreateRule(drafts.allow)}>
@@ -495,7 +537,7 @@ export function ActivityView({
     const visible = (events ?? []).filter((event) => showSeen || !event.dismissed);
     if (!needle) return visible;
     return visible.filter((event) =>
-      [event.sourceIp, ...event.sources, nodeById.get(event.nodeId)?.name, event.sourceNodeId ? nodeById.get(event.sourceNodeId)?.name : '', event.service, String(event.port ?? '')]
+      [event.sourceIp, ...event.sources, ...(event.topSources ?? []).map((entry) => entry.ip), nodeById.get(event.nodeId)?.name, event.sourceNodeId ? nodeById.get(event.sourceNodeId)?.name : '', event.service, String(event.port ?? '')]
         .filter(Boolean)
         .some((value) => (value as string).toLowerCase().includes(needle)),
     );
@@ -507,7 +549,25 @@ export function ActivityView({
     for (const event of shown) map.set(key(event), (map.get(key(event)) ?? 0) + event.count);
     return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
   };
-  const topSources = tally((event) => (event.sourceNodeId ? (nodeById.get(event.sourceNodeId)?.name ?? event.sourceIp) : event.sourceIp)).map(([label, value]) => ({
+  // Per address: an internet row adds up many of them, so each one is
+  // credited with its own attempts, not with the row's total.
+  const sourceTally = (() => {
+    const map = new Map<string, number>();
+    for (const event of shown) {
+      if (event.scope === 'public' && (event.topSources?.length ?? 0) > 0) {
+        for (const entry of event.topSources!) map.set(entry.ip, (map.get(entry.ip) ?? 0) + entry.count);
+      } else if (event.scope === 'public' && event.sources.length > 1) {
+        // Recorded before per-address counts: how the total splits between
+        // its addresses is unknown, so none of them is credited with it.
+        continue;
+      } else {
+        const label = event.sourceNodeId ? (nodeById.get(event.sourceNodeId)?.name ?? event.sourceIp) : event.sourceIp;
+        map.set(label, (map.get(label) ?? 0) + event.count);
+      }
+    }
+    return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  })();
+  const topSources = sourceTally.map(([label, value]) => ({
     label: shortHostname(label).length < label.length && !/^\d/.test(label) ? shortHostname(label) : label,
     value,
     mono: /^[\d.:a-f]+$/i.test(label),

@@ -20,9 +20,13 @@ import (
 
 // Bans, in two kinds:
 //   - ssh: on top of the connection limiter (TARMAC-FW-SSH), the agent reads
-//     sshd's log and bans from SSH an address that keeps failing to log in.
-//     Robots guessing passwords are often slow (one try every few minutes):
-//     they never trip a per-minute limit, but they do pile up failures.
+//     sshd's log and bans from SSH an address that keeps failing to log in
+//     (each wrong password, or each connection given up without logging in,
+//     see fwSSHConnections). Robots guessing passwords are often slow (one
+//     try every few minutes): they never trip a per-minute limit, but they
+//     do pile up failures.
+// Every ban is shared with the other servers of the workspace, see
+// firewall_banshare.go.
 //   - all: an address that keeps knocking on rpcbind over TCP (counted by the
 //     kernel, see TARMAC-FW-RPC) is cut off from the whole server. Only TCP
 //     counts: a UDP source address is trivially forged, and a forged flood
@@ -294,6 +298,7 @@ func fwBanOffence(kind fwBanKind, ip net.IP, now time.Time) {
 	}
 	duration := fwSSHBanRecord(entry, cfg.ban, now)
 	strikes := entry.Strikes
+	until := entry.Until
 	port := fwSSHBans.port
 	var snapshot map[string]fwSSHBanEntry
 	if duration > 0 {
@@ -308,6 +313,8 @@ func fwBanOffence(kind fwBanKind, ip net.IP, now time.Time) {
 		log.Printf("firewall: cannot ban %s: %v", key, err)
 		return
 	}
+	// Reported with the next heartbeat, for the other servers of the workspace.
+	fwQueueNewBan(kind, key, until, strikes)
 	if kind == fwBanAll {
 		log.Printf("firewall: %s banned from the whole server for %s (rpcbind spam, offence #%d)", key, duration, strikes)
 	} else {
@@ -476,8 +483,9 @@ func startSSHAuthLogReader() {
 			}
 			scanner := bufio.NewScanner(stdout)
 			scanner.Buffer(make([]byte, 64*1024), 64*1024)
+			connections := &fwSSHConnections{}
 			for scanner.Scan() {
-				if ip, ok := fwSSHFailureSource(scanner.Text()); ok {
+				if ip, ok := connections.observe(scanner.Text(), time.Now()); ok {
 					fwSSHBanFailure(ip, time.Now())
 				}
 			}

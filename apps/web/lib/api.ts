@@ -839,6 +839,9 @@ export type FirewallEvent = {
   sourceIp: string;
   sourceNodeId: string | null;
   sources: string[];
+  // Internet rows add up every address hitting the port: the busiest ones,
+  // each with its own attempts (empty for rows recorded before).
+  topSources?: Array<{ ip: string; count: number }>;
   protocol: string;
   port: number | null;
   service: string | null;

@@ -99,6 +99,7 @@ export interface CommandPayload {
     | 'command.ensure_internal_dns_route'
     | 'command.resolve_internal_dns_forwarder_conflict'
     | 'command.apply_vpn'
+    | 'command.firewall_bans'
     | 'command.apply_firewall';
   payload: Record<string, unknown>;
 }
@@ -156,7 +157,8 @@ export interface CommandResultPayload {
     | 'internal_dns'
     | 'internal_dns_route'
     | 'vpn'
-    | 'firewall';
+    | 'firewall'
+    | 'firewall_bans';
   resourceId: string;
   success: boolean;
   message?: string;
