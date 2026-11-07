@@ -1941,13 +1941,25 @@ func describePortHolder(conflict *dnsPortConflict) string {
 // of failing: that collision is what left pdns-internal unable to start
 // (webserver bind error) while the agent talked to the other service and
 // got back a 404 that wasn't PowerDNS's.
+//
+// Ports published by Docker containers are skipped too, even when nothing
+// listens there yet: at boot the agent may run before Docker has started
+// those containers (see docker_ports.go).
 func pickInternalPdnsApiPort(ctx context.Context, preferred int) (int, error) {
+	reserved := dockerReservedLoopbackTCPPorts()
 	for offset := 0; offset <= 20; offset++ {
 		candidate := preferred + offset
+		if _, taken := reserved[candidate]; taken {
+			continue
+		}
 		conflict := probePortBinding(candidate, "tcp")
 		if conflict == nil || heldByOurInstance(ctx, conflict, "webserver-port", candidate) {
 			if offset > 0 {
-				log.Printf("dns: internal PowerDNS API port %d is taken by %s, using %d", preferred, describePortHolder(probePortBinding(preferred, "tcp")), candidate)
+				holder := "le conteneur Docker " + reserved[preferred]
+				if _, byDocker := reserved[preferred]; !byDocker {
+					holder = describePortHolder(probePortBinding(preferred, "tcp"))
+				}
+				log.Printf("dns: internal PowerDNS API port %d is taken by %s, using %d", preferred, holder, candidate)
 			}
 			return candidate, nil
 		}
