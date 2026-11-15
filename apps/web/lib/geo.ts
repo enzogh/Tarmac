@@ -148,7 +148,11 @@ export const geocodeCity = async (city: string, country?: string | null): Promis
         }
       })()
     : {};
-  if (key in storageCache) {
+  // Only hits are kept across visits: a miss stored there (Nominatim rate
+  // limit, network blip, older versions also saved those) used to pin a
+  // node to its old position for good, every later save getting no
+  // coordinates without even asking again.
+  if (storageCache[key]) {
     const cached = storageCache[key];
     geocodeMemoryCache.set(key, cached);
     return cached;
@@ -159,7 +163,7 @@ export const geocodeCity = async (city: string, country?: string | null): Promis
       `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`,
     );
     if (!res.ok) {
-      geocodeMemoryCache.set(key, null);
+      // Transient (429, 5xx): not cached, the next try asks again.
       return null;
     }
     const results = (await res.json()) as NominatimResult[];
@@ -169,6 +173,7 @@ export const geocodeCity = async (city: string, country?: string | null): Promis
         ? { lat: parseFloat(first.lat), lng: parseFloat(first.lon) }
         : null;
     geocodeMemoryCache.set(key, result);
+    if (!result) return null;
     storageCache[key] = result;
     if (isBrowser()) {
       try {
@@ -179,7 +184,6 @@ export const geocodeCity = async (city: string, country?: string | null): Promis
     }
     return result;
   } catch {
-    geocodeMemoryCache.set(key, null);
     return null;
   }
 };

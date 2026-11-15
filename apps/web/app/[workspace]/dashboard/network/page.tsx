@@ -41,6 +41,20 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { WorldMapLink, WorldMapNode } from '@/components/WorldMap';
 
+// The IP-based position only stands in for a manual location saved
+// without coordinates when it agrees with it (same country, same city if
+// one was typed).
+function geoIpMatchesManualLocation(
+  manual: { city?: string; countryCode?: string } | undefined,
+  geo: { city?: string | null; countryCode?: string | null },
+): boolean {
+  const manualCountry = normalizeCountryCode(manual?.countryCode);
+  const manualCity = manual?.city?.trim().toLowerCase();
+  if (manualCountry && manualCountry !== normalizeCountryCode(geo.countryCode)) return false;
+  if (manualCity && manualCity !== (geo.city ?? '').trim().toLowerCase()) return false;
+  return true;
+}
+
 const WorldMap = dynamic(() => import('@/components/WorldMap').then((mod) => mod.WorldMap), {
   ssr: false,
   loading: () => (
@@ -519,11 +533,18 @@ export default function NetworkPage() {
             lat = member.node.locationLat;
             lng = member.node.locationLng;
             isPositionApproximate = false;
-          } else if (typeof geo?.latitude === 'number' && typeof geo?.longitude === 'number') {
+          } else if (
+            typeof geo?.latitude === 'number' &&
+            typeof geo?.longitude === 'number' &&
+            geoIpMatchesManualLocation(override, geo)
+          ) {
             lat = geo.latitude;
             lng = geo.longitude;
             isPositionApproximate = false;
           } else {
+            // A manual location without coordinates (city not found, or
+            // only the country set) lands on its country, never back on
+            // the IP-based guess it was meant to correct.
             const centroid = countryCentroid(countryCode);
             [lat, lng] = centroid ?? [15, 10];
             isPositionApproximate = true;
@@ -994,11 +1015,14 @@ export default function NetworkPage() {
     // way a manual drag on the map would.
     let locationLat: number | null = null;
     let locationLng: number | null = null;
+    let cityNotFound = false;
     if (locationCity) {
       const geocoded = await geocodeCity(locationCity, locationCountry);
       if (geocoded) {
         locationLat = geocoded.lat;
         locationLng = geocoded.lng;
+      } else {
+        cityNotFound = true;
       }
     }
 
@@ -1020,6 +1044,12 @@ export default function NetworkPage() {
         },
       }));
       setGeoDirtyByNodeId((prev) => ({ ...prev, [nodeId]: false }));
+      if (cityNotFound) {
+        setNotice({
+          type: 'error',
+          message: `Localisation enregistrée, mais « ${locationCity} » est introuvable sur la carte : le nœud est placé au centre du pays. Glissez-le sur la carte pour le mettre au bon endroit.`,
+        });
+      }
       setMapLocationOverrides((prev) => {
         if (typeof updatedNode.locationLat !== 'number' || typeof updatedNode.locationLng !== 'number') {
           const next = { ...prev };
