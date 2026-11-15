@@ -43,7 +43,7 @@ import { NODE_STATUS, SEVERITY, StatusDot, StatusPill, describe, type StatusTone
 import { Progress } from '../../../components/ui/progress';
 import { BannerSkeleton, ChartCardSkeleton, ListSkeleton, StatCardSkeleton } from '../../../components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '../../../components/ui/tabs';
-import { MiniMeter } from './infrastructure/components/node-ui';
+import { internalDnsUnreachable, MiniMeter } from './infrastructure/components/node-ui';
 
 type Range = '1h' | '6h' | '24h';
 const RANGE_LABEL: Record<Range, string> = { '1h': '1 h', '6h': '6 h', '24h': '24 h' };
@@ -323,7 +323,7 @@ export default function OverviewPage() {
   const failedMigrations = migrations.filter((migration) => migration.status === 'failed');
   const fullNodes = nodes.filter((node) => node.storage.usageRatio >= 0.9);
   const dnsNode = nodes.find((node) => node.id === internalDns?.internalDnsNodeId) ?? null;
-  const dnsUnreachable = nodes.filter((node) => node.status !== 'offline' && node.internalDnsForwarderStatus === 'unreachable');
+  const dnsUnreachable = nodes.filter(internalDnsUnreachable);
 
   const issues = useMemo<Issue[]>(() => {
     const list: Issue[] = [];

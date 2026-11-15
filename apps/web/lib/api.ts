@@ -56,7 +56,7 @@ export type NodeItem = {
   // Status of this node's own local fallback resolver for *.tarmac.local
   // (only relevant on nodes that can't use systemd-resolved's split-DNS
   // routing) - null means never attempted / not applicable.
-  internalDnsForwarderStatus?: 'pending' | 'active' | 'unreachable' | 'conflict' | 'error' | null;
+  internalDnsForwarderStatus?: 'pending' | 'active' | 'unreachable' | 'conflict' | 'error' | 'cleared' | null;
   // Who holds port 53 on a conflict: `unit` is a service the panel may
   // offer to stop, `container` a Docker container it never touches.
   internalDnsForwarderConflict?: {

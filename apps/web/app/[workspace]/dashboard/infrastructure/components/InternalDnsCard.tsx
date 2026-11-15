@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { StatusDot } from '@/components/ui/status';
 import type { NodeActivityItem } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import type { InternalDnsState } from './node-ui';
+import { internalDnsUnreachable, type InternalDnsState } from './node-ui';
 
 /**
  * Fleet-wide answer to "is internal DNS (*.tarmac.local) running, and
@@ -29,8 +29,10 @@ export function InternalDnsCard({
   const node = nodes.find((item) => item.id === state.internalDnsNodeId) ?? null;
   const conflicts = nodes.filter((item) => item.internalDnsForwarderStatus === 'conflict').length;
   // Reported by each node's agent from a real query, every ~30 s.
-  const unreachable = nodes.filter((item) => item.status !== 'offline' && item.internalDnsForwarderStatus === 'unreachable');
-  const reachable = nodes.filter((item) => item.status !== 'offline' && item.internalDnsForwarderStatus === 'active').length;
+  const unreachable = nodes.filter(internalDnsUnreachable);
+  const reachable = nodes.filter((item) => item.status !== 'offline' && item.vlanIp && item.internalDnsForwarderStatus === 'active').length;
+  // Not a DNS fault: they get *.tarmac.local as soon as they join.
+  const outsideMesh = nodes.filter((item) => item.status !== 'offline' && !item.vlanIp).length;
 
   let tone: 'ok' | 'warn' | 'danger' | 'neutral' = 'neutral';
   let title = 'DNS interne non configuré';
@@ -47,11 +49,11 @@ export function InternalDnsCard({
     } else if (state.internalDnsStatus === 'active' && unreachable.length > 0) {
       tone = 'danger';
       title = `DNS interne installé sur ${node.name}, mais injoignable depuis ${unreachable.length} nœud${unreachable.length > 1 ? 's' : ''}`;
-      detail = `${unreachable.map((item) => item.name.split('.')[0]).join(', ')} n’obtien${unreachable.length > 1 ? 'nent' : 't'} aucune réponse sur le port 5300 : le pare-feu de ${node.name.split('.')[0]} bloque probablement le réseau privé. Un agent à jour ouvre ce port automatiquement.`;
+      detail = `${unreachable.map((item) => item.name.split('.')[0]).join(', ')} n’obtien${unreachable.length > 1 ? 'nent' : 't'} aucune réponse sur le port 5300 : le pare-feu de ${node.name.split('.')[0]} ou le lien privé vers ce nœud bloque probablement les requêtes. Un agent à jour ouvre ce port automatiquement.`;
     } else if (state.internalDnsStatus === 'active') {
       tone = 'ok';
       title = `DNS interne actif sur ${node.name}`;
-      detail = `${state.records.length} nom${state.records.length > 1 ? 's' : ''} publié${state.records.length > 1 ? 's' : ''} sous tarmac.local${node.vlanIp ? `, servi par ${node.vlanIp}` : ''}${reachable > 0 ? ` · résolu par ${reachable} nœud${reachable > 1 ? 's' : ''}` : ''}.`;
+      detail = `${state.records.length} nom${state.records.length > 1 ? 's' : ''} publié${state.records.length > 1 ? 's' : ''} sous tarmac.local${node.vlanIp ? `, servi par ${node.vlanIp}` : ''}${reachable > 0 ? ` · résolu par ${reachable} nœud${reachable > 1 ? 's' : ''}` : ''}${outsideMesh > 0 ? ` · ${outsideMesh} nœud${outsideMesh > 1 ? 's' : ''} pas encore dans le réseau privé` : ''}.`;
     } else if (state.internalDnsStatus === 'error') {
       tone = 'danger';
       title = `Échec de l’installation du DNS interne sur ${node.name}`;

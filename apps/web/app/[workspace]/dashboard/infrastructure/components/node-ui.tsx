@@ -39,6 +39,14 @@ export const isMuted = (node: NodeActivityItem) => !!node.mutedUntil && new Date
 export const smartIssue = (node: NodeActivityItem) =>
   node.smartMonitoringEnabled !== false && node.storage.disks.some((disk) => disk.smart && disk.smart.overall !== 'healthy');
 
+/**
+ * The internal DNS server is only reachable over the private network: a
+ * node that hasn't joined it can't resolve *.tarmac.local yet, and that's
+ * not a DNS fault (an older status may still say "unreachable").
+ */
+export const internalDnsUnreachable = (node: NodeActivityItem) =>
+  node.status !== 'offline' && !!node.vlanIp && node.internalDnsForwarderStatus === 'unreachable';
+
 /** A node needs a look: down, degraded, out-of-date agent, failing disk, or full. */
 export function nodeAttention(node: NodeActivityItem): string[] {
   const reasons: string[] = [];
@@ -51,7 +59,7 @@ export function nodeAttention(node: NodeActivityItem): string[] {
   if (swap && swap.percent >= SWAP_FULL_PERCENT) reasons.push('Swap saturé');
   if (node.internalDnsForwarderStatus === 'conflict') reasons.push('Conflit DNS (port 53)');
   if (node.internalDnsForwarderStatus === 'error') reasons.push('Résolveur DNS local en échec');
-  if (node.internalDnsForwarderStatus === 'unreachable') reasons.push('DNS interne injoignable');
+  if (internalDnsUnreachable(node)) reasons.push('DNS interne injoignable');
   return reasons;
 }
 

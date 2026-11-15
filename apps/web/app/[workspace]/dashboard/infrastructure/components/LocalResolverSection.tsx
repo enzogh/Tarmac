@@ -106,6 +106,14 @@ export function LocalResolverSection({
     return <Note>Aucun DNS interne configuré dans la flotte.</Note>;
   }
 
+  if (!node.vlanIp) {
+    return (
+      <Note>
+        Ce nœud n’a pas encore rejoint le réseau privé : *.tarmac.local s’y résoudra automatiquement dès qu’il l’aura rejoint.
+      </Note>
+    );
+  }
+
   if (status === 'pending') {
     return (
       <Note>
@@ -233,7 +241,7 @@ export function LocalResolverSection({
     return (
       <Note>
         Ce nœud n’obtient aucune réponse du serveur DNS interne (port 5300 sur le réseau privé) : *.tarmac.local ne se résout
-        pas ici. Vérifiez le pare-feu du nœud DNS.
+        pas ici. Vérifiez le pare-feu du nœud DNS et le lien privé entre les deux nœuds.
       </Note>
     );
   }

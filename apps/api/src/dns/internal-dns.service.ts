@@ -240,30 +240,41 @@ export class InternalDnsService implements OnModuleInit {
   // as everywhere else in this file: an offline node just picks it up next
   // time it reconnects and this runs again.
   private async pushRouteToFleet(workspaceId: string, ip: string | null) {
-    const nodes = await this.prisma.node.findMany({ where: { workspaceId }, select: { id: true } });
+    const nodes = await this.prisma.node.findMany({ where: { workspaceId }, select: { id: true, vlanIp: true } });
     // Records travel alongside the route so a node that can't use
     // resolvectl/dnsmasq (already owns port 53 for its own public PowerDNS,
     // see dnsMarkerPath in the agent) can still resolve *.tarmac.local
     // locally via a static /etc/hosts block - see ensureInternalDnsForwarder.
     const records = ip ? await this.desiredRecords(workspaceId) : [];
-    const stateHash = createHash('sha256')
-      .update(JSON.stringify({ ip, port: INTERNAL_DNS_PORT, records }))
-      .digest('hex')
-      .slice(0, 16);
+    const routed = { ip, records, stateHash: this.routeStateHash(ip, records) };
+    // A node that hasn't joined the private network has no path to `ip`:
+    // routing tarmac.local there only made its agent probe a server it can
+    // never reach and report "unreachable", blamed on the DNS node's
+    // firewall. It gets the route cleared instead, and the real one on the
+    // first tick after it joins (the hash differs, so it's sent at once).
+    const cleared = { ip: null, records: [], stateHash: this.routeStateHash(null, []) };
     const now = Date.now();
     for (const node of nodes) {
+      const route = ip && node.vlanIp ? routed : cleared;
       // Skip nodes that already run this exact route, unless due a refresh.
-      const upToDate = this.agentsService.appliedStateHash(node.id, 'internal_dns_route') === stateHash;
+      const upToDate = this.agentsService.appliedStateHash(node.id, 'internal_dns_route') === route.stateHash;
       if (upToDate && now - (this.lastRoutePushAt.get(node.id) ?? 0) < ROUTE_REFRESH_MS) continue;
       if (
         this.agentsService.sendCommand(node.id, {
           type: 'command.ensure_internal_dns_route',
-          payload: { ip, port: INTERNAL_DNS_PORT, records, stateHash },
+          payload: { ip: route.ip, port: INTERNAL_DNS_PORT, records: route.records, stateHash: route.stateHash },
         })
       ) {
         this.lastRoutePushAt.set(node.id, now);
       }
     }
+  }
+
+  private routeStateHash(ip: string | null, records: InternalDnsRecord[]) {
+    return createHash('sha256')
+      .update(JSON.stringify({ ip, port: INTERNAL_DNS_PORT, records }))
+      .digest('hex')
+      .slice(0, 16);
   }
 
   private async desiredRecords(workspaceId: string): Promise<InternalDnsRecord[]> {
