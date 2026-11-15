@@ -209,7 +209,7 @@ export class VlanService implements OnModuleInit {
     // reused as-is (never re-derived) so an already-deployed node's address
     // never moves, regardless of how the generation formula below evolves.
     const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
-    const vlanIp = node?.vlanIp || this.generateDeterministicVlanIp(nodeId, vlan.subnetCidr);
+    const vlanIp = node?.vlanIp || (await this.allocateVlanIp(nodeId, vlan.id, vlan.subnetCidr));
     const vlanMac = node?.vlanMac || this.generateVlanMac(nodeId);
     this.logger.debug(`joinVlan: creating member vlanId=${vlan.id} vlanIp=${vlanIp} vlanMac=${vlanMac}`);
 
@@ -846,7 +846,31 @@ export class VlanService implements OnModuleInit {
   // (0x0aff0002) the old hardcoded constant used, so already-deployed nodes'
   // addresses are unaffected (verified byte-for-byte against production data
   // before this went out - see the Phase 2 rollout notes).
-  private generateDeterministicVlanIp(nodeId: string, subnetCidr: string): string {
+  // Starts from the node's hashed slot (same address as before for every node
+  // that never collided) and walks to the next free one. With only 253 slots
+  // two node ids regularly hash to the same one: the second node then failed
+  // its join on every heartbeat (unique vlanId+vlanIp) and never got a
+  // private IP. Only called for a node with no stored vlanIp, so an address
+  // already handed out never moves.
+  private async allocateVlanIp(nodeId: string, vlanId: string, subnetCidr: string): Promise<string> {
+    const [members, nodes] = await Promise.all([
+      this.prisma.vlanMember.findMany({ where: { vlanId }, select: { vlanIp: true } }),
+      // A node can keep a stored address without a member row (left the
+      // network, row cleaned up): it takes it back when it rejoins. Node.vlanIp
+      // is unique across workspaces, so every workspace counts.
+      this.prisma.node.findMany({ where: { vlanIp: { not: null }, id: { not: nodeId } }, select: { vlanIp: true } }),
+    ]);
+    const taken = new Set([...members, ...nodes].map((entry) => entry.vlanIp));
+    const baseIp = parseBaseIp(subnetCidr);
+    const start = this.deterministicVlanIndex(nodeId);
+    for (let step = 0; step < 253; step++) {
+      const candidate = this.generateVlanIp(((start - 1 + step) % 253) + 1, baseIp);
+      if (!taken.has(candidate)) return candidate;
+    }
+    throw new Error(`private network ${subnetCidr} is full`);
+  }
+
+  private deterministicVlanIndex(nodeId: string): number {
     // Hash nodeId to get deterministic offset (ensures same IP on restart)
     let hash = 0;
     for (let i = 0; i < nodeId.length; i++) {
@@ -854,8 +878,7 @@ export class VlanService implements OnModuleInit {
       hash |= 0;
     }
     // Map hash to index 1-253 (skip 0=gateway, 254=broadcast)
-    const index = (Math.abs(hash) % 253) + 1;
-    return this.generateVlanIp(index, parseBaseIp(subnetCidr));
+    return (Math.abs(hash) % 253) + 1;
   }
 
   private generateVlanMac(nodeId: string): string {
