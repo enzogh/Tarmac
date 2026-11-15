@@ -6,6 +6,7 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { WorkspaceScope } from '../auth/workspace.guard';
 import { slugify } from '../common/slugify';
 import { PrismaService } from '../prisma/prisma.service';
+import { ForwarderConflictAction } from './dto/resolve-forwarder-conflict.dto';
 
 const SYNC_INTERVAL_MS = 30_000;
 const INTERNAL_DNS_PORT = 5300;
@@ -157,11 +158,12 @@ export class InternalDnsService implements OnModuleInit {
     return { sent };
   }
 
-  // Sent when the user picks "kill the process and retry" on a node's
-  // internal-DNS-forwarder port-conflict banner - same fire-and-forget
-  // shape as DnsGroupsService.resolvePortConflict, just targeting the
-  // dnsmasq fallback forwarder instead of the public PowerDNS group.
-  async resolveForwarderConflict(nodeId: string, scope: WorkspaceScope) {
+  // Sent when the user picks a way out on a node's local-resolver conflict
+  // banner (/etc/hosts, stop the service holding port 53, or back from
+  // /etc/hosts to the forwarder) - same fire-and-forget shape as
+  // DnsGroupsService.resolvePortConflict. The agent answers with an
+  // internal_dns_route result, which updates the node's status.
+  async resolveForwarderConflict(nodeId: string, scope: WorkspaceScope, action: ForwarderConflictAction, actorUserId?: string) {
     const node = await this.prisma.node.findFirst({ where: { id: nodeId, workspaceId: scope.workspaceId } });
     if (!node) throw new NotFoundException('node not found');
     const workspace = await this.prisma.workspace.findUnique({ where: { id: scope.workspaceId as string } });
@@ -169,14 +171,26 @@ export class InternalDnsService implements OnModuleInit {
       ? await this.prisma.node.findUnique({ where: { id: workspace.internalDnsNodeId }, select: { vlanIp: true } })
       : null;
     if (!internalNode?.vlanIp) throw new NotFoundException('no internal DNS node configured for this workspace');
+    const records = await this.desiredRecords(scope.workspaceId as string);
     const sent = this.agentsService.sendCommand(nodeId, {
       type: 'command.resolve_internal_dns_forwarder_conflict',
-      payload: { ip: internalNode.vlanIp, port: INTERNAL_DNS_PORT },
+      payload: { ip: internalNode.vlanIp, port: INTERNAL_DNS_PORT, records, action },
     });
     if (!sent) throw new NotFoundException('node is offline');
+    // "pending" until the agent reports back (a few seconds; the conflict
+    // detail is kept so the banner can still say what was being fixed).
     await this.prisma.node.update({
       where: { id: nodeId },
-      data: { internalDnsForwarderStatus: null, internalDnsForwarderConflict: Prisma.JsonNull },
+      data: { internalDnsForwarderStatus: 'pending', internalDnsForwarderError: null },
+    });
+    // Its next periodic route push must not wait for the refresh delay.
+    this.lastRoutePushAt.delete(nodeId);
+    await this.auditLogsService.log({
+      workspaceId: scope.workspaceId as string,
+      actorUserId,
+      action: `dns.internal.forwarder_${action}`,
+      resourceType: 'node',
+      resourceId: nodeId,
     });
     return { sent };
   }

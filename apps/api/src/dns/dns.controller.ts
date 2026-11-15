@@ -12,6 +12,7 @@ import { CreateDnsGroupDto } from './dto/create-dns-group.dto';
 import { CreateDnsZoneDto } from './dto/create-dns-zone.dto';
 import { UpdateDnsZoneDto } from './dto/update-dns-zone.dto';
 import { RunDnsMaintenanceDto } from './dto/run-dns-maintenance.dto';
+import { ResolveForwarderConflictDto } from './dto/resolve-forwarder-conflict.dto';
 import { UpdateDnsGroupDto } from './dto/update-dns-group.dto';
 import { UpsertDnsGroupMemberDto } from './dto/upsert-dns-group-member.dto';
 import { UpsertDnsRecordDto } from './dto/upsert-dns-record.dto';
@@ -220,7 +221,12 @@ export class DnsController {
   }
 
   @Post('internal/forwarder/:nodeId/resolve-conflict')
-  resolveInternalDnsForwarderConflict(@Param('nodeId') nodeId: string, @CurrentWorkspace() scope: WorkspaceScope) {
-    return this.internalDnsService.resolveForwarderConflict(nodeId, scope);
+  resolveInternalDnsForwarderConflict(
+    @Param('nodeId') nodeId: string,
+    @Body() body: ResolveForwarderConflictDto,
+    @CurrentWorkspace() scope: WorkspaceScope,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.internalDnsService.resolveForwarderConflict(nodeId, scope, body.action ?? 'stop_service', req.user?.userId);
   }
 }

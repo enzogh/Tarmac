@@ -117,6 +117,11 @@ type dnsPortConflict struct {
 	Protocol    string `json:"protocol"`
 	PID         *int   `json:"pid"`
 	ProcessName string `json:"processName"`
+	// Set for the local forwarder's conflicts only: the systemd unit that
+	// could be stopped to free the port (never docker, ssh or the agent),
+	// or the Docker container publishing it.
+	Unit      string `json:"unit,omitempty"`
+	Container string `json:"container,omitempty"`
 }
 
 type dnsServerGroupApplyData struct {
@@ -197,6 +202,14 @@ func probePortBinding(port int, protocol string) *dnsPortConflict {
 // scans /proc/*/fd for a symlink to that inode. Deliberately avoids
 // shelling out to lsof/ss, which may not be installed on a minimal node.
 func findProcessOnPort(port int, protocol string) (int, string) {
+	return findProcessOnPortMatching(port, protocol, nil)
+}
+
+// findProcessOnPortMatching only considers sockets whose local address
+// passes match (nil: any). Several processes can bind the same port on
+// different addresses - systemd-resolved on 127.0.0.53 next to whatever
+// holds 127.0.0.1 - and only the one in the way is worth naming.
+func findProcessOnPortMatching(port int, protocol string, match func(net.IP) bool) (int, string) {
 	// A dual-stack socket (bound to ":port") is only listed in the "6" file.
 	var data []byte
 	for _, file := range []string{protocol, protocol + "6"} {
@@ -219,6 +232,14 @@ func findProcessOnPort(port int, protocol string) (int, string) {
 		parts := strings.Split(fields[1], ":")
 		if len(parts) != 2 || !strings.EqualFold(parts[1], portHex) {
 			continue
+		}
+		if match != nil {
+			ip, _, ok := parseProcNetAddress(fields[1])
+			// Only a listening TCP socket (state 0A) holds the port; an
+			// outgoing connection from port 53 doesn't.
+			if !ok || !match(ip) || (protocol == "tcp" && fields[3] != "0A") {
+				continue
+			}
 		}
 		inode = fields[9]
 		break
@@ -2414,8 +2435,15 @@ var hostsPath = "/etc/hosts"
 var hostsSafeLabelRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 type internalDnsRouteResultData struct {
-	Status   string           `json:"status"`
+	Status string `json:"status"`
+	// How *.tarmac.local resolves on this node when active: "resolved"
+	// (systemd-resolved routing domain), "dnsmasq" (local forwarder),
+	// "hosts" (static /etc/hosts block, chosen from the panel) or
+	// "hosts_auto" (same, because this node's PowerDNS owns port 53).
+	Mode     string           `json:"mode,omitempty"`
 	Conflict *dnsPortConflict `json:"conflict,omitempty"`
+	// Why the last attempt failed, shown under the node's DNS status.
+	Error string `json:"error,omitempty"`
 }
 
 // ensureInternalDnsSplitRoute points *.tarmac.local queries at the
@@ -2519,19 +2547,19 @@ func applyInternalDnsSplitRoute(ctx context.Context, ip string, port int, record
 			if err := removeInternalDnsHostsBlock(); err != nil {
 				log.Printf("dns: could not remove stale internal DNS /etc/hosts block (continuing): %v", err)
 			}
-			return internalDnsRouteResultData{Status: "active"}
+			return internalDnsRouteResultData{Status: "active", Mode: "resolved"}
 		}
 		logInternalDnsRouteModeOnce("resolvectl-unusable", "dns: resolvectl present but not usable on this node (systemd-resolved not running?), using local forwarder fallback")
 	} else {
 		logInternalDnsRouteModeOnce("resolvectl-missing", "dns: resolvectl not installed, using local forwarder fallback")
 	}
 
-	status, conflict, err := ensureInternalDnsForwarder(ctx, ip, port, records)
+	result, err := ensureInternalDnsForwarder(ctx, ip, port, records)
 	if err != nil {
 		log.Printf("dns: internal DNS forwarder fallback failed: %v", err)
-		return internalDnsRouteResultData{Status: "error"}
+		return internalDnsRouteResultData{Status: "error", Error: err.Error()}
 	}
-	return internalDnsRouteResultData{Status: status, Conflict: conflict}
+	return result
 }
 
 // ensureInternalDnsForwarder installs and configures a local dnsmasq
@@ -2550,29 +2578,42 @@ func applyInternalDnsSplitRoute(ctx context.Context, ip string, port int, record
 // that already-internet-exposed PowerDNS instance would (see the plan doc
 // for why that approach was rejected). When something else holds the port,
 // this reports the conflict (status "conflict") without touching it -
-// killing anything is only ever done via the explicit
-// resolveInternalDnsForwarderConflict flow, the same "propose, don't
+// the way out is picked from the panel (resolveInternalDnsForwarderConflict:
+// /etc/hosts, or stopping the service), the same "propose, don't
 // auto-kill" rule already followed for DnsServerGroup's own port-53 use.
-func ensureInternalDnsForwarder(ctx context.Context, ip string, port int, records []internalDnsHostRecord) (string, *dnsPortConflict, error) {
+// The /etc/hosts block is also what a node gets once that choice was made
+// (internalDnsHostsModeMarkerPath).
+func ensureInternalDnsForwarder(ctx context.Context, ip string, port int, records []internalDnsHostRecord) (internalDnsRouteResultData, error) {
+	// "hosts_auto": this node's public PowerDNS owns port 53, nothing to
+	// choose; "hosts": picked from the panel, can be undone there.
+	mode := ""
 	if _, err := os.Stat(dnsMarkerPath); err == nil {
-		if err := writeInternalDnsHostsBlock(records); err != nil {
-			return "", nil, fmt.Errorf("cannot write /etc/hosts fallback: %w", err)
+		mode = "hosts_auto"
+	} else if internalDnsHostsModeEnabled() {
+		mode = "hosts"
+	}
+	if mode != "" {
+		if err := removeInternalDnsForwarder(ctx); err != nil {
+			log.Printf("dns: could not remove internal DNS forwarder (continuing): %v", err)
 		}
-		return "active", nil, nil
+		if err := writeInternalDnsHostsBlock(records); err != nil {
+			return internalDnsRouteResultData{}, fmt.Errorf("cannot write /etc/hosts fallback: %w", err)
+		}
+		return internalDnsRouteResultData{Status: "active", Mode: mode}, nil
 	}
 
 	if _, err := os.Stat(internalDnsForwarderMarkerPath); err != nil {
-		if conflict := probeDnsPortConflict(); conflict != nil {
-			return "conflict", conflict, nil
+		if conflict := probeForwarderPortConflict(); conflict != nil {
+			return internalDnsRouteResultData{Status: "conflict", Conflict: conflict}, nil
 		}
 		if _, err := ensureAgentSystemPackages(ctx, []string{"dnsmasq"}); err != nil {
-			return "", nil, fmt.Errorf("cannot install dnsmasq: %w", err)
+			return internalDnsRouteResultData{}, fmt.Errorf("cannot install dnsmasq: %w", err)
 		}
 	}
 
 	configChanged, err := writeInternalDnsmasqConfig(ip, port, internalDnsUpstreams())
 	if err != nil {
-		return "", nil, err
+		return internalDnsRouteResultData{}, err
 	}
 
 	// This runs on every 30 s tick: restarting dnsmasq each time flushed its
@@ -2582,12 +2623,12 @@ func ensureInternalDnsForwarder(ctx context.Context, ip string, port int, record
 		running := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", "dnsmasq").Run() == nil
 		if !running {
 			if out, err := exec.CommandContext(ctx, "systemctl", "enable", "--now", "dnsmasq").CombinedOutput(); err != nil {
-				return "", nil, fmt.Errorf("cannot enable/start dnsmasq: %s", strings.TrimSpace(string(out)))
+				return internalDnsRouteResultData{}, fmt.Errorf("cannot enable/start dnsmasq: %s", strings.TrimSpace(string(out)))
 			}
 		}
 		if configChanged || !running {
 			if out, err := exec.CommandContext(ctx, "systemctl", "restart", "dnsmasq").CombinedOutput(); err != nil {
-				return "", nil, fmt.Errorf("cannot restart dnsmasq: %s", strings.TrimSpace(string(out)))
+				return internalDnsRouteResultData{}, fmt.Errorf("cannot restart dnsmasq: %s", strings.TrimSpace(string(out)))
 			}
 		}
 	}
@@ -2607,7 +2648,7 @@ func ensureInternalDnsForwarder(ctx context.Context, ip string, port int, record
 	if err := removeInternalDnsHostsBlock(); err != nil {
 		log.Printf("dns: could not remove stale internal DNS /etc/hosts block (continuing): %v", err)
 	}
-	return "active", nil, nil
+	return internalDnsRouteResultData{Status: "active", Mode: "dnsmasq"}, nil
 }
 
 // publicFallbackResolvers are only used when the node had no resolver of its
@@ -2891,50 +2932,65 @@ func restoreResolvConfFromForwarder() error {
 	return nil
 }
 
-// resolveInternalDnsForwarderConflict is the explicit, user-triggered
-// counterpart to the "conflict" status ensureInternalDnsForwarder can
-// report - kills and permanently disables the known culprit (same
-// permanentlyDisableService/knownPort53Services already used for
-// DnsServerGroup's own port-53 conflicts), then retries directly rather
-// than waiting for another control-plane round-trip, since this whole flow
-// is self-contained on the agent.
-func resolveInternalDnsForwarderConflict(ctx context.Context, ip string, port int) (string, error) {
-	conflict := probeDnsPortConflict()
-	if conflict != nil {
-		for _, unit := range knownPort53Services(conflict.ProcessName) {
-			if err := permanentlyDisableService(ctx, unit); err != nil {
-				return "", fmt.Errorf("could not disable %s: %w", unit, err)
+// resolveInternalDnsForwarderConflict applies the way out picked from the
+// panel for a forwarder port conflict, then retries at once instead of
+// waiting for the next route push:
+//   - "hosts": leave whatever holds port 53 alone and resolve
+//     *.tarmac.local from /etc/hosts from now on (always possible);
+//   - "stop_service": stop, disable and mask the unit holding the port
+//     (only when probeForwarderPortConflict found a stoppable one, or a
+//     known DNS service), then install the forwarder;
+//   - "local": drop a previous "hosts" choice and try the forwarder again.
+func resolveInternalDnsForwarderConflict(ctx context.Context, ip string, port int, records []internalDnsHostRecord, action string) (internalDnsRouteResultData, error) {
+	switch action {
+	case "hosts":
+		if err := setInternalDnsHostsMode(true); err != nil {
+			return internalDnsRouteResultData{Status: "error"}, fmt.Errorf("cannot record the /etc/hosts choice: %w", err)
+		}
+	case "local":
+		if err := setInternalDnsHostsMode(false); err != nil {
+			return internalDnsRouteResultData{Status: "error"}, fmt.Errorf("cannot clear the /etc/hosts choice: %w", err)
+		}
+	default:
+		if conflict := probeForwarderPortConflict(); conflict != nil {
+			units := knownPort53Services(conflict.ProcessName)
+			if conflict.Unit != "" {
+				units = []string{conflict.Unit}
 			}
-			if unit == "systemd-resolved" {
-				if err := fixResolvConfAfterDisablingSystemdResolved(); err != nil {
-					log.Printf("dns: could not fix resolv.conf after disabling systemd-resolved (continuing): %v", err)
+			if len(units) == 0 || !commandExists("systemctl") {
+				return internalDnsRouteResultData{Status: "conflict", Conflict: conflict},
+					fmt.Errorf("no service to stop for %s: use /etc/hosts instead", firstNonEmpty(conflict.Container, conflict.ProcessName, "the process holding port 53"))
+			}
+			for _, unit := range units {
+				if err := permanentlyDisableService(ctx, unit); err != nil {
+					return internalDnsRouteResultData{Status: "conflict", Conflict: conflict}, fmt.Errorf("could not stop %s: %w", unit, err)
+				}
+				log.Printf("dns: stopped, disabled and masked %s to free 127.0.0.1:53 for the tarmac.local forwarder", unit)
+				if strings.TrimSuffix(unit, ".service") == "systemd-resolved" {
+					if err := fixResolvConfAfterDisablingSystemdResolved(); err != nil {
+						log.Printf("dns: could not fix resolv.conf after disabling systemd-resolved (continuing): %v", err)
+					}
 				}
 			}
 		}
 	}
-	// records is nil here - this path only ever runs after a genuine port
-	// conflict was reported, which never happens on a dnsMarkerPath node
-	// (that branch returns "active" via the /etc/hosts fallback, never
-	// "conflict"), so the records-consuming branch below can't be reached.
-	status, newConflict, err := ensureInternalDnsForwarder(ctx, ip, port, nil)
+
+	result, err := ensureInternalDnsForwarder(ctx, ip, port, records)
 	if err != nil {
-		return "", err
+		return internalDnsRouteResultData{Status: "error"}, err
 	}
-	if newConflict != nil {
-		return "", fmt.Errorf("port 53 still occupied by %s after attempting to free it", newConflict.ProcessName)
+	if result.Conflict != nil && action != "local" {
+		return result, fmt.Errorf("port 53 still held by %s after stopping it", firstNonEmpty(result.Conflict.ProcessName, "another process"))
 	}
-	return status, nil
+	if result.Status == "active" && !probeInternalDns(ip, port) {
+		result.Status = "unreachable"
+	}
+	return result, nil
 }
 
-func handleEnsureInternalDnsRouteCommand(ctx context.Context, cmd commandPayload, result *commandResult) {
-	dnsPort53Mu.Lock()
-	defer dnsPort53Mu.Unlock()
-	result.Command = "ensure_internal_dns_route"
-	result.ResourceType = "internal_dns_route"
-	result.ResourceID = envOrDefault("NODE_ID", "agent")
-	ip := readString(cmd.Payload, "ip")
-	port := readInt(cmd.Payload, "port", 5300)
-	rawRecords, _ := cmd.Payload["records"].([]interface{})
+// readInternalDnsRecords parses the records list both route commands carry.
+func readInternalDnsRecords(payload map[string]interface{}) []internalDnsHostRecord {
+	rawRecords, _ := payload["records"].([]interface{})
 	records := make([]internalDnsHostRecord, 0, len(rawRecords))
 	for _, raw := range rawRecords {
 		entry, ok := raw.(map[string]interface{})
@@ -2948,6 +3004,18 @@ func handleEnsureInternalDnsRouteCommand(ctx context.Context, cmd commandPayload
 		}
 		records = append(records, internalDnsHostRecord{Name: name, Content: content})
 	}
+	return records
+}
+
+func handleEnsureInternalDnsRouteCommand(ctx context.Context, cmd commandPayload, result *commandResult) {
+	dnsPort53Mu.Lock()
+	defer dnsPort53Mu.Unlock()
+	result.Command = "ensure_internal_dns_route"
+	result.ResourceType = "internal_dns_route"
+	result.ResourceID = envOrDefault("NODE_ID", "agent")
+	ip := readString(cmd.Payload, "ip")
+	port := readInt(cmd.Payload, "port", 5300)
+	records := readInternalDnsRecords(cmd.Payload)
 	data := ensureInternalDnsSplitRoute(ctx, ip, port, records)
 	// This periodic push also reaches the node serving the zone: the firewall
 	// rule isn't persistent, so it is restored here after a reboot (the agent
@@ -2985,15 +3053,17 @@ func handleResolveInternalDnsForwarderConflictCommand(ctx context.Context, cmd c
 	result.ResourceID = envOrDefault("NODE_ID", "agent")
 	ip := readString(cmd.Payload, "ip")
 	port := readInt(cmd.Payload, "port", 5300)
-	status, err := resolveInternalDnsForwarderConflict(ctx, ip, port)
+	action := readString(cmd.Payload, "action")
+	data, err := resolveInternalDnsForwarderConflict(ctx, ip, port, readInternalDnsRecords(cmd.Payload), action)
 	if err != nil {
+		data.Error = err.Error()
 		result.Success = false
 		result.Message = err.Error()
-		result.Data = internalDnsRouteResultData{Status: "conflict"}
+		result.Data = data
 		return
 	}
-	result.Data = internalDnsRouteResultData{Status: status}
-	result.Message = fmt.Sprintf("internal DNS forwarder: %s", status)
+	result.Data = data
+	result.Message = fmt.Sprintf("internal DNS forwarder (%s): %s", firstNonEmpty(action, "stop_service"), data.Status)
 }
 
 func handleDnsGetZoneKeysCommand(cmd commandPayload, result *commandResult) {

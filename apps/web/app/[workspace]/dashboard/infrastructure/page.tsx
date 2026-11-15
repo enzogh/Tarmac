@@ -15,7 +15,7 @@ import {
   Server,
   X,
 } from 'lucide-react';
-import { AgentUpdateProgress, api, NodeActivityItem, NodeHeartbeatLiveEvent } from '@/lib/api';
+import { AgentUpdateProgress, api, ForwarderConflictAction, NodeActivityItem, NodeHeartbeatLiveEvent } from '@/lib/api';
 import { usePolling } from '@/lib/hooks/usePolling';
 import { useLiveSocket } from '@/lib/hooks/useLiveSocket';
 import { GeoInfo, getGeoInfo } from '@/lib/geo';
@@ -142,7 +142,13 @@ export default function InfrastructurePage() {
     }
     if (message.type === 'dns.internal.forwarder_status') {
       if (!nodesRaw) return;
-      const update = message.payload as { nodeId: string; status: string; conflict: NodeActivityItem['internalDnsForwarderConflict'] };
+      const update = message.payload as {
+        nodeId: string;
+        status: string;
+        mode?: NodeActivityItem['internalDnsForwarderMode'];
+        error?: string | null;
+        conflict: NodeActivityItem['internalDnsForwarderConflict'];
+      };
       void refreshNodes(
         (current) =>
           current?.map((node) =>
@@ -151,6 +157,8 @@ export default function InfrastructurePage() {
                   ...node,
                   internalDnsForwarderStatus: update.status as NodeActivityItem['internalDnsForwarderStatus'],
                   internalDnsForwarderConflict: update.conflict,
+                  internalDnsForwarderMode: update.mode ?? null,
+                  internalDnsForwarderError: update.error ?? null,
                 }
               : node,
           ) ?? current,
@@ -411,11 +419,16 @@ export default function InfrastructurePage() {
     }
   };
 
-  const resolveForwarder = async (node: NodeActivityItem) => {
+  const resolveForwarder = async (node: NodeActivityItem, action: ForwarderConflictAction) => {
     setDnsBusy(true);
     try {
-      await api.dns.internal.resolveForwarderConflict(node.id);
-      setNotice({ type: 'success', message: `Tentative de libération du port envoyée à ${node.name}.` });
+      await api.dns.internal.resolveForwarderConflict(node.id, action);
+      const sentMessage: Record<ForwarderConflictAction, string> = {
+        hosts: `${node.name} va résoudre *.tarmac.local via /etc/hosts.`,
+        stop_service: `Arrêt du service demandé à ${node.name}, puis installation du résolveur local.`,
+        local: `Nouvelle tentative du résolveur local envoyée à ${node.name}.`,
+      };
+      setNotice({ type: 'success', message: sentMessage[action] });
       await refreshNodes();
     } catch {
       setNotice({ type: 'error', message: `Impossible d’envoyer la commande à ${node.name} (agent hors ligne ?).` });
@@ -692,7 +705,7 @@ export default function InfrastructurePage() {
         onDesignateDns={() => opened && void designateDns(opened)}
         onClearDns={() => opened && void clearDns(opened)}
         onRetryDns={() => void retryDns()}
-        onResolveForwarder={() => opened && void resolveForwarder(opened)}
+        onResolveForwarder={(action) => opened && void resolveForwarder(opened, action)}
       />
       <EditNodeDialog
         node={editNode}

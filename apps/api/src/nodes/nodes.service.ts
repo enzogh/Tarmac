@@ -35,6 +35,8 @@ type ActivityNode = {
   systemInfo: Prisma.JsonValue | null;
   internalDnsForwarderStatus: string | null;
   internalDnsForwarderConflict: unknown;
+  internalDnsForwarderMode: string | null;
+  internalDnsForwarderError: string | null;
   agentUpdateStatus: string | null;
   agentUpdateMessage: string | null;
   agentUpdateFromVersion: string | null;
@@ -387,6 +389,8 @@ export class NodesService implements OnModuleInit {
         systemInfo: node.systemInfo,
         internalDnsForwarderStatus: node.internalDnsForwarderStatus,
         internalDnsForwarderConflict: node.internalDnsForwarderConflict,
+        internalDnsForwarderMode: node.internalDnsForwarderMode,
+        internalDnsForwarderError: node.internalDnsForwarderError,
         controlVersion,
         agentUpToDate: node.agentVersion && controlVersion ? node.agentVersion === controlVersion : null,
         agentUpdate: node.agentUpdateStatus

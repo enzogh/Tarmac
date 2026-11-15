@@ -28,11 +28,12 @@ import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHea
 import { NODE_STATUS, StatusPill, describe } from '@/components/ui/status';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SmartTrendChart } from '@/components/dashboard-charts';
-import { api, DnsNodeRecordRef, NodeActivityItem, SmartHistoryPoint } from '@/lib/api';
+import { api, DnsNodeRecordRef, ForwarderConflictAction, NodeActivityItem, SmartHistoryPoint } from '@/lib/api';
 import { formatBytes, formatCapacity, formatRelative, formatThroughput } from '@/lib/format';
 import { flagFromCountryCode, GeoInfo } from '@/lib/geo';
 import { cpuModelShort, cpuShape, formatLoad, loadRatio, memoryUsage, swapLabel, swapUsage, uptimeLabel } from '@/lib/system-info';
 import { cn } from '@/lib/utils';
+import { LocalResolverSection } from './LocalResolverSection';
 import { slugifyHostname } from './NodeDialogs';
 import { externalIpOf, formatDateTime, InternalDnsBadge, InternalDnsState, isMuted, MiniMeter, nodeAttention, SMART_LABEL } from './node-ui';
 
@@ -153,7 +154,7 @@ export function NodeDrawer({
   onDesignateDns: () => void;
   onClearDns: () => void;
   onRetryDns: () => void;
-  onResolveForwarder: () => void;
+  onResolveForwarder: (action: ForwarderConflictAction) => void;
 }) {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [records, setRecords] = useState<DnsNodeRecordRef[] | null>(null);
@@ -460,36 +461,7 @@ export function NodeDrawer({
 
               <section>
                 <SectionTitle>Résolveur local de ce nœud</SectionTitle>
-                {node.internalDnsForwarderStatus === 'conflict' && node.internalDnsForwarderConflict ? (
-                  <Callout variant="danger">
-                    <span className="flex items-start gap-2">
-                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                      <span className="space-y-2">
-                        <span className="block">
-                          Le port {node.internalDnsForwarderConflict.port}/{node.internalDnsForwarderConflict.protocol} est occupé par{' '}
-                          <strong>{node.internalDnsForwarderConflict.processName ?? 'un process inconnu'}</strong>
-                          {node.internalDnsForwarderConflict.pid ? ` (pid ${node.internalDnsForwarderConflict.pid})` : ''} : le résolveur de
-                          repli (dnsmasq) n’a pas pu démarrer.
-                        </span>
-                        <Button write size="sm" disabled={dnsBusy} onClick={onResolveForwarder}>
-                          Tuer le process et réessayer
-                        </Button>
-                      </span>
-                    </span>
-                  </Callout>
-                ) : (
-                  <p className="rounded-lg border border-border bg-surface-2/40 px-3 py-2 text-xs text-muted-foreground">
-                    {node.internalDnsForwarderStatus === 'unreachable'
-                      ? 'Ce nœud n’obtient aucune réponse du serveur DNS interne (port 5300 sur le réseau privé) : *.tarmac.local ne se résout pas ici. Vérifiez le pare-feu du nœud DNS.'
-                      : node.internalDnsForwarderStatus === 'active'
-                      ? 'Ce nœud résout *.tarmac.local : le serveur DNS interne répond.'
-                      : node.internalDnsForwarderStatus === 'error'
-                        ? 'Le résolveur de repli a échoué — voir le Journal.'
-                        : internalDns?.internalDnsNodeId
-                          ? 'Résolution via systemd-resolved (aucun résolveur de repli nécessaire).'
-                          : 'Aucun DNS interne configuré dans la flotte.'}
-                  </p>
-                )}
+                <LocalResolverSection node={node} internalDns={internalDns} busy={dnsBusy} onResolve={onResolveForwarder} />
               </section>
 
               <section>

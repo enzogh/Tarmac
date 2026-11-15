@@ -47,12 +47,8 @@ func dockerReservedLoopbackTCPPorts() map[int]string {
 			continue
 		}
 		base := filepath.Join(dockerContainersDir, dir.Name())
-		data, err := os.ReadFile(filepath.Join(base, "hostconfig.json"))
-		if err != nil {
-			continue
-		}
-		var cfg dockerHostConfig
-		if json.Unmarshal(data, &cfg) != nil {
+		cfg, ok := readDockerHostConfig(base)
+		if !ok {
 			continue
 		}
 		if policy := cfg.RestartPolicy.Name; policy == "" || policy == "no" {
@@ -74,6 +70,25 @@ func dockerReservedLoopbackTCPPorts() map[int]string {
 		}
 	}
 	return reserved
+}
+
+func readDockerHostConfig(base string) (dockerHostConfig, bool) {
+	var cfg dockerHostConfig
+	data, err := os.ReadFile(filepath.Join(base, "hostconfig.json"))
+	if err != nil || json.Unmarshal(data, &cfg) != nil {
+		return cfg, false
+	}
+	return cfg, true
+}
+
+func dockerContainerRunning(base string) bool {
+	var cfg struct {
+		State struct {
+			Running bool `json:"Running"`
+		} `json:"State"`
+	}
+	data, err := os.ReadFile(filepath.Join(base, "config.v2.json"))
+	return err == nil && json.Unmarshal(data, &cfg) == nil && cfg.State.Running
 }
 
 func bindsLoopback(hostIP string) bool {

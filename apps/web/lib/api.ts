@@ -56,9 +56,25 @@ export type NodeItem = {
   // Status of this node's own local fallback resolver for *.tarmac.local
   // (only relevant on nodes that can't use systemd-resolved's split-DNS
   // routing) - null means never attempted / not applicable.
-  internalDnsForwarderStatus?: 'active' | 'unreachable' | 'conflict' | 'error' | null;
-  internalDnsForwarderConflict?: { port: number; protocol: string; pid?: number | null; processName?: string | null } | null;
+  internalDnsForwarderStatus?: 'pending' | 'active' | 'unreachable' | 'conflict' | 'error' | null;
+  // Who holds port 53 on a conflict: `unit` is a service the panel may
+  // offer to stop, `container` a Docker container it never touches.
+  internalDnsForwarderConflict?: {
+    port: number;
+    protocol: string;
+    pid?: number | null;
+    processName?: string | null;
+    unit?: string | null;
+    container?: string | null;
+  } | null;
+  // How *.tarmac.local resolves here once active.
+  internalDnsForwarderMode?: 'resolved' | 'dnsmasq' | 'hosts' | 'hosts_auto' | null;
+  // The agent's reason for the last failed attempt.
+  internalDnsForwarderError?: string | null;
 };
+
+// Ways out of a local-resolver port-53 conflict, see LocalResolverSection.
+export type ForwarderConflictAction = 'hosts' | 'stop_service' | 'local';
 
 export type AgentUpdateStatus = 'sent' | 'restarting' | 'done' | 'failed' | 'timeout';
 export type AgentUpdateProgress = {
@@ -1416,8 +1432,11 @@ export const api = {
       designate: (nodeId: string) =>
         request<{ nodeId: string; applySent: boolean }>(`/api/v1/dns/internal/${nodeId}`, { method: 'POST' }),
       clear: () => request<{ cleanupSent: boolean }>('/api/v1/dns/internal', { method: 'DELETE' }),
-      resolveForwarderConflict: (nodeId: string) =>
-        request<{ sent: boolean }>(`/api/v1/dns/internal/forwarder/${nodeId}/resolve-conflict`, { method: 'POST' }),
+      resolveForwarderConflict: (nodeId: string, action: ForwarderConflictAction) =>
+        request<{ sent: boolean }>(`/api/v1/dns/internal/forwarder/${nodeId}/resolve-conflict`, {
+          method: 'POST',
+          body: JSON.stringify({ action }),
+        }),
     },
   },
 

@@ -49,7 +49,8 @@ export function nodeAttention(node: NodeActivityItem): string[] {
   if (node.storage.usageRatio >= 0.9) reasons.push('Stockage plein');
   const swap = node.status === 'offline' ? null : swapUsage(node.systemInfo);
   if (swap && swap.percent >= SWAP_FULL_PERCENT) reasons.push('Swap saturé');
-  if (node.internalDnsForwarderStatus === 'conflict') reasons.push('Conflit DNS');
+  if (node.internalDnsForwarderStatus === 'conflict') reasons.push('Conflit DNS (port 53)');
+  if (node.internalDnsForwarderStatus === 'error') reasons.push('Résolveur DNS local en échec');
   if (node.internalDnsForwarderStatus === 'unreachable') reasons.push('DNS interne injoignable');
   return reasons;
 }

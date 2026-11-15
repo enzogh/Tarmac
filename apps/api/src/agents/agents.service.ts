@@ -268,10 +268,21 @@ export class AgentsService implements OnModuleInit {
     protocol: string;
     processName?: string | null;
     pid?: number | null;
+    unit?: string | null;
+    container?: string | null;
   }) {
     const node = params.nodeName?.trim() || params.nodeId;
-    const process = params.processName ? `${params.processName}${params.pid ? ` (pid ${params.pid})` : ''}` : 'un autre process';
-    const message = `DNS : le port ${params.port}/${params.protocol} est déjà utilisé sur ${node} par ${process} - PowerDNS n'a pas pu démarrer.`;
+    const process = params.container
+      ? `le conteneur Docker ${params.container}`
+      : params.unit
+        ? `le service ${params.unit.replace(/\.service$/, '')}`
+        : params.processName
+          ? `${params.processName}${params.pid ? ` (pid ${params.pid})` : ''}`
+          : 'un autre process';
+    const message =
+      params.source === 'forwarder'
+        ? `DNS interne : le port 53 local de ${node} est déjà utilisé par ${process}, les noms *.tarmac.local ne s'y résolvent pas. Ouvrez le nœud dans Infrastructure pour choisir comment corriger.`
+        : `DNS : le port ${params.port}/${params.protocol} est déjà utilisé sur ${node} par ${process} - PowerDNS n'a pas pu démarrer.`;
     // The conflict is re-reported on every DNS check (every 30 s): one open
     // alert per conflict is enough, closed once the port is free again.
     await raiseAlert(this.prisma, {
@@ -926,11 +937,17 @@ export class AgentsService implements OnModuleInit {
     }
     const status = (result.data as { status?: string } | undefined)?.status;
     if (!status) return false;
+    const data = result.data as { mode?: string; error?: string } | undefined;
     const node = await this.prisma.node.findUnique({
       where: { id: nodeId },
-      select: { internalDnsForwarderStatus: true },
+      select: { internalDnsForwarderStatus: true, internalDnsForwarderMode: true, internalDnsForwarderError: true },
     });
-    return node?.internalDnsForwarderStatus === status;
+    return (
+      node?.internalDnsForwarderStatus === status &&
+      (node.internalDnsForwarderMode ?? undefined) === (status === 'active' || status === 'unreachable' ? data?.mode : undefined) &&
+      !node.internalDnsForwarderError &&
+      !data?.error
+    );
   }
 
   async onCommandResult(nodeId: string, result: CommandResultPayload) {
@@ -1122,31 +1139,57 @@ export class AgentsService implements OnModuleInit {
         this.logCrossWorkspaceAttempt(nodeId, result.resourceType, result.resourceId);
         return;
       }
-      const data = result.data as { status?: string; conflict?: Record<string, unknown> } | undefined;
+      const data = result.data as
+        | { status?: string; mode?: string; error?: string; conflict?: Record<string, unknown> }
+        | undefined;
       const forwarderStatus = data?.status ?? (result.success ? 'active' : 'error');
-      await this.prisma.node.update({
+      const forwarderMode = forwarderStatus === 'active' || forwarderStatus === 'unreachable' ? (data?.mode ?? null) : null;
+      const forwarderError = data?.error ? this.normalizeFailureMessage(data.error).slice(0, 1000) : null;
+      // An agent that failed to free the port without saying who still
+      // holds it (older agents) keeps the detail already shown.
+      const keepConflict = forwarderStatus === 'conflict' && !data?.conflict;
+      const updated = await this.prisma.node.update({
         where: { id: nodeId },
         data: {
           internalDnsForwarderStatus: forwarderStatus,
-          internalDnsForwarderConflict: (data?.conflict as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+          internalDnsForwarderMode: forwarderMode,
+          internalDnsForwarderError: forwarderError,
+          ...(keepConflict
+            ? {}
+            : { internalDnsForwarderConflict: (data?.conflict as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull }),
         },
+        select: { name: true, internalDnsForwarderConflict: true },
       });
       this.live.broadcast(
         'dns.internal.forwarder_status',
-        { nodeId, status: forwarderStatus, conflict: data?.conflict ?? null },
+        {
+          nodeId,
+          status: forwarderStatus,
+          mode: forwarderMode,
+          error: forwarderError,
+          conflict: updated.internalDnsForwarderConflict ?? null,
+        },
         callingWorkspaceId,
       );
       if (forwarderStatus === 'conflict' && data?.conflict) {
-        const node = await this.prisma.node.findUnique({ where: { id: nodeId }, select: { name: true } });
-        const conflict = data.conflict as { port: number; protocol: string; processName?: string | null; pid?: number | null };
+        const conflict = data.conflict as {
+          port: number;
+          protocol: string;
+          processName?: string | null;
+          pid?: number | null;
+          unit?: string | null;
+          container?: string | null;
+        };
         await this.createDnsPortConflictAlert({
           source: 'forwarder',
           nodeId,
-          nodeName: node?.name,
+          nodeName: updated.name,
           port: conflict.port,
           protocol: conflict.protocol,
           processName: conflict.processName,
           pid: conflict.pid,
+          unit: conflict.unit,
+          container: conflict.container,
         });
       } else if (!result.success) {
         this.logger.error(`Internal DNS forwarder on node ${nodeId} failed: ${this.normalizeFailureMessage(result.message)}`);

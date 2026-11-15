@@ -463,11 +463,19 @@ model Node {
   // (a dnsmasq forwarder on port 53, only installed when systemd-resolved's
   // per-link routing isn't usable here) - null means never attempted / not
   // applicable (e.g. this node already runs its own PowerDNS on port 53 for
-  // a DnsServerGroup, deliberately never touched). "active" | "conflict" | "error".
+  // a DnsServerGroup, deliberately never touched).
+  // "pending" | "active" | "unreachable" | "conflict" | "error".
   internalDnsForwarderStatus   String?
-  // { port, protocol, pid, processName } when status is "conflict" - same
-  // shape as DnsServerGroupMember.conflictDetail, surfaced the same way.
+  // { port, protocol, pid, processName, unit?, container? } when status is
+  // "conflict" - same shape as DnsServerGroupMember.conflictDetail, plus
+  // what the panel can offer to stop (unit) or must leave alone (container).
   internalDnsForwarderConflict Json?
+  // How *.tarmac.local resolves here once active: "resolved" | "dnsmasq" |
+  // "hosts" (static /etc/hosts block, chosen from the panel on a conflict) |
+  // "hosts_auto" (same, forced: this node's own PowerDNS owns port 53).
+  internalDnsForwarderMode     String?
+  // The agent's reason for the last failed attempt, null once it works.
+  internalDnsForwarderError    String?
   // Index of the /24 handed to WireGuard clients connecting through this
   // node (10.x.(100+n).0/24 inside the workspace mesh range) - allocated the
   // first time a VPN profile uses this node as its entry point, then kept
