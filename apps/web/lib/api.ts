@@ -145,11 +145,30 @@ export type GithubDeployKeyOverview = {
   orphanKeys: Array<{ id: string; title: string; readOnly: boolean; createdAt: string | null; fingerprint: string | null }>;
 };
 
-export type NodeOnboardingInstallResult = {
-  success: boolean;
+export type NodeInstallPhase = {
+  id: 'ssh' | 'packages' | 'clone' | 'build' | 'service' | 'agent';
+  label: string;
+  status: 'pending' | 'running' | 'done' | 'error';
+  durationMs: number | null;
+};
+
+// The install runs in the background on the API: started by
+// onboardingInstall, then polled with onboardingProgress.
+export type NodeInstallProgress = {
+  onboardingId: string;
   nodeId: string;
   nodeName: string;
-  output: string;
+  status: 'running' | 'succeeded' | 'failed';
+  percent: number;
+  phases: NodeInstallPhase[];
+  startedAt: string;
+  elapsedMs: number;
+  // Index of lines[0] in the whole log; pass `cursor` to the next poll.
+  from: number;
+  lines: string[];
+  cursor: number;
+  error: string | null;
+  warning: string | null;
 };
 
 export type ShareItem = {
@@ -1271,10 +1290,12 @@ export const api = {
         body: JSON.stringify(payload),
       }),
     onboardingInstall: (onboardingId: string) =>
-      request<NodeOnboardingInstallResult>(`/api/v1/nodes/onboarding/${encodeURIComponent(onboardingId)}/install`, {
+      request<NodeInstallProgress>(`/api/v1/nodes/onboarding/${encodeURIComponent(onboardingId)}/install`, {
         method: 'POST',
         body: JSON.stringify({ deployKeyConfirmed: true }),
       }),
+    onboardingProgress: (onboardingId: string, after: number) =>
+      request<NodeInstallProgress>(`/api/v1/nodes/onboarding/${encodeURIComponent(onboardingId)}/install?after=${after}`),
     update: (
       id: string,
       payload: {

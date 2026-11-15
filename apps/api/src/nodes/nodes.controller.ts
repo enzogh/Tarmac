@@ -77,7 +77,15 @@ export class NodesController {
     if (!dto.deployKeyConfirmed) {
       throw new BadRequestException('deployKeyConfirmed must be true');
     }
-    return this.nodeOnboardingService.completeOnboarding(id, scope);
+    return this.nodeOnboardingService.startInstall(id, scope);
+  }
+
+  // Polled by the panel during the install: phase, percentage and the log
+  // lines after `after` (the previous answer's `cursor`).
+  @Get('onboarding/:id/install')
+  installProgress(@Param('id') id: string, @Query('after') after: string | undefined, @CurrentWorkspace() scope: WorkspaceScope) {
+    const cursor = Number.parseInt(after ?? '0', 10);
+    return this.nodeOnboardingService.getInstallProgress(id, scope, Number.isFinite(cursor) && cursor > 0 ? cursor : 0);
   }
 
   @Patch(':id')

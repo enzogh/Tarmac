@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash, randomUUID } from 'crypto';
 import { BlockList, isIPv4 } from 'net';
@@ -75,10 +75,66 @@ type RemoteCommandResult = {
   stderr: string;
 };
 
+// The install runs in the background: a single request lasting the whole
+// install (apt, clone, Go build: several minutes) was cut by the reverse
+// proxy after 100 s (Cloudflare 524) while the server kept installing.
+// The panel now starts it, then polls getInstallProgress for the phase,
+// the percentage and the live log.
+export type InstallPhaseId = 'ssh' | 'packages' | 'clone' | 'build' | 'service' | 'agent';
+type InstallPhaseStatus = 'pending' | 'running' | 'done' | 'error';
+
+type InstallPhase = {
+  id: InstallPhaseId;
+  label: string;
+  status: InstallPhaseStatus;
+  startedAt?: number;
+  finishedAt?: number;
+};
+
+type InstallJob = {
+  onboardingId: string;
+  workspaceId: string;
+  nodeId: string;
+  nodeName: string;
+  status: 'running' | 'succeeded' | 'failed';
+  phases: InstallPhase[];
+  // Log lines, absolute index = droppedLines + position; the panel asks
+  // for the lines after the last index it has.
+  lines: string[];
+  droppedLines: number;
+  // Unterminated output of the current command, waiting for its newline.
+  partial: string;
+  secrets: string[];
+  startedAt: number;
+  finishedAt?: number;
+  error?: string;
+  warning?: string;
+};
+
+const PHASES: Array<{ id: InstallPhaseId; label: string; weight: number; expectedMs: number }> = [
+  { id: 'ssh', label: 'Connexion au serveur', weight: 3, expectedMs: 5_000 },
+  { id: 'packages', label: 'Installation des paquets système', weight: 27, expectedMs: 90_000 },
+  { id: 'clone', label: 'Téléchargement du code Tarmac', weight: 8, expectedMs: 20_000 },
+  { id: 'build', label: 'Compilation de l’agent', weight: 45, expectedMs: 150_000 },
+  { id: 'service', label: 'Démarrage du service', weight: 5, expectedMs: 10_000 },
+  { id: 'agent', label: 'Connexion de l’agent à Tarmac', weight: 12, expectedMs: 20_000 },
+];
+const MAX_LOG_LINES = 4000;
+const AGENT_CONNECT_TIMEOUT_MS = 3 * 60_000;
+const JOB_RETENTION_MS = 60 * 60_000;
+// Markers printed by install-agent-service.sh between its stages.
+const SCRIPT_MARKERS: Array<{ pattern: RegExp; phase: InstallPhaseId }> = [
+  { pattern: /^\[tarmac\] build/i, phase: 'build' },
+  { pattern: /^\[tarmac\] service/i, phase: 'service' },
+];
+// eslint-disable-next-line no-control-regex
+const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;
+
 @Injectable()
 export class NodeOnboardingService {
   private static readonly ONBOARDING_TTL_MS = 30 * 60 * 1000;
   private readonly sessions = new Map<string, NodeOnboardingSession>();
+  private readonly jobs = new Map<string, InstallJob>();
 
   constructor(
     private readonly nodesService: NodesService,
@@ -162,7 +218,14 @@ export class NodeOnboardingService {
     };
   }
 
-  async completeOnboarding(onboardingId: string, scope: WorkspaceScope) {
+  // Starts the install in the background and returns at once; calling it
+  // again while it runs returns the running install instead of starting a
+  // second one, and after a failure starts a new attempt.
+  startInstall(onboardingId: string, scope: WorkspaceScope) {
+    const existing = this.jobs.get(onboardingId);
+    if (existing && existing.workspaceId === scope.workspaceId && existing.status !== 'failed') {
+      return this.describeJob(existing, 0);
+    }
     const session = this.sessions.get(onboardingId);
     if (!session || session.workspaceId !== scope.workspaceId) {
       throw new NotFoundException('Session onboarding introuvable');
@@ -172,18 +235,180 @@ export class NodeOnboardingService {
       throw new BadRequestException('Session onboarding expirée, recommencez');
     }
 
-    try {
-      const result = await this.runRemoteInstall(session);
-      this.sessions.delete(onboardingId);
-      return {
-        success: true,
-        nodeId: session.nodeId,
-        nodeName: session.nodeName,
-        output: result,
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Échec installation';
-      throw new InternalServerErrorException(message);
+    const job: InstallJob = {
+      onboardingId,
+      workspaceId: session.workspaceId,
+      nodeId: session.nodeId,
+      nodeName: session.nodeName,
+      status: 'running',
+      phases: PHASES.map(({ id, label }) => ({ id, label, status: 'pending' })),
+      lines: [],
+      droppedLines: 0,
+      partial: '',
+      secrets: [session.agentToken, session.sshPassword, session.sudoPassword, session.sshKeyPassphrase].filter(
+        (value): value is string => !!value && value.length >= 4,
+      ),
+      startedAt: Date.now(),
+    };
+    this.jobs.set(onboardingId, job);
+    this.cleanupExpiredJobs();
+
+    void this.runRemoteInstall(session, job)
+      .then(async () => {
+        this.sessions.delete(onboardingId);
+        await this.waitForAgent(job);
+        job.status = 'succeeded';
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : 'Échec installation';
+        const running = job.phases.find((phase) => phase.status === 'running');
+        if (running) {
+          running.status = 'error';
+          running.finishedAt = Date.now();
+        }
+        job.error = this.redact(job, message);
+        job.status = 'failed';
+        this.appendLog(job, `\n✖ ${job.error}\n`);
+      })
+      .finally(() => {
+        job.finishedAt = Date.now();
+      });
+
+    return this.describeJob(job, 0);
+  }
+
+  getInstallProgress(onboardingId: string, scope: WorkspaceScope, after: number) {
+    const job = this.jobs.get(onboardingId);
+    if (!job || job.workspaceId !== scope.workspaceId) {
+      throw new NotFoundException('Installation introuvable');
+    }
+    return this.describeJob(job, after);
+  }
+
+  private describeJob(job: InstallJob, after: number) {
+    const from = Math.max(0, after - job.droppedLines);
+    const lines = job.lines.slice(from);
+    return {
+      onboardingId: job.onboardingId,
+      nodeId: job.nodeId,
+      nodeName: job.nodeName,
+      status: job.status,
+      percent: this.percent(job),
+      phases: job.phases.map(({ id, label, status, startedAt, finishedAt }) => ({
+        id,
+        label,
+        status,
+        durationMs: startedAt ? (finishedAt ?? Date.now()) - startedAt : null,
+      })),
+      startedAt: new Date(job.startedAt).toISOString(),
+      elapsedMs: (job.finishedAt ?? Date.now()) - job.startedAt,
+      // Where these lines start; the next poll passes `cursor`.
+      from: job.droppedLines + from,
+      lines,
+      cursor: job.droppedLines + job.lines.length,
+      error: job.error ?? null,
+      warning: job.warning ?? null,
+    };
+  }
+
+  // Finished phases count in full; the running one advances with its
+  // elapsed time against its usual duration, never past 95 %, so the bar
+  // keeps moving on a slow server without ever claiming to be done.
+  private percent(job: InstallJob): number {
+    if (job.status === 'succeeded') return 100;
+    const total = PHASES.reduce((sum, phase) => sum + phase.weight, 0);
+    let done = 0;
+    for (const phase of job.phases) {
+      const spec = PHASES.find((item) => item.id === phase.id)!;
+      if (phase.status === 'done') {
+        done += spec.weight;
+      } else if (phase.status === 'running' && phase.startedAt) {
+        const elapsed = Date.now() - phase.startedAt;
+        done += spec.weight * Math.min(0.95, 1 - Math.exp(-elapsed / spec.expectedMs));
+      }
+    }
+    return Math.min(99, Math.round((done / total) * 100));
+  }
+
+  private setPhase(job: InstallJob, id: InstallPhaseId) {
+    const now = Date.now();
+    const index = job.phases.findIndex((phase) => phase.id === id);
+    job.phases.forEach((phase, position) => {
+      if (position < index && phase.status !== 'done') {
+        phase.status = 'done';
+        phase.startedAt ??= now;
+        phase.finishedAt = now;
+      }
+    });
+    const phase = job.phases[index];
+    if (phase.status === 'pending') {
+      phase.status = 'running';
+      phase.startedAt = now;
+    }
+  }
+
+  private finishPhase(job: InstallJob, id: InstallPhaseId) {
+    const phase = job.phases.find((item) => item.id === id)!;
+    phase.status = 'done';
+    phase.startedAt ??= Date.now();
+    phase.finishedAt = Date.now();
+  }
+
+  private redact(job: InstallJob, text: string): string {
+    let result = text;
+    for (const secret of job.secrets) result = result.split(secret).join('••••••');
+    return result;
+  }
+
+  // Remote output arrives in arbitrary chunks: complete lines are kept,
+  // apt/git progress rewritten with \r keeps only its last state.
+  private appendLog(job: InstallJob, chunk: string, onLine?: (line: string) => void) {
+    const text = job.partial + this.redact(job, chunk.replace(ANSI, ''));
+    const parts = text.split('\n');
+    job.partial = parts.pop() ?? '';
+    for (const raw of parts) {
+      const line = raw.split('\r').filter((segment) => segment.length > 0).pop() ?? '';
+      job.lines.push(line);
+      onLine?.(line);
+    }
+    if (job.lines.length > MAX_LOG_LINES) {
+      const drop = job.lines.length - MAX_LOG_LINES;
+      job.lines.splice(0, drop);
+      job.droppedLines += drop;
+    }
+  }
+
+  private flushLog(job: InstallJob) {
+    if (job.partial) this.appendLog(job, '\n');
+  }
+
+  // The service being up says nothing about the agent reaching this
+  // control plane (wrong URL, firewall): the install is only reported done
+  // once the node has checked in.
+  private async waitForAgent(job: InstallJob) {
+    this.setPhase(job, 'agent');
+    this.appendLog(job, '\n▸ Attente de la première connexion de l’agent…\n');
+    const since = new Date(job.phases.find((phase) => phase.id === 'agent')!.startedAt! - 5_000);
+    const deadline = Date.now() + AGENT_CONNECT_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const node = await this.prisma.node.findUnique({ where: { id: job.nodeId }, select: { status: true, lastSeenAt: true } });
+      if (node?.status === 'online' && node.lastSeenAt && node.lastSeenAt >= since) {
+        this.finishPhase(job, 'agent');
+        this.appendLog(job, '✔ Agent connecté à Tarmac.\n');
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+    this.finishPhase(job, 'agent');
+    job.warning =
+      'Le service tourne sur le serveur, mais l’agent ne s’est pas encore connecté à Tarmac. Vérifiez que le serveur peut joindre ce panel (pare-feu, DNS) ; il apparaîtra en ligne dès sa première connexion.';
+    this.appendLog(job, `⚠ ${job.warning}\n`);
+  }
+
+  private cleanupExpiredJobs() {
+    const now = Date.now();
+    for (const [id, job] of this.jobs.entries()) {
+      if (job.finishedAt && now - job.finishedAt > JOB_RETENTION_MS) this.jobs.delete(id);
     }
   }
 
@@ -323,9 +548,12 @@ export class NodeOnboardingService {
     }
   }
 
-  private async runRemoteInstall(session: NodeOnboardingSession): Promise<string> {
+  private async runRemoteInstall(session: NodeOnboardingSession, job: InstallJob): Promise<void> {
+    this.setPhase(job, 'ssh');
+    this.appendLog(job, `▸ Connexion SSH à ${session.sshUsername}@${session.hostIp}…\n`);
     const { client } = await this.openSshConnection(session, session.hostKeyFingerprint);
-    const logs: string[] = [];
+    this.finishPhase(job, 'ssh');
+    this.appendLog(job, '✔ Connecté, identité du serveur vérifiée.\n');
     try {
       const nodeIdQuoted = this.shellQuote(session.nodeId);
       const wsQuoted = this.shellQuote(session.controlPlaneWs);
@@ -335,8 +563,9 @@ export class NodeOnboardingService {
       const repoRefQuoted = this.shellQuote(session.repoRef);
       const sshUserQuoted = this.shellQuote(session.sshUsername);
 
-      const commandScripts: Array<{ label: string; script: string }> = [
+      const commandScripts: Array<{ phase: InstallPhaseId; label: string; script: string }> = [
         {
+          phase: 'packages',
           label: 'Install packages',
           script: [
             'set -euo pipefail',
@@ -346,6 +575,7 @@ export class NodeOnboardingService {
           ].join('\n'),
         },
         {
+          phase: 'clone',
           label: 'Clone repository',
           script: [
             'set -euo pipefail',
@@ -372,6 +602,7 @@ export class NodeOnboardingService {
           ].join('\n'),
         },
         {
+          phase: 'build',
           label: 'Install and start agent',
           script: [
             'set -euo pipefail',
@@ -405,23 +636,28 @@ export class NodeOnboardingService {
       ];
 
       for (const step of commandScripts) {
-        const result = await this.execRemote(client, this.buildRemoteCommand(session, step.script));
+        this.setPhase(job, step.phase);
+        const label = job.phases.find((phase) => phase.id === step.phase)!.label;
+        this.appendLog(job, `\n▸ ${label}\n`);
+        const onLine = (line: string) => {
+          const marker = SCRIPT_MARKERS.find((item) => item.pattern.test(line));
+          if (marker) this.setPhase(job, marker.phase);
+        };
+        const result = await this.execRemote(client, this.buildRemoteCommand(session, step.script), (chunk) =>
+          this.appendLog(job, chunk, onLine),
+        );
+        this.flushLog(job);
         if (result.code !== 0) {
-          throw new Error(
-            `${step.label} failed (${result.code}): ${this.describeRemoteFailure(session, result.stderr || result.stdout || '')}`.trim(),
-          );
-        }
-        const compactOutput = (result.stdout || result.stderr).trim();
-        if (compactOutput) {
-          logs.push(`[${step.label}] ${compactOutput}`);
-        } else {
-          logs.push(`[${step.label}] ok`);
+          const detail = this.describeRemoteFailure(session, result.stderr || result.stdout || '');
+          const lastLines = detail.split('\n').slice(-6).join('\n');
+          throw new Error(`${label} : échec (code ${result.code}).${lastLines ? `\n${lastLines}` : ''}`);
         }
       }
+      this.finishPhase(job, 'build');
+      this.finishPhase(job, 'service');
     } finally {
       client.end();
     }
-    return logs.join('\n');
   }
 
   // The host key is recorded at the first connection and must match on the
@@ -472,7 +708,7 @@ export class NodeOnboardingService {
     });
   }
 
-  private execRemote(client: Client, command: string): Promise<RemoteCommandResult> {
+  private execRemote(client: Client, command: string, onChunk?: (chunk: string) => void): Promise<RemoteCommandResult> {
     return new Promise((resolve, reject) => {
       client.exec(command, (error, stream) => {
         if (error) {
@@ -488,10 +724,14 @@ export class NodeOnboardingService {
             resolve({ code, stdout, stderr });
           })
           .on('data', (data: Buffer) => {
-            stdout += data.toString('utf8');
+            const text = data.toString('utf8');
+            stdout += text;
+            onChunk?.(text);
           });
         stream.stderr.on('data', (data: Buffer) => {
-          stderr += data.toString('utf8');
+          const text = data.toString('utf8');
+          stderr += text;
+          onChunk?.(text);
         });
       });
     });

@@ -1,8 +1,9 @@
 'use client';
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Check, CheckCircle, Copy, FileKey, KeyRound, Loader2, Plus, ShieldCheck, Upload } from 'lucide-react';
-import { api, NodeOnboardingInstallResult, NodeOnboardingStartResult } from '../lib/api';
+import { Check, Copy, FileKey, KeyRound, Plus, ShieldCheck, Upload } from 'lucide-react';
+import { api, ApiError, NodeInstallProgress, NodeOnboardingStartResult } from '../lib/api';
+import { NodeInstallProgressView } from './NodeInstallProgress';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -19,7 +20,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 
 type HostProvider = 'ovh' | 'standard';
 type AuthMethod = 'password' | 'key';
-type Step = 'form' | 'deploy-key' | 'installing' | 'done';
+type Step = 'form' | 'deploy-key' | 'installing';
 
 interface NodeOnboardingModalProps {
   onCreated?: () => void;
@@ -45,7 +46,12 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
   const [error, setError] = useState('');
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
   const [onboarding, setOnboarding] = useState<NodeOnboardingStartResult | null>(null);
-  const [installResult, setInstallResult] = useState<NodeOnboardingInstallResult | null>(null);
+  const [progress, setProgress] = useState<NodeInstallProgress | null>(null);
+  const [logLines, setLogLines] = useState<string[]>([]);
+  const [trackingLost, setTrackingLost] = useState(false);
+  const cursorRef = useRef(0);
+  const onCreatedRef = useRef(onCreated);
+  onCreatedRef.current = onCreated;
 
   useEffect(() => {
     if (copyState !== 'copied') return;
@@ -78,8 +84,45 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
     setLoading(false);
     setCopyState('idle');
     setOnboarding(null);
-    setInstallResult(null);
+    setProgress(null);
+    setLogLines([]);
+    setTrackingLost(false);
+    cursorRef.current = 0;
   };
+
+  // Poll the background install: phase, percentage and new log lines.
+  const installRunning = step === 'installing' && progress?.status === 'running' && !trackingLost;
+  const onboardingId = progress?.onboardingId;
+  useEffect(() => {
+    if (!installRunning || !onboardingId) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const next = await api.nodes.onboardingProgress(onboardingId, cursorRef.current);
+        if (cancelled) return;
+        if (next.lines.length) setLogLines((current) => [...current, ...next.lines].slice(-4000));
+        cursorRef.current = next.cursor;
+        setProgress(next);
+        if (next.status === 'succeeded') onCreatedRef.current?.();
+        if (next.status !== 'running') return;
+      } catch (caught) {
+        if (cancelled) return;
+        // Gone (the API restarted): stop; anything else (a proxy hiccup)
+        // is retried on the next tick.
+        if (caught instanceof ApiError && caught.status === 404) {
+          setTrackingLost(true);
+          return;
+        }
+      }
+      timer = window.setTimeout(poll, 1200);
+    };
+    timer = window.setTimeout(poll, 800);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [installRunning, onboardingId]);
 
   const onOpenChange = (value: boolean) => {
     setOpen(value);
@@ -140,15 +183,16 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
     if (!onboarding) return;
     setLoading(true);
     setError('');
-    setStep('installing');
     try {
-      const result = await api.nodes.onboardingInstall(onboarding.onboardingId);
-      setInstallResult(result);
-      setStep('done');
-      onCreated?.();
+      // Returns at once: the install itself runs in the background.
+      const started = await api.nodes.onboardingInstall(onboarding.onboardingId);
+      cursorRef.current = started.cursor;
+      setLogLines(started.lines);
+      setTrackingLost(false);
+      setProgress(started);
+      setStep('installing');
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Installation distante échouée.');
-      setStep('deploy-key');
+      setError(caught instanceof Error ? caught.message : 'Impossible de lancer l’installation.');
     } finally {
       setLoading(false);
     }
@@ -407,49 +451,38 @@ export function NodeOnboardingModal({ onCreated }: NodeOnboardingModalProps) {
             </div>
           )}
 
-          {step === 'installing' && (
-            <div className="space-y-3 py-4">
-              <div className="flex items-center gap-2 text-sm text-foreground/90">
-                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                Installation automatique en cours sur le serveur distant…
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Actions: création <code>~/.apps/Tarmac</code>, pull repo, installation service agent et démarrage.
-              </p>
-            </div>
-          )}
-
-          {step === 'done' && installResult && (
+          {step === 'installing' && progress && (
             <div className="space-y-4">
-              <div className="flex items-start gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
-                <CheckCircle className="mt-0.5 h-4 w-4 text-emerald-400" />
-                <div>
-                  <p className="text-sm font-medium text-emerald-200">
-                    Agent installé sur {installResult.nodeName}
-                  </p>
-                  <p className="text-xs text-emerald-100/80">Service tarmac-agent démarré.</p>
-                </div>
-              </div>
+              <NodeInstallProgressView progress={progress} lines={logLines} trackingLost={trackingLost} />
 
-              <pre className="max-h-56 overflow-auto rounded-xl border border-border bg-zinc-950/70 p-3 text-xs text-zinc-300">
-                {installResult.output}
-              </pre>
+              {error && <p className="text-sm text-rose-400">{error}</p>}
 
-              {error && (
-                <div className="flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>{error}</span>
-                </div>
+              {progress.status === 'running' && !trackingLost ? (
+                <DialogFooter className="items-center sm:justify-between">
+                  <p className="text-xs text-muted-foreground">Vous pouvez fermer : l’installation continue sur le serveur.</p>
+                  <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
+                    Fermer
+                  </Button>
+                </DialogFooter>
+              ) : progress.status === 'failed' ? (
+                <DialogFooter>
+                  <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
+                    Fermer
+                  </Button>
+                  <Button type="button" onClick={handleInstall} disabled={loading}>
+                    {loading ? 'Relance…' : 'Réessayer l’installation'}
+                  </Button>
+                </DialogFooter>
+              ) : (
+                <DialogFooter>
+                  <Button type="button" variant="secondary" onClick={reset}>
+                    Ajouter un autre
+                  </Button>
+                  <Button type="button" onClick={() => onOpenChange(false)}>
+                    Terminer
+                  </Button>
+                </DialogFooter>
               )}
-
-              <DialogFooter>
-                <Button type="button" variant="secondary" onClick={reset}>
-                  Ajouter un autre
-                </Button>
-                <Button type="button" onClick={() => onOpenChange(false)}>
-                  Terminer
-                </Button>
-              </DialogFooter>
             </div>
           )}
         </DialogContent>

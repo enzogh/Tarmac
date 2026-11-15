@@ -153,11 +153,15 @@ if ! clone_repo "$REPO_URL"; then
   fi
 fi
 
+# "[tarmac] <stage>" lines mark progress for the panel's install view
+# (see SCRIPT_MARKERS in node-onboarding.service.ts).
+echo "[tarmac] build: compiling the agent"
 pushd "$INSTALL_DIR/apps/agent" >/dev/null
 COMMIT_SHA="$(git -C "$INSTALL_DIR" rev-parse --short HEAD 2>/dev/null || echo dev)"
-go build -ldflags "-X main.agentVersion=${COMMIT_SHA}" -o "$BIN_FILE" .
+go build -v -ldflags "-X main.agentVersion=${COMMIT_SHA}" -o "$BIN_FILE" .
 popd >/dev/null
 
+echo "[tarmac] service: installing and starting tarmac-agent.service"
 install -m 0644 "$INSTALL_DIR/apps/agent/systemd/tarmac-agent.service" "$SERVICE_FILE"
 
 cat >"$ENV_FILE" <<EOF
