@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import dynamic from 'next/dynamic';
-import { Activity, ArrowRight, Gauge, Globe2, Info, Minus, Network, Plus, RadioTower, RefreshCw, Share2, Waves, X, Zap } from 'lucide-react';
+import { Activity, ArrowRight, Gauge, Globe2, Info, LocateFixed, Minus, Network, Plus, RadioTower, RefreshCw, Share2, Waves, X, Zap } from 'lucide-react';
 import { api, VlanConnection, VlanConnectionHistory, VlanConnectionTest, VlanStatus } from '@/lib/api';
 import { shortHostname } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -16,12 +16,24 @@ import {
   LINK_STATUS,
   LinksPanel,
   LocationEditor,
+  regionLabel,
   sortLinks,
   SegmentationCard,
   type LinkStatus,
   type LinkSummary,
   type LocationRow,
 } from './components/network-ui';
+import {
+  computeDefaultPositions,
+  computeParcels,
+  contentBounds,
+  fitTransform,
+  layoutSignature,
+  NODE_DISC_RADIUS,
+  NODE_FOOTPRINT_RADIUS,
+  regionHue,
+  type LayoutMember,
+} from './components/graph-layout';
 import { ConnectionHistoryChart } from '@/components/dashboard-charts';
 import { GeoInfo, flagFromCountryCode, geocodeCity, getGeoInfo, normalizeCountryCode, parseHostFromEndpoint } from '@/lib/geo';
 import { countryCentroid } from '@/lib/country-centroids';
@@ -74,19 +86,13 @@ type GraphNode = {
   city: string;
   country: string;
   countryCode: string | null;
+  region: string | null;
+  isGateway: boolean;
   x: number;
   y: number;
   lat: number;
   lng: number;
   isPositionApproximate: boolean;
-};
-
-type GraphBubble = {
-  id: string;
-  label: string;
-  x: number;
-  y: number;
-  r: number;
 };
 
 type GraphLink = {
@@ -116,9 +122,6 @@ type GeoOverride = {
   country?: string;
   countryCode?: string;
 };
-
-const MIND_MAP_WIDTH = 1320;
-const MIND_MAP_HEIGHT = 760;
 
 const STATUS_PRIORITY: Record<LinkStatus, number> = {
   healthy: 0,
@@ -152,6 +155,31 @@ const nodeFill = (status: GraphNode['status']) => {
   return '#f43f5e';
 };
 
+// Rough text width (no measuring in SVG): ~0.6 em per character.
+const textWidth = (text: string, fontSize: number) => text.length * fontSize * 0.6;
+
+/**
+ * The first variant that fits `maxWidth`, else the last one shortened with
+ * an ellipsis. `flag` is an emoji: several UTF-16 units, about 1.4 em wide
+ * with its space, so it's measured apart.
+ */
+const fitLabel = (variants: string[], maxWidth: number, fontSize: number, flag = '') => {
+  const withFlag = (text: string) => (flag ? `${flag} ${text}` : text);
+  const room = maxWidth - (flag ? fontSize * 1.4 : 0);
+  for (const variant of variants) {
+    if (textWidth(variant, fontSize) <= room) return withFlag(variant);
+  }
+  const last = variants[variants.length - 1];
+  const chars = Math.max(4, Math.floor(room / (fontSize * 0.6)) - 1);
+  return withFlag(last.length > chars ? `${last.slice(0, chars)}…` : last);
+};
+
+// A region's faint tint for its parcels (neutral grey for an unknown region).
+const parcelTint = (region: string | null) => {
+  const hue = regionHue(region);
+  return (alpha: number) => (hue === null ? `hsl(240 5% 65% / ${alpha})` : `hsl(${hue} 80% 68% / ${alpha})`);
+};
+
 const linkPulseDuration = (latencyMs?: number | null) => {
   if (typeof latencyMs !== 'number' || latencyMs <= 0) return '3s';
   const clamped = Math.max(900, Math.min(5000, latencyMs * 18));
@@ -165,8 +193,7 @@ const linkGlow = (status: LinkStatus) => {
   return 'drop-shadow(0 0 7px rgba(161,161,170,0.45))';
 };
 
-const clampScale = (value: number) => Math.max(0.45, Math.min(3.2, value));
-const NODE_RADIUS = 26;
+const clampScale = (value: number) => Math.max(0.2, Math.min(3.2, value));
 
 export default function NetworkPage() {
   const [vlanStatus, setVlanStatus] = useState<VlanStatus | null>(null);
@@ -199,6 +226,29 @@ export default function NetworkPage() {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const panRef = useRef<{ pointerId: number; startX: number; startY: number; startTx: number; startTy: number } | null>(null);
   const nodeDragRef = useRef<{ pointerId: number; nodeId: string; offsetX: number; offsetY: number } | null>(null);
+  // The graph's viewBox is the frame's real pixel size, so the fit below and
+  // pointer maths are exact at any width (it used to be a fixed 1320×760
+  // letterboxed into whatever space the card had).
+  const [graphSize, setGraphSize] = useState({ width: 960, height: 520 });
+  const graphResizeRef = useRef<ResizeObserver | null>(null);
+  const graphFrameRef = useCallback((element: HTMLDivElement | null) => {
+    graphResizeRef.current?.disconnect();
+    graphResizeRef.current = null;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(([entry]) => {
+      const width = Math.round(entry.contentRect.width);
+      const height = Math.round(entry.contentRect.height);
+      if (width > 0 && height > 0) {
+        setGraphSize((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
+      }
+    });
+    observer.observe(element);
+    graphResizeRef.current = observer;
+  }, []);
+  // Set once the user pans or zooms: from then on the view stays where they
+  // put it, until the fleet's shape changes or they press "Recentrer".
+  const userMovedViewRef = useRef(false);
+  const lastFitSignatureRef = useRef<string | null>(null);
   const geocodeAttemptedRef = useRef<Set<string>>(new Set());
   const countryPersistAttemptedRef = useRef<Set<string>>(new Set());
   const [gatewaySavingByNodeId, setGatewaySavingByNodeId] = useState<Record<string, boolean>>({});
@@ -478,94 +528,60 @@ export default function NetworkPage() {
     }
 
     const membersList = vlanStatus.vlan.members ?? [];
-    const grouped = new Map<string, Map<string, Array<(typeof membersList)[number]>>>();
+    const nodes: GraphNode[] = [];
+    // Positions in the graph come from graph-layout (packed by region →
+    // country → city); only the map's lat/lng are resolved here.
     for (const member of membersList) {
       const endpointHost = parseHostFromEndpoint(member.node?.externalIp || member.node?.overlayEndpoint);
       const geo = endpointHost ? geoByIp[endpointHost] : null;
       const override = geoOverrides[member.nodeId];
       const country = override?.country?.trim() || geo?.country || 'Pays inconnu';
       const city = override?.city?.trim() || geo?.city || 'Ville inconnue';
-      if (!grouped.has(country)) grouped.set(country, new Map());
-      const countryGroup = grouped.get(country)!;
-      if (!countryGroup.has(city)) countryGroup.set(city, []);
-      countryGroup.get(city)!.push(member);
-    }
-
-    const countryEntries = Array.from(grouped.entries());
-    const centerX = MIND_MAP_WIDTH / 2;
-    const centerY = MIND_MAP_HEIGHT / 2;
-    const countryOrbitRadius =
-      countryEntries.length <= 1
-        ? 0
-        : countryEntries.length === 2
-          ? 220
-          : Math.min(360, 170 + countryEntries.length * 42);
-    const nodes: GraphNode[] = [];
-
-    countryEntries.forEach(([country, cities], countryIndex) => {
-      const countryAngle = (countryIndex / Math.max(countryEntries.length, 1)) * Math.PI * 2 - Math.PI / 2;
-      const countryCenterX = centerX + Math.cos(countryAngle) * countryOrbitRadius;
-      const countryCenterY = centerY + Math.sin(countryAngle) * countryOrbitRadius;
-      const cityEntries = Array.from(cities.entries());
-      cityEntries.forEach(([city, members], cityIndex) => {
-        const cityAngle = (cityIndex / Math.max(cityEntries.length, 1)) * Math.PI * 2 - Math.PI / 2;
-        const cityOrbitRadius =
-          cityEntries.length <= 1
-            ? 0
-            : Math.min(220, 90 + members.length * 22 + Math.max(0, cityEntries.length - 2) * 18);
-        const cityCenterX = countryCenterX + Math.cos(cityAngle) * cityOrbitRadius;
-        const cityCenterY = countryCenterY + Math.sin(cityAngle) * cityOrbitRadius;
-        members.forEach((member, memberIndex) => {
-          const endpointHost = parseHostFromEndpoint(member.node?.externalIp || member.node?.overlayEndpoint);
-          const geo = endpointHost ? geoByIp[endpointHost] : null;
-          const override = geoOverrides[member.nodeId];
-          const nodeAngle = (memberIndex / Math.max(members.length, 1)) * Math.PI * 2 - Math.PI / 2;
-          const nodeOrbitRadius = members.length <= 1 ? 0 : Math.min(220, 58 + members.length * 14);
-          const countryCode = normalizeCountryCode(override?.countryCode) ?? geo?.countryCode ?? null;
-          const mapOverride = mapLocationOverrides[member.nodeId];
-          let lat: number;
-          let lng: number;
-          let isPositionApproximate: boolean;
-          if (mapOverride) {
-            [lat, lng] = mapOverride;
-            isPositionApproximate = false;
-          } else if (typeof member.node?.locationLat === 'number' && typeof member.node?.locationLng === 'number') {
-            lat = member.node.locationLat;
-            lng = member.node.locationLng;
-            isPositionApproximate = false;
-          } else if (
-            typeof geo?.latitude === 'number' &&
-            typeof geo?.longitude === 'number' &&
-            geoIpMatchesManualLocation(override, geo)
-          ) {
-            lat = geo.latitude;
-            lng = geo.longitude;
-            isPositionApproximate = false;
-          } else {
-            // A manual location without coordinates (city not found, or
-            // only the country set) lands on its country, never back on
-            // the IP-based guess it was meant to correct.
-            const centroid = countryCentroid(countryCode);
-            [lat, lng] = centroid ?? [15, 10];
-            isPositionApproximate = true;
-          }
-          nodes.push({
-            id: member.nodeId,
-            label: member.node?.name || member.nodeId.slice(0, 8),
-            vlanIp: member.vlanIp,
-            status: member.node?.status === 'online' ? 'online' : 'offline',
-            city: override?.city?.trim() || city,
-            country: override?.country?.trim() || country,
-            countryCode,
-            x: cityCenterX + Math.cos(nodeAngle) * nodeOrbitRadius,
-            y: cityCenterY + Math.sin(nodeAngle) * nodeOrbitRadius,
-            lat,
-            lng,
-            isPositionApproximate,
-          });
-        });
+      const countryCode = normalizeCountryCode(override?.countryCode) ?? geo?.countryCode ?? null;
+      const mapOverride = mapLocationOverrides[member.nodeId];
+      let lat: number;
+      let lng: number;
+      let isPositionApproximate: boolean;
+      if (mapOverride) {
+        [lat, lng] = mapOverride;
+        isPositionApproximate = false;
+      } else if (typeof member.node?.locationLat === 'number' && typeof member.node?.locationLng === 'number') {
+        lat = member.node.locationLat;
+        lng = member.node.locationLng;
+        isPositionApproximate = false;
+      } else if (
+        typeof geo?.latitude === 'number' &&
+        typeof geo?.longitude === 'number' &&
+        geoIpMatchesManualLocation(override, geo)
+      ) {
+        lat = geo.latitude;
+        lng = geo.longitude;
+        isPositionApproximate = false;
+      } else {
+        // A manual location without coordinates (city not found, or
+        // only the country set) lands on its country, never back on
+        // the IP-based guess it was meant to correct.
+        const centroid = countryCentroid(countryCode);
+        [lat, lng] = centroid ?? [15, 10];
+        isPositionApproximate = true;
+      }
+      nodes.push({
+        id: member.nodeId,
+        label: member.node?.name || member.nodeId.slice(0, 8),
+        vlanIp: member.vlanIp,
+        status: member.node?.status === 'online' ? 'online' : 'offline',
+        city,
+        country,
+        countryCode,
+        region: member.region ?? null,
+        isGateway: Boolean(member.gatewayActive),
+        x: 0,
+        y: 0,
+        lat,
+        lng,
+        isPositionApproximate,
       });
-    });
+    }
 
     const bestByPair = new Map<string, GraphLink>();
     for (const connection of physicalConnections) {
@@ -602,14 +618,39 @@ export default function NetworkPage() {
     }
     return map;
   }, [vlanStatus]);
-  const displayedNodes = useMemo(
+  const layoutMembers: LayoutMember[] = useMemo(
     () =>
       graph.nodes.map((node) => ({
-        ...node,
-        ...(persistedGraphPositions.get(node.id) ?? {}),
-        ...(nodePositionOverrides[node.id] ?? {}),
+        id: node.id,
+        region: node.region,
+        country: node.country,
+        countryCode: node.countryCode,
+        city: node.city,
       })),
-    [graph.nodes, persistedGraphPositions, nodePositionOverrides],
+    [graph.nodes],
+  );
+  const graphSignature = useMemo(() => layoutSignature(layoutMembers), [layoutMembers]);
+  // Regions are arranged for the frame's shape (a row on a wide card, a
+  // column on a phone); bucketed so a few pixels of resize don't reshuffle.
+  const graphAspect = Math.round((graphSize.width / graphSize.height) * 4) / 4;
+  // Keyed on the signature: the ~5 s poll hands over new arrays every tick,
+  // but the packing only has to change when the fleet's shape does.
+  const defaultGraphPositions = useMemo(
+    () => computeDefaultPositions(layoutMembers, graphAspect),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [graphSignature, graphAspect],
+  );
+  // A dragged node is stored as an offset from its packed spot (graphX/Y),
+  // not as an absolute point: it stays put relative to its parcel when other
+  // nodes join or leave and the packing moves around it.
+  const displayedNodes = useMemo(
+    () =>
+      graph.nodes.map((node) => {
+        const base = defaultGraphPositions.get(node.id) ?? { x: 0, y: 0 };
+        const offset = nodePositionOverrides[node.id] ?? persistedGraphPositions.get(node.id) ?? { x: 0, y: 0 };
+        return { ...node, x: base.x + offset.x, y: base.y + offset.y };
+      }),
+    [graph.nodes, defaultGraphPositions, persistedGraphPositions, nodePositionOverrides],
   );
   const worldMapNodes: WorldMapNode[] = useMemo(
     () =>
@@ -644,64 +685,37 @@ export default function NetworkPage() {
       .update(nodeId, { locationLat: lat, locationLng: lng })
       .catch(() => setNotice({ type: 'error', message: 'Impossible d’enregistrer la position sur la carte.' }));
   };
-  const { cityBubbles, countryBubbles } = useMemo(() => {
-    const cityGroups = new Map<string, GraphNode[]>();
-    for (const node of displayedNodes) {
-      const cityKey = `${node.country}__${node.city}`;
-      const current = cityGroups.get(cityKey) ?? [];
-      current.push(node);
-      cityGroups.set(cityKey, current);
+  const parcels = useMemo(
+    () => computeParcels(layoutMembers, new Map(displayedNodes.map((node) => [node.id, { x: node.x, y: node.y }]))),
+    [layoutMembers, displayedNodes],
+  );
+  // Biggest first, so regions sit behind countries behind cities.
+  const parcelsBackToFront = useMemo(() => [...parcels].reverse(), [parcels]);
+  // Zoomed out to fit a big fleet, labels would shrink to unreadable: they
+  // grow back in world units (up to a cap) to stay legible on screen.
+  const labelBoost = Math.min(1 / viewTransform.scale, 1.6);
+  const fitGraphView = useCallback(() => {
+    const bounds = contentBounds(parcels, displayedNodes);
+    // The legend wraps to two lines on a phone.
+    if (bounds) setViewTransform(fitTransform(bounds, graphSize.width, graphSize.height, { bottom: graphSize.width < 520 ? 64 : 48 }));
+  }, [parcels, displayedNodes, graphSize]);
+  const fitGraphViewRef = useRef(fitGraphView);
+  fitGraphViewRef.current = fitGraphView;
+  // Centred and zoomed to fit on first display, whenever a node joins,
+  // leaves or moves to another place, and on resize until the user takes
+  // over the view themselves.
+  useEffect(() => {
+    if (mapView !== 'graph' || networkTab !== 'topology' || displayedNodes.length === 0) return;
+    if (lastFitSignatureRef.current !== graphSignature) {
+      lastFitSignatureRef.current = graphSignature;
+      userMovedViewRef.current = false;
     }
-
-    const computedCityBubbles: GraphBubble[] = [];
-    const countryToCityBubbles = new Map<string, GraphBubble[]>();
-
-    cityGroups.forEach((nodes, key) => {
-      const [country, city] = key.split('__');
-      const centerX = nodes.reduce((acc, node) => acc + node.x, 0) / nodes.length;
-      const centerY = nodes.reduce((acc, node) => acc + node.y, 0) / nodes.length;
-      const maxNodeDistance = nodes.reduce((max, node) => {
-        const dx = node.x - centerX;
-        const dy = node.y - centerY;
-        return Math.max(max, Math.hypot(dx, dy));
-      }, 0);
-      const bubble: GraphBubble = {
-        id: `city-${country}-${city}`,
-        label: city,
-        x: centerX,
-        y: centerY,
-        r: Math.max(72, maxNodeDistance + NODE_RADIUS + 28),
-      };
-      computedCityBubbles.push(bubble);
-      const bucket = countryToCityBubbles.get(country) ?? [];
-      bucket.push(bubble);
-      countryToCityBubbles.set(country, bucket);
-    });
-
-    const computedCountryBubbles: GraphBubble[] = [];
-    countryToCityBubbles.forEach((bubbles, country) => {
-      if (bubbles.length === 0) return;
-      const centerX = bubbles.reduce((acc, bubble) => acc + bubble.x, 0) / bubbles.length;
-      const centerY = bubbles.reduce((acc, bubble) => acc + bubble.y, 0) / bubbles.length;
-      const maxBubbleDistance = bubbles.reduce((max, bubble) => {
-        const dx = bubble.x - centerX;
-        const dy = bubble.y - centerY;
-        return Math.max(max, Math.hypot(dx, dy) + bubble.r);
-      }, 0);
-      computedCountryBubbles.push({
-        id: `country-${country}`,
-        label: country,
-        x: centerX,
-        y: centerY,
-        r: Math.max(140, maxBubbleDistance + 24),
-      });
-    });
-
-    return {
-      cityBubbles: computedCityBubbles,
-      countryBubbles: computedCountryBubbles,
-    };
-  }, [displayedNodes]);
+    if (!userMovedViewRef.current) fitGraphViewRef.current();
+  }, [graphSignature, graphSize.width, graphSize.height, mapView, networkTab, displayedNodes.length]);
+  const recenterGraph = () => {
+    userMovedViewRef.current = false;
+    fitGraphView();
+  };
   const nodeById = useMemo(() => new Map(displayedNodes.map((node) => [node.id, node])), [displayedNodes]);
   const shortName = useCallback(
     (nodeId: string) => {
@@ -874,8 +888,8 @@ export default function NetworkPage() {
     const rect = svg.getBoundingClientRect();
     if (!rect.width || !rect.height) return null;
     return {
-      x: ((clientX - rect.left) / rect.width) * MIND_MAP_WIDTH,
-      y: ((clientY - rect.top) / rect.height) * MIND_MAP_HEIGHT,
+      x: ((clientX - rect.left) / rect.width) * graphSize.width,
+      y: ((clientY - rect.top) / rect.height) * graphSize.height,
     };
   };
 
@@ -889,10 +903,11 @@ export default function NetworkPage() {
   };
 
   const zoomFrom = (factor: number, focus?: { x: number; y: number }) => {
+    userMovedViewRef.current = true;
     setViewTransform((prev) => {
       const nextScale = clampScale(prev.scale * factor);
       if (nextScale === prev.scale) return prev;
-      const center = focus ?? { x: MIND_MAP_WIDTH / 2, y: MIND_MAP_HEIGHT / 2 };
+      const center = focus ?? { x: graphSize.width / 2, y: graphSize.height / 2 };
       const worldX = (center.x - prev.tx) / prev.scale;
       const worldY = (center.y - prev.ty) / prev.scale;
       return {
@@ -903,13 +918,24 @@ export default function NetworkPage() {
     });
   };
 
-  const handleMapWheel = (event: ReactWheelEvent<SVGSVGElement>) => {
+  const handleMapWheel = (event: WheelEvent) => {
     event.preventDefault();
     const focus = toSvgPoint(event.clientX, event.clientY);
     if (!focus) return;
     const factor = Math.exp(-event.deltaY * 0.0016);
     zoomFrom(factor, focus);
   };
+  const handleMapWheelRef = useRef(handleMapWheel);
+  handleMapWheelRef.current = handleMapWheel;
+  // Native, non-passive listener: React's onWheel is passive, so its
+  // preventDefault() was ignored and the page scrolled along with the zoom.
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || mapView !== 'graph') return;
+    const listener = (event: WheelEvent) => handleMapWheelRef.current(event);
+    svg.addEventListener('wheel', listener, { passive: false });
+    return () => svg.removeEventListener('wheel', listener);
+  }, [mapView, networkTab]);
 
   const handleMapPointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (event.button !== 0) return;
@@ -932,11 +958,12 @@ export default function NetworkPage() {
       const dragState = nodeDragRef.current;
       const world = toWorldPoint(event.clientX, event.clientY);
       if (!world) return;
+      const base = defaultGraphPositions.get(dragState.nodeId) ?? { x: 0, y: 0 };
       setNodePositionOverrides((prev) => ({
         ...prev,
         [dragState.nodeId]: {
-          x: world.x - dragState.offsetX,
-          y: world.y - dragState.offsetY,
+          x: world.x - dragState.offsetX - base.x,
+          y: world.y - dragState.offsetY - base.y,
         },
       }));
       return;
@@ -945,6 +972,7 @@ export default function NetworkPage() {
     if (!panRef.current || panRef.current.pointerId !== event.pointerId) return;
     const point = toSvgPoint(event.clientX, event.clientY);
     if (!point) return;
+    userMovedViewRef.current = true;
     setViewTransform((prev) => ({
       ...prev,
       tx: panRef.current!.startTx + (point.x - panRef.current!.startX),
@@ -1317,7 +1345,8 @@ export default function NetworkPage() {
                       <Button size="icon" variant="secondary" className="h-7 w-7" onClick={() => zoomFrom(1 / 1.16)} aria-label="Dézoomer">
                         <Minus className="h-3.5 w-3.5" />
                       </Button>
-                      <Button size="sm" variant="secondary" className="h-7" onClick={() => setViewTransform({ scale: 1, tx: 0, ty: 0 })}>
+                      <Button size="sm" variant="secondary" className="h-7 gap-1.5" onClick={recenterGraph}>
+                        <LocateFixed className="h-3.5 w-3.5" />
                         Recentrer
                       </Button>
                     </>
@@ -1331,7 +1360,7 @@ export default function NetworkPage() {
                     <TooltipContent className="max-w-xs">
                       {mapView === 'map'
                         ? 'Molette pour zoomer, glisser le fond pour se déplacer, glisser un point pour corriger sa position. Les nœuds d’un même lieu sont regroupés tant que vous n’avez pas zoomé.'
-                        : 'Molette pour zoomer, glisser le fond pour se déplacer, glisser un nœud pour le repositionner. Cliquez un lien pour le sélectionner.'}
+                        : 'Les nœuds sont regroupés par région, puis par pays et par ville. Molette pour zoomer, glisser le fond pour se déplacer, glisser un nœud pour l’écarter (sa position est mémorisée). Cliquez un lien pour le sélectionner.'}
                     </TooltipContent>
                   </Tooltip>
                 </div>
@@ -1343,79 +1372,160 @@ export default function NetworkPage() {
                     links={worldMapLinks}
                     onNodeDrag={handleMapNodeDrag}
                     onSelectNode={setSelectedMapNodeId}
-                    className="h-[520px] w-full rounded-none border-0"
+                    className="h-[520px] w-full rounded-none border-0 xl:h-[600px]"
                   />
                 ) : (
-                  <div className="bg-surface-2/40">
+                  <div ref={graphFrameRef} className="relative h-[520px] overflow-hidden bg-surface-2/40 xl:h-[600px]">
                     <svg
                       ref={svgRef}
-                      viewBox={`0 0 ${MIND_MAP_WIDTH} ${MIND_MAP_HEIGHT}`}
-                      className="h-[520px] w-full touch-none"
-                      onWheel={handleMapWheel}
+                      viewBox={`0 0 ${graphSize.width} ${graphSize.height}`}
+                      className="h-full w-full touch-none select-none"
                       onPointerDown={handleMapPointerDown}
                       onPointerMove={handleMapPointerMove}
                       onPointerUp={endPointerInteraction}
                       onPointerCancel={endPointerInteraction}
                     >
+                      <defs>
+                        <pattern id="graph-grid" width={24} height={24} patternUnits="userSpaceOnUse">
+                          <circle cx={1} cy={1} r={1} fill="hsl(var(--muted-foreground) / 0.12)" />
+                        </pattern>
+                      </defs>
+                      <rect width="100%" height="100%" fill="url(#graph-grid)" />
                       <g transform={`translate(${viewTransform.tx} ${viewTransform.ty}) scale(${viewTransform.scale})`}>
-                        {countryBubbles.map((bubble) => (
-                          <g key={bubble.id}>
-                            <circle cx={bubble.x} cy={bubble.y} r={bubble.r} fill="rgba(59,130,246,0.04)" stroke="rgba(59,130,246,0.18)" strokeWidth={1.5} />
-                            <text x={bubble.x} y={bubble.y - bubble.r + 18} textAnchor="middle" fill="rgba(191,219,254,0.85)" fontSize={11}>
-                              {bubble.label}
-                            </text>
-                          </g>
-                        ))}
-                        {cityBubbles.map((bubble) => (
-                          <g key={bubble.id}>
-                            <circle cx={bubble.x} cy={bubble.y} r={bubble.r} fill="rgba(139,92,246,0.04)" stroke="rgba(139,92,246,0.2)" strokeWidth={1} />
-                            <text x={bubble.x} y={bubble.y - bubble.r + 14} textAnchor="middle" fill="rgba(221,214,254,0.75)" fontSize={10}>
-                              {bubble.label}
-                            </text>
-                          </g>
-                        ))}
+                        {parcelsBackToFront.map((parcel) => {
+                          const tint = parcelTint(parcel.region);
+                          const isRegion = parcel.kind === 'region';
+                          const isCountry = parcel.kind === 'country';
+                          return (
+                            <circle
+                              key={parcel.id}
+                              cx={parcel.x}
+                              cy={parcel.y}
+                              r={parcel.r}
+                              fill={tint(isRegion ? 0.05 : isCountry ? 0.045 : 0.035)}
+                              stroke={tint(isRegion ? 0.38 : isCountry ? 0.28 : 0.24)}
+                              strokeWidth={isRegion ? 1.5 : 1}
+                              strokeDasharray={parcel.kind === 'city' ? '4 5' : undefined}
+                            />
+                          );
+                        })}
                         {graph.links.map((link) => {
                           const source = nodeById.get(link.sourceNodeId);
                           const target = nodeById.get(link.targetNodeId);
                           if (!source || !target) return null;
                           const isSelected = selectedPairKey === link.key;
+                          const dimmed = selectedPairKey !== null && !isSelected;
+                          // Links between two regions (gateway to gateway) bow out
+                          // so they read apart from the regions' inner mesh; inner
+                          // links curve slightly too, so lined-up nodes don't
+                          // stack their links on one line through each other.
+                          const crossRegion = source.region !== target.region;
+                          const dx = target.x - source.x;
+                          const dy = target.y - source.y;
+                          const bow = crossRegion ? 0.18 : 0.1;
+                          const controlX = (source.x + target.x) / 2 - dy * bow;
+                          const controlY = (source.y + target.y) / 2 + dx * bow;
+                          const d = `M ${source.x} ${source.y} Q ${controlX} ${controlY} ${target.x} ${target.y}`;
                           return (
                             <g
                               key={link.key}
                               data-link-clickable="true"
                               onClick={() => setSelectedPairKey(isSelected ? null : link.key)}
                               className="cursor-pointer"
+                              opacity={dimmed ? 0.25 : 1}
                             >
-                              <line
-                                x1={source.x}
-                                y1={source.y}
-                                x2={target.x}
-                                y2={target.y}
+                              {/* Wide invisible stroke: a 2 px line is hard to hit. */}
+                              <path d={d} fill="none" stroke="transparent" strokeWidth={16} vectorEffect="non-scaling-stroke" />
+                              <path
+                                id={`path-${link.key}`}
+                                d={d}
+                                fill="none"
                                 stroke={linkStroke(link.status)}
-                                strokeWidth={isSelected ? 5 : link.status === 'offline' ? 2 : 3}
+                                strokeWidth={isSelected ? 4.5 : crossRegion ? 3 : 2}
                                 strokeDasharray={link.status === 'offline' ? '6 6' : undefined}
-                                style={{ filter: linkGlow(link.status) }}
+                                strokeLinecap="round"
+                                vectorEffect="non-scaling-stroke"
+                                style={{ filter: isSelected || crossRegion ? linkGlow(link.status) : undefined }}
                               />
                               {link.status !== 'offline' && (
-                                <circle r={isSelected ? 5 : 4} fill={linkStroke(link.status)}>
+                                <circle r={isSelected ? 5 : crossRegion ? 4 : 3} fill={linkStroke(link.status)}>
                                   <animateMotion dur={linkPulseDuration(link.latencyMs)} repeatCount="indefinite" rotate="auto">
                                     <mpath href={`#path-${link.key}`} />
                                   </animateMotion>
                                 </circle>
                               )}
-                              <path id={`path-${link.key}`} d={`M ${source.x} ${source.y} L ${target.x} ${target.y}`} fill="none" stroke="none" />
                               <title>
-                                {shortName(source.id)} ↔ {shortName(target.id)} · {LINK_STATUS[link.status].label} · {formatMs(link.latencyMs)} · perte {formatPercent(link.packetLoss)}
+                                {shortName(source.id)} ↔ {shortName(target.id)}
+                                {crossRegion ? ' · lien entre régions' : ''} · {LINK_STATUS[link.status].label} · {formatMs(link.latencyMs)} · perte{' '}
+                                {formatPercent(link.packetLoss)}
                               </title>
                             </g>
                           );
                         })}
+                        {/* Parcel labels above the links, so a line never crosses out a name. */}
+                        {parcelsBackToFront.map((parcel) => {
+                          const tint = parcelTint(parcel.region);
+                          if (parcel.kind === 'region') {
+                            const count = parcel.nodeIds.length;
+                            const text = `${regionLabel(parcel.region)} · ${count} nœud${count > 1 ? 's' : ''}`;
+                            const k = labelBoost;
+                            const width = (text.length * 7 + 26) * k;
+                            return (
+                              <g key={parcel.id} className="pointer-events-none">
+                                {/* Tag straddling the top edge, like a label on a parcel map. */}
+                                <rect
+                                  x={parcel.x - width / 2}
+                                  y={parcel.y - parcel.r - 13 * k}
+                                  width={width}
+                                  height={26 * k}
+                                  rx={13 * k}
+                                  fill="hsl(var(--surface-1))"
+                                  stroke={tint(0.5)}
+                                  vectorEffect="non-scaling-stroke"
+                                />
+                                <text x={parcel.x} y={parcel.y - parcel.r + 4.5 * k} textAnchor="middle" fill={tint(0.95)} fontSize={12.5 * k} fontWeight={600}>
+                                  {text}
+                                </text>
+                              </g>
+                            );
+                          }
+                          const isCountry = parcel.kind === 'country';
+                          // These sit in the parcel's padding band: grown less, or
+                          // they'd spill onto the children below.
+                          const k = Math.min(labelBoost, 1.3);
+                          const fontSize = (isCountry ? 12 : 11) * k;
+                          // Must fit the bubble's width near its top, or two
+                          // neighbours' labels run into each other: drop the city,
+                          // then shorten.
+                          const flag = isCountry ? flagFromCountryCode(parcel.countryCode) : '';
+                          const text = fitLabel([parcel.label, parcel.shortLabel], parcel.r * 1.9, fontSize, flag);
+                          return (
+                            <text
+                              key={parcel.id}
+                              x={parcel.x}
+                              y={parcel.y - parcel.r + (isCountry ? 15 : 12) + 2 * k}
+                              textAnchor="middle"
+                              fill={isCountry ? 'hsl(var(--foreground) / 0.8)' : 'hsl(var(--muted-foreground))'}
+                              fontSize={fontSize}
+                              fontWeight={isCountry ? 500 : 400}
+                              stroke="hsl(var(--surface-2))"
+                              strokeWidth={3}
+                              paintOrder="stroke"
+                              className="pointer-events-none"
+                            >
+                              {text}
+                            </text>
+                          );
+                        })}
                         {displayedNodes.map((node) => {
-                          const nameLine = `${flagFromCountryCode(node.countryCode)} ${shortName(node.id)}`;
-                          const detailLine = `${node.city} · ${node.vlanIp}`;
-                          // Rough char-width estimate (no canvas measurement in SVG) so the plate
-                          // covers whichever line is wider.
-                          const labelWidth = Math.max(nameLine.length * 7.2, detailLine.length * 6.2) + 16;
+                          const name = shortName(node.id);
+                          const selected = selectedPairKey !== null && selectedPairKey.split('__').includes(node.id);
+                          const baseWidth = Math.max(name.length * 7, node.vlanIp.length * 6.2) + 16;
+                          // Grown with the zoom-out, but never wider than the node's
+                          // footprint: two neighbours' plates must not overlap.
+                          const k = Math.max(1, Math.min(labelBoost, (NODE_FOOTPRINT_RADIUS * 2 - 8) / baseWidth));
+                          const plateWidth = baseWidth * k;
+                          const color = nodeFill(node.status);
                           return (
                             <g
                               key={node.id}
@@ -1423,27 +1533,92 @@ export default function NetworkPage() {
                               onPointerDown={(event) => handleNodePointerDown(event, node.id)}
                               className="cursor-grab active:cursor-grabbing"
                             >
-                              <circle cx={node.x} cy={node.y} r={26} fill="rgba(9,9,11,0.95)" stroke={nodeFill(node.status)} strokeWidth={2.5} />
-                              <circle cx={node.x} cy={node.y} r={10} fill={nodeFill(node.status)} />
-                              <rect x={node.x - labelWidth / 2} y={node.y + 40} width={labelWidth} height={42} rx={8} fill="rgba(9,9,11,0.85)" />
-                              <text x={node.x} y={node.y + 54} textAnchor="middle" fill="rgba(244,244,245,0.94)" fontSize={13}>
-                                {nameLine}
+                              <title>
+                                {node.label} · {node.vlanIp} · {node.city}, {node.country} · {node.status === 'online' ? 'en ligne' : 'hors ligne'}
+                                {node.isGateway ? ' · passerelle de sa région' : ''}
+                              </title>
+                              {node.status === 'online' && (
+                                <circle cx={node.x} cy={node.y} r={NODE_DISC_RADIUS + 7} fill={color} opacity={0.12} />
+                              )}
+                              <circle
+                                cx={node.x}
+                                cy={node.y}
+                                r={NODE_DISC_RADIUS}
+                                fill="hsl(var(--surface-1))"
+                                stroke={selected ? 'hsl(var(--primary))' : color}
+                                strokeWidth={selected ? 3.5 : 2.5}
+                              />
+                              <circle cx={node.x} cy={node.y} r={8} fill={color} />
+                              {node.isGateway && (
+                                // Diamond badge on the rim: this node carries its region's
+                                // traffic to the other regions.
+                                <g transform={`translate(${node.x + 16} ${node.y - 16})`}>
+                                  <rect x={-7} y={-7} width={14} height={14} rx={2.5} transform="rotate(45)" fill="hsl(var(--primary))" stroke="hsl(var(--surface-1))" strokeWidth={2} />
+                                </g>
+                              )}
+                              <rect
+                                x={node.x - plateWidth / 2}
+                                y={node.y + NODE_DISC_RADIUS + 6}
+                                width={plateWidth}
+                                height={34 * k}
+                                rx={7 * k}
+                                fill="hsl(var(--surface-1) / 0.92)"
+                                stroke="hsl(var(--border))"
+                                vectorEffect="non-scaling-stroke"
+                              />
+                              <text x={node.x} y={node.y + NODE_DISC_RADIUS + 6 + 14 * k} textAnchor="middle" fill="hsl(var(--foreground))" fontSize={12 * k} fontWeight={500}>
+                                {name}
                               </text>
-                              <text x={node.x} y={node.y + 74} textAnchor="middle" fill="rgba(161,161,170,0.95)" fontSize={11} className="font-mono">
-                                {detailLine}
+                              <text
+                                x={node.x}
+                                y={node.y + NODE_DISC_RADIUS + 6 + 28 * k}
+                                textAnchor="middle"
+                                fill="hsl(var(--muted-foreground))"
+                                fontSize={10.5 * k}
+                                className="font-mono"
+                              >
+                                {node.vlanIp}
                               </text>
                             </g>
                           );
                         })}
                       </g>
                     </svg>
+                    {displayedNodes.length === 0 ? (
+                      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
+                        <Network className="h-6 w-6 text-muted-foreground" />
+                        <p className="text-sm font-medium text-foreground">Aucun nœud dans le réseau privé</p>
+                        <p className="max-w-xs text-xs text-muted-foreground">Les nœuds apparaissent ici, regroupés par région, dès qu’ils ont rejoint le réseau.</p>
+                      </div>
+                    ) : (
+                      <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-surface-1/90 px-2.5 py-1.5 text-2xs text-muted-foreground backdrop-blur">
+                        <span className="flex items-center gap-1.5">
+                          <span className="h-2 w-2 rounded-full bg-[#10b981]" />
+                          En ligne
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <span className="h-2 w-2 rounded-full bg-[#f43f5e]" />
+                          Hors ligne
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <span className="h-2 w-2 rotate-45 rounded-[2px] bg-primary" />
+                          Passerelle
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <svg width="18" height="8" viewBox="0 0 18 8" aria-hidden>
+                            <path d="M1 7 Q9 -2 17 7" fill="none" stroke="rgba(52,211,153,0.8)" strokeWidth={2} />
+                          </svg>
+                          Lien entre régions
+                        </span>
+                      </div>
+                    )}
                   </div>
                 )}
               </CardContent>
             </Card>
 
             <LinksPanel
-              className="xl:max-h-[585px]"
+              className="xl:max-h-[665px]"
               links={linkSummaries}
               name={shortName}
               selectedKey={selectedPairKey}

@@ -36,6 +36,8 @@ export class UpdateNodeDto {
   @IsNumber()
   locationLng?: number | null;
 
+  // Offset of a dragged node from its packed spot in the private-network
+  // graph (region → country → city parcels), not an absolute position.
   @IsOptional()
   @IsNumber()
   graphX?: number | null;
