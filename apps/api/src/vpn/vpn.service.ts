@@ -45,6 +45,8 @@ const SESSION_ACTIVE_WINDOW_MS = 3 * 60 * 1000;
 // the live socket carries them in real time, the database only needs a
 // recent copy.
 const SESSION_STATS_WRITE_INTERVAL_MS = 30_000;
+// A report older than this means the entry node stopped reporting the peer.
+const LIVE_SESSION_TTL_MS = 30_000;
 // Workspace-wide pushes are coalesced: a burst of changes (bulk edit, several
 // toggles in a row) sends one apply to the nodes, once things settle for
 // RECONCILE_QUIET_MS or at the latest RECONCILE_MAX_WAIT_MS after the first.
@@ -122,6 +124,22 @@ function isUniqueConstraintError(error: unknown) {
 export class VpnService {
   private readonly logger = new Logger(VpnService.name);
   private readonly statsWrittenAt = new Map<string, number>();
+  // Last two agent reports per profile, kept in memory (an agent reports
+  // every 5 s, the database only gets a copy every 30 s): what
+  // GET /vpn/sessions/live serves to API clients that can't use the
+  // session-only live socket.
+  private readonly liveSessions = new Map<
+    string,
+    {
+      workspaceId: string;
+      at: number;
+      lastHandshakeAt: string | null;
+      endpoint: string | null;
+      rxBytes: number;
+      txBytes: number;
+      prev: { at: number; rxBytes: number; txBytes: number } | null;
+    }
+  >();
   private readonly pendingReconciles = new Map<
     string,
     { firstAt: number; timer: NodeJS.Timeout; waiters: Array<{ resolve: () => void; reject: (error: unknown) => void }> }
@@ -473,6 +491,40 @@ export class VpnService {
     return { count: ids.length };
   }
 
+  /**
+   * Live session counters straight from the latest agent reports (every
+   * 5 s), with the rate between the last two reports. Same data as the
+   * `vpn.stats` live event, for API keys. Bytes per second; rx = sent by
+   * the client, tx = received by it.
+   */
+  listLiveSessions(scope: WorkspaceScope) {
+    const now = Date.now();
+    const sessions = [];
+    for (const [profileId, s] of this.liveSessions) {
+      if (now - s.at > LIVE_SESSION_TTL_MS) {
+        this.liveSessions.delete(profileId);
+        continue;
+      }
+      if (s.workspaceId !== scope.workspaceId) continue;
+      const seconds = s.prev ? (s.at - s.prev.at) / 1000 : 0;
+      const rate = (current: number, previous: number | undefined) =>
+        seconds > 0 && previous !== undefined && current >= previous ? Math.round((current - previous) / seconds) : 0;
+      const handshake = s.lastHandshakeAt ? new Date(s.lastHandshakeAt).getTime() : 0;
+      sessions.push({
+        profileId,
+        reportedAt: new Date(s.at).toISOString(),
+        connected: handshake > 0 && now - handshake < SESSION_ACTIVE_WINDOW_MS,
+        lastHandshakeAt: s.lastHandshakeAt,
+        endpoint: s.endpoint,
+        rxBytes: s.rxBytes,
+        txBytes: s.txBytes,
+        rxRate: rate(s.rxBytes, s.prev?.rxBytes),
+        txRate: rate(s.txBytes, s.prev?.txBytes),
+      });
+    }
+    return { at: new Date(now).toISOString(), sessions };
+  }
+
   async getConfig(id: string, scope: WorkspaceScope) {
     const profile = await this.findOwned(id, scope);
     return {
@@ -819,6 +871,19 @@ export class VpnService {
         for (const entry of live) this.statsWrittenAt.delete(entry.profileId);
         this.logger.warn(`VPN session stats not saved for node ${nodeId}: ${error instanceof Error ? error.message : error}`);
       }
+    }
+
+    for (const entry of live) {
+      const before = this.liveSessions.get(entry.profileId);
+      this.liveSessions.set(entry.profileId, {
+        workspaceId,
+        at: now,
+        lastHandshakeAt: entry.lastHandshakeAt,
+        endpoint: entry.endpoint,
+        rxBytes: entry.rxBytes,
+        txBytes: entry.txBytes,
+        prev: before ? { at: before.at, rxBytes: before.rxBytes, txBytes: before.txBytes } : null,
+      });
     }
 
     if (live.length > 0) this.live.broadcast('vpn.stats', { nodeId, peers: live }, workspaceId);

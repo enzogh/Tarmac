@@ -28,6 +28,14 @@ export class VpnController {
     return this.vpnService.listGateways(scope);
   }
 
+  // Counters from the latest agent reports (5 s), for API keys: the live
+  // socket only accepts browser sessions.
+  @Get('sessions/live')
+  @RequireApiScope('vpn:read')
+  liveSessions(@CurrentWorkspace() scope: WorkspaceScope) {
+    return this.vpnService.listLiveSessions(scope);
+  }
+
   @Get('profiles')
   @RequireApiScope('vpn:read')
   list(@CurrentWorkspace() scope: WorkspaceScope) {
