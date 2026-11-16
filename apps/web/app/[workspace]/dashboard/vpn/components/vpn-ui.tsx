@@ -60,7 +60,7 @@ export type ProfileStatus = { key: ProfileStatusKey; tone: StatusTone; label: st
 
 // One status per profile, in the order an operator cares about: is it
 // broken, is it still being set up, is someone on it right now.
-export function profileStatus(profile: VpnProfile): ProfileStatus {
+export function profileStatus(profile: VpnProfile, live?: LiveSession): ProfileStatus {
   const { deployment, session } = profile;
   if (deployment.status === 'expired') return { key: 'expired', tone: 'neutral', label: 'Expiré' };
   if (deployment.status === 'disabled') return { key: 'disabled', tone: 'neutral', label: 'Désactivé' };
@@ -68,7 +68,7 @@ export function profileStatus(profile: VpnProfile): ProfileStatus {
   if (deployment.status === 'pending') {
     return { key: 'pending', tone: 'warn', label: 'Déploiement…', pulse: true, hint: deployment.message };
   }
-  if (session.connected) return { key: 'connected', tone: 'ok', label: 'Connecté', pulse: true };
+  if (isLiveConnected(profile, live)) return { key: 'connected', tone: 'ok', label: 'Connecté', pulse: true };
   return {
     key: 'ready',
     tone: 'info',
@@ -84,7 +84,23 @@ export type LiveSession = {
   txRate: number;
   lastHandshakeAt: string | null;
   endpoint: string | null;
+  connected: boolean;
+  receivedAt: number;
 };
+
+// A live push stops when the entry node goes quiet: past this, the polled
+// list is the better source again.
+const LIVE_SESSION_STALE_MS = 30_000;
+
+/**
+ * Connected right now: the API decides from the entry node's 5 s reports
+ * (traffic within ~40 s), carried live by `vpn.stats`; the polled list only
+ * fills in until the first push arrives.
+ */
+export function isLiveConnected(profile: VpnProfile, live?: LiveSession) {
+  if (live && Date.now() - live.receivedAt < LIVE_SESSION_STALE_MS) return live.connected;
+  return profile.session.connected;
+}
 
 /**
  * Real-time session counters: the entry node's heartbeat pushes every
@@ -124,6 +140,11 @@ export function useVpnLive(onChanged: () => void) {
             txRate: rate(peer.txBytes, before?.tx),
             lastHandshakeAt: peer.lastHandshakeAt,
             endpoint: peer.endpoint,
+            // An API from before this field: judge by the handshake as it did.
+            connected:
+              peer.connected ??
+              Boolean(peer.lastHandshakeAt && now - new Date(peer.lastHandshakeAt).getTime() < 180_000),
+            receivedAt: now,
           };
           previous.current[peer.profileId] = { rx: peer.rxBytes, tx: peer.txBytes, at: now };
         }

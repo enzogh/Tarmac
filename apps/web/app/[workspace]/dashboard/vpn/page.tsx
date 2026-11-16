@@ -41,8 +41,8 @@ import { CreateProfileDialog } from './components/CreateProfileDialog';
 import { EditProfileDialog } from './components/EditProfileDialog';
 import { buildLinks, LinksPanel } from './components/LinksPanel';
 import { ProfileDrawer } from './components/ProfileDrawer';
-import { isLiveConnected, ProfileAction, ProfileTable, Sort, SortKey } from './components/ProfileTable';
-import { profileStatus, ProfileStatusKey, useVpnLive } from './components/vpn-ui';
+import { ProfileAction, ProfileTable, Sort, SortKey } from './components/ProfileTable';
+import { isLiveConnected, profileStatus, ProfileStatusKey, useVpnLive } from './components/vpn-ui';
 
 type Filter = 'all' | 'connected' | 'attention' | 'inactive';
 type View = 'profiles' | 'links';
@@ -228,7 +228,7 @@ export default function VpnProfilesPage() {
       return at ? new Date(at).getTime() : 0;
     };
     const compare: Record<SortKey, (left: VpnProfile, right: VpnProfile) => number> = {
-      status: (left, right) => STATUS_RANK[profileStatus(left).key] - STATUS_RANK[profileStatus(right).key],
+      status: (left, right) => STATUS_RANK[profileStatus(left, live[left.id]).key] - STATUS_RANK[profileStatus(right, live[right.id]).key],
       name: (left, right) => left.name.localeCompare(right.name),
       entry: (left, right) => left.entryNode.name.localeCompare(right.entryNode.name),
       ip: (left, right) => ipValue(left.clientIp) - ipValue(right.clientIp),

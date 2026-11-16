@@ -712,7 +712,8 @@ export type VpnGateway = VpnNodeRef & {
 // Pushed on the live socket by the entry node's heartbeat (every ~5s).
 export type VpnStatsLiveEvent = {
   nodeId: string;
-  peers: Array<{ profileId: string; lastHandshakeAt: string | null; endpoint: string | null; rxBytes: number; txBytes: number }>;
+  // connected: a device is on the profile right now (traffic within ~40 s).
+  peers: Array<{ profileId: string; lastHandshakeAt: string | null; endpoint: string | null; rxBytes: number; txBytes: number; connected?: boolean }>;
 };
 
 // Mirrors API_KEY_RESOURCES in apps/api/src/api-keys/api-key-token.ts.

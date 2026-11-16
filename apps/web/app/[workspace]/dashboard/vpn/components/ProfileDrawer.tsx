@@ -13,9 +13,8 @@ import { formatBytes, formatDateTime, formatRelative, formatThroughput } from '@
 import { meshSummary, peerSummary, reachableBy } from './access';
 import { ExitSwitcher } from './ExitSwitcher';
 import type { ProfileAction } from './ProfileTable';
-import { isLiveConnected } from './ProfileTable';
 import { RouteDiagram } from './RouteDiagram';
-import { endpointIp, LiveSession, MODE_LABEL, profileStatus } from './vpn-ui';
+import { endpointIp, isLiveConnected, LiveSession, MODE_LABEL, profileStatus } from './vpn-ui';
 
 function Field({ label, children, mono }: { label: string; children: ReactNode; mono?: boolean }) {
   return (
@@ -60,7 +59,7 @@ export function ProfileDrawer({
 }) {
   if (!profile) return <Sheet open={false} onOpenChange={onOpenChange}>{null}</Sheet>;
 
-  const status = profileStatus(profile);
+  const status = profileStatus(profile, live);
   const connected = isLiveConnected(profile, live);
   const lastHandshakeAt = live?.lastHandshakeAt ?? profile.session.lastHandshakeAt;
   const endpoint = live?.endpoint ?? profile.session.endpoint;

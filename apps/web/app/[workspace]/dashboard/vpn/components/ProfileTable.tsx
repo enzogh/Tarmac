@@ -17,18 +17,11 @@ import { formatRelative, formatThroughput } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { useReadOnly } from '@/lib/read-only';
 import { AccessChips } from './access';
-import { LiveSession, NodeFlag, profileStatus } from './vpn-ui';
+import { isLiveConnected, LiveSession, NodeFlag, profileStatus } from './vpn-ui';
 
 export type ProfileAction = 'open' | 'install' | 'edit' | 'access' | 'toggle' | 'rotate' | 'delete';
 export type SortKey = 'status' | 'name' | 'entry' | 'activity' | 'ip';
 export type Sort = { key: SortKey; direction: 'asc' | 'desc' };
-
-export function isLiveConnected(profile: VpnProfile, live?: LiveSession) {
-  return (
-    profile.session.connected ||
-    Boolean(live?.lastHandshakeAt && Date.now() - new Date(live.lastHandshakeAt).getTime() < 180_000)
-  );
-}
 
 function SortHead({ label, column, sort, onSort, className }: { label: string; column: SortKey; sort: Sort; onSort: (key: SortKey) => void; className?: string }) {
   const active = sort.key === column;
@@ -104,8 +97,8 @@ export function ProfileTable({
       </TableHeader>
       <TableBody>
         {profiles.map((profile) => {
-          const status = profileStatus(profile);
           const session = live[profile.id];
+          const status = profileStatus(profile, session);
           const connected = isLiveConnected(profile, session);
           const lastHandshakeAt = session?.lastHandshakeAt ?? profile.session.lastHandshakeAt;
           const usable = profile.deployment.status !== 'disabled' && profile.deployment.status !== 'expired';

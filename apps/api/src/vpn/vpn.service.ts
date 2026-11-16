@@ -47,6 +47,10 @@ const SESSION_ACTIVE_WINDOW_MS = 3 * 60 * 1000;
 const SESSION_STATS_WRITE_INTERVAL_MS = 30_000;
 // A report older than this means the entry node stopped reporting the peer.
 const LIVE_SESSION_TTL_MS = 30_000;
+// Clients send a keepalive every 25 s (PersistentKeepalive in their config)
+// and the entry node reports every 5 s: a peer whose received bytes haven't
+// moved for this long has disconnected, well before its handshake expires.
+const SESSION_IDLE_TIMEOUT_MS = 40_000;
 // Workspace-wide pushes are coalesced: a burst of changes (bulk edit, several
 // toggles in a row) sends one apply to the nodes, once things settle for
 // RECONCILE_QUIET_MS or at the latest RECONCILE_MAX_WAIT_MS after the first.
@@ -137,6 +141,8 @@ export class VpnService {
       endpoint: string | null;
       rxBytes: number;
       txBytes: number;
+      // Last report where the client had sent something (keepalives count).
+      lastRxAt: number;
       prev: { at: number; rxBytes: number; txBytes: number } | null;
     }
   >();
@@ -379,6 +385,7 @@ export class VpnService {
   async remove(id: string, actor: Actor) {
     const existing = await this.findOwned(id, actor.scope);
     await this.prisma.vpnProfile.delete({ where: { id } });
+    this.forgetSessions([id]);
     await this.dropPeerReferences(existing.workspaceId, [id]);
     await this.audit(actor, 'vpn_profile.delete', id, { name: existing.name, clientIp: existing.clientIp });
     await this.reconcileWorkspace(existing.workspaceId);
@@ -412,6 +419,7 @@ export class VpnService {
       }
       case 'delete':
         await this.prisma.vpnProfile.deleteMany({ where: { id: { in: ids } } });
+        this.forgetSessions(ids);
         await this.dropPeerReferences(workspaceId, ids);
         routingChanged = true;
         break;
@@ -501,19 +509,14 @@ export class VpnService {
     const now = Date.now();
     const sessions = [];
     for (const [profileId, s] of this.liveSessions) {
-      if (now - s.at > LIVE_SESSION_TTL_MS) {
-        this.liveSessions.delete(profileId);
-        continue;
-      }
-      if (s.workspaceId !== scope.workspaceId) continue;
+      if (now - s.at > LIVE_SESSION_TTL_MS || s.workspaceId !== scope.workspaceId) continue;
       const seconds = s.prev ? (s.at - s.prev.at) / 1000 : 0;
       const rate = (current: number, previous: number | undefined) =>
         seconds > 0 && previous !== undefined && current >= previous ? Math.round((current - previous) / seconds) : 0;
-      const handshake = s.lastHandshakeAt ? new Date(s.lastHandshakeAt).getTime() : 0;
       sessions.push({
         profileId,
         reportedAt: new Date(s.at).toISOString(),
-        connected: handshake > 0 && now - handshake < SESSION_ACTIVE_WINDOW_MS,
+        connected: this.isSessionConnected(profileId, null, now),
         lastHandshakeAt: s.lastHandshakeAt,
         endpoint: s.endpoint,
         rxBytes: s.rxBytes,
@@ -544,7 +547,7 @@ export class VpnService {
       this.prisma.node.findMany({ where: { workspaceId }, select: NODE_REF_SELECT, orderBy: { name: 'asc' } }),
       this.prisma.vpnProfile.findMany({
         where: { workspaceId },
-        select: { entryNodeId: true, exitNodeId: true, mode: true, enabled: true, expiresAt: true, lastHandshakeAt: true },
+        select: { id: true, entryNodeId: true, exitNodeId: true, mode: true, enabled: true, expiresAt: true, lastHandshakeAt: true },
       }),
       this.vlanService.getVlanSubnet(workspaceId),
     ]);
@@ -563,9 +566,7 @@ export class VpnService {
         listenPort: VPN_LISTEN_PORT,
         entryProfiles: asEntry.length,
         exitProfiles: asExit.length,
-        connectedClients: asEntry.filter(
-          (p) => p.lastHandshakeAt && now - p.lastHandshakeAt.getTime() < SESSION_ACTIVE_WINDOW_MS,
-        ).length,
+        connectedClients: asEntry.filter((p) => this.isSessionConnected(p.id, p.lastHandshakeAt, now)).length,
         apply: {
           status: node.vpnApplyStatus,
           error: node.vpnApplyError,
@@ -833,6 +834,7 @@ export class VpnService {
       endpoint: string | null;
       rxBytes: number;
       txBytes: number;
+      connected?: boolean;
     }> = [];
 
     for (const peer of peers) {
@@ -875,6 +877,10 @@ export class VpnService {
 
     for (const entry of live) {
       const before = this.liveSessions.get(entry.profileId);
+      // A counter that moved (or reset, after a key rotation) means the
+      // client is talking. The first report after an API restart has nothing
+      // to compare with: it gets the benefit of the doubt until the next ones.
+      const lastRxAt = before && entry.rxBytes === before.rxBytes ? before.lastRxAt : now;
       this.liveSessions.set(entry.profileId, {
         workspaceId,
         at: now,
@@ -882,8 +888,10 @@ export class VpnService {
         endpoint: entry.endpoint,
         rxBytes: entry.rxBytes,
         txBytes: entry.txBytes,
+        lastRxAt,
         prev: before ? { at: before.at, rxBytes: before.rxBytes, txBytes: before.txBytes } : null,
       });
+      entry.connected = this.isSessionConnected(entry.profileId, null, now);
     }
 
     if (live.length > 0) this.live.broadcast('vpn.stats', { nodeId, peers: live }, workspaceId);
@@ -938,6 +946,28 @@ export class VpnService {
   // ---------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------
+
+  /**
+   * Whether a device is on the profile right now. From the entry node's live
+   * reports when there are any: a recent handshake and traffic (at least the
+   * client's keepalives) within SESSION_IDLE_TIMEOUT_MS, so a disconnect
+   * shows within ~40 s; a node that stopped reporting means no session. With
+   * no report since the API started, falls back to the stored handshake.
+   */
+  private forgetSessions(ids: string[]) {
+    for (const id of ids) {
+      this.liveSessions.delete(id);
+      this.statsWrittenAt.delete(id);
+    }
+  }
+
+  private isSessionConnected(profileId: string, storedHandshake: Date | null, now: number) {
+    const live = this.liveSessions.get(profileId);
+    if (!live) return Boolean(storedHandshake && now - storedHandshake.getTime() < SESSION_ACTIVE_WINDOW_MS);
+    if (now - live.at > LIVE_SESSION_TTL_MS) return false;
+    const handshake = live.lastHandshakeAt ? new Date(live.lastHandshakeAt).getTime() : 0;
+    return handshake > 0 && now - handshake < SESSION_ACTIVE_WINDOW_MS && now - live.lastRxAt < SESSION_IDLE_TIMEOUT_MS;
+  }
 
   private isLive(profile: { enabled: boolean; expiresAt: Date | null }, now: number) {
     return profile.enabled && (!profile.expiresAt || profile.expiresAt.getTime() > now);
@@ -1180,9 +1210,7 @@ export class VpnService {
   private serialize(profile: ProfileWithNodes) {
     const now = Date.now();
     const effectiveExit = profile.mode === 'full' ? (profile.exitNode ?? profile.entryNode) : null;
-    const connected = Boolean(
-      profile.lastHandshakeAt && now - profile.lastHandshakeAt.getTime() < SESSION_ACTIVE_WINDOW_MS,
-    );
+    const connected = this.isSessionConnected(profile.id, profile.lastHandshakeAt, now);
     return {
       id: profile.id,
       name: profile.name,
