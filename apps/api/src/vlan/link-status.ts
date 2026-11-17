@@ -15,6 +15,11 @@ export const LINK_DEGRADED_HANDSHAKE_SEC = 240;
 // isn't itself a sign of trouble, so it gets a separate, higher bar.
 export const LINK_DEGRADED_LATENCY_MS = 180;
 export const LINK_DEGRADED_LATENCY_CROSS_REGION_MS = 300;
+// The API marks every node offline when it boots and agents come back over
+// the next seconds: until then "peer offline" / "heartbeat late" says
+// nothing about the links, and counting it turned every deploy into a burst
+// of degraded links. Only measured telemetry counts during this window.
+export const LINK_STATUS_STARTUP_GRACE_MS = 90_000;
 
 /**
  * Status of one overlay link from the WireGuard telemetry its source node

@@ -15,7 +15,7 @@ import { VlanService } from '../vlan/vlan.service';
 import { VpnService } from '../vpn/vpn.service';
 import { FirewallService } from '../firewall/firewall.service';
 import { Region, resolveRegion } from '../vlan/region';
-import { classifyLink } from '../vlan/link-status';
+import { classifyLink, LINK_STATUS_STARTUP_GRACE_MS } from '../vlan/link-status';
 import { planOverlayPeers, shouldUseBackup } from '../vlan/overlay-topology';
 import { AgentLogsService } from '../agent-logs/agent-logs.service';
 import { LiveWsServer } from '../live/live.ws';
@@ -2206,7 +2206,9 @@ export class AgentsService implements OnModuleInit {
       const reverse = this.ownLinkReports.get(`${target.id}:${sourceNodeId}`);
       const reverseFresh = Boolean(reverse && now - reverse.at < OWN_LINK_REPORT_TTL_MS);
       const status = classifyLink(metric, {
-        peerOnline: target.status === 'online',
+        // Right after an API restart the peer may simply not have
+        // reconnected yet: its status says nothing about this link.
+        peerOnline: target.status === 'online' || Date.now() - this.bootedAt < LINK_STATUS_STARTUP_GRACE_MS,
         // A link crossing regions (e.g. the France <-> Canada gateway
         // backbone) has a much higher latency floor from distance alone.
         crossRegion: Boolean(sourceRegion && targetRegion && sourceRegion !== targetRegion),

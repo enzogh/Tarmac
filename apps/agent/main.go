@@ -393,6 +393,9 @@ type overlayProbeSnapshot struct {
 	hasLoss             bool
 	at                  time.Time
 	consecutiveFailures int
+	// Ping counts of the last probes, for the windowed loss (see
+	// overlay_probe.go).
+	window []overlayPingCount
 }
 
 // Overlay latency/loss probing shells out to `ping`, which is relatively
@@ -689,42 +692,6 @@ func parsePingStats(output string) (*float64, *float64) {
 	return latencyMs, packetLoss
 }
 
-func probeOverlayLatency(iface, targetIP string) (*float64, *float64) {
-	if targetIP == "" || !commandExists("ping") {
-		return nil, nil
-	}
-
-	// Try without forcing interface first (kernel routing already prefers WG route).
-	commands := [][]string{
-		{"-c", "2", "-W", "1", targetIP},
-		{"-I", iface, "-c", "2", "-W", "1", targetIP},
-	}
-	var fallbackLatency *float64
-	var fallbackLoss *float64
-	for _, args := range commands {
-		pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
-		cmd := exec.CommandContext(pingCtx, "ping", args...)
-		output, err := cmd.CombinedOutput()
-		pingCancel()
-		latencyMs, packetLoss := parsePingStats(string(output))
-		// A 100% loss result is kept and reported: dropping it used to hide
-		// dead links, which then stayed "healthy" on handshake/tx alone. The
-		// control plane only treats it as down when nothing comes back from
-		// the peer either.
-		if err == nil {
-			return latencyMs, packetLoss
-		}
-
-		// Keep parsed failure stats as fallback, but continue to try the next command.
-		// This avoids false negatives when the first probe path fails and -I succeeds.
-		if latencyMs != nil || packetLoss != nil {
-			fallbackLatency = latencyMs
-			fallbackLoss = packetLoss
-		}
-	}
-	return fallbackLatency, fallbackLoss
-}
-
 // Matches "traceroute -n" numeric output, one probe per hop (-q 1):
 //
 //	1  10.255.0.1  0.512 ms
@@ -1017,9 +984,9 @@ func (c *collector) collectOverlayLinkMetrics(iface string) []overlayLinkMetric 
 	// pre-indexed slot in results, so there's no concurrent write to a
 	// shared map or slice.
 	type probeResult struct {
-		latencyMs  *float64
-		packetLoss *float64
-		probed     bool
+		reading overlayPingReading
+		ok      bool
+		probed  bool
 	}
 	results := make([]probeResult, len(metrics))
 
@@ -1040,12 +1007,12 @@ func (c *collector) collectOverlayLinkMetrics(iface string) []overlayLinkMetric 
 			go func(i int, targetIP string) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				latencyMs, packetLoss := probeOverlayLatency(iface, targetIP)
-				if latencyMs == nil && packetLoss == nil {
+				reading, ok := probeOverlayLatency(iface, targetIP)
+				if !ok {
 					// Keep overlay telemetry active even when ICMP probing is unavailable.
 					_ = pokeOverlayTraffic(targetIP)
 				}
-				results[i] = probeResult{latencyMs: latencyMs, packetLoss: packetLoss, probed: true}
+				results[i] = probeResult{reading: reading, ok: ok, probed: true}
 			}(i, metrics[i].TargetVlanIP)
 		}
 		wg.Wait()
@@ -1058,39 +1025,24 @@ func (c *collector) collectOverlayLinkMetrics(iface string) []overlayLinkMetric 
 			continue
 		}
 		cacheKey := cacheKeys[i]
-		latencyMs, packetLoss := results[i].latencyMs, results[i].packetLoss
-		if latencyMs == nil && packetLoss == nil {
+		if !results[i].ok {
 			next := c.lastOverlayRtt[cacheKey]
 			next.consecutiveFailures++
 			next.at = now
 			c.lastOverlayRtt[cacheKey] = next
 			continue
 		}
-		// Only a reply counts as success: a 100% loss reading is reported
-		// (without the cached latency of an earlier, answered probe) but
-		// still backs off like any other failed probe.
-		failures := 0
-		if latencyMs == nil {
-			metrics[i].LatencyMs = nil
-			failures = c.lastOverlayRtt[cacheKey].consecutiveFailures + 1
-		} else {
-			metrics[i].LatencyMs = latencyMs
-		}
-		if packetLoss != nil {
-			metrics[i].PacketLoss = packetLoss
-		}
-		snapshot := overlayProbeSnapshot{
-			hasLatency:          metrics[i].LatencyMs != nil,
-			hasLoss:             metrics[i].PacketLoss != nil,
-			at:                  now,
-			consecutiveFailures: failures,
-		}
+		// Only a reply counts as success: a probe with every ping lost is
+		// reported as 100 % (without the latency of an earlier, answered
+		// probe) and backs off like any other failed probe.
+		snapshot := nextOverlayProbe(c.lastOverlayRtt[cacheKey], results[i].reading, now)
+		metrics[i].LatencyMs = nil
 		if snapshot.hasLatency {
-			snapshot.latencyMs = *metrics[i].LatencyMs
+			latency := snapshot.latencyMs
+			metrics[i].LatencyMs = &latency
 		}
-		if snapshot.hasLoss {
-			snapshot.packetLoss = *metrics[i].PacketLoss
-		}
+		loss := snapshot.packetLoss
+		metrics[i].PacketLoss = &loss
 		c.lastOverlayRtt[cacheKey] = snapshot
 	}
 

@@ -7,6 +7,7 @@ import { alertKey } from '../alerts/alert-keys';
 import { raiseAlert } from '../alerts/alert-lifecycle';
 import { isMuted, isNodeFresh } from '../alerts/node-availability';
 import { chainSegments, LinkHistoryPoint, relayGateways, uptimePercent } from './link-history';
+import { LINK_STATUS_STARTUP_GRACE_MS } from './link-status';
 import { activeGateways } from './overlay-topology';
 import { Region, resolveRegion } from './region';
 
@@ -921,6 +922,10 @@ export class VlanService implements OnModuleInit {
   }
 
   private async refreshVlanConnections(vlanId: string) {
+    // Heartbeat-derived statuses only: meaningless while agents are still
+    // reconnecting after an API restart (the links keep their last status,
+    // and agents' own measurements still update them).
+    if (Date.now() - this.bootedAt < LINK_STATUS_STARTUP_GRACE_MS) return;
     const [members, connections] = await Promise.all([
       this.prisma.vlanMember.findMany({
         where: { vlanId },
