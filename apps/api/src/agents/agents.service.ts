@@ -56,6 +56,28 @@ type PendingTracerouteRequest = {
   reject: (reason: Error) => void;
   timeout: NodeJS.Timeout;
 };
+// MTR-style trace over the internet to another node's public address (see
+// path_trace.go in the agent): per hop, how many probes got an answer and
+// how fast.
+export type PathTraceHop = {
+  hop: number;
+  ip: string | null;
+  otherIps?: string[];
+  sent: number;
+  received: number;
+  lossPct: number;
+  lastMs: number | null;
+  avgMs: number | null;
+  bestMs: number | null;
+  worstMs: number | null;
+};
+export type PathTraceResult = { targetIp: string; rounds: number; reached: boolean; hops: PathTraceHop[] };
+type PendingPathTraceRequest = {
+  nodeId: string;
+  resolve: (value: PathTraceResult) => void;
+  reject: (reason: Error) => void;
+  timeout: NodeJS.Timeout;
+};
 export type PingResult = {
   targetIp: string;
   sent: number;
@@ -139,6 +161,7 @@ export class AgentsService implements OnModuleInit {
   private readonly pendingDirectoryRequests = new Map<string, PendingDirectoryRequest>();
   private readonly pendingDirectoryScanRequests = new Map<string, PendingDirectoryScanRequest>();
   private readonly pendingTracerouteRequests = new Map<string, PendingTracerouteRequest>();
+  private readonly pendingPathTraceRequests = new Map<string, PendingPathTraceRequest>();
   private readonly pendingPingRequests = new Map<string, PendingPingRequest>();
   private readonly pendingDnsZoneKeysRequests = new Map<string, PendingDnsZoneKeysRequest>();
   private readonly pendingDnsZoneFingerprintRequests = new Map<string, PendingDnsZoneFingerprintRequest>();
@@ -416,6 +439,12 @@ export class AgentsService implements OnModuleInit {
       clearTimeout(request.timeout);
       request.reject(new Error(`node ${nodeId} disconnected`));
       this.pendingTracerouteRequests.delete(requestId);
+    }
+    for (const [requestId, request] of this.pendingPathTraceRequests.entries()) {
+      if (request.nodeId !== nodeId) continue;
+      clearTimeout(request.timeout);
+      request.reject(new Error(`node ${nodeId} disconnected`));
+      this.pendingPathTraceRequests.delete(requestId);
     }
     for (const [requestId, request] of this.pendingPingRequests.entries()) {
       if (request.nodeId !== nodeId) continue;
@@ -1393,6 +1422,51 @@ export class AgentsService implements OnModuleInit {
       }
       return;
     }
+    if (!result.success && result.message?.includes('unknown command command.run_path_trace')) {
+      for (const [requestId, request] of this.pendingPathTraceRequests.entries()) {
+        if (request.nodeId !== nodeId) continue;
+        clearTimeout(request.timeout);
+        request.reject(new Error('agent too old'));
+        this.pendingPathTraceRequests.delete(requestId);
+      }
+      return;
+    }
+
+    if (result.resourceType === 'path_trace') {
+      const pending = this.pendingPathTraceRequests.get(result.resourceId);
+      if (!pending || pending.nodeId !== nodeId) {
+        if (pending) this.logCrossWorkspaceAttempt(nodeId, result.resourceType, result.resourceId);
+        return;
+      }
+      clearTimeout(pending.timeout);
+      this.pendingPathTraceRequests.delete(result.resourceId);
+      if (!result.success) {
+        pending.reject(new Error(result.message ?? 'path trace failed'));
+        return;
+      }
+      const payload = result.data as unknown as Partial<PathTraceResult> | undefined;
+      const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+      pending.resolve({
+        targetIp: String(payload?.targetIp ?? ''),
+        rounds: num(payload?.rounds) ?? 0,
+        reached: payload?.reached === true,
+        hops: (Array.isArray(payload?.hops) ? payload.hops : [])
+          .filter((hop) => Boolean(hop) && typeof hop.hop === 'number')
+          .map((hop) => ({
+            hop: hop.hop,
+            ip: typeof hop.ip === 'string' ? hop.ip : null,
+            otherIps: Array.isArray(hop.otherIps) ? hop.otherIps.filter((ip): ip is string => typeof ip === 'string') : [],
+            sent: num(hop.sent) ?? 0,
+            received: num(hop.received) ?? 0,
+            lossPct: num(hop.lossPct) ?? 0,
+            lastMs: num(hop.lastMs),
+            avgMs: num(hop.avgMs),
+            bestMs: num(hop.bestMs),
+            worstMs: num(hop.worstMs),
+          })),
+      });
+      return;
+    }
 
     if (result.resourceType === 'traceroute') {
       const pending = this.pendingTracerouteRequests.get(result.resourceId);
@@ -1893,6 +1967,25 @@ export class AgentsService implements OnModuleInit {
       if (!sent) {
         clearTimeout(timeout);
         this.pendingTracerouteRequests.delete(requestId);
+        reject(new Error(`node ${nodeId} is offline`));
+      }
+    });
+  }
+
+  // ~1.1 s per round on the agent (one probe per hop, then a 1 s wait).
+  requestPathTrace(nodeId: string, targetIp: string, rounds = 10): Promise<PathTraceResult> {
+    const requestId = `path:${nodeId}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
+    const timeoutMs = 15_000 + rounds * 2_000;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingPathTraceRequests.delete(requestId);
+        reject(new Error("l'agent n'a pas répondu à temps"));
+      }, timeoutMs);
+      this.pendingPathTraceRequests.set(requestId, { nodeId, resolve, reject, timeout });
+      const sent = this.sendCommand(nodeId, { type: 'command.run_path_trace', payload: { requestId, targetIp, rounds } });
+      if (!sent) {
+        clearTimeout(timeout);
+        this.pendingPathTraceRequests.delete(requestId);
         reject(new Error(`node ${nodeId} is offline`));
       }
     });

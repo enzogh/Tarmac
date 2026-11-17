@@ -1621,6 +1621,13 @@ export const api = {
       request<VlanConnectionHistory>(
         `/api/v1/vlan/${vlanId}/history?source=${encodeURIComponent(sourceNodeId)}&target=${encodeURIComponent(targetNodeId)}&range=${range}`,
       ),
+    // Report on one link for a hosting provider; runs an MTR-style trace
+    // from each end (~15 s).
+    linkReport: (vlanId: string, payload: { source: string; target: string; range: '6h' | '24h' | '48h'; lang: 'fr' | 'en' }) =>
+      request<{ text: string; filename: string; generatedAt: string }>(`/api/v1/vlan/${vlanId}/report`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
     runTest: (vlanId: string, initiatorNodeId: string, targetNodeId: string, testType: 'ping' | 'traceroute') =>
       request<{ success: boolean; test: VlanConnectionTest }>(`/api/v1/vlan/${vlanId}/test`, {
         method: 'POST',

@@ -361,6 +361,13 @@ const MODULES: Module[] = [
       },
       {
         method: 'POST',
+        path: '/vlan/:vlanId/report',
+        body: 'source, target, range? (6h | 24h | 48h), lang? (fr | en)',
+        description:
+          "Rapport texte sur un lien, à envoyer au support d’un hébergeur ({ text, filename, generatedAt }) : IP publiques des deux serveurs, pertes et latence mesurées, comparaison avec leurs autres liens, et trajet internet de type MTR relevé à l’instant depuis chaque serveur vers l’IP publique de l’autre (~15 s).",
+      },
+      {
+        method: 'POST',
         path: '/vlan/:vlanId/members/:nodeId/gateway',
         body: 'enabled',
         description: "Désigne (ou retire) ce nœud comme passerelle régionale : au-delà de deux régions géographiques, seules les passerelles se relient entre régions, les autres nœuds restent en maillage complet au sein de leur région. Un seul nœud passerelle par région et par VLAN ; en activer un remplace l'ancien. Déclenche une reconfiguration WireGuard sur toute la flotte.",

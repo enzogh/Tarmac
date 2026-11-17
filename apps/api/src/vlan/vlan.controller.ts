@@ -4,6 +4,8 @@ import { AgentsService } from '../agents/agents.service';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import { ApiKeyOrJwtGuard, ApiKeyResource } from '../auth/api-key.guard';
 import { PrismaService } from '../prisma/prisma.service';
+import { extractExternalIp } from '../nodes/extract-external-ip';
+import { buildLinkReport, LinkReportLang, ReportNode, TraceOutcome, traceFailureReason } from './link-report';
 
 @ApiKeyResource('network')
 @Controller('vlan')
@@ -217,6 +219,86 @@ export class VlanController {
     } catch (error) {
       return { success: true, test: { ...base, ...done(), status: 'failed', resultMessage: this.testError(error) } };
     }
+  }
+
+  // A report about one link, ready to send to a hosting provider: public
+  // IPs, measured loss and latency over the window, comparison with both
+  // servers' other links, and an MTR-style trace run now from each end
+  // towards the other's public address (both at once, ~11 s).
+  @Post(':vlanId/report')
+  async linkReport(
+    @Param('vlanId') vlanId: string,
+    @Body() body: { source?: string; target?: string; range?: string; lang?: string },
+    @CurrentWorkspace() scope: WorkspaceScope,
+  ) {
+    await this.assertVlanInScope(vlanId, scope);
+    const lang: LinkReportLang = body.lang === 'en' ? 'en' : 'fr';
+    const hours = { '6h': 6, '24h': 24, '48h': 48 }[body.range ?? '24h'];
+    if (!hours) throw new HttpException('Période invalide (6h, 24h ou 48h).', HttpStatus.BAD_REQUEST);
+    if (!body.source || !body.target || body.source === body.target) {
+      throw new HttpException('Choisissez deux nœuds différents.', HttpStatus.BAD_REQUEST);
+    }
+    const vlan = await this.prisma.vlan.findFirst({
+      where: { OR: [{ id: vlanId }, { name: vlanId }], workspaceId: scope.workspaceId },
+      select: { id: true },
+    });
+    const members = await this.vlanService.getVlanMembers(vlan!.id);
+    if (!members.some((m: any) => m.nodeId === body.source) || !members.some((m: any) => m.nodeId === body.target)) {
+      throw new HttpException('Les nœuds sélectionnés ne font pas partie de ce réseau.', HttpStatus.BAD_REQUEST);
+    }
+
+    const generatedAt = new Date();
+    const since = new Date(generatedAt.getTime() - hours * 3_600_000);
+    const data = await this.vlanService.linkReportData(vlan!.id, body.source, body.target, since);
+    if (!data.a || !data.b) throw new HttpException('Nœud introuvable.', HttpStatus.NOT_FOUND);
+    if (data.aToB.length === 0 && data.bToA.length === 0) {
+      throw new HttpException(
+        "Aucune mesure directe entre ces deux nœuds sur la période : ils ne sont pas reliés directement (le trafic passe par une passerelle). Faites le rapport sur chaque tronçon.",
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const toReportNode = (node: NonNullable<typeof data.a>): ReportNode => {
+      const port = Number((node.overlayEndpoint ?? '').match(/:(\d+)$/)?.[1]);
+      return {
+        name: node.name,
+        publicIp: extractExternalIp(node.overlayEndpoint),
+        tunnelPort: Number.isFinite(port) && port > 0 ? port : null,
+        location: [node.locationCity, node.locationCountry].filter(Boolean).join(', ') || null,
+      };
+    };
+    const a = toReportNode(data.a);
+    const b = toReportNode(data.b);
+    const trace = async (fromId: string, to: ReportNode): Promise<TraceOutcome> => {
+      if (!to.publicIp) return { ok: false, reason: lang === 'fr' ? 'IP publique inconnue' : 'unknown public IP' };
+      try {
+        const ranAt = new Date();
+        return { ok: true, trace: await this.agentsService.requestPathTrace(fromId, to.publicIp, 10), ranAt };
+      } catch (error) {
+        return { ok: false, reason: traceFailureReason(error, lang) };
+      }
+    };
+    const [traceAToB, traceBToA, workspace] = await Promise.all([
+      trace(body.source, b),
+      trace(body.target, a),
+      this.prisma.workspace.findUnique({ where: { id: scope.workspaceId as string }, select: { firewallPublicPing: true } }),
+    ]);
+
+    const report = buildLinkReport({
+      lang,
+      generatedAt,
+      since,
+      a,
+      b,
+      aToB: data.aToB,
+      bToA: data.bToA,
+      aOthers: data.aOthers,
+      bOthers: data.bOthers,
+      traceAToB,
+      traceBToA,
+      publicPingFiltered: workspace?.firewallPublicPing === false,
+    });
+    return { ...report, generatedAt: generatedAt.toISOString() };
   }
 
   private testError(error: unknown): string {

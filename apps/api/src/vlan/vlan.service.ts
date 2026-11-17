@@ -548,6 +548,64 @@ export class VlanService implements OnModuleInit {
    * directions are read as one series. Raw samples only live
    * RAW_SAMPLE_RETENTION_MS, older hours come from VlanConnectionRollup.
    */
+  /**
+   * Everything the hosting-provider report needs from the database for the
+   * pair A <-> B: both nodes, both directions' raw samples since `since`
+   * (raw samples are kept 48 h), and how A and B fare with their other
+   * peers over the same window - the comparison that shows a loss is
+   * specific to the route between them.
+   */
+  async linkReportData(vlanId: string, aId: string, bId: string, since: Date) {
+    const nodeSelect = {
+      id: true,
+      name: true,
+      status: true,
+      overlayEndpoint: true,
+      locationCity: true,
+      locationCountry: true,
+      workspaceId: true,
+    } as const;
+    const [a, b, samples] = await Promise.all([
+      this.prisma.node.findUnique({ where: { id: aId }, select: nodeSelect }),
+      this.prisma.node.findUnique({ where: { id: bId }, select: nodeSelect }),
+      this.prisma.vlanConnectionSample.findMany({
+        where: {
+          vlanId,
+          createdAt: { gte: since },
+          OR: [
+            { sourceNodeId: aId, targetNodeId: bId },
+            { sourceNodeId: bId, targetNodeId: aId },
+          ],
+        },
+        select: { sourceNodeId: true, status: true, latencyMs: true, packetLoss: true, createdAt: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+    const others = async (nodeId: string, excludeId: string) => {
+      const rows = await this.prisma.$queryRaw<Array<{ peers: bigint; avg_loss: number | null }>>`
+        SELECT count(DISTINCT "targetNodeId") AS peers, avg("packetLoss")::float8 AS avg_loss
+        FROM "VlanConnectionSample"
+        WHERE "vlanId" = ${vlanId} AND "sourceNodeId" = ${nodeId} AND "targetNodeId" <> ${excludeId}
+          AND "createdAt" >= ${since} AND "packetLoss" IS NOT NULL`;
+      return { peers: Number(rows[0]?.peers ?? 0), avgLoss: rows[0]?.avg_loss ?? null };
+    };
+    const [aOthers, bOthers] = await Promise.all([others(aId, bId), others(bId, aId)]);
+    const toSample = (row: (typeof samples)[number]) => ({
+      at: row.createdAt,
+      status: row.status,
+      latencyMs: row.latencyMs,
+      packetLoss: row.packetLoss,
+    });
+    return {
+      a,
+      b,
+      aToB: samples.filter((row) => row.sourceNodeId === aId).map(toSample),
+      bToA: samples.filter((row) => row.sourceNodeId === bId).map(toSample),
+      aOthers,
+      bOthers,
+    };
+  }
+
   private async pairHistory(
     vlanId: string,
     a: string,

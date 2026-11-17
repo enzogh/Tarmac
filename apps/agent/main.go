@@ -3997,6 +3997,20 @@ func handleCommand(ctx context.Context, cmd commandPayload, onProgress func(prog
 			result.Data = data
 			result.Message = fmt.Sprintf("ping %s: %.0f%% loss", data.TargetIP, *data.PacketLoss)
 		}
+	case "command.run_path_trace":
+		// MTR-style trace to another node's public address, for the link
+		// reports sent to hosting providers (see path_trace.go).
+		result.Command = "run_path_trace"
+		result.ResourceType = "path_trace"
+		result.ResourceID = readString(cmd.Payload, "requestId")
+		data, err := runPathTrace(cmd.Payload)
+		if err != nil {
+			result.Success = false
+			result.Message = err.Error()
+		} else {
+			result.Data = data
+			result.Message = fmt.Sprintf("%d hops, destination reached: %v", len(data.Hops), data.Reached)
+		}
 	case "command.run_traceroute":
 		result.Command = "run_traceroute"
 		result.ResourceType = "traceroute"

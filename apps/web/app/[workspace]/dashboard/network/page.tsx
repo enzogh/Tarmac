@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import dynamic from 'next/dynamic';
-import { Activity, ArrowRight, Gauge, Globe2, Info, LocateFixed, Minus, Network, Plus, RadioTower, RefreshCw, Share2, Waves, X, Zap } from 'lucide-react';
+import { Activity, ArrowRight, FileText, Gauge, Globe2, Info, LocateFixed, Minus, Network, Plus, RadioTower, RefreshCw, Share2, Waves, X, Zap } from 'lucide-react';
 import { api, VlanConnection, VlanConnectionHistory, VlanConnectionTest, VlanStatus } from '@/lib/api';
 import { shortHostname } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -35,6 +35,7 @@ import {
   type LayoutMember,
 } from './components/graph-layout';
 import { ConnectionHistoryChart } from '@/components/dashboard-charts';
+import { HostReportDialog } from './components/HostReportDialog';
 import { GeoInfo, flagFromCountryCode, geocodeCity, getGeoInfo, normalizeCountryCode, parseHostFromEndpoint } from '@/lib/geo';
 import { countryCentroid } from '@/lib/country-centroids';
 import { PageHeader } from '../../../../components/PageHeader';
@@ -218,6 +219,7 @@ export default function NetworkPage() {
   const [testDraft, setTestDraft] = useState<{ from?: string; to?: string; type: TestType }>({ type: 'ping' });
   const [locationsOpen, setLocationsOpen] = useState(false);
   const [historyRange, setHistoryRange] = useState<'1h' | '24h' | '7d'>('1h');
+  const [reportPair, setReportPair] = useState<{ a: string; b: string } | null>(null);
   // Opens on the topology, which is what the page is for; the connectivity
   // test form now waits in its own tab instead of greeting every visit.
   const [networkTab, setNetworkTab] = useState('topology');
@@ -1679,6 +1681,18 @@ export default function NetworkPage() {
                     <TabsTrigger value="7d">7 j</TabsTrigger>
                   </TabsList>
                 </Tabs>
+                {historyPair && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="h-8 gap-1.5"
+                    onClick={() => setReportPair({ a: historyPair.nodeAId, b: historyPair.nodeBId })}
+                    title="Rapport à envoyer au support de l’hébergeur : IP publiques, pertes mesurées et trajet internet"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    Rapport pour l’hébergeur
+                  </Button>
+                )}
               </div>
               <CardDescription>
                 Latence et pertes mesurées en continu par les agents, dans chaque sens. La disponibilité compte la part des mesures où le lien répondait.
@@ -1782,6 +1796,14 @@ export default function NetworkPage() {
           />
         </TabsContent>
       </Tabs>
+      {vlanStatus && (
+        <HostReportDialog
+          vlanId={vlanStatus.vlan.id}
+          nodeA={reportPair ? { id: reportPair.a, name: nodeById.get(reportPair.a)?.label ?? shortName(reportPair.a) } : null}
+          nodeB={reportPair ? { id: reportPair.b, name: nodeById.get(reportPair.b)?.label ?? shortName(reportPair.b) } : null}
+          onOpenChange={(open) => !open && setReportPair(null)}
+        />
+      )}
     </div>
   );
 
