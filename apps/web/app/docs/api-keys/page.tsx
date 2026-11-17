@@ -149,7 +149,13 @@ curl -s -X POST ${BASE}/dns/zones/<ID_ZONE>/records \\
 curl -s -X POST ${BASE}/vpn/profiles/<ID_PROFIL>/exit \\
   -H "Authorization: Bearer $TARMAC_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"exitNodeId":"<ID_NOEUD_SORTIE>"}'`}
+  -d '{"exitNodeId":"<ID_NOEUD_SORTIE>"}'
+
+# Renommer un appareil dans le DNS interne : pc-alice.intranet.internal (vpn:write)
+curl -s -X PATCH ${BASE}/vpn/profiles/<ID_PROFIL> \\
+  -H "Authorization: Bearer $TARMAC_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"hostname":"pc-alice"}'`}
             </pre>
           </CardContent>
         </Card>

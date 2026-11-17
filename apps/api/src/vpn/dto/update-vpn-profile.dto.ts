@@ -14,6 +14,8 @@ import {
 } from 'class-validator';
 import {
   VPN_ACCESS_SCOPES,
+  VPN_HOSTNAME,
+  VPN_HOSTNAME_MESSAGE,
   VPN_PROFILE_MODES,
   VPN_TAG,
   VpnAccessScopeValue,
@@ -32,6 +34,18 @@ export class UpdateVpnProfileDto {
   @IsString()
   @MaxLength(500)
   description?: string | null;
+
+  // Renames the device in the internal DNS right away (no reinstall).
+  // null = derive it again from the (new) name.
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @Matches(VPN_HOSTNAME, { message: VPN_HOSTNAME_MESSAGE })
+  hostname?: string | null;
+
+  // Changes the downloaded config's DNS line: reinstall to apply.
+  @IsOptional()
+  @IsBoolean()
+  internalDns?: boolean;
 
   @IsOptional()
   @IsIn(VPN_PROFILE_MODES)

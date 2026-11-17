@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import {
   Activity,
   ArrowRightLeft,
+  AtSign,
   ChevronLeft,
   ChevronRight,
   Link2,
@@ -38,6 +39,7 @@ import { usePolling } from '@/lib/hooks/usePolling';
 import { AccessDialog, BulkAccessDialog, LinkDialog, TagDialog } from './components/AccessDialogs';
 import { ConfigDialog } from './components/ConfigPanel';
 import { CreateProfileDialog } from './components/CreateProfileDialog';
+import { DEFAULT_ZONE, DnsSettingsDialog } from './components/dns';
 import { EditProfileDialog } from './components/EditProfileDialog';
 import { buildLinks, LinksPanel } from './components/LinksPanel';
 import { ProfileDrawer } from './components/ProfileDrawer';
@@ -134,9 +136,12 @@ export default function VpnProfilesPage() {
   const { data: gateways = [], mutate: mutateGateways } = usePolling('vpn-gateways', api.vpn.gateways, {
     intervalMs: 15000,
   });
+  const { data: dnsSettings, mutate: mutateDns } = usePolling('vpn-dns', api.vpn.dns, { intervalMs: 60000 });
+  const zone = dnsSettings?.zone ?? DEFAULT_ZONE;
   const live = useVpnLive(() => {
     void mutate();
     void mutateGateways();
+    void mutateDns();
   });
 
   const [view, setView] = useState<View>('profiles');
@@ -157,6 +162,7 @@ export default function VpnProfilesPage() {
   const [bulkAccess, setBulkAccess] = useState<VpnProfile[] | null>(null);
   const [tagTargets, setTagTargets] = useState<VpnProfile[] | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
+  const [dnsOpen, setDnsOpen] = useState(false);
   const [linkSources, setLinkSources] = useState<string[]>([]);
   const [installing, setInstalling] = useState<VpnProfile | null>(null);
   const [switching, setSwitching] = useState<Record<string, string>>({});
@@ -213,7 +219,7 @@ export default function VpnProfilesPage() {
       if (tagFilter !== ANY && !profile.tags.includes(tagFilter)) return false;
       if (modeFilter !== ANY && profile.mode !== modeFilter) return false;
       if (!needle) return true;
-      return [profile.name, profile.description, profile.clientIp, profile.entryNode.name, profile.exitNode?.name, ...profile.tags]
+      return [profile.name, profile.description, profile.clientIp, profile.fqdn, profile.entryNode.name, profile.exitNode?.name, ...profile.tags]
         .filter(Boolean)
         .some((value) => (value as string).toLowerCase().includes(needle));
     });
@@ -362,6 +368,10 @@ export default function VpnProfilesPage() {
         }
         actions={
           <>
+            <Button variant="secondary" onClick={() => setDnsOpen(true)} className="gap-1.5" title={`Noms internes en .${zone}`}>
+              <AtSign className="h-4 w-4" />
+              Noms DNS
+            </Button>
             <Button variant="secondary" asChild>
               <Link href={`/${params.workspace}/dashboard/vpn/gateways`} className="gap-1.5">
                 <RadioTower className="h-4 w-4" />
@@ -475,7 +485,7 @@ export default function VpnProfilesPage() {
                   <Input
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Nom, libellé, nœud ou IP…"
+                    placeholder="Nom, nom DNS, libellé, nœud ou IP…"
                     className="h-8 pl-8"
                   />
                 </div>
@@ -663,11 +673,13 @@ export default function VpnProfilesPage() {
         onOpenChange={setCreateOpen}
         gateways={gateways}
         profiles={profiles}
+        zone={zone}
         onCreated={refresh}
       />
       <EditProfileDialog
         profile={editing}
         gateways={gateways}
+        zone={zone}
         onOpenChange={(open) => !open && setEditing(null)}
         onSaved={(message) => {
           showNotice({ tone: 'success', message });
@@ -685,6 +697,17 @@ export default function VpnProfilesPage() {
       <TagDialog targets={tagTargets} knownTags={knownTags} onOpenChange={(open) => !open && setTagTargets(null)} onDone={onDone} />
       <LinkDialog open={linkOpen} profiles={profiles} initialSources={linkSources} onOpenChange={setLinkOpen} onDone={onDone} />
       <ConfigDialog profile={installing} onOpenChange={(open) => !open && setInstalling(null)} />
+      <DnsSettingsDialog
+        open={dnsOpen}
+        settings={dnsSettings}
+        sampleHostname={profiles[0]?.hostname ?? 'pc-alice'}
+        onOpenChange={setDnsOpen}
+        onSaved={(next) => {
+          void mutateDns(next, { revalidate: false });
+          void mutate();
+          showNotice({ tone: 'success', message: `Les profils répondent désormais en .${next.zone}.` });
+        }}
+      />
     </div>
   );
 }

@@ -72,11 +72,11 @@ export function ProfileDrawer({
   const meshNodes =
     profile.access.mesh === 'selected' ? gateways.filter((gateway) => profile.access.meshNodeIds.includes(gateway.id)) : [];
 
-  const chipList = (items: Array<{ id: string; name: string; onClick?: () => void }>) => (
+  const chipList = (items: Array<{ id: string; name: string; title?: string; onClick?: () => void }>) => (
     <div className="mt-1.5 flex flex-wrap gap-1">
       {items.slice(0, 12).map((item) =>
         item.onClick ? (
-          <button key={item.id} type="button" onClick={item.onClick} className="rounded-md border border-border bg-surface-2 px-2 py-0.5 text-2xs text-foreground hover:border-primary/40">
+          <button key={item.id} type="button" onClick={item.onClick} title={item.title} className="rounded-md border border-border bg-surface-2 px-2 py-0.5 text-2xs text-foreground hover:border-primary/40">
             {item.name}
           </button>
         ) : (
@@ -200,7 +200,7 @@ export function ProfileDrawer({
                 <div className="min-w-0 flex-1">
                   <p className="text-sm text-foreground">Peut joindre</p>
                   <p className="text-xs text-muted-foreground">{peerSummary(profile.access, profileNames)}</p>
-                  {peers.length > 0 && chipList(peers.map((peer) => ({ id: peer.id, name: peer.name, onClick: () => onOpenProfile(peer) })))}
+                  {peers.length > 0 && chipList(peers.map((peer) => ({ id: peer.id, name: peer.name, title: peer.fqdn, onClick: () => onOpenProfile(peer) })))}
                 </div>
               </li>
               <li className="flex items-start gap-3 px-3 py-2.5">
@@ -210,7 +210,7 @@ export function ProfileDrawer({
                   <p className="text-xs text-muted-foreground">
                     {reachers.length === 0 ? 'Aucun autre profil' : `${reachers.length} profil${reachers.length > 1 ? 's' : ''}`}
                   </p>
-                  {reachers.length > 0 && chipList(reachers.map((peer) => ({ id: peer.id, name: peer.name, onClick: () => onOpenProfile(peer) })))}
+                  {reachers.length > 0 && chipList(reachers.map((peer) => ({ id: peer.id, name: peer.name, title: peer.fqdn, onClick: () => onOpenProfile(peer) })))}
                 </div>
               </li>
             </ul>
@@ -219,11 +219,38 @@ export function ProfileDrawer({
           <section>
             <SectionTitle>Configuration</SectionTitle>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
+              <div className="col-span-2 min-w-0">
+                <dt className="text-2xs text-muted-foreground">Nom DNS interne</dt>
+                <dd className="flex items-center gap-1">
+                  <span className="truncate font-mono text-xs text-foreground">{profile.fqdn}</span>
+                  <CopyButton value={profile.fqdn} iconOnly />
+                </dd>
+                <dd className="text-2xs text-muted-foreground">
+                  {reachers.length > 0
+                    ? `Résolu par ${profile.internalDns ? 'cet appareil et ' : ''}les ${reachers.length} profil${reachers.length > 1 ? 's' : ''} qui peuvent le joindre.`
+                    : 'Reliez-le à d’autres profils pour qu’ils le joignent par ce nom.'}
+                </dd>
+                {!profile.internalDns && (
+                  <dd className="mt-1 text-2xs text-[hsl(var(--warn))]">
+                    Cet appareil n&apos;utilise pas le DNS interne et ne résout pas les noms des autres profils. Activez-le
+                    dans « Modifier », puis réinstallez sa configuration.
+                  </dd>
+                )}
+              </div>
               <Field label="Adresse VPN" mono>
                 {profile.clientIp}
               </Field>
               <Field label="DNS" mono>
-                {profile.dns.length > 0 ? profile.dns.join(', ') : 'DNS de l’appareil'}
+                {(() => {
+                  const upstream = profile.dns.length > 0 ? profile.dns.join(', ') : null;
+                  const text = profile.internalDns
+                    ? `Interne → ${upstream ?? 'DNS du point d’entrée'}`
+                    : (upstream ?? 'DNS de l’appareil');
+                  const title = profile.internalDns
+                    ? `Noms internes résolus par ${profile.entryNode.name}, le reste relayé vers ${upstream ?? 'ses propres serveurs DNS'}`
+                    : text;
+                  return <span title={title}>{text}</span>;
+                })()}
               </Field>
               <Field label="Expiration">
                 {profile.expiresAt ? (

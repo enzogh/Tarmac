@@ -196,6 +196,8 @@ export interface CommandResultPayload {
     vpnActive?: boolean;
     // Set by `apply_vpn` on agents that enforce per-client access rules.
     vpnPolicy?: boolean;
+    // Set by `apply_vpn` on agents running the clients' internal resolver.
+    vpnDns?: boolean;
     // Set by `apply_firewall`: false once nothing is filtered any more.
     firewallActive?: boolean;
   };

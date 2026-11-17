@@ -1,6 +1,7 @@
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsIP,
   IsISO8601,
@@ -17,6 +18,11 @@ export type VpnProfileModeValue = (typeof VPN_PROFILE_MODES)[number];
 export const VPN_ACCESS_SCOPES = ['all', 'selected', 'none'] as const;
 export type VpnAccessScopeValue = (typeof VPN_ACCESS_SCOPES)[number];
 export const VPN_TAG = /^[\p{L}\p{N}][\p{L}\p{N} _.-]{0,31}$/u;
+
+// A single DNS label; stored lowercase.
+export const VPN_HOSTNAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+export const VPN_HOSTNAME_MESSAGE =
+  'hostname must be a DNS label: 1-63 letters, digits or dashes, not starting or ending with a dash';
 
 const WIREGUARD_KEY = /^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]=$/;
 
@@ -46,7 +52,21 @@ export class CreateVpnProfileDto {
   @IsString()
   exitNodeId?: string | null;
 
-  // Omitted = 1.1.1.1/1.0.0.1 in full mode, none in private mode.
+  // Internal name: <hostname>.<workspace zone>. Omitted = derived from the
+  // name ("PC Alice" -> pc-alice, pc-alice-2 if taken).
+  @IsOptional()
+  @Matches(VPN_HOSTNAME, { message: VPN_HOSTNAME_MESSAGE })
+  hostname?: string;
+
+  // Omitted = true: the device resolves internal names through its entry
+  // node, which relays everything else to `dns`.
+  @IsOptional()
+  @IsBoolean()
+  internalDns?: boolean;
+
+  // Resolvers the device uses (or, with internalDns, that its entry node
+  // relays other names to). Omitted = 1.1.1.1/1.0.0.1 in full mode, none in
+  // private mode (the entry node's own resolver with internalDns).
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(4)

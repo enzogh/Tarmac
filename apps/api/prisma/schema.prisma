@@ -279,6 +279,9 @@ model Workspace {
   // The agent's message when internalDnsStatus is error, shown as-is on the
   // Nodes page; null otherwise.
   internalDnsError  String?
+  // Suffix of the VPN clients' internal names (<hostname>.<vpnDnsZone>),
+  // answered by the resolver each entry node runs on its client gateway.
+  vpnDnsZone        String  @default("intranet.internal")
 
   memberships          WorkspaceMembership[]
   nodes                Node[]
@@ -1117,6 +1120,15 @@ model VpnProfile {
   exitNode          Node?          @relation("VpnExitNode", fields: [exitNodeId], references: [id], onDelete: SetNull)
   // Address inside the entry node's client /24.
   clientIp          String
+  // DNS label of this client: <hostname>.<Workspace.vpnDnsZone> resolves to
+  // clientIp for the clients allowed to reach it. Derived from `name` when
+  // not chosen, unique per workspace. Only null for rows predating the
+  // feature until VpnService backfills them at startup.
+  hostname          String?
+  // The downloaded config points the device's DNS at its entry node's
+  // resolver (internal names + relay to `dns`). Off for profiles created
+  // before internal names existed: their installed config predates it.
+  useInternalDns    Boolean        @default(false)
   clientPublicKey   String         @unique
   // Null when the caller brought its own key pair (only the public half was
   // sent): the downloadable config then carries a placeholder instead.
@@ -1153,6 +1165,7 @@ model VpnProfile {
   updatedAt         DateTime       @updatedAt
 
   @@unique([entryNodeId, clientIp])
+  @@unique([workspaceId, hostname])
   @@index([workspaceId])
   @@index([exitNodeId])
 }

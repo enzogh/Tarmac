@@ -36,13 +36,16 @@ export function buildLinks(profiles: VpnProfile[]): Link[] {
 
 function ProfileRef({ profile, onOpen }: { profile: VpnProfile; onOpen: (profile: VpnProfile) => void }) {
   return (
-    <button type="button" onClick={() => onOpen(profile)} className="inline-flex min-w-0 items-center gap-2 text-left hover:text-primary">
+    <button
+      type="button"
+      onClick={() => onOpen(profile)}
+      title={`${profile.fqdn} → ${profile.clientIp} (via ${profile.entryNode.name})`}
+      className="inline-flex min-w-0 items-center gap-2 text-left hover:text-primary"
+    >
       <NodeFlag node={profile.entryNode} className="text-sm" />
       <span className="min-w-0">
         <span className="block truncate font-medium text-foreground">{profile.name}</span>
-        <span className="block truncate font-mono text-2xs text-muted-foreground">
-          {profile.clientIp} · {profile.entryNode.name}
-        </span>
+        <span className="block truncate font-mono text-2xs text-muted-foreground">{profile.fqdn}</span>
       </span>
     </button>
   );
@@ -71,7 +74,9 @@ export function LinksPanel({
     if (!needle) return links;
     return links.filter((link) =>
       [link.from, link.to].some((profile) =>
-        [profile.name, profile.clientIp, profile.entryNode.name, ...profile.tags].some((value) => value.toLowerCase().includes(needle)),
+        [profile.name, profile.fqdn, profile.clientIp, profile.entryNode.name, ...profile.tags].some((value) =>
+          value.toLowerCase().includes(needle),
+        ),
       ),
     );
   }, [links, query]);
@@ -120,14 +125,14 @@ export function LinksPanel({
             <CardDescription>
               {links.length === 0
                 ? 'Par défaut chaque appareil est isolé des autres. Créez un lien pour autoriser deux appareils à communiquer.'
-                : `${links.length} lien${links.length > 1 ? 's' : ''}${crossEntry > 0 ? `, dont ${crossEntry} entre points d’entrée différents` : ''}. Les autres appareils restent isolés.`}
+                : `${links.length} lien${links.length > 1 ? 's' : ''}${crossEntry > 0 ? `, dont ${crossEntry} entre points d’entrée différents` : ''}. Les appareils reliés se joignent par leur nom DNS, les autres restent isolés.`}
             </CardDescription>
           </div>
           <div className="flex items-center gap-2">
             {links.length > 6 && (
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Profil, IP, libellé…" className="h-8 w-56 pl-8" />
+                <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Profil, nom DNS, IP, libellé…" className="h-8 w-56 pl-8" />
               </div>
             )}
             <Button write onClick={onCreate} className="gap-1.5" disabled={profiles.length < 2}>

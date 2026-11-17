@@ -1522,6 +1522,7 @@ export class AgentsService implements OnModuleInit {
         message: result.message,
         active: result.data?.vpnActive,
         policy: result.data?.vpnPolicy,
+        dns: result.data?.vpnDns,
       });
       return;
     }

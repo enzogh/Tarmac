@@ -6,6 +6,7 @@ import { BulkVpnProfilesDto } from './dto/bulk-vpn-profiles.dto';
 import { CreateVpnProfileDto } from './dto/create-vpn-profile.dto';
 import { RotateVpnKeysDto } from './dto/rotate-keys.dto';
 import { SwitchVpnExitDto } from './dto/switch-exit.dto';
+import { UpdateVpnDnsDto } from './dto/update-vpn-dns.dto';
 import { UpdateVpnProfileDto } from './dto/update-vpn-profile.dto';
 import { VpnService } from './vpn.service';
 
@@ -26,6 +27,20 @@ export class VpnController {
   @RequireApiScope('vpn:read')
   gateways(@CurrentWorkspace() scope: WorkspaceScope) {
     return this.vpnService.listGateways(scope);
+  }
+
+  // Internal names: every profile answers as <hostname>.<zone> through the
+  // resolver of its entry node. The zone is per workspace.
+  @Get('dns')
+  @RequireApiScope('vpn:read')
+  dnsSettings(@CurrentWorkspace() scope: WorkspaceScope) {
+    return this.vpnService.getDnsSettings(scope);
+  }
+
+  @Patch('dns')
+  @RequireApiScope('vpn:write')
+  updateDnsSettings(@Body() dto: UpdateVpnDnsDto, @CurrentWorkspace() scope: WorkspaceScope, @Req() req: AuthenticatedRequest) {
+    return this.vpnService.updateDnsSettings(dto, { scope, userId: req.user?.userId });
   }
 
   // Counters from the latest agent reports (5 s), for API keys: the live

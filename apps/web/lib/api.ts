@@ -647,7 +647,15 @@ export type VpnProfile = {
   mode: VpnProfileMode;
   enabled: boolean;
   expiresAt: string | null;
+  // Resolvers the device uses, or that its entry node relays to when
+  // `internalDns` is on.
   dns: string[];
+  // Internal name: `fqdn` (<hostname>.<zone>) resolves to clientIp for the
+  // device itself and the profiles allowed to reach it.
+  hostname: string;
+  fqdn: string;
+  // The config points the device's DNS at its entry node's resolver.
+  internalDns: boolean;
   tags: string[];
   access: VpnAccess;
   clientIp: string;
@@ -687,6 +695,9 @@ export type VpnProfilePayload = {
   entryNodeId: string;
   exitNodeId?: string | null;
   dns?: string[];
+  // null (update only) = derive it again from the name.
+  hostname?: string | null;
+  internalDns?: boolean;
   expiresAt?: string | null;
   publicKey?: string;
   tags?: string[];
@@ -695,6 +706,10 @@ export type VpnProfilePayload = {
   peerAccess?: VpnAccessScope;
   peerProfileIds?: string[];
 };
+
+// Suffix of every profile's internal name; `warning` when it can't work
+// everywhere (.local).
+export type VpnDnsSettings = { zone: string; defaultZone: string; ttl: number; warning: string | null };
 
 export type VpnGateway = VpnNodeRef & {
   vlanIp: string | null;
@@ -1696,6 +1711,9 @@ export const api = {
       }),
     config: (id: string) =>
       request<{ filename: string; config: string; complete: boolean }>(`/api/v1/vpn/profiles/${id}/config`),
+    dns: () => request<VpnDnsSettings>('/api/v1/vpn/dns'),
+    updateDns: (zone: string) =>
+      request<VpnDnsSettings>('/api/v1/vpn/dns', { method: 'PATCH', body: JSON.stringify({ zone }) }),
   },
 
   firewall: {

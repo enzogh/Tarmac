@@ -6,6 +6,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Node, Prisma, VpnProfile } from '@prisma/client';
@@ -20,8 +21,21 @@ import { VlanService } from '../vlan/vlan.service';
 import { BulkVpnProfilesDto } from './dto/bulk-vpn-profiles.dto';
 import { CreateVpnProfileDto, VpnAccessScopeValue } from './dto/create-vpn-profile.dto';
 import { RotateVpnKeysDto } from './dto/rotate-keys.dto';
+import { UpdateVpnDnsDto } from './dto/update-vpn-dns.dto';
 import { UpdateVpnProfileDto } from './dto/update-vpn-profile.dto';
 import { configFilename, renderClientConfig } from './vpn-config';
+import {
+  DEFAULT_VPN_DNS_ZONE,
+  fqdn,
+  hostnameCandidate,
+  hostnameFromName,
+  isValidHostname,
+  normalizeHostname,
+  normalizeZone,
+  VPN_DNS_TTL,
+  zoneProblem,
+  zoneWarning,
+} from './vpn-dns';
 import { generateWireguardKeyPair, generateWireguardPresharedKey } from './vpn-keys';
 import {
   assignRoutingTables,
@@ -91,6 +105,10 @@ type ApplyTunnel = { name: string; localIp: string; remoteIp: string; table: num
 // `localDns` = only port 53 on it, `allow` = forwarded destinations (other
 // nodes, other clients), `dns` = mesh resolvers reachable on port 53 only.
 type ClientPolicy = { internet: boolean; local: boolean; localDns: boolean; allow: string[]; dns: string[] };
+// The internal names the entry node's resolver serves (all of the
+// workspace's live clients; the agent answers each client only the ones its
+// policy lets it reach, plus itself).
+type ApplyDns = { zone: string; ttl: number; records: Array<{ name: string; ip: string }> };
 type ApplyPayload = {
   revision: string;
   meshInterface: string;
@@ -103,7 +121,17 @@ type ApplyPayload = {
     listenPort: number;
     addressCidr: string;
     clientSubnet: string;
-    clients: Array<{ publicKey: string; presharedKey: string; ip: string; table: number; policy: ClientPolicy }>;
+    // `upstreams`: where the resolver relays this client's other queries
+    // (empty = the node's own resolvers).
+    clients: Array<{
+      publicKey: string;
+      presharedKey: string;
+      ip: string;
+      table: number;
+      policy: ClientPolicy;
+      upstreams: string[];
+    }>;
+    dns: ApplyDns;
   } | null;
   tunnels: ApplyTunnel[];
   natSubnets: string[];
@@ -124,8 +152,14 @@ function isUniqueConstraintError(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }
 
+function isHostnameClash(error: unknown) {
+  if (!isUniqueConstraintError(error)) return false;
+  const target = (error as Prisma.PrismaClientKnownRequestError).meta?.target;
+  return Array.isArray(target) ? target.includes('hostname') : String(target ?? '').includes('hostname');
+}
+
 @Injectable()
-export class VpnService {
+export class VpnService implements OnModuleInit {
   private readonly logger = new Logger(VpnService.name);
   private readonly statsWrittenAt = new Map<string, number>();
   // Last two agent reports per profile, kept in memory (an agent reports
@@ -160,21 +194,30 @@ export class VpnService {
     private readonly agentsService: AgentsService,
   ) {}
 
+  onModuleInit() {
+    void this.backfillHostnames().catch((error) =>
+      this.logger.warn(`VPN hostname backfill failed: ${error instanceof Error ? error.message : error}`),
+    );
+  }
+
   // ---------------------------------------------------------------------
   // Profiles
   // ---------------------------------------------------------------------
 
   async list(scope: WorkspaceScope) {
-    const profiles = await this.prisma.vpnProfile.findMany({
-      where: { workspaceId: scope.workspaceId },
-      include: { entryNode: { select: NODE_REF_SELECT }, exitNode: { select: NODE_REF_SELECT } },
-      orderBy: { createdAt: 'desc' },
-    });
-    return profiles.map((profile) => this.serialize(profile));
+    const [profiles, zone] = await Promise.all([
+      this.prisma.vpnProfile.findMany({
+        where: { workspaceId: scope.workspaceId },
+        include: { entryNode: { select: NODE_REF_SELECT }, exitNode: { select: NODE_REF_SELECT } },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.zoneOf(scope.workspaceId as string),
+    ]);
+    return profiles.map((profile) => this.serialize(profile, zone));
   }
 
   async get(id: string, scope: WorkspaceScope) {
-    return this.serialize(await this.findOwned(id, scope));
+    return this.present(await this.findOwned(id, scope));
   }
 
   async create(dto: CreateVpnProfileDto, actor: Actor) {
@@ -189,6 +232,8 @@ export class VpnService {
     const peerAccess = dto.peerAccess ?? 'none';
     const meshNodeIds = await this.normalizeNodeIds(meshAccess, dto.meshNodeIds, workspaceId);
     const peerProfileIds = await this.normalizePeerIds(peerAccess, dto.peerProfileIds, workspaceId);
+    const requestedHostname = dto.hostname !== undefined ? this.checkedHostname(dto.hostname) : null;
+    if (requestedHostname) await this.assertHostnameFree(workspaceId, requestedHostname);
 
     const meshCidr = await this.vlanService.getVlanSubnet(workspaceId);
     const subnetIndex = await this.ensureEntrySubnet(entryNode.id, workspaceId);
@@ -196,6 +241,7 @@ export class VpnService {
     let created: VpnProfile | null = null;
     for (let attempt = 0; attempt < UNIQUE_RETRIES && !created; attempt++) {
       const clientIp = await this.allocateClientIp(entryNode.id, meshCidr, subnetIndex);
+      const hostname = requestedHostname ?? (await this.freeHostname(workspaceId, hostnameFromName(dto.name)));
       try {
         created = await this.prisma.vpnProfile.create({
           data: {
@@ -206,6 +252,8 @@ export class VpnService {
             entryNodeId: entryNode.id,
             exitNodeId,
             clientIp,
+            hostname,
+            useInternalDns: dto.internalDns ?? true,
             clientPublicKey: keys.publicKey,
             clientPrivateKey: sealSecret(keys.privateKey),
             presharedKey: sealSecret(generateWireguardPresharedKey()),
@@ -221,8 +269,10 @@ export class VpnService {
           },
         });
       } catch (error) {
-        // Two profiles racing for the same free address on this entry node.
+        // Two profiles racing for the same free address on this entry node
+        // (or the same derived hostname: the next attempt picks another).
         if (!isUniqueConstraintError(error)) throw error;
+        if (requestedHostname && isHostnameClash(error)) throw this.hostnameTaken(requestedHostname);
       }
     }
     if (!created) throw new ConflictException("Impossible d'attribuer une adresse au client, réessayez.");
@@ -233,6 +283,7 @@ export class VpnService {
       entryNodeId: entryNode.id,
       exitNodeId,
       clientIp: created.clientIp,
+      hostname: created.hostname,
       meshAccess,
       peerAccess,
     });
@@ -240,7 +291,7 @@ export class VpnService {
     this.broadcastChanged(workspaceId, created.id);
 
     const profile = await this.findOwned(created.id, actor.scope);
-    return { ...this.serialize(profile), config: await this.buildConfig(profile) };
+    return { ...(await this.present(profile)), config: await this.buildConfig(profile) };
   }
 
   async update(id: string, dto: UpdateVpnProfileDto, actor: Actor) {
@@ -251,6 +302,22 @@ export class VpnService {
 
     if (dto.name !== undefined) data.name = dto.name.trim();
     if (dto.description !== undefined) data.description = dto.description?.trim() || null;
+    if (dto.hostname !== undefined) {
+      const hostname =
+        dto.hostname === null
+          ? await this.freeHostname(workspaceId, hostnameFromName(dto.name ?? existing.name), id)
+          : this.checkedHostname(dto.hostname);
+      if (hostname !== existing.hostname) {
+        if (dto.hostname !== null) await this.assertHostnameFree(workspaceId, hostname, id);
+        data.hostname = hostname;
+        // Names are served by the entry nodes: a rename is pushed to them.
+        routingChanged = true;
+      }
+    }
+    // Only the downloaded config changes (its DNS line).
+    if (dto.internalDns !== undefined && dto.internalDns !== existing.useInternalDns) {
+      data.useInternalDns = dto.internalDns;
+    }
     if (dto.dns !== undefined) {
       data.dns = dto.dns;
       // Mesh resolvers are opened in the firewall per client.
@@ -313,19 +380,23 @@ export class VpnService {
     }
 
     if (routingChanged) data.configChangedAt = new Date();
-    if (Object.keys(data).length === 0) return this.serialize(existing);
+    if (Object.keys(data).length === 0) return this.present(existing);
 
     try {
       await this.prisma.vpnProfile.update({ where: { id }, data });
     } catch (error) {
+      if (isHostnameClash(error)) throw this.hostnameTaken(String(data.hostname));
       if (isUniqueConstraintError(error)) throw new ConflictException('Adresse client déjà prise, réessayez.');
       throw error;
     }
 
-    await this.audit(actor, 'vpn_profile.update', id, { changes: Object.keys(data) });
+    await this.audit(actor, 'vpn_profile.update', id, {
+      changes: Object.keys(data),
+      ...(data.hostname !== undefined ? { hostname: { from: existing.hostname, to: data.hostname } } : {}),
+    });
     if (routingChanged) await this.reconcileWorkspace(workspaceId);
     this.broadcastChanged(workspaceId, id);
-    return this.serialize(await this.findOwned(id, actor.scope));
+    return this.present(await this.findOwned(id, actor.scope));
   }
 
   // The one-click exit switch. Only routing on the nodes changes: the
@@ -340,7 +411,7 @@ export class VpnService {
       );
     }
     const normalized = await this.normalizeExit(exitNodeId ?? null, existing.entryNodeId, existing.workspaceId);
-    if (normalized === existing.exitNodeId) return this.serialize(existing);
+    if (normalized === existing.exitNodeId) return this.present(existing);
 
     const now = new Date();
     await this.prisma.vpnProfile.update({
@@ -353,7 +424,7 @@ export class VpnService {
     });
     await this.reconcileWorkspace(existing.workspaceId);
     this.broadcastChanged(existing.workspaceId, id);
-    return this.serialize(await this.findOwned(id, actor.scope));
+    return this.present(await this.findOwned(id, actor.scope));
   }
 
   // Invalidates the current config (lost device, leaked file): new key pair
@@ -379,7 +450,7 @@ export class VpnService {
     await this.reconcileWorkspace(existing.workspaceId);
     this.broadcastChanged(existing.workspaceId, id);
     const profile = await this.findOwned(id, actor.scope);
-    return { ...this.serialize(profile), config: await this.buildConfig(profile) };
+    return { ...(await this.present(profile)), config: await this.buildConfig(profile) };
   }
 
   async remove(id: string, actor: Actor) {
@@ -538,6 +609,48 @@ export class VpnService {
   }
 
   // ---------------------------------------------------------------------
+  // Internal DNS (<hostname>.<zone> for every client)
+  // ---------------------------------------------------------------------
+
+  async getDnsSettings(scope: WorkspaceScope) {
+    return this.dnsSettings(await this.zoneOf(scope.workspaceId as string));
+  }
+
+  // Takes effect on the entry nodes right away: every name moves to the new
+  // zone. Devices keep resolving full names; the short-name search domain
+  // in their config only follows once it's reinstalled.
+  async updateDnsSettings(dto: UpdateVpnDnsDto, actor: Actor) {
+    const workspaceId = actor.scope.workspaceId as string;
+    const zone = normalizeZone(dto.zone);
+    const problem = zoneProblem(zone);
+    if (problem) throw new BadRequestException(problem);
+    const current = await this.zoneOf(workspaceId);
+    if (zone === current) return this.dnsSettings(zone);
+
+    await this.prisma.workspace.update({ where: { id: workspaceId }, data: { vpnDnsZone: zone } });
+    await this.prisma.vpnProfile.updateMany({ where: { workspaceId, enabled: true }, data: { configChangedAt: new Date() } });
+    await this.auditLogsService.log({
+      workspaceId,
+      actorUserId: actor.userId,
+      action: 'vpn.dns_zone.update',
+      resourceType: 'vpn_dns',
+      resourceId: workspaceId,
+      details: {
+        from: current,
+        to: zone,
+        ...(actor.scope.apiKey ? { apiKey: { id: actor.scope.apiKey.id, name: actor.scope.apiKey.name } } : {}),
+      },
+    });
+    await this.reconcileWorkspace(workspaceId);
+    this.live.broadcast('vpn.changed', {}, workspaceId);
+    return this.dnsSettings(zone);
+  }
+
+  private dnsSettings(zone: string) {
+    return { zone, defaultZone: DEFAULT_VPN_DNS_ZONE, ttl: VPN_DNS_TTL, warning: zoneWarning(zone) };
+  }
+
+  // ---------------------------------------------------------------------
   // Gateways (which nodes can serve as entry / exit, and what they carry)
   // ---------------------------------------------------------------------
 
@@ -621,13 +734,14 @@ export class VpnService {
   }
 
   private async pushWorkspace(workspaceId: string, onlyNodeId?: string): Promise<void> {
-    const [nodes, profiles, meshCidr] = await Promise.all([
+    const [nodes, profiles, meshCidr, zone] = await Promise.all([
       this.prisma.node.findMany({
         where: { workspaceId },
         select: { id: true, vlanIp: true, overlayPublicKey: true, vpnSubnetIndex: true, vpnAppliedRevision: true },
       }),
       this.prisma.vpnProfile.findMany({ where: { workspaceId, enabled: true } }),
       this.vlanService.getVlanSubnet(workspaceId),
+      this.zoneOf(workspaceId),
     ]);
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const now = Date.now();
@@ -640,6 +754,14 @@ export class VpnService {
     const liveEntries = new Set(liveProfiles.map((profile) => profile.entryNodeId));
     const meshNodeCidrs = meshNodeRangeCidrs(meshCidr);
     const clientCidrs = clientRangeCidrs(meshCidr);
+    const dns: ApplyDns = {
+      zone,
+      ttl: VPN_DNS_TTL,
+      records: liveProfiles
+        .filter((profile) => profile.hostname)
+        .map((profile) => ({ name: profile.hostname as string, ip: profile.clientIp }))
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    };
     // Unordered pairs of entry nodes whose clients talk to each other.
     const entryLinks = new Set<string>();
 
@@ -672,6 +794,7 @@ export class VpnService {
       if (!entry?.vlanIp || entry.vpnSubnetIndex == null) continue;
 
       const subnet = clientSubnet(meshCidr, entry.vpnSubnetIndex);
+      const gatewayIp = entryGatewayCidr(meshCidr, entry.vpnSubnetIndex).split('/')[0];
       const entryState = stateFor(entry.id);
       entryState.entry ??= {
         interfaceName: VPN_INTERFACE,
@@ -679,6 +802,7 @@ export class VpnService {
         addressCidr: entryGatewayCidr(meshCidr, entry.vpnSubnetIndex),
         clientSubnet: subnet,
         clients: [],
+        dns,
       };
       entryState.natSubnets.add(subnet);
       const policy = this.clientPolicy(profile, entry, {
@@ -687,7 +811,7 @@ export class VpnService {
         clientCidrs,
         nodeById,
         liveById,
-        gatewayIp: entryGatewayCidr(meshCidr, entry.vpnSubnetIndex).split('/')[0],
+        gatewayIp,
       });
       for (const peerEntryId of policy.remoteEntries) {
         if (peerEntryId !== entry.id && liveEntries.has(peerEntryId)) {
@@ -705,6 +829,8 @@ export class VpnService {
         ip: profile.clientIp,
         table: 0,
         policy: policy.policy,
+        // The gateway is the resolver itself.
+        upstreams: profile.dns.filter((ip) => ip !== gatewayIp),
       });
 
       const exit = profile.mode === 'full' && profile.exitNodeId ? nodeById.get(profile.exitNodeId) : undefined;
@@ -786,7 +912,7 @@ export class VpnService {
   async onApplyResult(
     nodeId: string,
     workspaceId: string,
-    result: { revision: string; success: boolean; message?: string; active?: boolean; policy?: boolean },
+    result: { revision: string; success: boolean; message?: string; active?: boolean; policy?: boolean; dns?: boolean },
   ) {
     const revision = new Date(result.revision);
     if (Number.isNaN(revision.getTime())) return;
@@ -801,7 +927,15 @@ export class VpnService {
     const cleared = result.success && result.active === false;
     // An agent that predates access rules applies tunnels and routes fine
     // but leaves its clients unfiltered: working, yet not what was asked.
-    const outdated = result.success && result.policy !== true;
+    // One that predates internal names has no resolver for its clients
+    // (only matters where clients connect).
+    const noPolicy = result.success && result.policy !== true;
+    const noDns =
+      result.success &&
+      !noPolicy &&
+      result.dns !== true &&
+      (await this.prisma.vpnProfile.count({ where: { entryNodeId: nodeId, enabled: true } })) > 0;
+    const outdated = noPolicy || noDns;
     await this.prisma.node.update({
       where: { id: nodeId },
       data: cleared
@@ -810,9 +944,11 @@ export class VpnService {
             vpnAppliedRevision: revision,
             vpnApplyStatus: result.success ? (outdated ? 'outdated' : 'active') : 'error',
             vpnApplyError: result.success
-              ? outdated
+              ? noPolicy
                 ? "Agent trop ancien pour les règles d'accès : les clients de ce nœud ne sont pas cloisonnés. Mettez à jour l'agent depuis la page Nœuds."
-                : null
+                : noDns
+                  ? "Agent trop ancien pour les noms DNS internes : les appareils qui se connectent ici ne les résolvent pas. Mettez à jour l'agent depuis la page Nœuds, puis réinstallez leur configuration."
+                  : null
               : (result.message ?? 'Erreur inconnue').slice(0, 700),
           },
     });
@@ -1122,6 +1258,77 @@ export class VpnService {
     return date;
   }
 
+  private async zoneOf(workspaceId: string): Promise<string> {
+    const workspace = await this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { vpnDnsZone: true } });
+    return workspace?.vpnDnsZone || DEFAULT_VPN_DNS_ZONE;
+  }
+
+  private checkedHostname(value: string): string {
+    const hostname = normalizeHostname(value);
+    if (!isValidHostname(hostname)) {
+      throw new BadRequestException(
+        'Nom DNS invalide : 1 à 63 lettres, chiffres ou tirets, sans tiret au début ni à la fin (ex. pc-alice).',
+      );
+    }
+    return hostname;
+  }
+
+  private hostnameTaken(hostname: string) {
+    return new ConflictException(`Le nom « ${hostname} » est déjà utilisé par un autre profil de ce workspace.`);
+  }
+
+  private async assertHostnameFree(workspaceId: string, hostname: string, exceptProfileId?: string) {
+    const clash = await this.prisma.vpnProfile.findFirst({
+      where: { workspaceId, hostname, ...(exceptProfileId ? { id: { not: exceptProfileId } } : {}) },
+      select: { name: true },
+    });
+    if (clash) {
+      throw new ConflictException(`Le nom « ${hostname} » est déjà utilisé par le profil « ${clash.name} ».`);
+    }
+  }
+
+  // Deterministic: the name's label, then label-2, label-3... - never random.
+  private async freeHostname(workspaceId: string, base: string, exceptProfileId?: string): Promise<string> {
+    const rows = await this.prisma.vpnProfile.findMany({
+      where: { workspaceId, hostname: { not: null }, ...(exceptProfileId ? { id: { not: exceptProfileId } } : {}) },
+      select: { hostname: true },
+    });
+    const taken = new Set(rows.map((row) => row.hostname));
+    for (let attempt = 1; ; attempt++) {
+      const candidate = hostnameCandidate(base, attempt);
+      if (!taken.has(candidate)) return candidate;
+    }
+  }
+
+  // Profiles created before internal names existed get theirs at startup,
+  // oldest first (so the oldest keeps the plain label when two share a name).
+  private async backfillHostnames() {
+    const missing = await this.prisma.vpnProfile.findMany({
+      where: { hostname: null },
+      select: { id: true, workspaceId: true, name: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (missing.length === 0) return;
+    const workspaces = new Set<string>();
+    for (const profile of missing) {
+      for (let attempt = 0; attempt < UNIQUE_RETRIES; attempt++) {
+        const hostname = await this.freeHostname(profile.workspaceId, hostnameFromName(profile.name));
+        try {
+          await this.prisma.vpnProfile.update({ where: { id: profile.id }, data: { hostname } });
+          workspaces.add(profile.workspaceId);
+          break;
+        } catch (error) {
+          if (!isUniqueConstraintError(error)) throw error;
+        }
+      }
+    }
+    this.logger.log(`VPN: internal names given to ${missing.length} existing profile(s)`);
+    for (const workspaceId of workspaces) {
+      await this.reconcileWorkspace(workspaceId).catch(() => undefined);
+      this.live.broadcast('vpn.changed', {}, workspaceId);
+    }
+  }
+
   private async assertPublicKeyFree(publicKey: string, exceptProfileId?: string) {
     const clash = await this.prisma.vpnProfile.findUnique({ where: { clientPublicKey: publicKey }, select: { id: true } });
     if (clash && clash.id !== exceptProfileId) {
@@ -1169,9 +1376,22 @@ export class VpnService {
     return profile;
   }
 
+  /**
+   * Whether the device's config points its DNS at the entry node's resolver.
+   * Not while that node's agent predates it ('outdated'): the device would
+   * lose all name resolution, not just the internal names.
+   */
+  private usesInternalDns(profile: ProfileWithNodes) {
+    return (
+      profile.useInternalDns &&
+      profile.entryNode.vpnSubnetIndex != null &&
+      profile.entryNode.vpnApplyStatus !== 'outdated'
+    );
+  }
+
   private async buildConfig(profile: ProfileWithNodes) {
     const [workspace, meshCidr] = await Promise.all([
-      this.prisma.workspace.findUnique({ where: { id: profile.workspaceId }, select: { name: true } }),
+      this.prisma.workspace.findUnique({ where: { id: profile.workspaceId }, select: { name: true, vpnDnsZone: true } }),
       this.vlanService.getVlanSubnet(profile.workspaceId),
     ]);
     const host = extractExternalIp(profile.entryNode.overlayEndpoint);
@@ -1186,7 +1406,14 @@ export class VpnService {
       clientIp: profile.clientIp,
       clientPrivateKey: openSecret(profile.clientPrivateKey),
       presharedKey: openSecret(profile.presharedKey),
-      dns: profile.dns,
+      // The resolver, then the zone as search domain (`ssh pc-alice` works
+      // without the suffix); other names are relayed to profile.dns.
+      dns: this.usesInternalDns(profile)
+        ? [
+            entryGatewayCidr(meshCidr, profile.entryNode.vpnSubnetIndex as number).split('/')[0],
+            workspace?.vpnDnsZone || DEFAULT_VPN_DNS_ZONE,
+          ]
+        : profile.dns,
       serverPublicKey: profile.entryNode.overlayPublicKey,
       endpoint: `${host.includes(':') ? `[${host}]` : host}:${VPN_LISTEN_PORT}`,
       meshCidr,
@@ -1205,10 +1432,15 @@ export class VpnService {
     };
   }
 
+  private async present(profile: ProfileWithNodes) {
+    return this.serialize(profile, await this.zoneOf(profile.workspaceId));
+  }
+
   // Never exposes the private or preshared key - those only leave through
   // the config endpoints.
-  private serialize(profile: ProfileWithNodes) {
+  private serialize(profile: ProfileWithNodes, zone: string) {
     const now = Date.now();
+    const hostname = profile.hostname ?? hostnameFromName(profile.name);
     const effectiveExit = profile.mode === 'full' ? (profile.exitNode ?? profile.entryNode) : null;
     const connected = this.isSessionConnected(profile.id, profile.lastHandshakeAt, now);
     return {
@@ -1219,6 +1451,11 @@ export class VpnService {
       enabled: profile.enabled,
       expiresAt: profile.expiresAt,
       dns: profile.dns,
+      // <hostname>.<zone>, resolvable by itself and the profiles allowed to
+      // reach it. `internalDns`: whether its config uses the resolver.
+      hostname,
+      fqdn: fqdn(hostname, zone),
+      internalDns: profile.useInternalDns,
       tags: profile.tags,
       access: {
         mesh: profile.meshAccess,

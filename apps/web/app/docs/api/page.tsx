@@ -536,23 +536,24 @@ const MODULES: Module[] = [
         path: '/vpn/profiles',
         apiScope: 'vpn:read',
         description:
-          'Profils avec route effective (entryNode, exitNode), état de déploiement (deployment.status) et session (connected, lastHandshakeAt, rxBytes, txBytes). Jamais de clé privée.',
+          'Profils avec route effective (entryNode, exitNode), nom DNS interne (hostname, fqdn, internalDns), état de déploiement (deployment.status) et session (connected, lastHandshakeAt, rxBytes, txBytes). Jamais de clé privée.',
       },
       { method: 'GET', path: '/vpn/profiles/:id', apiScope: 'vpn:read', description: "Détail d'un profil." },
       {
         method: 'POST',
         path: '/vpn/profiles',
         apiScope: 'vpn:write',
-        body: 'name, entryNodeId, mode? (full | private), exitNodeId?, description?, dns?, expiresAt?, publicKey?',
+        body: 'name, entryNodeId, mode? (full | private), exitNodeId?, description?, hostname?, internalDns? (true), dns?, expiresAt?, publicKey?',
         description:
-          "Crée un profil et renvoie sa configuration WireGuard (config). Sans exitNodeId, la sortie se fait par le nœud d'entrée. Avec publicKey, la clé privée n'est jamais connue de Tarmac.",
+          "Crée un profil et renvoie sa configuration WireGuard (config). Sans exitNodeId, la sortie se fait par le nœud d'entrée. Sans hostname, le nom DNS est dérivé du nom (« PC Alice » → pc-alice, pc-alice-2 si déjà pris). Avec publicKey, la clé privée n'est jamais connue de Tarmac.",
       },
       {
         method: 'PATCH',
         path: '/vpn/profiles/:id',
         apiScope: 'vpn:write',
-        body: 'name?, description?, mode?, entryNodeId?, exitNodeId?, dns?, enabled?, expiresAt?',
-        description: "Modifie un profil. Changer entryNodeId attribue une nouvelle adresse : la configuration doit être réimportée.",
+        body: 'name?, description?, hostname? (null = dérivé du nom), internalDns?, mode?, entryNodeId?, exitNodeId?, dns?, enabled?, expiresAt?',
+        description:
+          "Modifie un profil. Un nouveau hostname répond en quelques secondes, sans réimporter la configuration (409 s'il est déjà pris). Changer entryNodeId, mode, dns ou internalDns modifie la configuration : elle doit être réimportée.",
       },
       {
         method: 'POST',
@@ -581,6 +582,21 @@ const MODULES: Module[] = [
         path: '/vpn/profiles/:id/config.conf',
         apiScope: 'vpn:write',
         description: 'La même configuration en fichier .conf prêt à importer (curl -OJ).',
+      },
+      {
+        method: 'GET',
+        path: '/vpn/dns',
+        apiScope: 'vpn:read',
+        description:
+          "Domaine des noms internes ({ zone, defaultZone, ttl, warning }). Chaque profil répond en <hostname>.<zone> via le DNS de son point d'entrée, pour lui-même et les profils autorisés à le joindre.",
+      },
+      {
+        method: 'PATCH',
+        path: '/vpn/dns',
+        apiScope: 'vpn:write',
+        body: 'zone (ex. intranet.internal)',
+        description:
+          "Change le domaine de tous les profils, appliqué en quelques secondes. Évitez .local (DNS multicast, ignoré par macOS, iOS et la plupart des Linux) : warning le signale.",
       },
     ],
   },

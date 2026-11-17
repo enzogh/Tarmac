@@ -108,6 +108,7 @@ et les vues topologiques.
 - Règles d'accès par profil, appliquées par le pare-feu du nœud d'entrée : serveurs du réseau privé (tout / nœuds choisis / aucun) et autres appareils VPN (isolé par défaut / profils choisis / tous), y compris entre points d'entrée différents ; un profil « réseau privé uniquement » ne peut plus sortir sur Internet même en modifiant sa configuration
 - Liste pensée pour des centaines de profils : tableau filtrable et triable, libellés, actions groupées (accès, liens, activation, suppression) via `POST /vpn/profiles/bulk`, vue « Liens d'accès »
 - Création et bascule aussi par API, avec une clé API portant la permission `vpn:read` / `vpn:write`
+- Noms DNS internes : chaque profil répond en `<hostname>.<zone>` (dérivé du nom, modifiable via `PATCH /vpn/profiles/:id`, domaine du workspace via `PATCH /vpn/dns`, `intranet.internal` par défaut). Chaque nœud d'entrée sert ces noms depuis l'agent sur l'adresse passerelle des clients (port 53 redirigé vers 53535), uniquement pour les profils qu'un client a le droit de joindre, et relaie le reste aux DNS du profil — par sa sortie en mode « tout le trafic »
 - L'agent des nœuds d'entrée et de sortie doit être à jour (un agent trop ancien applique le VPN sans cloisonner les clients, signalé « Agent à mettre à jour ») ; si l'hébergeur filtre en amont, ouvrir UDP `51821` sur les nœuds d'entrée
 
 **Organisation**
@@ -280,7 +281,7 @@ l'application elle-même sur `/docs/api`.
 | DNS | `/dns/groups`, `/dns/groups/:id/members`, `/dns/zones`, `/dns/zones/:id/records`, `/dns/zones/:id/dnssec`, `/dns/internal` |
 | Réplication | `/sync-jobs`, `/sync-jobs/:id/runs`, `/migrations`, `/migrations/directories` |
 | Alertes | `/alert-rules`, `/alerts`, `/alerts/:id/ack`, `/alerts/:id/resolve`, `/notification-channels` |
-| Accès distant | `/vpn/gateways`, `/vpn/profiles`, `/vpn/profiles/bulk`, `/vpn/profiles/:id/exit`, `/vpn/profiles/:id/rotate-keys`, `/vpn/profiles/:id/config(.conf)` |
+| Accès distant | `/vpn/gateways`, `/vpn/profiles`, `/vpn/profiles/bulk`, `/vpn/profiles/:id/exit`, `/vpn/profiles/:id/rotate-keys`, `/vpn/profiles/:id/config(.conf)`, `/vpn/dns` |
 | Exploitation | `/audit-logs`, `/agent-logs`, `/workspaces`, `/api-keys` |
 
 Toutes ces routes, sauf Auth, `/workspaces` et `/api-keys`, acceptent aussi une

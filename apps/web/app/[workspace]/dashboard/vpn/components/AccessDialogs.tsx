@@ -252,7 +252,7 @@ export function LinkDialog({
   const items = profiles.map((profile) => ({
     id: profile.id,
     label: profile.name,
-    detail: `${profile.clientIp} · via ${profile.entryNode.name}`,
+    detail: `${profile.fqdn} · ${profile.clientIp} · via ${profile.entryNode.name}`,
     tags: profile.tags,
   }));
   const invalid =

@@ -168,7 +168,10 @@ export function ProfileTable({
               <TableCell className="hidden py-2 xl:table-cell">
                 <AccessChips profile={profile} nodeNames={nodeNames} profileNames={profileNames} />
               </TableCell>
-              <TableCell className="hidden py-2 font-mono text-xs text-muted-foreground md:table-cell">{profile.clientIp}</TableCell>
+              <TableCell className="hidden max-w-[13rem] py-2 font-mono md:table-cell" title={profile.fqdn}>
+                <div className="truncate text-xs text-foreground">{profile.hostname}</div>
+                <div className="truncate text-2xs leading-4 text-muted-foreground">{profile.clientIp}</div>
+              </TableCell>
               <TableCell className="hidden py-2 text-xs sm:table-cell">
                 {connected && session ? (
                   <span className="inline-flex items-center gap-1.5 tabular-nums text-foreground">

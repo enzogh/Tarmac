@@ -1,4 +1,4 @@
-import { Globe2, KeyRound, LockKeyhole, QrCode, RadioTower, Users, Wrench } from 'lucide-react';
+import { AtSign, Globe2, KeyRound, LockKeyhole, QrCode, RadioTower, Users, Wrench } from 'lucide-react';
 import { PageHeader } from '../../../components/PageHeader';
 import { Callout } from '../../../components/Callout';
 import { SectionLabel } from '../../../components/SectionLabel';
@@ -73,6 +73,16 @@ export default function VpnDocsPage() {
           <DocCard icon={Globe2} title="Sortie Internet">
             Le nœud de sortie fait suivre le trafic de l’appareil vers Internet avec sa propre adresse publique : c’est elle que voient les sites visités.
           </DocCard>
+          <DocCard icon={AtSign} title="Noms DNS internes">
+            Chaque profil a un nom, par exemple pc-alice.intranet.internal, tiré de son nom ou choisi (interface ou API). Les appareils reliés se joignent
+            par ce nom ; un appareil ne résout que le sien et ceux qu’il a le droit de joindre. Un renommage s’applique en quelques secondes. Le domaine se
+            règle dans « Noms DNS » ; évitez .local, ignoré par macOS, iOS et la plupart des Linux.
+          </DocCard>
+          <DocCard icon={RadioTower} title="Le DNS du point d’entrée">
+            Avec les noms internes, l’appareil interroge son point d’entrée, qui répond aux noms du VPN et relaie le reste aux serveurs DNS du profil — par la
+            sortie choisie en mode « tout le trafic ». Les profils créés avant cette option la reçoivent désactivée : activez-la dans « Modifier », puis
+            réinstallez la configuration.
+          </DocCard>
         </div>
       </section>
 
@@ -83,7 +93,12 @@ export default function VpnDocsPage() {
             Le point d’entrée doit recevoir de l’UDP sur le port 51821. Si l’hébergeur filtre en amont, ouvrez ce port dans sa console.
           </DocCard>
           <DocCard icon={Wrench} title="« Agent à mettre à jour »" tone="warn">
-            Un agent trop ancien sur un nœud d’entrée ou de sortie applique le VPN sans cloisonner les appareils. Mettez-le à jour depuis la page Nœuds.
+            Un agent trop ancien sur un nœud d’entrée ou de sortie applique le VPN sans cloisonner les appareils, ou sans DNS interne. Mettez-le à jour
+            depuis la page Nœuds.
+          </DocCard>
+          <DocCard icon={Wrench} title="Un nom interne ne répond pas" tone="warn">
+            Vérifiez que le profil qui cherche le nom a « Résoudre les noms internes » activé et une configuration réinstallée depuis, et qu’un lien
+            d’accès l’autorise à joindre l’autre profil : sans lien, le nom n’existe pas pour lui.
           </DocCard>
         </div>
       </section>

@@ -27,8 +27,10 @@ import (
 //   - IPIP tunnels named tvpn<hash> to the other end of each entry/exit pair
 //   - routing tables 21000-28999 and ip rules with priority 20000-20999
 //   - iptables / ip6tables chains TARMAC-VPN-*
+//   - the internal DNS resolver on the client gateway (see vpn_dns.go)
 const (
 	vpnRulePrefMesh   = 20000
+	vpnRulePrefDns    = 20050
 	vpnRulePrefClient = 20100
 	vpnRulePrefMin    = 20000
 	vpnRulePrefMax    = 20999
@@ -67,6 +69,9 @@ type vpnClient struct {
 	ip           string
 	table        int
 	policy       vpnPolicy
+	// Resolvers the internal DNS relays this client's other queries to
+	// (empty = the host's own).
+	upstreams []string
 }
 
 type vpnEntry struct {
@@ -75,6 +80,9 @@ type vpnEntry struct {
 	addressCidr  string
 	clientSubnet string
 	clients      []vpnClient
+	// Internal names served on the gateway address; nil = no resolver
+	// (APIs predating it).
+	dns *vpnDnsSpec
 }
 
 type vpnTunnel struct {
@@ -178,6 +186,12 @@ func parseVpnPayload(payload map[string]interface{}) (vpnDesired, error) {
 				presharedKey: readString(record, "presharedKey"),
 				ip:           readString(record, "ip"),
 				table:        readInt(record, "table", 0),
+				upstreams:    readStringSlice(record, "upstreams"),
+			}
+			for _, upstream := range client.upstreams {
+				if net.ParseIP(upstream) == nil {
+					return desired, fmt.Errorf("invalid dns upstream %q for client %s", upstream, client.publicKey)
+				}
 			}
 			if !vpnWgKeyPattern.MatchString(client.publicKey) || !validIPv4(client.ip) {
 				return desired, fmt.Errorf("invalid vpn client %q", client.publicKey)
@@ -203,6 +217,13 @@ func parseVpnPayload(payload map[string]interface{}) (vpnDesired, error) {
 				}
 			}
 			entry.clients = append(entry.clients, client)
+		}
+		if rawDns, ok := rawEntry["dns"].(map[string]interface{}); ok {
+			spec, err := parseVpnDnsSpec(rawDns)
+			if err != nil {
+				return desired, err
+			}
+			entry.dns = spec
 		}
 		desired.entry = entry
 	}
@@ -301,6 +322,9 @@ func applyVpn(payload map[string]interface{}) (string, bool, error) {
 		return "", true, err
 	}
 	_ = exec.Command("ip", "route", "flush", "cache").Run()
+	if err := syncVpnResolver(desired); err != nil {
+		return "", true, err
+	}
 
 	// A client whose exit just changed still has conntrack entries NATed to
 	// the previous exit; dropping them makes its open connections fail fast
@@ -436,6 +460,9 @@ func syncVpnTunnels(tunnels []vpnTunnel) error {
 		// the tunnel while its source is only routable via the default
 		// route: strict reverse-path filtering would drop all of it.
 		_ = exec.Command("sysctl", "-w", fmt.Sprintf("net.ipv4.conf.%s.rp_filter=2", tunnel.name)).Run()
+		// Same check for answers to the internal resolver's relayed queries,
+		// recognized by their restored mark (see vpnChainDnsRestore).
+		_ = exec.Command("sysctl", "-w", fmt.Sprintf("net.ipv4.conf.%s.src_valid_mark=1", tunnel.name)).Run()
 	}
 	return nil
 }
@@ -595,14 +622,15 @@ func syncVpnRoutes(tunnels []vpnTunnel) error {
 }
 
 type vpnRule struct {
-	pref  int
-	src   string
-	dst   string
-	table string
+	pref   int
+	src    string
+	dst    string
+	fwmark string
+	table  string
 }
 
 func (r vpnRule) key() string {
-	return fmt.Sprintf("%d|%s|%s|%s", r.pref, r.src, r.dst, r.table)
+	return fmt.Sprintf("%d|%s|%s|%s|%s", r.pref, r.src, r.dst, r.fwmark, r.table)
 }
 
 func (r vpnRule) args(action string) []string {
@@ -612,6 +640,9 @@ func (r vpnRule) args(action string) []string {
 	}
 	if r.dst != "" {
 		args = append(args, "to", r.dst)
+	}
+	if r.fwmark != "" {
+		args = append(args, "fwmark", r.fwmark)
 	}
 	return append(args, "table", r.table)
 }
@@ -626,6 +657,18 @@ func normalizeRulePrefix(addr string, length *int) string {
 	return fmt.Sprintf("%s/%d", addr, *length)
 }
 
+// "0x10005208" / "0x10005208/0xffffffff" -> "0x10005208"
+func normalizeFwmark(mark string) string {
+	if mark == "" {
+		return ""
+	}
+	value, err := strconv.ParseUint(strings.SplitN(mark, "/", 2)[0], 0, 32)
+	if err != nil {
+		return mark
+	}
+	return fmt.Sprintf("0x%x", value)
+}
+
 func listManagedVpnRules() ([]vpnRule, error) {
 	out, err := exec.Command("ip", "-j", "-4", "rule", "show").Output()
 	if err != nil {
@@ -637,6 +680,7 @@ func listManagedVpnRules() ([]vpnRule, error) {
 		SrcLen   *int   `json:"srclen"`
 		Dst      string `json:"dst"`
 		DstLen   *int   `json:"dstlen"`
+		Fwmark   string `json:"fwmark"`
 		Table    string `json:"table"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
@@ -648,10 +692,11 @@ func listManagedVpnRules() ([]vpnRule, error) {
 			continue
 		}
 		rules = append(rules, vpnRule{
-			pref:  entry.Priority,
-			src:   normalizeRulePrefix(entry.Src, entry.SrcLen),
-			dst:   normalizeRulePrefix(entry.Dst, entry.DstLen),
-			table: entry.Table,
+			pref:   entry.Priority,
+			src:    normalizeRulePrefix(entry.Src, entry.SrcLen),
+			dst:    normalizeRulePrefix(entry.Dst, entry.DstLen),
+			fwmark: normalizeFwmark(entry.Fwmark),
+			table:  entry.Table,
 		})
 	}
 	return rules, nil
@@ -670,6 +715,9 @@ func syncVpnRules(desired vpnDesired) ([]string, error) {
 				continue
 			}
 			rule := vpnRule{pref: vpnRulePrefClient, src: client.ip + "/32", table: strconv.Itoa(client.table)}
+			want[rule.key()] = rule
+		}
+		for _, rule := range vpnDnsMarkRules(desired) {
 			want[rule.key()] = rule
 		}
 	}
@@ -786,6 +834,9 @@ func syncVpnFirewall(desired vpnDesired) error {
 		{bin: "iptables", table: "filter", chain: vpnChainInput, parents: []string{"INPUT"}},
 		{bin: "iptables", table: "nat", chain: vpnChainNat, parents: []string{"POSTROUTING"}},
 		{bin: "iptables", table: "mangle", chain: vpnChainMss, parents: []string{"FORWARD"}},
+		{bin: "iptables", table: "nat", chain: vpnChainDns, parents: []string{"PREROUTING"}},
+		{bin: "iptables", table: "mangle", chain: vpnChainDnsSave, parents: []string{"OUTPUT"}},
+		{bin: "iptables", table: "mangle", chain: vpnChainDnsRestore, parents: []string{"PREROUTING"}},
 	}
 
 	if !desired.active() {
@@ -821,6 +872,8 @@ func syncVpnFirewall(desired vpnDesired) error {
 	if isolated {
 		specs[1].rules = append(specs[1].rules, vpnClientInputRules(desired)...)
 	}
+	specs[4].rules = vpnDnsRedirectRules(desired)
+	specs[5].rules, specs[6].rules = vpnDnsConnmarkRules(desired)
 	for _, subnet := range desired.natSubnets {
 		// Client-to-client and entry->exit relaying keep the client's own
 		// address; anything leaving elsewhere (internet, mesh) is NATed.
@@ -934,6 +987,9 @@ func vpnClientInputRules(desired vpnDesired) [][]string {
 		// Pinging the gateway is how people check the tunnel is up.
 		{"-i", iface, "-p", "icmp", "-j", "ACCEPT"},
 	}
+	// Every client may query the internal resolver (names it may not see
+	// are filtered by the resolver itself).
+	rules = append(rules, vpnDnsInputRules(desired)...)
 	for _, client := range desired.entry.clients {
 		src := client.ip + "/32"
 		if client.policy.local {

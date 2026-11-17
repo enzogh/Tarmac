@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { ArrowLeft, ArrowRight, Globe2, LoaderCircle, Network, PartyPopper } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Callout } from '@/components/Callout';
+import { CopyButton } from '@/components/ui/copy-button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,6 +13,7 @@ import { api, VpnAccess, VpnGateway, VpnProfile, VpnProfileMode, VpnProfileWithC
 import { cn } from '@/lib/utils';
 import { AccessEditor, accessError, accessPayload, DEFAULT_ACCESS } from './access';
 import { ConfigPanel } from './ConfigPanel';
+import { HostnameInput, hostnameError, hostnameFromName, InternalDnsOption, normalizeHostname } from './dns';
 import { RouteDiagram } from './RouteDiagram';
 import { NodePicker } from './NodePicker';
 import { MODE_LABEL } from './vpn-ui';
@@ -77,12 +79,14 @@ export function CreateProfileDialog({
   onOpenChange,
   gateways,
   profiles,
+  zone,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   gateways: VpnGateway[];
   profiles: VpnProfile[];
+  zone: string;
   onCreated: () => void;
 }) {
   const [step, setStep] = useState(0);
@@ -95,6 +99,9 @@ export function CreateProfileDialog({
   // '' = leave directly through the entry node.
   const [exitId, setExitId] = useState<string>('');
   const [dns, setDns] = useState('');
+  // '' = derived from the name by the API.
+  const [hostname, setHostname] = useState('');
+  const [internalDns, setInternalDns] = useState(true);
   const [expiry, setExpiry] = useState('never');
   const [ownKey, setOwnKey] = useState(false);
   const [publicKey, setPublicKey] = useState('');
@@ -112,6 +119,8 @@ export function CreateProfileDialog({
     setMode('full');
     setExitId('');
     setDns('');
+    setHostname('');
+    setInternalDns(true);
     setExpiry('never');
     setOwnKey(false);
     setPublicKey('');
@@ -129,7 +138,18 @@ export function CreateProfileDialog({
   const dnsList = parseDns(dns);
   const dnsInvalid = dnsList.some((value) => !IPV4.test(value)) || dnsList.length > 4;
   const keyInvalid = ownKey && !WG_KEY.test(publicKey.trim());
+  const derivedHostname = hostnameFromName(name);
+  const chosenHostname = normalizeHostname(hostname);
+  const hostnameTaken = chosenHostname ? profiles.find((profile) => profile.hostname === chosenHostname) : undefined;
+  const hostnameInvalid = hostnameError(hostname);
 
+  const reviewError = () => {
+    if (hostnameInvalid) return hostnameInvalid;
+    if (hostnameTaken) return `Le nom « ${chosenHostname} » est déjà utilisé par le profil « ${hostnameTaken.name} ».`;
+    if (dnsInvalid) return 'Serveurs DNS : jusqu’à 4 adresses IPv4 séparées par des virgules.';
+    if (keyInvalid) return 'La clé publique doit être une clé WireGuard en base64 (44 caractères).';
+    return null;
+  };
   const stepError =
     step === 0
       ? !name.trim()
@@ -140,12 +160,8 @@ export function CreateProfileDialog({
       : step === 2
         ? accessError(access)
         : step === 3
-        ? dnsInvalid
-          ? 'Serveurs DNS : jusqu’à 4 adresses IPv4 séparées par des virgules.'
-          : keyInvalid
-            ? 'La clé publique doit être une clé WireGuard en base64 (44 caractères).'
-            : null
-        : null;
+          ? reviewError()
+          : null;
 
   const submit = async () => {
     if (!entry || stepError) return;
@@ -159,6 +175,8 @@ export function CreateProfileDialog({
         entryNodeId: entry.id,
         exitNodeId: mode === 'full' && exitId ? exitId : null,
         dns: dnsList.length > 0 ? dnsList : undefined,
+        hostname: chosenHostname || undefined,
+        internalDns,
         expiresAt: expiryToIso(expiry),
         publicKey: ownKey ? publicKey.trim() : undefined,
         tags: parseTags(tags),
@@ -192,6 +210,12 @@ export function CreateProfileDialog({
                 l&apos;appareil :
               </DialogDescription>
             </DialogHeader>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-border bg-surface-2/40 px-3 py-2 text-xs">
+              <span className="text-muted-foreground">Nom interne</span>
+              <span className="font-mono text-foreground">{created.fqdn}</span>
+              <CopyButton value={created.fqdn} iconOnly />
+              <span className="text-muted-foreground">→ {created.clientIp}</span>
+            </div>
             <ConfigPanel profileName={created.name} config={created.config} complete={created.hasPrivateKey} />
             <DialogFooter>
               <Button onClick={() => onOpenChange(false)}>Terminer</Button>
@@ -321,14 +345,34 @@ export function CreateProfileDialog({
                     <Label>Récapitulatif</Label>
                     {route}
                   </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="vpn-hostname">Nom DNS interne</Label>
+                    <HostnameInput id="vpn-hostname" value={hostname} onChange={setHostname} zone={zone} placeholder={derivedHostname} />
+                    <p className="text-2xs text-muted-foreground">
+                      {hostname
+                        ? 'Modifiable à tout moment, sans réinstaller la configuration.'
+                        : `Laissez vide pour « ${derivedHostname} » (suffixé -2, -3… s’il est déjà pris). Modifiable à tout moment.`}
+                    </p>
+                  </div>
+                  <InternalDnsOption
+                    checked={internalDns}
+                    onChange={setInternalDns}
+                    fqdn={`${chosenHostname || derivedHostname}.${zone}`}
+                  />
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
-                      <Label htmlFor="vpn-dns">Serveurs DNS</Label>
+                      <Label htmlFor="vpn-dns">{internalDns ? 'Serveurs DNS relayés' : 'Serveurs DNS'}</Label>
                       <Input
                         id="vpn-dns"
                         value={dns}
                         onChange={(event) => setDns(event.target.value)}
-                        placeholder={mode === 'full' ? '1.1.1.1, 1.0.0.1 (par défaut)' : 'Aucun (DNS de l’appareil)'}
+                        placeholder={
+                          mode === 'full'
+                            ? '1.1.1.1, 1.0.0.1 (par défaut)'
+                            : internalDns
+                              ? 'Ceux du point d’entrée (par défaut)'
+                              : 'Aucun (DNS de l’appareil)'
+                        }
                       />
                     </div>
                     <div className="space-y-2">

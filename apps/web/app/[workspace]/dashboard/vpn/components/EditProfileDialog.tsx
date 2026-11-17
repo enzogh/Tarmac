@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { api, VpnGateway, VpnProfile, VpnProfileMode } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { EXPIRY_OPTIONS, expiryToIso, parseDns, parseTags } from './CreateProfileDialog';
+import { HostnameInput, hostnameError, hostnameFromName, InternalDnsOption, normalizeHostname } from './dns';
 import { NodePicker } from './NodePicker';
 import { MODE_LABEL, NodeLabel } from './vpn-ui';
 
@@ -19,11 +20,13 @@ const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 export function EditProfileDialog({
   profile,
   gateways,
+  zone,
   onOpenChange,
   onSaved,
 }: {
   profile: VpnProfile | null;
   gateways: VpnGateway[];
+  zone: string;
   onOpenChange: (open: boolean) => void;
   onSaved: (message: string) => void;
 }) {
@@ -34,6 +37,11 @@ export function EditProfileDialog({
   const [entryId, setEntryId] = useState('');
   const [pickingEntry, setPickingEntry] = useState(false);
   const [dns, setDns] = useState('');
+  const [hostname, setHostname] = useState('');
+  // "Take the profile's name again": sent as null, the API then picks the
+  // derived label (or label-2... if another profile already has it).
+  const [hostnameReset, setHostnameReset] = useState(false);
+  const [internalDns, setInternalDns] = useState(true);
   const [expiry, setExpiry] = useState('keep');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +55,9 @@ export function EditProfileDialog({
     setEntryId(profile.entryNode.id);
     setPickingEntry(false);
     setDns(profile.dns.join(', '));
+    setHostname(profile.hostname);
+    setHostnameReset(false);
+    setInternalDns(profile.internalDns);
     setExpiry('keep');
     setError(null);
   }, [profile]);
@@ -57,10 +68,16 @@ export function EditProfileDialog({
   const selectedEntry = gateways.find((gateway) => gateway.id === entryId) ?? (entryChanged ? null : profile.entryNode);
   const dnsList = parseDns(dns);
   const dnsInvalid = dnsList.some((value) => !IPV4.test(value)) || dnsList.length > 4;
-  const requiresReimport = entryChanged || mode !== profile.mode || dnsList.join(',') !== profile.dns.join(',');
+  const nextHostname = normalizeHostname(hostname);
+  const hostnameInvalid = hostnameError(hostname) ?? (nextHostname ? null : 'Indiquez un nom DNS.');
+  const hostnameChanged = hostnameReset || nextHostname !== profile.hostname;
+  const internalDnsChanged = internalDns !== profile.internalDns;
+  const requiresReimport =
+    entryChanged || mode !== profile.mode || dnsList.join(',') !== profile.dns.join(',') || internalDnsChanged;
+  const invalid = !name.trim() || dnsInvalid || Boolean(hostnameInvalid);
 
   const save = async () => {
-    if (!name.trim() || dnsInvalid) return;
+    if (invalid) return;
     setSaving(true);
     setError(null);
     try {
@@ -70,6 +87,8 @@ export function EditProfileDialog({
         tags: parseTags(tags),
         mode,
         dns: dnsList,
+        ...(hostnameChanged ? { hostname: hostnameReset ? null : nextHostname } : {}),
+        ...(internalDnsChanged ? { internalDns } : {}),
         ...(entryChanged ? { entryNodeId: entryId } : {}),
         ...(expiry === 'keep' ? {} : { expiresAt: expiry === 'never' ? null : expiryToIso(expiry) }),
       });
@@ -109,6 +128,33 @@ export function EditProfileDialog({
                 maxLength={500}
                 onChange={(event) => setDescription(event.target.value)}
               />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="vpn-edit-hostname">Nom DNS interne</Label>
+              <HostnameInput
+                id="vpn-edit-hostname"
+                value={hostname}
+                onChange={(value) => {
+                  setHostname(value);
+                  setHostnameReset(false);
+                }}
+                zone={zone}
+                placeholder={hostnameFromName(name)}
+                onReset={
+                  hostnameFromName(name) !== profile.hostname || hostname !== profile.hostname
+                    ? () => {
+                        setHostname(hostnameFromName(name));
+                        setHostnameReset(true);
+                      }
+                    : undefined
+                }
+              />
+              {hostnameChanged && !hostnameInvalid && (
+                <p className="text-2xs text-muted-foreground">
+                  Appliqué en quelques secondes, sans réinstaller la configuration : l&apos;ancien nom{' '}
+                  <span className="font-mono">{profile.fqdn}</span> cessera de répondre.
+                </p>
+              )}
             </div>
             <div className="space-y-2 sm:col-span-2">
               <Label htmlFor="vpn-edit-tags">Libellés</Label>
@@ -173,8 +219,13 @@ export function EditProfileDialog({
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="vpn-edit-dns">Serveurs DNS</Label>
-              <Input id="vpn-edit-dns" value={dns} onChange={(event) => setDns(event.target.value)} placeholder="Aucun" />
+              <Label htmlFor="vpn-edit-dns">{internalDns ? 'Serveurs DNS relayés' : 'Serveurs DNS'}</Label>
+              <Input
+                id="vpn-edit-dns"
+                value={dns}
+                onChange={(event) => setDns(event.target.value)}
+                placeholder={internalDns ? 'Ceux du point d’entrée' : 'Aucun'}
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="vpn-edit-expiry">Expiration</Label>
@@ -195,6 +246,11 @@ export function EditProfileDialog({
               </Select>
             </div>
           </div>
+          <InternalDnsOption
+            checked={internalDns}
+            onChange={setInternalDns}
+            fqdn={hostnameInvalid ? profile.fqdn : `${nextHostname}.${zone}`}
+          />
           {requiresReimport && (
             <Callout variant="warning">
               {entryChanged
@@ -209,7 +265,7 @@ export function EditProfileDialog({
           <Button variant="secondary" onClick={() => onOpenChange(false)}>
             Annuler
           </Button>
-          <Button write onClick={() => void save()} disabled={saving || !name.trim() || dnsInvalid} className="gap-1.5">
+          <Button write onClick={() => void save()} disabled={saving || invalid} className="gap-1.5">
             {saving && <LoaderCircle className="h-4 w-4 animate-spin" />}
             Enregistrer
           </Button>
