@@ -1136,7 +1136,11 @@ export class VpnService implements OnModuleInit {
       gatewayIp: string;
     },
   ): { policy: ClientPolicy; remoteEntries: Set<string> } {
-    const allow = new Set<string>();
+    // A device always reaches its own address: with a full tunnel (or any
+    // route covering it) its OS sends that traffic into the tunnel instead
+    // of keeping it local, and the entry node hands it straight back - so
+    // pinging itself, or a service of its own by its internal name, works.
+    const allow = new Set<string>([`${profile.clientIp}/32`]);
     const dns = new Set<string>();
     const remoteEntries = new Set<string>();
     let local = profile.meshAccess === 'all';
