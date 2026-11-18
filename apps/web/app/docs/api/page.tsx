@@ -364,7 +364,14 @@ const MODULES: Module[] = [
         path: '/vlan/:vlanId/report',
         body: 'source, target, range? (6h | 24h | 48h), lang? (fr | en)',
         description:
-          "Rapport texte sur un lien, à envoyer au support d’un hébergeur ({ text, filename, generatedAt }) : IP publiques des deux serveurs, pertes et latence mesurées, comparaison avec leurs autres liens, et les tests qu’exigent les supports réseau, lancés à l’instant depuis chaque serveur vers l’IP publique de l’autre : charge (lignes de top), ping de 100 paquets, traceroute et MTR de 30 cycles (~35 s).",
+          "Rapport texte sur un lien, à envoyer au support d’un hébergeur ({ text, filename, generatedAt }) : IP publiques des deux serveurs, pertes et latence mesurées, comparaison avec leurs autres liens, et les tests qu’exigent les supports réseau, lancés à l’instant depuis chaque serveur vers l’IP publique de l’autre : charge (lignes de top), ping de 100 paquets, traceroute et MTR de 30 cycles (~35 s). Y figurent aussi les tests capturés automatiquement pendant les dégradations de la période (les deux qui ont relevé le plus de perte) ; captures: { available, included } dans la réponse.",
+      },
+      {
+        method: 'GET',
+        path: '/vlan/:vlanId/captures',
+        body: 'source, target, range? (6h | 24h | 48h) en paramètres de requête',
+        description:
+          "Tests (top, ping, traceroute, MTR) lancés automatiquement depuis les deux serveurs quand le lien s’est dégradé, au plus une fois par demi-heure et conservés 7 jours, du plus récent au plus ancien : at, direction (AB = source → target), status, triggerLoss, measuredLoss, complete, included (joint au rapport).",
       },
       {
         method: 'POST',

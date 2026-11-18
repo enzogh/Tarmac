@@ -1,14 +1,15 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Download, FileText, LoaderCircle, RefreshCw } from 'lucide-react';
+import { ArrowRight, Download, FileText, History, LoaderCircle, RefreshCw } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Callout } from '@/components/Callout';
 import { CopyButton } from '@/components/ui/copy-button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { api } from '@/lib/api';
+import { api, type LinkCapture } from '@/lib/api';
 
 type Range = '6h' | '24h' | '48h';
 type Lang = 'fr' | 'en';
@@ -46,6 +47,7 @@ export function HostReportDialog({
   const [running, setRunning] = useState(false);
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [captures, setCaptures] = useState<LinkCapture[] | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -53,6 +55,19 @@ export function HostReportDialog({
     setError(null);
     setRunning(false);
   }, [open, nodeA?.id, nodeB?.id]);
+
+  useEffect(() => {
+    if (!nodeA || !nodeB) return;
+    let cancelled = false;
+    setCaptures(null);
+    api.vlan
+      .linkCaptures(vlanId, nodeA.id, nodeB.id, range)
+      .then((list) => !cancelled && setCaptures(list))
+      .catch(() => !cancelled && setCaptures([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [vlanId, nodeA?.id, nodeB?.id, range, report]);
 
   if (!nodeA || !nodeB) return null;
 
@@ -126,6 +141,8 @@ export function HostReportDialog({
             </Button>
           </div>
 
+          <CaptureList captures={captures} nodeA={nodeA.name} nodeB={nodeB.name} />
+
           {running && (
             <Callout variant="info">
               Chaque serveur lance top, un ping de 100 paquets, un traceroute et un MTR de 30 cycles vers l’autre : comptez
@@ -140,8 +157,8 @@ export function HostReportDialog({
                 {report.text}
               </pre>
               <p className="text-2xs text-muted-foreground">
-                Envoyez-le au support de l’hébergeur de chacun des deux serveurs : le trajet relevé montre où la route se dégrade.
-                Les heures sont en UTC, comme les attend un support réseau.
+                Envoyez-le au support de l’hébergeur de chacun des deux serveurs : les tests capturés pendant l’incident montrent où
+                la route se dégradait. Les heures sont en UTC, comme les attend un support réseau.
               </p>
             </div>
           ) : (
@@ -169,5 +186,75 @@ export function HostReportDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+const timeFormat = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+
+function lossVariant(loss: number | null): 'success' | 'warning' | 'destructive' | 'secondary' {
+  if (loss === null) return 'secondary';
+  if (loss === 0) return 'success';
+  return loss >= 5 ? 'destructive' : 'warning';
+}
+
+/**
+ * The tests Tarmac ran by itself when the link degraded: what makes the
+ * report convincing once the incident is over.
+ */
+function CaptureList({ captures, nodeA, nodeB }: { captures: LinkCapture[] | null; nodeA: string; nodeB: string }) {
+  return (
+    <div className="rounded-lg border border-border bg-surface-2/40">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
+        <p className="flex items-center gap-2 text-sm font-medium">
+          <History className="h-4 w-4 text-muted-foreground" />
+          Tests capturés pendant les dégradations
+        </p>
+        {captures && captures.length > 0 && (
+          <span className="text-2xs text-muted-foreground">
+            {captures.length} sur la période · {captures.filter((c) => c.included).length} joint{captures.filter((c) => c.included).length > 1 ? 's' : ''} au rapport
+          </span>
+        )}
+      </div>
+      {captures === null ? (
+        <p className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground">
+          <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+          Chargement…
+        </p>
+      ) : captures.length === 0 ? (
+        <p className="px-3 py-3 text-xs leading-relaxed text-muted-foreground">
+          Aucune capture sur cette période. Dès que ce lien se dégrade, Tarmac lance de lui-même top, ping, traceroute et MTR depuis
+          les deux serveurs (au plus une fois par demi-heure) : le rapport aura ainsi des preuves prises pendant l’incident, même
+          si vous le générez une fois le problème passé.
+        </p>
+      ) : (
+        <ul className="scroll-thin max-h-40 divide-y divide-border overflow-auto">
+          {captures.map((capture) => (
+            <li key={capture.at} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-xs">
+              <span className="w-28 shrink-0 tabular-nums text-muted-foreground">{timeFormat.format(new Date(capture.at))}</span>
+              <span className="flex min-w-0 flex-wrap items-center gap-x-1">
+                {capture.direction === 'AB' ? nodeA : nodeB}
+                <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+                {capture.direction === 'AB' ? nodeB : nodeA}
+                <span className="whitespace-nowrap text-muted-foreground">
+                  {capture.status === 'offline' ? 'coupé' : 'dégradé'}
+                  {capture.triggerLoss !== null && ` (${Math.round(capture.triggerLoss)} % de perte)`}
+                </span>
+              </span>
+              <span className="ml-auto flex items-center gap-1.5">
+                <Badge variant={lossVariant(capture.measuredLoss)}>
+                  {capture.measuredLoss === null
+                    ? 'perte non mesurée'
+                    : capture.measuredLoss === 0
+                      ? 'aucune perte aux tests'
+                      : `${capture.measuredLoss} % perdus aux tests`}
+                </Badge>
+                {!capture.complete && <Badge variant="secondary">un seul côté</Badge>}
+                {capture.included && <Badge variant="info">joint au rapport</Badge>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

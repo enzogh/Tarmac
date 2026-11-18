@@ -575,6 +575,18 @@ export type VlanConnectionSample = {
   createdAt: string;
 };
 
+// Tests run automatically from both ends of a link when it degraded,
+// oriented from the requested source (direction AB = source -> target).
+export type LinkCapture = {
+  at: string;
+  direction: 'AB' | 'BA';
+  status: string;
+  triggerLoss: number | null;
+  measuredLoss: number | null;
+  complete: boolean;
+  included: boolean;
+};
+
 export type VlanConnectionHistory = {
   samples: VlanConnectionSample[];
   // null when the range holds no sample at all.
@@ -1621,13 +1633,18 @@ export const api = {
       request<VlanConnectionHistory>(
         `/api/v1/vlan/${vlanId}/history?source=${encodeURIComponent(sourceNodeId)}&target=${encodeURIComponent(targetNodeId)}&range=${range}`,
       ),
-    // Report on one link for a hosting provider; runs an MTR-style trace
-    // from each end (~15 s).
+    // Report on one link for a hosting provider; runs top, ping, traceroute
+    // and MTR from each end (~35 s) and includes the tests captured
+    // automatically while the link was degraded.
     linkReport: (vlanId: string, payload: { source: string; target: string; range: '6h' | '24h' | '48h'; lang: 'fr' | 'en' }) =>
-      request<{ text: string; filename: string; generatedAt: string }>(`/api/v1/vlan/${vlanId}/report`, {
+      request<{ text: string; filename: string; generatedAt: string; captures?: { available: number; included: number } }>(`/api/v1/vlan/${vlanId}/report`, {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
+    linkCaptures: (vlanId: string, source: string, target: string, range: '6h' | '24h' | '48h') =>
+      request<LinkCapture[]>(
+        `/api/v1/vlan/${vlanId}/captures?source=${encodeURIComponent(source)}&target=${encodeURIComponent(target)}&range=${range}`,
+      ),
     runTest: (vlanId: string, initiatorNodeId: string, targetNodeId: string, testType: 'ping' | 'traceroute') =>
       request<{ success: boolean; test: VlanConnectionTest }>(`/api/v1/vlan/${vlanId}/test`, {
         method: 'POST',

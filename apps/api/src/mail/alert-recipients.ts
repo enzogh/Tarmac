@@ -1,3 +1,5 @@
+import type { PrismaClient } from '@prisma/client';
+
 export const DEFAULT_INTERNAL_MAIL_DOMAIN = 'intraced.fr';
 
 export function internalMailDomain(): string {
@@ -64,4 +66,39 @@ export function parseChannelTargets(target: string): string[] {
     .split(/[\s,;]+/)
     .map((part) => part.trim().toLowerCase())
     .filter((part) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(part));
+}
+
+/**
+ * Everyone a workspace's alert emails go to: members who can see the
+ * Alertes page and haven't turned the emails off, plus its email channels.
+ */
+export async function workspaceAlertRecipients(
+  prisma: Pick<PrismaClient, 'workspaceMembership' | 'notificationChannel'>,
+  workspaceId: string,
+): Promise<string[]> {
+  const [memberships, channels] = await Promise.all([
+    prisma.workspaceMembership.findMany({
+      // Members whose role hides the Alertes page don't get its emails either.
+      where: {
+        workspaceId,
+        user: { alertEmailsEnabled: true },
+        OR: [{ role: 'owner' }, { permissions: { hasSome: ['alerts:read', 'alerts:write'] } }],
+      },
+      select: { user: { select: { email: true, internalEmail: true } } },
+    }),
+    prisma.notificationChannel.findMany({
+      where: { workspaceId, type: 'email', enabled: true },
+      select: { target: true },
+    }),
+  ]);
+
+  const addresses = new Set<string>();
+  for (const { user } of memberships) {
+    const address = alertEmailAddress(user);
+    if (address) addresses.add(address);
+  }
+  for (const channel of channels) {
+    for (const address of parseChannelTargets(channel.target)) addresses.add(address);
+  }
+  return [...addresses];
 }

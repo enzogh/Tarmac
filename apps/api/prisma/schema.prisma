@@ -1017,6 +1017,7 @@ model Vlan {
   connections       VlanConnection[]
   connectionSamples VlanConnectionSample[]
   connectionRollups VlanConnectionRollup[]
+  linkCaptures      LinkCapture[]
 
   @@index([workspaceId])
 }
@@ -1061,6 +1062,29 @@ model VlanConnection {
   @@index([vlanId])
   @@index([sourceNodeId])
   @@index([targetNodeId])
+}
+
+// Tests a hosting provider's support asks for (load, ping, traceroute, MTR)
+// run automatically from both ends of a direct link when it degrades, so
+// the report has evidence from during the incident (see link-capture.service).
+// nodeAId < nodeBId; aToB / bToA are the outcome of each side's run.
+model LinkCapture {
+  id              String   @id @default(cuid())
+  vlanId          String
+  nodeAId         String
+  nodeBId         String
+  // The direction and measurement that triggered the capture.
+  triggerSourceId String
+  triggerStatus   String
+  triggerLoss     Float?
+  triggerLatency  Float?
+  aToB            Json
+  bToA            Json
+  createdAt       DateTime @default(now())
+  vlan            Vlan     @relation(fields: [vlanId], references: [id], onDelete: Cascade)
+
+  @@index([vlanId, nodeAId, nodeBId, createdAt])
+  @@index([createdAt])
 }
 
 model VlanConnectionSample {

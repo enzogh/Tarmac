@@ -7,6 +7,8 @@ export interface RenderedMail {
   subject: string;
   html: string;
   text: string;
+  // Files sent along (a report to forward, for instance).
+  attachments?: Array<{ filename: string; content: string; contentType: string }>;
 }
 
 // Thin wrapper around a single nodemailer transport pointed at the internal
@@ -68,6 +70,7 @@ export class MailService implements OnModuleInit {
       // signature, which the relay adds.
       headers: { 'BIMI-Selector': 'v=BIMI1; s=tarmac;' },
       attachments: [
+        ...(mail.attachments ?? []),
         {
           filename: 'tarmac.png',
           content: Buffer.from(TARMAC_MARK_PNG_BASE64, 'base64'),

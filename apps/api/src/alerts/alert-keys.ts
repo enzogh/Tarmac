@@ -12,6 +12,9 @@ export const alertKey = {
   nodesOffline: (workspaceId: string, nodeIds: string[]) => `nodes-offline:${workspaceId}:${[...nodeIds].sort().join(',')}`,
   // One key per pair and VLAN, whichever side noticed first.
   vlanLink: (vlanId: string, nodeA: string, nodeB: string) => `vlan-link:${vlanId}:${[nodeA, nodeB].sort().join(':')}`,
+  // A link losing packets (not down), seen by the tests captured when it
+  // degraded (LinkCaptureService). Same shape as vlanLink.
+  linkDegraded: (vlanId: string, nodeA: string, nodeB: string) => `link-degraded:${vlanId}:${[nodeA, nodeB].sort().join(':')}`,
   gatewayFailover: (vlanId: string, region: string) => `gateway-failover:${vlanId}:${region}`,
   mountStuck: (mountId: string) => `mount-stuck:${mountId}`,
   mountError: (mountId: string) => `mount-error:${mountId}`,

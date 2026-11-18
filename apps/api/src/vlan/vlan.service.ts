@@ -53,6 +53,15 @@ function resolveSubnetCidr(workspace: SubnetWorkspace): string {
   return cidrForSubnetIndex(workspace.subnetIndex);
 }
 
+export type LinkDegradedEvent = {
+  vlanId: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  status: 'degraded' | 'offline';
+  packetLoss: number | null;
+  latencyMs: number | null;
+};
+
 const CONNECTION_OFFLINE_TIMEOUT_MS = 60_000;
 const CONNECTION_DEGRADED_TIMEOUT_MS = 20_000;
 // A link has to stay offline this long before it raises an alert: an agent
@@ -106,6 +115,15 @@ export class VlanService implements OnModuleInit {
   private readonly bootedAt = Date.now();
 
   constructor(private prisma: PrismaService) {}
+
+  // Told when a direct link starts losing packets (LinkCaptureService runs
+  // the tests for the hosting-provider report then). Listeners, not an
+  // injected service: the capture needs AgentsService, which needs us.
+  private readonly linkDegradedListeners: Array<(event: LinkDegradedEvent) => void> = [];
+
+  onLinkDegraded(listener: (event: LinkDegradedEvent) => void) {
+    this.linkDegradedListeners.push(listener);
+  }
 
   // Used to compute an NFS export's allowedCidr - must match the actual
   // subnet of the requesting node's own workspace mesh, not always Default's.
@@ -398,6 +416,26 @@ export class VlanService implements OnModuleInit {
           bandwidth: next.bandwidth ?? null,
         },
       });
+    }
+
+    // Measured by the agents (heartbeat-derived statuses carry no loss): the
+    // route itself is failing, worth capturing while it does.
+    const measured = typeof next.packetLoss === 'number' || typeof next.latencyMs === 'number';
+    if (statusChanged && measured && (next.status === 'degraded' || next.status === 'offline')) {
+      for (const listener of this.linkDegradedListeners) {
+        try {
+          listener({
+            vlanId,
+            sourceNodeId,
+            targetNodeId,
+            status: next.status,
+            packetLoss: next.packetLoss ?? null,
+            latencyMs: next.latencyMs ?? null,
+          });
+        } catch (error) {
+          this.logger.warn(`Link degradation listener failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
     }
 
     const directionKey = `${sourceNodeId}:${targetNodeId}`;

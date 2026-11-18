@@ -20,6 +20,17 @@ export type ReportSample = { at: Date; status: string; latencyMs: number | null;
 export type PeerComparison = { peers: number; avgLoss: number | null };
 
 export type TraceOutcome = { ok: true; trace: PathTraceResult; ranAt: Date } | { ok: false; reason: string };
+// As kept in LinkCapture rows (JSON): the raw error, translated at report time.
+export type StoredTraceOutcome = { ok: true; trace: PathTraceResult; ranAt: string } | { ok: false; error: string };
+
+// Tests captured automatically when the link degraded, oriented A/B like
+// the report.
+export type ReportCapture = {
+  at: Date;
+  trigger: { direction: 'AB' | 'BA'; status: string; loss: number | null; latencyMs: number | null };
+  aToB: TraceOutcome;
+  bToA: TraceOutcome;
+};
 
 export type LinkReportInput = {
   lang: LinkReportLang;
@@ -33,6 +44,11 @@ export type LinkReportInput = {
   bOthers: PeerComparison;
   traceAToB: TraceOutcome;
   traceBToA: TraceOutcome;
+  // Every capture in the window; the most telling ones are included.
+  captures: ReportCapture[];
+  // The report mailed with an incident: its "now" tests are the capture
+  // taken when the link degraded.
+  testsAreCapture?: boolean;
   // The workspace firewall doesn't answer pings on public addresses: the
   // last hop of a trace towards one of our servers stays silent.
   publicPingFiltered: boolean;
@@ -41,7 +57,9 @@ export type LinkReportInput = {
 export type DirectionStats = {
   samples: number;
   avgLoss: number | null;
-  peakLoss: number | null;
+  // Highest 15-minute average: a single bad probe says little, and the
+  // first agents probed with 2 pings (one lost read as 50 %).
+  worstWindowLoss: number | null;
   lossyShare: number | null;
   avgLatency: number | null;
   minLatency: number | null;
@@ -65,12 +83,87 @@ export function directionStats(samples: ReportSample[]): DirectionStats {
   return {
     samples: samples.length,
     avgLoss: avgLoss === null ? null : round1(avgLoss),
-    peakLoss: losses.length ? round1(Math.max(...losses)) : null,
+    worstWindowLoss: worstWindowLoss(samples),
     lossyShare: losses.length ? round1((losses.filter((v) => v > 0).length * 100) / losses.length) : null,
     avgLatency: avgLatency === null ? null : round1(avgLatency),
     minLatency: latencies.length ? round1(Math.min(...latencies)) : null,
     maxLatency: latencies.length ? round1(Math.max(...latencies)) : null,
   };
+}
+
+function worstWindowLoss(samples: ReportSample[]): number | null {
+  const buckets = new Map<number, number[]>();
+  for (const sample of samples) {
+    if (typeof sample.packetLoss !== 'number') continue;
+    const key = Math.floor(sample.at.getTime() / BUCKET_MS);
+    buckets.set(key, [...(buckets.get(key) ?? []), sample.packetLoss]);
+  }
+  if (buckets.size === 0) return null;
+  return round1(Math.max(...[...buckets.values()].map((values) => mean(values) ?? 0)));
+}
+
+/** Loss of the system ping in a trace result, from its statistics line. */
+export function pingLoss(trace: PathTraceResult): number | null {
+  const match = trace.ping?.output.match(/([\d.]+)% packet loss/);
+  return match ? Number(match[1]) : null;
+}
+
+/** Loss at the destination hop of the MTR, when it answered. */
+export function destinationLoss(trace: PathTraceResult): number | null {
+  if (!trace.reached || trace.hops.length === 0) return null;
+  return trace.hops[trace.hops.length - 1].lossPct;
+}
+
+/** Worst loss either side measured towards the other in one run. */
+export function outcomeLoss(...outcomes: TraceOutcome[]): number | null {
+  const values = outcomes
+    .flatMap((outcome) => (outcome.ok ? [pingLoss(outcome.trace), destinationLoss(outcome.trace)] : []))
+    .filter((value): value is number => value !== null);
+  return values.length ? Math.max(...values) : null;
+}
+
+/**
+ * The captures worth showing support: those that caught the most loss
+ * (latest first on a tie), in chronological order.
+ */
+export function pickCaptures(captures: ReportCapture[], max = 2): ReportCapture[] {
+  return [...captures]
+    .sort((x, y) => (outcomeLoss(y.aToB, y.bToA) ?? -1) - (outcomeLoss(x.aToB, x.bToA) ?? -1) || y.at.getTime() - x.at.getTime())
+    .slice(0, max)
+    .sort((x, y) => x.at.getTime() - y.at.getTime());
+}
+
+export function storedToOutcome(stored: StoredTraceOutcome, lang: LinkReportLang): TraceOutcome {
+  if (stored.ok) return { ok: true, trace: stored.trace, ranAt: new Date(stored.ranAt) };
+  return { ok: false, reason: traceFailureReason(new Error(stored.error), lang) };
+}
+
+/**
+ * Keeps what support reads in a ping listing: the header, the first
+ * replies, every unanswered probe or error, and the statistics. Runs of
+ * normal replies in between are folded into one line.
+ */
+export function condensePing(output: string, omitted: (count: number) => string): string[] {
+  const lines = output.split('\n');
+  const isReply = (line: string) => /bytes from .*(icmp_seq|seq)=\d+.*time[=<]/.test(line);
+  const out: string[] = [];
+  let replies = 0;
+  let folded = 0;
+  for (const line of lines) {
+    if (isReply(line)) {
+      replies++;
+      if (replies <= 5) out.push(line);
+      else folded++;
+      continue;
+    }
+    if (folded > 0) {
+      out.push(omitted(folded));
+      folded = 0;
+    }
+    out.push(line);
+  }
+  if (folded > 0) out.push(omitted(folded));
+  return out;
 }
 
 /**
@@ -146,7 +239,7 @@ const TEXT = {
     sinceOnset: 'Depuis le début de l’incident :',
     wholePeriod: 'Sur toute la période analysée :',
     dirStats: (s: DirectionStats) =>
-      `perte moyenne ${fmtPct(s.avgLoss)}, pic ${fmtPct(s.peakLoss)}, ${fmtPct(s.lossyShare)} des mesures avec perte ; latence moyenne ${fmtMs(s.avgLatency)} (min ${fmtMs(s.minLatency)}, max ${fmtMs(s.maxLatency)})`,
+      `perte moyenne ${fmtPct(s.avgLoss)}, pire quart d’heure ${fmtPct(s.worstWindowLoss)}, ${fmtPct(s.lossyShare)} des mesures avec perte ; latence moyenne ${fmtMs(s.avgLatency)} (min ${fmtMs(s.minLatency)}, max ${fmtMs(s.maxLatency)})`,
     comparison: 'Comparaison sur la même période :',
     others: (name: string, c: PeerComparison) =>
       c.peers === 0
@@ -165,6 +258,20 @@ const TEXT = {
     hourlyHead: ['Heure', 'perte', 'latence', 'perte', 'latence'],
     testsIntro:
       'Les tests demandés (charge avec top, ping, traceroute et MTR) ont été lancés en même temps depuis chacun des deux serveurs vers l’IP publique de l’autre : voir ci-dessous.',
+    nowClean: (at: string) =>
+      `Au moment des tests (${at}), aucune perte dans un sens comme dans l’autre : le problème ne se produit pas en ce moment.`,
+    nowLoss: (at: string, ab: string, ba: string) => `Au moment des tests (${at}) : perte au ping A → B ${ab}, B → A ${ba}.`,
+    lastEnded: (end: string, ago: string) => `La dernière période de perte s’est terminée le ${end} (il y a ${ago}).`,
+    capturesIncluded: (total: number, shown: number) =>
+      `${total} capture${total > 1 ? 's' : ''} de ces tests faite${total > 1 ? 's' : ''} automatiquement pendant les dégradations de la période ; ${shown === total ? (total > 1 ? 'toutes incluses' : 'incluse') : `les ${shown} qui ont relevé le plus de perte sont incluses`} ci-dessous, avant les tests lancés maintenant.`,
+    noCapture:
+      'Aucun test n’a été capturé pendant une dégradation sur la période : seuls les tests lancés maintenant figurent ci-dessous.',
+    testsCaptured: 'Ils ont été lancés automatiquement au moment où le lien s’est dégradé.',
+    capturesTitle: 'TESTS CAPTURÉS AUTOMATIQUEMENT PENDANT L’INCIDENT',
+    captureHeading: (at: string, dir: string, status: string, loss: string) =>
+      `Capture du ${at}, déclenchée par le passage du lien ${dir} à l’état « ${status} » (perte mesurée ${loss}).`,
+    nowTitle: 'TESTS LANCÉS À LA GÉNÉRATION DU RAPPORT',
+    pingOmitted: (count: number) => `[… ${count} réponse${count > 1 ? 's' : ''} normale${count > 1 ? 's' : ''} non reproduite${count > 1 ? 's' : ''} …]`,
     testsTitle: (from: string, to: string) => `TESTS LANCÉS DEPUIS ${from} VERS ${to}`,
     testsRanAt: (at: string) => `Lancés le ${at}, en même temps que ceux de l’autre serveur.`,
     testsFailed: (reason: string) => `Tests impossibles : ${reason}`,
@@ -182,10 +289,12 @@ const TEXT = {
       'Note : une perte sur un saut intermédiaire qui ne se retrouve pas sur les sauts suivants vient en général de la limitation ICMP de ce routeur, pas d’une vraie perte.',
     events: 'CHANGEMENTS D’ÉTAT ENREGISTRÉS (UTC)',
     noEvents: 'Aucun changement d’état sur la période.',
-    eventsTruncated: (total: number, shown: number) => `${total} changements d’état au total, les ${shown} derniers ci-dessous.`,
+    eventsSummary: (total: number, ab: number, ba: number, first: string, last: string) =>
+      `${total} changements d’état (A → B : ${ab}, B → A : ${ba}) entre le ${first} et le ${last} : le lien a oscillé entre sain et dégradé. Le détail heure par heure est dans l’historique ci-dessus.`,
     eventLine: (at: string, dir: string, status: string, loss: string, latency: string) =>
       `${at}  ${dir}  ${status}  perte ${loss}  latence ${latency}`,
     status: { healthy: 'sain    ', degraded: 'dégradé ', offline: 'coupé   ', unknown: 'inconnu ' } as Record<string, string>,
+    statusWord: { healthy: 'sain', degraded: 'dégradé', offline: 'coupé', unknown: 'inconnu' } as Record<string, string>,
     footer: 'Rapport généré par Tarmac à partir des mesures continues des agents installés sur les deux serveurs.',
     noIp: 'IP publique inconnue',
     tooOld: 'l’agent de ce serveur est trop ancien (mettez-le à jour depuis la page Nœuds)',
@@ -211,7 +320,7 @@ const TEXT = {
     sinceOnset: 'Since the incident started:',
     wholePeriod: 'Over the whole analysed window:',
     dirStats: (s: DirectionStats) =>
-      `average loss ${fmtPct(s.avgLoss)}, peak ${fmtPct(s.peakLoss)}, ${fmtPct(s.lossyShare)} of measurements with loss; average latency ${fmtMs(s.avgLatency)} (min ${fmtMs(s.minLatency)}, max ${fmtMs(s.maxLatency)})`,
+      `average loss ${fmtPct(s.avgLoss)}, worst 15 minutes ${fmtPct(s.worstWindowLoss)}, ${fmtPct(s.lossyShare)} of measurements with loss; average latency ${fmtMs(s.avgLatency)} (min ${fmtMs(s.minLatency)}, max ${fmtMs(s.maxLatency)})`,
     comparison: 'Comparison over the same period:',
     others: (name: string, c: PeerComparison) =>
       c.peers === 0
@@ -230,6 +339,19 @@ const TEXT = {
     hourlyHead: ['Hour', 'loss', 'latency', 'loss', 'latency'],
     testsIntro:
       'The requested tests (load with top, ping, traceroute and MTR) were run at the same time from each server towards the other one\'s public IP: see below.',
+    nowClean: (at: string) =>
+      `At the time of the tests (${at}), no loss in either direction: the problem is not occurring right now.`,
+    nowLoss: (at: string, ab: string, ba: string) => `At the time of the tests (${at}): ping loss A -> B ${ab}, B -> A ${ba}.`,
+    lastEnded: (end: string, ago: string) => `The last period of loss ended at ${end} (${ago} ago).`,
+    capturesIncluded: (total: number, shown: number) =>
+      `${total} capture${total > 1 ? 's' : ''} of these tests taken automatically while the link was degraded in the window; ${shown === total ? (total > 1 ? 'all included' : 'included') : `the ${shown} that caught the most loss are included`} below, before the tests run now.`,
+    noCapture: 'No test was captured during a degradation in the window: only the tests run now are included below.',
+    testsCaptured: 'They were run automatically as the link degraded.',
+    capturesTitle: 'TESTS CAPTURED AUTOMATICALLY DURING THE INCIDENT',
+    captureHeading: (at: string, dir: string, status: string, loss: string) =>
+      `Capture taken at ${at}, triggered by link ${dir} turning ${status} (measured loss ${loss}).`,
+    nowTitle: 'TESTS RUN WHEN THE REPORT WAS GENERATED',
+    pingOmitted: (count: number) => `[... ${count} normal repl${count > 1 ? 'ies' : 'y'} not reproduced ...]`,
     testsTitle: (from: string, to: string) => `TESTS RUN FROM ${from} TO ${to}`,
     testsRanAt: (at: string) => `Run at ${at}, at the same time as the other server's.`,
     testsFailed: (reason: string) => `Tests not available: ${reason}`,
@@ -247,10 +369,12 @@ const TEXT = {
       'Note: loss on an intermediate hop that does not carry on to the following hops is usually ICMP rate limiting by that router, not actual loss.',
     events: 'RECORDED STATUS CHANGES (UTC)',
     noEvents: 'No status change in the period.',
-    eventsTruncated: (total: number, shown: number) => `${total} status changes in total, the last ${shown} below.`,
+    eventsSummary: (total: number, ab: number, ba: number, first: string, last: string) =>
+      `${total} status changes (A -> B: ${ab}, B -> A: ${ba}) between ${first} and ${last}: the link kept switching between healthy and degraded. The hourly history above has the detail.`,
     eventLine: (at: string, dir: string, status: string, loss: string, latency: string) =>
       `${at}  ${dir}  ${status}  loss ${loss}  latency ${latency}`,
     status: { healthy: 'healthy ', degraded: 'degraded', offline: 'down    ', unknown: 'unknown ' } as Record<string, string>,
+    statusWord: { healthy: 'healthy', degraded: 'degraded', offline: 'down', unknown: 'unknown' } as Record<string, string>,
     footer: 'Report generated by Tarmac from the continuous measurements of the agents running on both servers.',
     noIp: 'unknown public IP',
     tooOld: 'the agent on this server is too old',
@@ -309,7 +433,7 @@ function renderDiagnostics(
   lines.push('', `  ${t.pingTitle(target)}`);
   if (trace.ping) {
     if (trace.ping.command) lines.push(`    $ ${trace.ping.command}`);
-    indent((trace.ping.output || trace.ping.error || '').split('\n'));
+    indent(trace.ping.output ? condensePing(trace.ping.output, t.pingOmitted) : [trace.ping.error ?? '']);
   } else {
     lines.push(`    ${t.unavailable}`);
   }
@@ -454,9 +578,40 @@ export function buildLinkReport(input: LinkReportInput): { text: string; filenam
     input.aOthers.peers + input.bOthers.peers > 0 &&
     [input.aOthers, input.bOthers].every((c) => c.peers === 0 || (c.avgLoss ?? 0) < Math.min(1, incidentLoss / 3));
   if (incidentLoss > 0 && othersClean) lines.push(`  ${t.pathSpecific}`);
-  lines.push('', `  ${t.testsIntro}`);
 
-  // The tests support asks for, from each end towards the other.
+  // Where things stand now, from the tests run with the report.
+  lines.push('');
+  const nowAt = fmtUtc(input.generatedAt);
+  const nowAB = input.traceAToB.ok ? pingLoss(input.traceAToB.trace) : null;
+  const nowBA = input.traceBToA.ok ? pingLoss(input.traceBToA.trace) : null;
+  const nowWorst = outcomeLoss(input.traceAToB, input.traceBToA);
+  if (nowWorst === 0 && input.traceAToB.ok && input.traceBToA.ok) lines.push(`  ${t.nowClean(nowAt)}`);
+  else if (nowAB !== null || nowBA !== null) lines.push(`  ${t.nowLoss(nowAt, fmtPct(nowAB), fmtPct(nowBA))}`);
+  const lastPast = past[past.length - 1];
+  if (!ongoing && lastPast) {
+    const minutes = Math.max(1, Math.round((input.generatedAt.getTime() - lastPast.end.getTime()) / 60_000));
+    lines.push(`  ${t.lastEnded(fmtUtc(lastPast.end), t.duration(minutes))}`);
+  }
+  const shownCaptures = pickCaptures(input.captures);
+  lines.push('', `  ${t.testsIntro}`);
+  if (input.testsAreCapture) lines.push(`  ${t.testsCaptured}`);
+  else lines.push(`  ${shownCaptures.length ? t.capturesIncluded(input.captures.length, shownCaptures.length) : t.noCapture}`);
+
+  // The tests support asks for, from each end towards the other: first
+  // those captured while the link was failing, then the ones run now.
+  if (shownCaptures.length) {
+    lines.push('', rule, t.capturesTitle, rule);
+    for (const capture of shownCaptures) {
+      const dir = capture.trigger.direction === 'AB' ? t.direction('A', 'B') : t.direction('B', 'A');
+      lines.push(
+        '',
+        `  ${t.captureHeading(fmtUtc(capture.at, true), dir, t.statusWord[capture.trigger.status] ?? capture.trigger.status, fmtPct(capture.trigger.loss))}`,
+      );
+      renderDiagnostics(lines, t, 'A', a, 'B', b, capture.aToB);
+      renderDiagnostics(lines, t, 'B', b, 'A', a, capture.bToA);
+    }
+    lines.push('', rule, t.nowTitle, rule);
+  }
   renderDiagnostics(lines, t, 'A', a, 'B', b, input.traceAToB);
   renderDiagnostics(lines, t, 'B', b, 'A', a, input.traceBToA);
   lines.push('');
@@ -504,13 +659,20 @@ export function buildLinkReport(input: LinkReportInput): { text: string; filenam
     }
   }
   transitions.sort((x, y) => x.at.getTime() - y.at.getTime());
-  const MAX_EVENTS = 40;
+  // A long list of flaps is noise for support: summed up past a few.
+  const MAX_EVENTS = 12;
   if (transitions.length === 0) lines.push(`  ${t.noEvents}`);
-  if (transitions.length > MAX_EVENTS) lines.push(`  ${t.eventsTruncated(transitions.length, MAX_EVENTS)}`);
-  for (const { at, dir, sample } of transitions.slice(-MAX_EVENTS)) {
+  if (transitions.length > MAX_EVENTS) {
+    const count = (dir: string) => transitions.filter((entry) => entry.dir === dir).length;
     lines.push(
-      `  ${t.eventLine(fmtUtc(at, true).replace(' UTC', ''), dir, t.status[sample.status] ?? sample.status, fmtPct(sample.packetLoss), fmtMs(sample.latencyMs))}`,
+      `  ${t.eventsSummary(transitions.length, count('A→B'), count('B→A'), fmtUtc(transitions[0].at), fmtUtc(transitions[transitions.length - 1].at))}`,
     );
+  } else {
+    for (const { at, dir, sample } of transitions) {
+      lines.push(
+        `  ${t.eventLine(fmtUtc(at, true).replace(' UTC', ''), dir, t.status[sample.status] ?? sample.status, fmtPct(sample.packetLoss), fmtMs(sample.latencyMs))}`,
+      );
+    }
   }
 
   lines.push('', rule, t.footer, rule, '');

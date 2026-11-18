@@ -34,6 +34,7 @@ const (
 	// per hop, like traceroute itself).
 	pathTraceListedProbes = 3
 	pathTraceMaxPings     = 200
+	pathTracePingDelay    = 1500 * time.Millisecond
 )
 
 type pathTraceHop struct {
@@ -156,7 +157,13 @@ func runPathTrace(payload map[string]interface{}) (pathTraceData, error) {
 	var pingDone chan *diagnosticPing
 	if pingCount > 0 {
 		pingDone = make(chan *diagnosticPing, 1)
-		go func() { pingDone <- runDiagnosticPing(targetIP, pingCount) }()
+		go func() {
+			// After the first round: starting the ping process on a
+			// single-core server delayed the reader and inflated the first
+			// hops' times in the traceroute listing.
+			time.Sleep(pathTracePingDelay)
+			pingDone <- runDiagnosticPing(targetIP, pingCount)
+		}()
 	}
 
 	stats := map[int]*pathTraceStat{}

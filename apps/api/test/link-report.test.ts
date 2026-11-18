@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildLinkReport, directionStats, LinkReportInput, lossEpisodes, ReportSample } from '../src/vlan/link-report';
+import {
+  buildLinkReport,
+  condensePing,
+  directionStats,
+  LinkReportInput,
+  lossEpisodes,
+  pickCaptures,
+  ReportCapture,
+  ReportSample,
+  TraceOutcome,
+} from '../src/vlan/link-report';
 
 const NOW = new Date('2026-11-17T12:30:00Z');
 const SINCE = new Date('2026-11-16T12:30:00Z');
@@ -86,6 +96,7 @@ function input(overrides: Partial<LinkReportInput> = {}): LinkReportInput {
       },
     },
     traceBToA: { ok: false, reason: 'ce serveur est hors ligne' },
+    captures: [],
     publicPingFiltered: false,
     ...overrides,
   };
@@ -94,7 +105,10 @@ function input(overrides: Partial<LinkReportInput> = {}): LinkReportInput {
 test('stats per direction', () => {
   const stats = directionStats(samples());
   assert.ok(stats.avgLoss! > 0.5 && stats.avgLoss! < 2, String(stats.avgLoss));
-  assert.equal(stats.peakLoss, 10);
+  // The last slice holds one sample only (12:30:00).
+  assert.ok(stats.worstWindowLoss! >= 6.5 && stats.worstWindowLoss! <= 10, String(stats.worstWindowLoss));
+  const flaky = [0, 50, 0, 0, 0, 0].map((loss, i) => ({ at: new Date(NOW.getTime() + i * 60_000), status: 'healthy', latencyMs: 20, packetLoss: loss }));
+  assert.ok(directionStats(flaky).worstWindowLoss! < 50, 'one bad probe is not the worst 15 minutes');
   assert.equal(stats.minLatency, 22);
   assert.equal(stats.maxLatency, 26);
   assert.equal(directionStats([]).avgLoss, null);
@@ -136,6 +150,9 @@ test('french report carries public IPs, onset, comparison, traces and events', (
   assert.match(text, /MiB Mem : {2}15890\.4 total/);
   assert.match(text, /\$ ping -n -c 100 -i 0\.2 -W 2 -O 51\.68\.36\.61\n {4}PING 51\.68\.36\.61/);
   assert.match(text, /100 packets transmitted, 94 received, 6% packet loss/);
+  assert.match(text, /Au moment des tests \(2026-11-17 12:30 UTC\) : perte au ping A → B 6%, B → A —\./);
+  assert.match(text, /Aucun test n’a été capturé pendant une dégradation/);
+  assert.doesNotMatch(text, /TESTS CAPTURÉS/);
   assert.match(text, /\n {4}traceroute to 51\.68\.36\.61 \(51\.68\.36\.61\), 30 hops max, ICMP\n {4} 1 {2}191\.101\.236\.1 {2}0\.412 ms {2}0\.500 ms {2}0\.310 ms\n {4} 2 {2}\* \* \*\n {4} 3 {2}51\.68\.36\.61 {2}26\.000 ms {2}\* {2}51\.68\.36\.62 {2}25\.500 ms\n/);
   assert.match(text, /MTR vers 51\.68\.36\.61 \(30 cycles, ICMP\)/);
   assert.match(text, /\n {4}HOST: 2-es-vpn +Loss% +Snt +Last +Avg +Best +Wrst +StDev\n/);
@@ -143,8 +160,8 @@ test('french report carries public IPs, onset, comparison, traces and events', (
   assert.match(text, /\n {6}2\.\|-- \?\?\? +100\.0% +30/);
   assert.match(text, /Tests impossibles : ce serveur est hors ligne/);
   assert.match(text, /Depuis le début de l’incident :\n +A → B : perte moyenne 6\.7%/);
-  assert.match(text, /changements d’état au total, les 40 derniers ci-dessous/);
-  assert.match(text, /2026-11-17 12:\d\d:\d\d {2}A→B {2}dégradé/);
+  assert.match(text, /\d+ changements d’état \(A → B : \d+, B → A : \d+\) entre le 2026-11-17 09:3\d UTC et le 2026-11-17 12:\d\d UTC : le lien a oscillé/);
+  assert.match(text, /pire quart d’heure/);
   assert.match(text, /HISTORIQUE HORAIRE \(UTC\)\n-+\n.*A→B perte/);
   assert.doesNotMatch(text, /undefined|NaN|\[object/);
   assert.equal(filename, 'rapport-reseau_2-es-vpn_ns3121979-ip-51-68-36-eu_20261117-1230Z.txt');
@@ -181,4 +198,58 @@ test('a clean link says so', () => {
   assert.match(text, /Aucune période de perte soutenue/);
   assert.match(text, /Aucun changement d’état sur la période/);
   assert.doesNotMatch(text, /propre à la route/);
+});
+
+function cleanTrace(lossPct: number, at: Date): TraceOutcome {
+  const base = input().traceAToB;
+  if (!base.ok) throw new Error('fixture');
+  const output = `PING x\n64 bytes from x: icmp_seq=1 ttl=50 time=20.1 ms\n\n--- x ping statistics ---\n100 packets transmitted, ${100 - lossPct} received, ${lossPct}% packet loss, time 19858ms`;
+  return { ok: true, ranAt: at, trace: { ...base.trace, ping: { command: 'ping x', output, error: null } } };
+}
+
+test('captures: the most telling ones, in order, and the resolved state', () => {
+  const at = (iso: string) => new Date(iso);
+  const capture = (iso: string, loss: number, direction: 'AB' | 'BA' = 'AB'): ReportCapture => ({
+    at: at(iso),
+    trigger: { direction, status: 'degraded', loss: 10, latencyMs: 25 },
+    aToB: cleanTrace(loss, at(iso)),
+    bToA: { ok: false, reason: 'ce serveur est hors ligne' },
+  });
+  const captures = [capture('2026-11-17T09:40:00Z', 4), capture('2026-11-17T10:20:00Z', 12, 'BA'), capture('2026-11-17T11:00:00Z', 0)];
+  // The MTR fixture's destination shows 10 % on every capture: 12 % wins, then the latest 10 %.
+  assert.deepEqual(
+    pickCaptures(captures).map((c) => c.at.toISOString()),
+    ['2026-11-17T10:20:00.000Z', '2026-11-17T11:00:00.000Z'],
+  );
+
+  const clean = samples().map((s) => ({ ...s, packetLoss: s.at < at('2026-11-17T11:00:00Z') ? s.packetLoss : 0 }));
+  const now = { ok: true as const, ranAt: NOW, trace: { ...(cleanTrace(0, NOW) as any).trace, hops: [] , reached: false } };
+  const { text } = buildLinkReport(input({ aToB: clean, bToA: clean, captures, traceAToB: now, traceBToA: now }));
+  assert.match(text, /Au moment des tests \(2026-11-17 12:30 UTC\), aucune perte dans un sens comme dans l’autre/);
+  assert.match(text, /La dernière période de perte s’est terminée le 2026-11-17 11:00 UTC \(il y a 1 h 30\)\./);
+  assert.match(text, /3 captures de ces tests faites automatiquement .* les 2 qui ont relevé le plus de perte sont incluses/);
+  assert.match(text, /TESTS CAPTURÉS AUTOMATIQUEMENT PENDANT L’INCIDENT/);
+  assert.match(text, /Capture du 2026-11-17 10:20:00 UTC, déclenchée par le passage du lien B → A à l’état « dégradé » \(perte mesurée 10%\)/);
+  assert.match(text, /TESTS LANCÉS À LA GÉNÉRATION DU RAPPORT/);
+  assert.ok(text.indexOf('Capture du 2026-11-17 10:20') < text.indexOf('Capture du 2026-11-17 11:00'));
+  assert.ok(text.indexOf('TESTS LANCÉS À LA GÉNÉRATION') > text.indexOf('Capture du 2026-11-17 11:00'));
+  assert.doesNotMatch(text, /09:40:00 UTC, déclenchée/);
+
+  const mailed = buildLinkReport(input({ testsAreCapture: true })).text;
+  assert.match(mailed, /Ils ont été lancés automatiquement au moment où le lien s’est dégradé\./);
+  assert.doesNotMatch(mailed, /Aucun test n’a été capturé/);
+});
+
+test('ping listing keeps the losses and folds the normal replies', () => {
+  const replies = (from: number, to: number) =>
+    Array.from({ length: to - from + 1 }, (_, i) => `64 bytes from 1.2.3.4: icmp_seq=${from + i} ttl=50 time=20.${i} ms`);
+  const output = ['PING 1.2.3.4 (1.2.3.4) 56(84) bytes of data.', ...replies(1, 30), 'no answer yet for icmp_seq=31', ...replies(32, 100), '', '--- 1.2.3.4 ping statistics ---', '100 packets transmitted, 99 received, 1% packet loss'].join('\n');
+  const lines = condensePing(output, (n) => `[${n} omitted]`);
+  assert.deepEqual(lines.slice(0, 6), ['PING 1.2.3.4 (1.2.3.4) 56(84) bytes of data.', ...replies(1, 5)]);
+  assert.equal(lines[6], '[25 omitted]');
+  assert.equal(lines[7], 'no answer yet for icmp_seq=31');
+  assert.equal(lines[8], '[69 omitted]');
+  assert.ok(lines.includes('100 packets transmitted, 99 received, 1% packet loss'));
+  // BSD-style ping (no -O) folds the same way.
+  assert.equal(condensePing('64 bytes from 1.2.3.4: icmp_seq=0 ttl=51 time=20.182 ms\n'.repeat(8).trim(), (n) => `[${n}]`).at(-1), '[3]');
 });

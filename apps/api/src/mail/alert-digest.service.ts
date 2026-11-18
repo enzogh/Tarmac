@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { alertEmailAddress, parseChannelTargets } from './alert-recipients';
+import { workspaceAlertRecipients } from './alert-recipients';
 import { MailService } from './mail.service';
 import { renderAlertDigest } from './templates/alert-digest';
 
@@ -162,31 +162,7 @@ export class AlertDigestService {
     return this.prisma.alert.updateMany({ where: { id: { in: ids } }, data: { emailNotifiedAt: new Date() } });
   }
 
-  private async recipientsFor(workspaceId: string): Promise<string[]> {
-    const [memberships, channels] = await Promise.all([
-      this.prisma.workspaceMembership.findMany({
-        // Members whose role hides the Alertes page don't get its emails either.
-        where: {
-          workspaceId,
-          user: { alertEmailsEnabled: true },
-          OR: [{ role: 'owner' }, { permissions: { hasSome: ['alerts:read', 'alerts:write'] } }],
-        },
-        select: { user: { select: { email: true, internalEmail: true } } },
-      }),
-      this.prisma.notificationChannel.findMany({
-        where: { workspaceId, type: 'email', enabled: true },
-        select: { target: true },
-      }),
-    ]);
-
-    const addresses = new Set<string>();
-    for (const { user } of memberships) {
-      const address = alertEmailAddress(user);
-      if (address) addresses.add(address);
-    }
-    for (const channel of channels) {
-      for (const address of parseChannelTargets(channel.target)) addresses.add(address);
-    }
-    return [...addresses];
+  private recipientsFor(workspaceId: string): Promise<string[]> {
+    return workspaceAlertRecipients(this.prisma, workspaceId);
   }
 }

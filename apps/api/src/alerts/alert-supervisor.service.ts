@@ -22,6 +22,9 @@ const CONFIRM_MS: Record<string, number> = {
   // Links flap more than agents do (a WireGuard handshake that comes and
   // goes): a link has to hold for a while before it is called fixed.
   'vlan-link': 5 * 60_000,
+  // A route losing packets swings between healthy and degraded every few
+  // minutes while it lasts: closed after a quarter of an hour clean.
+  'link-degraded': 15 * 60_000,
 };
 
 // Verdict on an alert's condition: still a problem, gone, or nothing this
@@ -153,6 +156,20 @@ export class AlertSupervisorService {
         });
         // No row left: the link was removed with a node or a VLAN.
         return verdict(links.some((link) => link.status === 'offline'));
+      }
+      case 'link-degraded': {
+        const [vlanId, nodeA, nodeB] = parts;
+        const links = await this.prisma.vlanConnection.findMany({
+          where: {
+            vlanId,
+            OR: [
+              { sourceNodeId: nodeA, targetNodeId: nodeB },
+              { sourceNodeId: nodeB, targetNodeId: nodeA },
+            ],
+          },
+          select: { status: true },
+        });
+        return verdict(links.some((link) => link.status === 'degraded' || link.status === 'offline'));
       }
       case 'gateway-failover': {
         const [vlanId, region] = parts;

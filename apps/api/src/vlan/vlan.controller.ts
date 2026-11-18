@@ -4,13 +4,18 @@ import { AgentsService } from '../agents/agents.service';
 import { CurrentWorkspace, WorkspaceGuard, WorkspaceScope } from '../auth/workspace.guard';
 import { ApiKeyOrJwtGuard, ApiKeyResource } from '../auth/api-key.guard';
 import { PrismaService } from '../prisma/prisma.service';
-import { extractExternalIp } from '../nodes/extract-external-ip';
-import { buildLinkReport, LinkReportLang, ReportNode, TraceOutcome, traceFailureReason } from './link-report';
+import {
+  buildLinkReport,
+  LinkReportLang,
+  outcomeLoss,
+  pickCaptures,
+  ReportCapture,
+  StoredTraceOutcome,
+  storedToOutcome,
+} from './link-report';
+import { LinkCaptureService, reportNodeFrom } from './link-capture.service';
 
-// What the report's tests run on each server: mtr's usual report length
-// and a 100-packet ping (20 s, alongside the MTR).
-const REPORT_MTR_CYCLES = 30;
-const REPORT_PING_COUNT = 100;
+const REPORT_RANGES: Record<string, number> = { '6h': 6, '24h': 24, '48h': 48 };
 
 @ApiKeyResource('network')
 @Controller('vlan')
@@ -22,6 +27,7 @@ export class VlanController {
     private vlanService: VlanService,
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => AgentsService)) private agentsService: AgentsService,
+    private readonly linkCaptures: LinkCaptureService,
   ) {}
 
   private async assertVlanInScope(vlanId: string, scope: WorkspaceScope) {
@@ -239,7 +245,7 @@ export class VlanController {
   ) {
     await this.assertVlanInScope(vlanId, scope);
     const lang: LinkReportLang = body.lang === 'en' ? 'en' : 'fr';
-    const hours = { '6h': 6, '24h': 24, '48h': 48 }[body.range ?? '24h'];
+    const hours = REPORT_RANGES[body.range ?? '24h'];
     if (!hours) throw new HttpException('Période invalide (6h, 24h ou 48h).', HttpStatus.BAD_REQUEST);
     if (!body.source || !body.target || body.source === body.target) {
       throw new HttpException('Choisissez deux nœuds différents.', HttpStatus.BAD_REQUEST);
@@ -264,31 +270,16 @@ export class VlanController {
       );
     }
 
-    const toReportNode = (node: NonNullable<typeof data.a>): ReportNode => {
-      const port = Number((node.overlayEndpoint ?? '').match(/:(\d+)$/)?.[1]);
-      return {
-        name: node.name,
-        publicIp: extractExternalIp(node.overlayEndpoint),
-        tunnelPort: Number.isFinite(port) && port > 0 ? port : null,
-        location: [node.locationCity, node.locationCountry].filter(Boolean).join(', ') || null,
-      };
-    };
-    const a = toReportNode(data.a);
-    const b = toReportNode(data.b);
-    const trace = async (fromId: string, to: ReportNode): Promise<TraceOutcome> => {
-      if (!to.publicIp) return { ok: false, reason: lang === 'fr' ? 'IP publique inconnue' : 'unknown public IP' };
-      try {
-        const ranAt = new Date();
-        return { ok: true, trace: await this.agentsService.requestPathTrace(fromId, to.publicIp, REPORT_MTR_CYCLES, { pingCount: REPORT_PING_COUNT, withLoad: true }), ranAt };
-      } catch (error) {
-        return { ok: false, reason: traceFailureReason(error, lang) };
-      }
-    };
-    const [traceAToB, traceBToA, workspace] = await Promise.all([
-      trace(body.source, b),
-      trace(body.target, a),
+    const a = reportNodeFrom(data.a);
+    const b = reportNodeFrom(data.b);
+    const [now, workspace, stored] = await Promise.all([
+      this.linkCaptures.runDiagnostics({ id: body.source, publicIp: a.publicIp }, { id: body.target, publicIp: b.publicIp }),
       this.prisma.workspace.findUnique({ where: { id: scope.workspaceId as string }, select: { firewallPublicPing: true } }),
+      this.linkCaptures.listCaptures(vlan!.id, body.source, body.target, since),
     ]);
+    const traceAToB = storedToOutcome(now.aToB, lang);
+    const traceBToA = storedToOutcome(now.bToA, lang);
+    const captures = stored.map((row) => this.orientCapture(row, body.source!, lang));
 
     const report = buildLinkReport({
       lang,
@@ -302,9 +293,71 @@ export class VlanController {
       bOthers: data.bOthers,
       traceAToB,
       traceBToA,
+      captures,
       publicPingFiltered: workspace?.firewallPublicPing === false,
     });
-    return { ...report, generatedAt: generatedAt.toISOString() };
+    return {
+      ...report,
+      generatedAt: generatedAt.toISOString(),
+      captures: { available: captures.length, included: pickCaptures(captures).length },
+    };
+  }
+
+  // Tests captured automatically while a link was degraded (see
+  // LinkCaptureService), newest first, for the report dialog.
+  @Get(':vlanId/captures')
+  async listLinkCaptures(
+    @Param('vlanId') vlanId: string,
+    @Query('source') source: string,
+    @Query('target') target: string,
+    @Query('range') range: string,
+    @CurrentWorkspace() scope: WorkspaceScope,
+  ) {
+    await this.assertVlanInScope(vlanId, scope);
+    const hours = REPORT_RANGES[range ?? '24h'];
+    if (!hours) throw new HttpException('Période invalide (6h, 24h ou 48h).', HttpStatus.BAD_REQUEST);
+    if (!source || !target || source === target) throw new HttpException('Choisissez deux nœuds différents.', HttpStatus.BAD_REQUEST);
+    const vlan = await this.prisma.vlan.findFirst({
+      where: { OR: [{ id: vlanId }, { name: vlanId }], workspaceId: scope.workspaceId },
+      select: { id: true },
+    });
+    const since = new Date(Date.now() - hours * 3_600_000);
+    const rows = await this.linkCaptures.listCaptures(vlan!.id, source, target, since);
+    const captures = rows.map((row) => this.orientCapture(row, source, 'fr'));
+    const included = new Set(pickCaptures(captures).map((capture) => capture.at.getTime()));
+    return captures
+      .map((capture) => ({
+        at: capture.at.toISOString(),
+        direction: capture.trigger.direction,
+        status: capture.trigger.status,
+        triggerLoss: capture.trigger.loss,
+        measuredLoss: outcomeLoss(capture.aToB, capture.bToA),
+        complete: capture.aToB.ok && capture.bToA.ok,
+        included: included.has(capture.at.getTime()),
+      }))
+      .reverse();
+  }
+
+  /** A stored capture seen from the report's A (= `sourceId`). */
+  private orientCapture(
+    row: { createdAt: Date; nodeAId: string; triggerSourceId: string; triggerStatus: string; triggerLoss: number | null; triggerLatency: number | null; aToB: unknown; bToA: unknown },
+    sourceId: string,
+    lang: LinkReportLang,
+  ): ReportCapture {
+    const flipped = row.nodeAId !== sourceId;
+    const forward = storedToOutcome(row.aToB as StoredTraceOutcome, lang);
+    const backward = storedToOutcome(row.bToA as StoredTraceOutcome, lang);
+    return {
+      at: row.createdAt,
+      trigger: {
+        direction: row.triggerSourceId === sourceId ? 'AB' : 'BA',
+        status: row.triggerStatus,
+        loss: row.triggerLoss,
+        latencyMs: row.triggerLatency,
+      },
+      aToB: flipped ? backward : forward,
+      bToA: flipped ? forward : backward,
+    };
   }
 
   private testError(error: unknown): string {
