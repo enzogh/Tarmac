@@ -55,3 +55,12 @@ test('incident email: a cut link and names are escaped', () => {
   assert.doesNotMatch(mail.html, /<b>x<\/b>/);
   assert.match(mail.html, /IP publique inconnue/);
 });
+
+test('incident email: how long the link stayed degraded', () => {
+  const mail = renderLinkIncident(input({ degradedForMs: 334_000, observedForMs: 600_000 }));
+  assert.match(mail.html, /Dégradé pendant/);
+  assert.match(mail.html, /6 min sur les 10 minutes suivantes/);
+  assert.match(mail.text, /Dégradé pendant 6 min sur les 10 minutes suivantes\./);
+  // Older callers without the observation: no row.
+  assert.doesNotMatch(renderLinkIncident(input()).html, /Dégradé pendant/);
+});

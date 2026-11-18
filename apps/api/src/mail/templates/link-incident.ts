@@ -48,6 +48,10 @@ export interface LinkIncidentInput {
   triggerLoss: number | null;
   triggerLatencyMs: number | null;
   capturedAt: Date;
+  // How long the link stayed degraded while it was watched after the
+  // capture (what made it an incident rather than a blip).
+  degradedForMs?: number;
+  observedForMs?: number;
   aToB: IncidentDirection;
   bToA: IncidentDirection;
   attachments: Array<{ filename: string; content: string }>;
@@ -93,6 +97,13 @@ function directionText(direction: IncidentDirection): string {
     .join(', ');
 }
 
+function durationText(input: LinkIncidentInput): string | null {
+  if (input.degradedForMs === undefined || !input.observedForMs) return null;
+  const degraded = Math.max(1, Math.round(input.degradedForMs / 60_000));
+  const observed = Math.round(input.observedForMs / 60_000);
+  return `${degraded} min sur les ${observed} minutes suivantes`;
+}
+
 export function renderLinkIncident(input: LinkIncidentInput): RenderedMail {
   const { a, b, workspaceName, workspaceSlug, recipient, frontendUrl } = input;
   const offline = input.status === 'offline';
@@ -101,6 +112,7 @@ export function renderLinkIncident(input: LinkIncidentInput): RenderedMail {
   const lossText = input.triggerLoss === null ? '' : ` · ${pct(input.triggerLoss)} de perte`;
   const subject = `[Tarmac] ${offline ? 'Lien coupé' : 'Lien dégradé'} · ${a.name} ↔ ${b.name}${lossText}`;
   const base = `${frontendUrl}/${encodeURIComponent(workspaceSlug)}/dashboard`;
+  const duration = durationText(input);
   const strong = (text: string) => `<strong style="color:${tokens.foreground};font-weight:600;">${escapeHtml(text)}</strong>`;
 
   const intro = `Le ${escapeHtml(formatDateTime(input.capturedAt))}, le lien ${strong(a.name)} &rarr; ${strong(b.name)} ${
@@ -120,6 +132,7 @@ export function renderLinkIncident(input: LinkIncidentInput): RenderedMail {
       detailRow('Serveur A', serverLine(a), true),
       detailRow('Serveur B', serverLine(b), false),
       detailRow('Tests capturés', escapeHtml(formatDateTime(input.capturedAt)), false),
+      ...(duration ? [detailRow(offline ? 'Coupé pendant' : 'Dégradé pendant', escapeHtml(duration), false)] : []),
     ].join(''),
   )}
   ${sectionTitle('Ce que les tests ont relevé')}
@@ -140,7 +153,7 @@ export function renderLinkIncident(input: LinkIncidentInput): RenderedMail {
     context: workspaceName,
     hero: { icon: '&#8646;', tone, eyebrow: 'Incident réseau', title, lede: intro },
     body,
-    footer: `Envoyé à <span style="color:${tokens.muted};">${escapeHtml(recipient)}</span> parce que vous suivez les alertes de «&nbsp;${escapeHtml(workspaceName)}&nbsp;». Un seul email par incident, même si le lien reste dégradé plusieurs heures.`,
+    footer: `Envoyé à <span style="color:${tokens.muted};">${escapeHtml(recipient)}</span> parce que vous suivez les alertes de «&nbsp;${escapeHtml(workspaceName)}&nbsp;». Un seul email par incident, même si le lien reste dégradé plusieurs heures ou qu’un même serveur perd des paquets vers plusieurs autres. Les pertes passagères ne font pas l’objet d’un email.`,
     links: [{ label: 'Gérer mes notifications', href: `${base}/settings` }],
     frontendUrl,
   });
@@ -149,6 +162,7 @@ export function renderLinkIncident(input: LinkIncidentInput): RenderedMail {
     `${title} — ${workspaceName}`,
     '',
     `Le ${formatDateTime(input.capturedAt)}, le lien ${a.name} -> ${b.name} ${offline ? 'ne passait plus' : `a perdu ${pct(input.triggerLoss)} des paquets`}.`,
+    ...(duration ? [`${offline ? 'Coupé' : 'Dégradé'} pendant ${duration}.`] : []),
     'Tarmac a lancé depuis les deux serveurs les tests qu’exigent les hébergeurs (top, ping, traceroute, MTR).',
     '',
     `A : ${a.name} (${a.publicIp ?? 'IP inconnue'})${a.location ? `, ${a.location}` : ''}`,
