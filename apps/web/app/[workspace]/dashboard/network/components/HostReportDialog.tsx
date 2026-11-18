@@ -26,8 +26,8 @@ function download(filename: string, text: string) {
 /**
  * Builds the incident report about one link that a hosting provider's
  * support needs: both public IPs, the measured loss over time, the
- * comparison with the servers' other links, and a trace of the internet
- * route run from each end.
+ * comparison with the servers' other links, and the tests support asks for
+ * before escalating (top, ping, traceroute, MTR), run from each end.
  */
 export function HostReportDialog({
   vlanId,
@@ -78,8 +78,8 @@ export function HostReportDialog({
           </DialogTitle>
           <DialogDescription>
             {nodeA.name} ↔ {nodeB.name}. Un rapport prêt à joindre à un ticket : les IP publiques des deux serveurs, les pertes et
-            la latence mesurées, la comparaison avec leurs autres liens, et le trajet internet relevé maintenant depuis chaque
-            serveur.
+            la latence mesurées, la comparaison avec leurs autres liens, et les tests qu’exigent les supports réseau (charge avec
+            top, ping, traceroute et MTR), lancés maintenant depuis chacun des deux serveurs vers l’autre.
           </DialogDescription>
         </DialogHeader>
 
@@ -128,7 +128,8 @@ export function HostReportDialog({
 
           {running && (
             <Callout variant="info">
-              Les deux serveurs tracent la route internet vers l’autre (10 sondes par saut) : comptez une quinzaine de secondes.
+              Chaque serveur lance top, un ping de 100 paquets, un traceroute et un MTR de 30 cycles vers l’autre : comptez
+              environ 35 secondes.
             </Callout>
           )}
           {error && <Callout variant="danger">{error}</Callout>}

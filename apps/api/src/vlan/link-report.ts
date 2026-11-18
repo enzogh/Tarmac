@@ -1,4 +1,4 @@
-import type { PathTraceResult } from '../agents/agents.service';
+import type { HostLoad, PathTraceResult } from '../agents/agents.service';
 
 // Plain-text incident report about one link, written to be pasted as-is into
 // a ticket with the hosting provider: both public addresses up front, what
@@ -163,14 +163,21 @@ const TEXT = {
     ],
     hourly: 'HISTORIQUE HORAIRE (UTC)',
     hourlyHead: ['Heure', 'perte', 'latence', 'perte', 'latence'],
-    traces: 'TRAJETS INTERNET ACTUELS (type MTR, entre les IP publiques)',
-    traceTitle: (from: string, fromIp: string, to: string, toIp: string, rounds: number, at: string) =>
-      `${from} (${fromIp}) → ${to} (${toIp}) — ${rounds} sondes par saut, le ${at}`,
-    traceHead: ['Saut', 'Adresse', 'Perte', 'Env.', 'Dern.', 'Moy.', 'Min', 'Max'],
-    traceFailed: (reason: string) => `Trace impossible : ${reason}`,
+    testsIntro:
+      'Les tests demandés (charge avec top, ping, traceroute et MTR) ont été lancés en même temps depuis chacun des deux serveurs vers l’IP publique de l’autre : voir ci-dessous.',
+    testsTitle: (from: string, to: string) => `TESTS LANCÉS DEPUIS ${from} VERS ${to}`,
+    testsRanAt: (at: string) => `Lancés le ${at}, en même temps que ceux de l’autre serveur.`,
+    testsFailed: (reason: string) => `Tests impossibles : ${reason}`,
+    loadTitle: (seconds: number, cpus: number) =>
+      `[1] Charge du serveur (top) : CPU moyenné sur les ${Math.round(seconds)} s des tests${cpus ? `, ${cpus} cœur${cpus > 1 ? 's' : ''}` : ''}`,
+    loadTitleBare: '[1] Charge du serveur (top)',
+    pingTitle: (ip: string) => `[2] Ping vers ${ip}`,
+    tracerouteTitle: (ip: string) => `[3] Traceroute vers ${ip} (ICMP, 3 sondes par saut)`,
+    mtrTitle: (ip: string, rounds: number) => `[4] MTR vers ${ip} (${rounds} cycles, ICMP)`,
+    unavailable: 'Non disponible : l’agent de ce serveur est trop ancien (mettez-le à jour depuis la page Nœuds).',
     traceUnreached: 'La destination n’a pas répondu aux sondes.',
     pingFiltered:
-      'Note : nos serveurs ne répondent pas au ping sur leur IP publique (pare-feu) ; le dernier saut silencieux est donc normal.',
+      'Note : nos serveurs ne répondent pas au ping sur leur IP publique (pare-feu) ; un ping sans réponse et un dernier saut silencieux sont donc normaux.',
     hopCaveat:
       'Note : une perte sur un saut intermédiaire qui ne se retrouve pas sur les sauts suivants vient en général de la limitation ICMP de ce routeur, pas d’une vraie perte.',
     events: 'CHANGEMENTS D’ÉTAT ENREGISTRÉS (UTC)',
@@ -221,14 +228,21 @@ const TEXT = {
     ],
     hourly: 'HOURLY HISTORY (UTC)',
     hourlyHead: ['Hour', 'loss', 'latency', 'loss', 'latency'],
-    traces: 'CURRENT INTERNET PATHS (MTR-style, between the public IPs)',
-    traceTitle: (from: string, fromIp: string, to: string, toIp: string, rounds: number, at: string) =>
-      `${from} (${fromIp}) -> ${to} (${toIp}) — ${rounds} probes per hop, at ${at}`,
-    traceHead: ['Hop', 'Address', 'Loss', 'Sent', 'Last', 'Avg', 'Best', 'Worst'],
-    traceFailed: (reason: string) => `Trace not available: ${reason}`,
+    testsIntro:
+      'The requested tests (load with top, ping, traceroute and MTR) were run at the same time from each server towards the other one\'s public IP: see below.',
+    testsTitle: (from: string, to: string) => `TESTS RUN FROM ${from} TO ${to}`,
+    testsRanAt: (at: string) => `Run at ${at}, at the same time as the other server's.`,
+    testsFailed: (reason: string) => `Tests not available: ${reason}`,
+    loadTitle: (seconds: number, cpus: number) =>
+      `[1] Server load (top): CPU averaged over the ${Math.round(seconds)} s of the tests${cpus ? `, ${cpus} core${cpus > 1 ? 's' : ''}` : ''}`,
+    loadTitleBare: '[1] Server load (top)',
+    pingTitle: (ip: string) => `[2] Ping to ${ip}`,
+    tracerouteTitle: (ip: string) => `[3] Traceroute to ${ip} (ICMP, 3 probes per hop)`,
+    mtrTitle: (ip: string, rounds: number) => `[4] MTR to ${ip} (${rounds} cycles, ICMP)`,
+    unavailable: 'Not available: the agent on this server is too old.',
     traceUnreached: 'The destination did not answer the probes.',
     pingFiltered:
-      'Note: our servers do not answer ping on their public IP (firewall), so a silent last hop is expected.',
+      'Note: our servers do not answer ping on their public IP (firewall), so an unanswered ping and a silent last hop are expected.',
     hopCaveat:
       'Note: loss on an intermediate hop that does not carry on to the following hops is usually ICMP rate limiting by that router, not actual loss.',
     events: 'RECORDED STATUS CHANGES (UTC)',
@@ -263,6 +277,109 @@ function fmtUtc(date: Date, withSeconds = false) {
 function pad(value: string, width: number, right = false) {
   if (value.length >= width) return value;
   return right ? value.padStart(width) : value.padEnd(width);
+}
+
+type Text = (typeof TEXT)[LinkReportLang];
+
+function renderDiagnostics(
+  lines: string[],
+  t: Text,
+  fromLabel: string,
+  from: ReportNode,
+  toLabel: string,
+  to: ReportNode,
+  outcome: TraceOutcome,
+) {
+  const sub = '-'.repeat(96);
+  const who = (label: string, node: ReportNode) => `${label} — ${node.name} (${node.publicIp ?? '?'})`;
+  lines.push('', sub, t.testsTitle(who(fromLabel, from), who(toLabel, to)), sub);
+  if (!outcome.ok) {
+    lines.push(`  ${t.testsFailed(outcome.reason)}`);
+    return;
+  }
+  const { trace } = outcome;
+  const target = to.publicIp ?? trace.targetIp;
+  const indent = (block: string[]) => block.forEach((line) => lines.push(`    ${line}`.trimEnd()));
+  lines.push(`  ${t.testsRanAt(fmtUtc(outcome.ranAt, true))}`);
+
+  lines.push('', `  ${trace.system ? t.loadTitle(trace.system.windowSec, trace.system.cpus) : t.loadTitleBare}`);
+  if (trace.system) indent(topLines(trace.system));
+  else lines.push(`    ${t.unavailable}`);
+
+  lines.push('', `  ${t.pingTitle(target)}`);
+  if (trace.ping) {
+    if (trace.ping.command) lines.push(`    $ ${trace.ping.command}`);
+    indent((trace.ping.output || trace.ping.error || '').split('\n'));
+  } else {
+    lines.push(`    ${t.unavailable}`);
+  }
+
+  lines.push('', `  ${t.tracerouteTitle(target)}`);
+  if (trace.hops.some((hop) => hop.probes.length > 0)) indent(tracerouteLines(trace));
+  else lines.push(`    ${t.unavailable}`);
+  if (!trace.reached) lines.push(`    ${t.traceUnreached}`);
+
+  lines.push('', `  ${t.mtrTitle(target, trace.rounds)}`);
+  indent(mtrLines(trace, from.name, outcome.ranAt));
+}
+
+/** The header of top: uptime and load, CPU shares, memory. */
+export function topLines(load: HostLoad): string[] {
+  const at = new Date(load.at);
+  const clock = Number.isNaN(at.getTime()) ? '--:--:--' : at.toISOString().slice(11, 19);
+  const minutes = Math.floor(load.uptimeSec / 60);
+  const days = Math.floor(minutes / 1440);
+  const hhmm = `${Math.floor((minutes % 1440) / 60)}:${String(minutes % 60).padStart(2, '0')}`;
+  const up =
+    (days > 0 ? `${days} day${days > 1 ? 's' : ''}, ` : '') + (minutes % 1440 < 60 ? `${minutes % 60} min` : hhmm.padStart(5));
+  const lines = [`top - ${clock} up ${up},  load average: ${load.load.map((v) => v.toFixed(2)).join(', ')}`];
+  const f1 = (value: number, width: number) => value.toFixed(1).padStart(width);
+  if (load.cpu) {
+    const c = load.cpu;
+    lines.push(
+      `%Cpu(s): ${f1(c.us, 4)} us, ${f1(c.sy, 4)} sy, ${f1(c.ni, 4)} ni, ${f1(c.id, 4)} id, ${f1(c.wa, 4)} wa, ${f1(c.hi, 4)} hi, ${f1(c.si, 4)} si, ${f1(c.st, 4)} st`,
+    );
+  }
+  if (load.mem) {
+    const m = load.mem;
+    lines.push(`MiB Mem : ${f1(m.totalMiB, 8)} total, ${f1(m.freeMiB, 8)} free, ${f1(m.usedMiB, 8)} used, ${f1(m.buffCacheMiB, 8)} buff/cache`);
+    lines.push(`MiB Swap: ${f1(m.swapTotalMiB, 8)} total, ${f1(m.swapFreeMiB, 8)} free, ${f1(m.swapUsedMiB, 8)} used. ${f1(m.availMiB, 8)} avail Mem`);
+  }
+  return lines;
+}
+
+/** The trace's first probes laid out like `traceroute -I -n`. */
+export function tracerouteLines(trace: PathTraceResult): string[] {
+  const lines = [`traceroute to ${trace.targetIp} (${trace.targetIp}), 30 hops max, ICMP`];
+  for (const hop of trace.hops) {
+    let previous: string | null = null;
+    const parts = hop.probes.map((probe) => {
+      if (!probe) return '*';
+      const text = `${probe.ip === previous ? '' : `${probe.ip}  `}${probe.ms.toFixed(3)} ms`;
+      previous = probe.ip;
+      return text;
+    });
+    lines.push(`${String(hop.hop).padStart(2)}  ${parts.join('  ').replace(/\*  \*/g, '* *').replace(/\*  \*/g, '* *')}`);
+  }
+  return lines;
+}
+
+/** The trace as `mtr --report --no-dns` prints it. */
+export function mtrLines(trace: PathTraceResult, host: string, ranAt: Date): string[] {
+  const width = Math.max(25, ...trace.hops.map((hop) => (hop.ip ?? '???').length + 1));
+  const iso = ranAt.toISOString();
+  const lines = [
+    `Start: ${iso.slice(0, 19)}+0000`,
+    `${`HOST: ${host}`.padEnd(8 + width)}${'Loss%'.padStart(6)}${'Snt'.padStart(6)}${'Last'.padStart(7)}${'Avg'.padStart(6)}${'Best'.padStart(6)}${'Wrst'.padStart(6)}${'StDev'.padStart(6)}`,
+  ];
+  const ms = (value: number | null) => (value ?? 0).toFixed(1);
+  for (const hop of trace.hops) {
+    lines.push(
+      `${String(hop.hop).padStart(3)}.|-- ${(hop.ip ?? '???').padEnd(width)}${`${hop.lossPct.toFixed(1)}%`.padStart(6)}${String(hop.sent).padStart(6)}${ms(hop.lastMs).padStart(7)}${ms(hop.avgMs).padStart(6)}${ms(hop.bestMs).padStart(6)}${ms(hop.worstMs).padStart(6)}${ms(hop.stdevMs).padStart(6)}`,
+    );
+    for (const other of hop.otherIps ?? []) lines.push(`    |  \`-- ${other}`);
+  }
+  return lines;
 }
 
 /** Readable reason for a trace that couldn't run. */
@@ -337,6 +454,14 @@ export function buildLinkReport(input: LinkReportInput): { text: string; filenam
     input.aOthers.peers + input.bOthers.peers > 0 &&
     [input.aOthers, input.bOthers].every((c) => c.peers === 0 || (c.avgLoss ?? 0) < Math.min(1, incidentLoss / 3));
   if (incidentLoss > 0 && othersClean) lines.push(`  ${t.pathSpecific}`);
+  lines.push('', `  ${t.testsIntro}`);
+
+  // The tests support asks for, from each end towards the other.
+  renderDiagnostics(lines, t, 'A', a, 'B', b, input.traceAToB);
+  renderDiagnostics(lines, t, 'B', b, 'A', a, input.traceBToA);
+  lines.push('');
+  if (input.publicPingFiltered) lines.push(`  ${t.pingFiltered}`);
+  lines.push(`  ${t.hopCaveat}`);
 
   section(t.method);
   const port = String(a.tunnelPort ?? b.tunnelPort ?? 51820);
@@ -364,35 +489,6 @@ export function buildLinkReport(input: LinkReportInput): { text: string; filenam
       `  ${pad(`${at.slice(0, 10)} ${at.slice(11, 16)}`, 18)}${pad(fmtPct(ab.avgLoss), 12, true)}${pad(fmtMs(ab.avgLatency), 11, true)}   ${pad(fmtPct(ba.avgLoss), 12, true)}${pad(fmtMs(ba.avgLatency), 11, true)}`,
     );
   }
-
-  // Traces
-  section(t.traces);
-  const renderTrace = (from: ReportNode, to: ReportNode, outcome: TraceOutcome) => {
-    if (!outcome.ok) {
-      lines.push(`  ${from.name} → ${to.name}${colon} ${t.traceFailed(outcome.reason)}`);
-      return;
-    }
-    const { trace } = outcome;
-    lines.push(`  ${t.traceTitle(from.name, from.publicIp ?? '?', to.name, to.publicIp ?? '?', trace.rounds, fmtUtc(outcome.ranAt, true))}`);
-    const [hHop, hAddr, hLossT, hSent, hLast, hAvg, hBest, hWorst] = t.traceHead;
-    lines.push(
-      `  ${pad(hHop, 5, true)}  ${pad(hAddr, 18)}${pad(hLossT, 8, true)}${pad(hSent, 6, true)}${pad(hLast, 9, true)}${pad(hAvg, 9, true)}${pad(hBest, 9, true)}${pad(hWorst, 9, true)}`,
-    );
-    const ms = (value: number | null) => (value === null ? '—' : value.toFixed(1));
-    for (const hop of trace.hops) {
-      lines.push(
-        `  ${pad(String(hop.hop), 5, true)}  ${pad(hop.ip ?? '???', 18)}${pad(`${round1(hop.lossPct)}%`, 8, true)}${pad(String(hop.sent), 6, true)}${pad(ms(hop.lastMs), 9, true)}${pad(ms(hop.avgMs), 9, true)}${pad(ms(hop.bestMs), 9, true)}${pad(ms(hop.worstMs), 9, true)}`,
-      );
-      for (const other of hop.otherIps ?? []) lines.push(`         ${other}`);
-    }
-    if (!trace.reached) lines.push(`  ${t.traceUnreached}`);
-  };
-  renderTrace(a, b, input.traceAToB);
-  lines.push('');
-  renderTrace(b, a, input.traceBToA);
-  lines.push('');
-  if (input.publicPingFiltered) lines.push(`  ${t.pingFiltered}`);
-  lines.push(`  ${t.hopCaveat}`);
 
   // Status changes
   section(t.events);

@@ -4009,7 +4009,7 @@ func handleCommand(ctx context.Context, cmd commandPayload, onProgress func(prog
 			result.Message = err.Error()
 		} else {
 			result.Data = data
-			result.Message = fmt.Sprintf("%d hops, destination reached: %v", len(data.Hops), data.Reached)
+			result.Message = fmt.Sprintf("%d hops, destination reached: %v, ping: %v, load: %v", len(data.Hops), data.Reached, data.Ping != nil, data.System != nil)
 		}
 	case "command.run_traceroute":
 		result.Command = "run_traceroute"

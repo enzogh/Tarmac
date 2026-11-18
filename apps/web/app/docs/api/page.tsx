@@ -364,7 +364,7 @@ const MODULES: Module[] = [
         path: '/vlan/:vlanId/report',
         body: 'source, target, range? (6h | 24h | 48h), lang? (fr | en)',
         description:
-          "Rapport texte sur un lien, à envoyer au support d’un hébergeur ({ text, filename, generatedAt }) : IP publiques des deux serveurs, pertes et latence mesurées, comparaison avec leurs autres liens, et trajet internet de type MTR relevé à l’instant depuis chaque serveur vers l’IP publique de l’autre (~15 s).",
+          "Rapport texte sur un lien, à envoyer au support d’un hébergeur ({ text, filename, generatedAt }) : IP publiques des deux serveurs, pertes et latence mesurées, comparaison avec leurs autres liens, et les tests qu’exigent les supports réseau, lancés à l’instant depuis chaque serveur vers l’IP publique de l’autre : charge (lignes de top), ping de 100 paquets, traceroute et MTR de 30 cycles (~35 s).",
       },
       {
         method: 'POST',

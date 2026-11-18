@@ -7,6 +7,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { extractExternalIp } from '../nodes/extract-external-ip';
 import { buildLinkReport, LinkReportLang, ReportNode, TraceOutcome, traceFailureReason } from './link-report';
 
+// What the report's tests run on each server: mtr's usual report length
+// and a 100-packet ping (20 s, alongside the MTR).
+const REPORT_MTR_CYCLES = 30;
+const REPORT_PING_COUNT = 100;
+
 @ApiKeyResource('network')
 @Controller('vlan')
 @UseGuards(ApiKeyOrJwtGuard, WorkspaceGuard)
@@ -223,8 +228,9 @@ export class VlanController {
 
   // A report about one link, ready to send to a hosting provider: public
   // IPs, measured loss and latency over the window, comparison with both
-  // servers' other links, and an MTR-style trace run now from each end
-  // towards the other's public address (both at once, ~11 s).
+  // servers' other links, and the tests support asks for before escalating
+  // (load as top shows it, ping, traceroute, MTR), run now from each end
+  // towards the other's public address, both at once (~32 s).
   @Post(':vlanId/report')
   async linkReport(
     @Param('vlanId') vlanId: string,
@@ -273,7 +279,7 @@ export class VlanController {
       if (!to.publicIp) return { ok: false, reason: lang === 'fr' ? 'IP publique inconnue' : 'unknown public IP' };
       try {
         const ranAt = new Date();
-        return { ok: true, trace: await this.agentsService.requestPathTrace(fromId, to.publicIp, 10), ranAt };
+        return { ok: true, trace: await this.agentsService.requestPathTrace(fromId, to.publicIp, REPORT_MTR_CYCLES, { pingCount: REPORT_PING_COUNT, withLoad: true }), ranAt };
       } catch (error) {
         return { ok: false, reason: traceFailureReason(error, lang) };
       }

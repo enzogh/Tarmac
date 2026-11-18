@@ -32,13 +32,57 @@ function input(overrides: Partial<LinkReportInput> = {}): LinkReportInput {
       ranAt: NOW,
       trace: {
         targetIp: '51.68.36.61',
-        rounds: 10,
+        rounds: 30,
         reached: true,
         hops: [
-          { hop: 1, ip: '191.101.236.1', sent: 10, received: 10, lossPct: 0, lastMs: 0.4, avgMs: 0.5, bestMs: 0.3, worstMs: 1.1 },
-          { hop: 2, ip: null, sent: 10, received: 0, lossPct: 100, lastMs: null, avgMs: null, bestMs: null, worstMs: null },
-          { hop: 3, ip: '51.68.36.61', otherIps: ['51.68.36.62'], sent: 10, received: 9, lossPct: 10, lastMs: 26, avgMs: 26.4, bestMs: 25, worstMs: 31 },
+          {
+            hop: 1,
+            ip: '191.101.236.1',
+            sent: 30,
+            received: 30,
+            lossPct: 0,
+            lastMs: 0.4,
+            avgMs: 0.5,
+            bestMs: 0.3,
+            worstMs: 1.1,
+            stdevMs: 0.12,
+            probes: [
+              { ip: '191.101.236.1', ms: 0.412 },
+              { ip: '191.101.236.1', ms: 0.5 },
+              { ip: '191.101.236.1', ms: 0.31 },
+            ],
+          },
+          { hop: 2, ip: null, sent: 30, received: 0, lossPct: 100, lastMs: null, avgMs: null, bestMs: null, worstMs: null, stdevMs: null, probes: [null, null, null] },
+          {
+            hop: 3,
+            ip: '51.68.36.61',
+            otherIps: ['51.68.36.62'],
+            sent: 30,
+            received: 27,
+            lossPct: 10,
+            lastMs: 26,
+            avgMs: 26.4,
+            bestMs: 25,
+            worstMs: 31,
+            stdevMs: 1.6,
+            probes: [{ ip: '51.68.36.61', ms: 26 }, null, { ip: '51.68.36.62', ms: 25.5 }],
+          },
         ],
+        ping: {
+          command: 'ping -n -c 100 -i 0.2 -W 2 -O 51.68.36.61',
+          output:
+            'PING 51.68.36.61 (51.68.36.61) 56(84) bytes of data.\n64 bytes from 51.68.36.61: icmp_seq=1 ttl=51 time=26.1 ms\nno answer yet for icmp_seq=2\n\n--- 51.68.36.61 ping statistics ---\n100 packets transmitted, 94 received, 6% packet loss, time 19830ms\nrtt min/avg/max/mdev = 25.0/26.4/31.0/1.2 ms',
+          error: null,
+        },
+        system: {
+          at: '2026-11-17T12:30:32Z',
+          windowSec: 31.6,
+          cpus: 4,
+          cpu: { us: 0.2, sy: 0.3, ni: 0, id: 98.5, wa: 0, hi: 0, si: 0, st: 1 },
+          load: [0.08, 0.12, 0.1],
+          uptimeSec: 12 * 86400 + 3 * 3600 + 4 * 60,
+          mem: { totalMiB: 15890.4, freeMiB: 1203.5, usedMiB: 4021.2, buffCacheMiB: 10665.7, availMiB: 11869.2, swapTotalMiB: 0, swapFreeMiB: 0, swapUsedMiB: 0 },
+        },
       },
     },
     traceBToA: { ok: false, reason: 'ce serveur est hors ligne' },
@@ -85,11 +129,19 @@ test('french report carries public IPs, onset, comparison, traces and events', (
   assert.match(text, /Perte de paquets en cours depuis le 2026-11-17 09:30 UTC \(3 h\)/);
   assert.match(text, /la perte est propre à la route internet entre ces deux adresses/);
   assert.match(text, /port UDP 51820/);
-  assert.match(text, /2-es-vpn \(191\.101\.236\.219\) → ns3121979\.ip-51-68-36\.eu \(51\.68\.36\.61\) — 10 sondes par saut/);
-  assert.match(text, /\n +3 {2}51\.68\.36\.61 +10%/);
-  assert.match(text, /\n +51\.68\.36\.62\n/);
-  assert.match(text, /\n +2 {2}\?\?\? +100%/);
-  assert.match(text, /Trace impossible : ce serveur est hors ligne/);
+  assert.match(text, /TESTS LANCÉS DEPUIS A — 2-es-vpn \(191\.101\.236\.219\) VERS B — ns3121979\.ip-51-68-36\.eu \(51\.68\.36\.61\)/);
+  assert.match(text, /CPU moyenné sur les 32 s des tests, 4 cœurs/);
+  assert.match(text, /\n {4}top - 12:30:32 up 12 days, {2}3:04, {2}load average: 0\.08, 0\.12, 0\.10\n/);
+  assert.match(text, /\n {4}%Cpu\(s\): {2}0\.2 us, {2}0\.3 sy, {2}0\.0 ni, 98\.5 id, {2}0\.0 wa, {2}0\.0 hi, {2}0\.0 si, {2}1\.0 st\n/);
+  assert.match(text, /MiB Mem : {2}15890\.4 total/);
+  assert.match(text, /\$ ping -n -c 100 -i 0\.2 -W 2 -O 51\.68\.36\.61\n {4}PING 51\.68\.36\.61/);
+  assert.match(text, /100 packets transmitted, 94 received, 6% packet loss/);
+  assert.match(text, /\n {4}traceroute to 51\.68\.36\.61 \(51\.68\.36\.61\), 30 hops max, ICMP\n {4} 1 {2}191\.101\.236\.1 {2}0\.412 ms {2}0\.500 ms {2}0\.310 ms\n {4} 2 {2}\* \* \*\n {4} 3 {2}51\.68\.36\.61 {2}26\.000 ms {2}\* {2}51\.68\.36\.62 {2}25\.500 ms\n/);
+  assert.match(text, /MTR vers 51\.68\.36\.61 \(30 cycles, ICMP\)/);
+  assert.match(text, /\n {4}HOST: 2-es-vpn +Loss% +Snt +Last +Avg +Best +Wrst +StDev\n/);
+  assert.match(text, /\n {6}3\.\|-- 51\.68\.36\.61 +10\.0% +30 +26\.0 +26\.4 +25\.0 +31\.0 +1\.6\n {4} {4}\| {2}`-- 51\.68\.36\.62\n/);
+  assert.match(text, /\n {6}2\.\|-- \?\?\? +100\.0% +30/);
+  assert.match(text, /Tests impossibles : ce serveur est hors ligne/);
   assert.match(text, /Depuis le début de l’incident :\n +A → B : perte moyenne 6\.7%/);
   assert.match(text, /changements d’état au total, les 40 derniers ci-dessous/);
   assert.match(text, /2026-11-17 12:\d\d:\d\d {2}A→B {2}dégradé/);
@@ -107,8 +159,20 @@ test('english report, filtered ping note, no path-specific claim when others los
   assert.match(text, /Since the incident started:\n +A -> B: average loss/);
   assert.match(text, /our servers do not answer ping on their public IP/);
   assert.doesNotMatch(text, /specific to the internet route/);
-  assert.match(text, /Trace not available/);
+  assert.match(text, /Tests not available/);
+  assert.match(text, /\[1\] Server load \(top\): CPU averaged over the 32 s/);
   assert.ok(filename.startsWith('network-report_'));
+});
+
+test('an agent without the extra tests says which ones are missing', () => {
+  const base = input();
+  if (!base.traceAToB.ok) throw new Error('fixture');
+  const old = { ...base.traceAToB.trace, ping: null, system: null, hops: base.traceAToB.trace.hops.map((hop) => ({ ...hop, probes: [] })) };
+  const { text } = buildLinkReport(input({ traceAToB: { ok: true, ranAt: NOW, trace: old } }));
+  assert.match(text, /\[1\] Charge du serveur \(top\)\n {4}Non disponible : l’agent de ce serveur est trop ancien/);
+  assert.match(text, /\[2\] Ping vers 51\.68\.36\.61\n {4}Non disponible/);
+  assert.match(text, /\[3\] Traceroute vers 51\.68\.36\.61 \(ICMP, 3 sondes par saut\)\n {4}Non disponible/);
+  assert.match(text, /HOST: 2-es-vpn/);
 });
 
 test('a clean link says so', () => {

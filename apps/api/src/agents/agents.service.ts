@@ -70,8 +70,41 @@ export type PathTraceHop = {
   avgMs: number | null;
   bestMs: number | null;
   worstMs: number | null;
+  stdevMs: number | null;
+  // The first rounds' probes one by one (null when unanswered), for a
+  // traceroute-style listing.
+  probes: Array<{ ip: string; ms: number } | null>;
 };
-export type PathTraceResult = { targetIp: string; rounds: number; reached: boolean; hops: PathTraceHop[] };
+// Asked along with the trace (host_diagnostics.go): the system ping to the
+// same address, verbatim, and the server's load over the whole run.
+export type DiagnosticPing = { command: string; output: string; error: string | null };
+export type HostLoad = {
+  at: string;
+  windowSec: number;
+  cpus: number;
+  cpu: { us: number; sy: number; ni: number; id: number; wa: number; hi: number; si: number; st: number } | null;
+  load: number[];
+  uptimeSec: number;
+  mem: {
+    totalMiB: number;
+    freeMiB: number;
+    usedMiB: number;
+    buffCacheMiB: number;
+    availMiB: number;
+    swapTotalMiB: number;
+    swapFreeMiB: number;
+    swapUsedMiB: number;
+  } | null;
+};
+export type PathTraceResult = {
+  targetIp: string;
+  rounds: number;
+  reached: boolean;
+  hops: PathTraceHop[];
+  // Missing on agents from before they were added.
+  ping: DiagnosticPing | null;
+  system: HostLoad | null;
+};
 type PendingPathTraceRequest = {
   nodeId: string;
   resolve: (value: PathTraceResult) => void;
@@ -1444,18 +1477,26 @@ export class AgentsService implements OnModuleInit {
         pending.reject(new Error(result.message ?? 'path trace failed'));
         return;
       }
-      const payload = result.data as unknown as Partial<PathTraceResult> | undefined;
+      const payload = result.data as unknown as Record<string, any> | undefined;
       const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+      const record = (value: unknown): Record<string, any> | null =>
+        value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, any>) : null;
+      const numbers = <K extends string>(source: Record<string, any>, keys: readonly K[]) =>
+        Object.fromEntries(keys.map((key) => [key, num(source[key]) ?? 0])) as Record<K, number>;
+      const ping = record(payload?.ping);
+      const system = record(payload?.system);
+      const cpu = system ? record(system.cpu) : null;
+      const mem = system ? record(system.mem) : null;
       pending.resolve({
         targetIp: String(payload?.targetIp ?? ''),
         rounds: num(payload?.rounds) ?? 0,
         reached: payload?.reached === true,
         hops: (Array.isArray(payload?.hops) ? payload.hops : [])
-          .filter((hop) => Boolean(hop) && typeof hop.hop === 'number')
-          .map((hop) => ({
+          .filter((hop: any) => Boolean(hop) && typeof hop.hop === 'number')
+          .map((hop: any) => ({
             hop: hop.hop,
             ip: typeof hop.ip === 'string' ? hop.ip : null,
-            otherIps: Array.isArray(hop.otherIps) ? hop.otherIps.filter((ip): ip is string => typeof ip === 'string') : [],
+            otherIps: Array.isArray(hop.otherIps) ? hop.otherIps.filter((ip: unknown): ip is string => typeof ip === 'string') : [],
             sent: num(hop.sent) ?? 0,
             received: num(hop.received) ?? 0,
             lossPct: num(hop.lossPct) ?? 0,
@@ -1463,7 +1504,31 @@ export class AgentsService implements OnModuleInit {
             avgMs: num(hop.avgMs),
             bestMs: num(hop.bestMs),
             worstMs: num(hop.worstMs),
+            stdevMs: num(hop.stdevMs),
+            probes: (Array.isArray(hop.probes) ? hop.probes : []).map((probe: any) =>
+              probe && typeof probe.ip === 'string' && num(probe.ms) !== null ? { ip: probe.ip, ms: probe.ms as number } : null,
+            ),
           })),
+        ping: ping
+          ? {
+              command: typeof ping.command === 'string' ? ping.command : '',
+              output: typeof ping.output === 'string' ? ping.output : '',
+              error: typeof ping.error === 'string' && ping.error ? ping.error : null,
+            }
+          : null,
+        system: system
+          ? {
+              at: typeof system.at === 'string' ? system.at : new Date().toISOString(),
+              windowSec: num(system.windowSec) ?? 0,
+              cpus: num(system.cpus) ?? 0,
+              cpu: cpu ? numbers(cpu, ['us', 'sy', 'ni', 'id', 'wa', 'hi', 'si', 'st'] as const) : null,
+              load: (Array.isArray(system.load) ? system.load : []).map(num).filter((v: number | null): v is number => v !== null),
+              uptimeSec: num(system.uptimeSec) ?? 0,
+              mem: mem
+                ? numbers(mem, ['totalMiB', 'freeMiB', 'usedMiB', 'buffCacheMiB', 'availMiB', 'swapTotalMiB', 'swapFreeMiB', 'swapUsedMiB'] as const)
+                : null,
+            }
+          : null,
       });
       return;
     }
@@ -1972,17 +2037,23 @@ export class AgentsService implements OnModuleInit {
     });
   }
 
-  // ~1.1 s per round on the agent (one probe per hop, then a 1 s wait).
-  requestPathTrace(nodeId: string, targetIp: string, rounds = 10): Promise<PathTraceResult> {
+  // ~1.1 s per round on the agent (one probe per hop, then a 1 s wait). The
+  // ping (200 ms apart) and the load measurement run alongside.
+  requestPathTrace(
+    nodeId: string,
+    targetIp: string,
+    rounds = 10,
+    extras: { pingCount?: number; withLoad?: boolean } = {},
+  ): Promise<PathTraceResult> {
     const requestId = `path:${nodeId}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
-    const timeoutMs = 15_000 + rounds * 2_000;
+    const timeoutMs = 15_000 + Math.max(rounds * 2_000, (extras.pingCount ?? 0) * 400);
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pendingPathTraceRequests.delete(requestId);
         reject(new Error("l'agent n'a pas répondu à temps"));
       }, timeoutMs);
       this.pendingPathTraceRequests.set(requestId, { nodeId, resolve, reject, timeout });
-      const sent = this.sendCommand(nodeId, { type: 'command.run_path_trace', payload: { requestId, targetIp, rounds } });
+      const sent = this.sendCommand(nodeId, { type: 'command.run_path_trace', payload: { requestId, targetIp, rounds, ...extras } });
       if (!sent) {
         clearTimeout(timeout);
         this.pendingPathTraceRequests.delete(requestId);

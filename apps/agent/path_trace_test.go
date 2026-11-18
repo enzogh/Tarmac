@@ -49,6 +49,13 @@ func TestSummarizePathHop(t *testing.T) {
 	if *hop.AvgMs != 3 || *hop.BestMs != 2 || *hop.WorstMs != 4 || *hop.LastMs != 3 {
 		t.Fatalf("latency: %v %v %v %v", *hop.AvgMs, *hop.BestMs, *hop.WorstMs, *hop.LastMs)
 	}
+	if *hop.StdevMs != 0.53 || len(hop.Probes) != 0 {
+		t.Fatalf("stdev/probes: %v %v", *hop.StdevMs, hop.Probes)
+	}
+	listed := summarizePathHop(2, &pathTraceStat{sent: 3, received: 1, rtts: []float64{1}, last: 1, ips: map[string]int{"10.0.0.9": 1}, probes: []*pathTraceSample{nil, {IP: "10.0.0.9", Ms: 1}, nil}})
+	if len(listed.Probes) != 3 || listed.Probes[0] != nil || listed.Probes[1].IP != "10.0.0.9" || *listed.StdevMs != 0 {
+		t.Fatalf("listed probes: %+v", listed)
+	}
 	silent := summarizePathHop(6, &pathTraceStat{sent: 10, ips: map[string]int{}})
 	if silent.IP != nil || silent.LossPct != 100 || silent.AvgMs != nil {
 		t.Fatalf("silent hop: %+v", silent)

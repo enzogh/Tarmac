@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"errors"
+	"math"
 	"net"
 	"os"
 	"sort"
@@ -29,6 +30,10 @@ const (
 	// A destination that never answers (ping filtered): probe a few hops
 	// past the last router that did, not all 30.
 	pathTraceSilentTail = 3
+	// Answers kept per probe for the classic traceroute listing (3 probes
+	// per hop, like traceroute itself).
+	pathTraceListedProbes = 3
+	pathTraceMaxPings     = 200
 )
 
 type pathTraceHop struct {
@@ -42,6 +47,15 @@ type pathTraceHop struct {
 	AvgMs    *float64 `json:"avgMs"`
 	BestMs   *float64 `json:"bestMs"`
 	WorstMs  *float64 `json:"worstMs"`
+	StdevMs  *float64 `json:"stdevMs"`
+	// The first rounds' probes one by one (nil when unanswered), for the
+	// traceroute listing.
+	Probes []*pathTraceSample `json:"probes"`
+}
+
+type pathTraceSample struct {
+	IP string  `json:"ip"`
+	Ms float64 `json:"ms"`
 }
 
 type pathTraceData struct {
@@ -49,6 +63,10 @@ type pathTraceData struct {
 	Rounds   int            `json:"rounds"`
 	Reached  bool           `json:"reached"`
 	Hops     []pathTraceHop `json:"hops"`
+	// Asked with pingCount / withLoad: a plain ping to the same address and
+	// the server's load during the whole diagnostic.
+	Ping   *diagnosticPing `json:"ping,omitempty"`
+	System *hostLoad       `json:"system,omitempty"`
 }
 
 type pathTraceStat struct {
@@ -57,10 +75,12 @@ type pathTraceStat struct {
 	rtts     []float64
 	last     float64
 	ips      map[string]int
+	probes   []*pathTraceSample
 }
 
 type pathTraceProbe struct {
 	ttl    int
+	round  int
 	sentAt time.Time
 }
 
@@ -108,6 +128,11 @@ func runPathTrace(payload map[string]interface{}) (pathTraceData, error) {
 	if rounds > pathTraceMaxRounds {
 		rounds = pathTraceMaxRounds
 	}
+	pingCount := readInt(payload, "pingCount", 0)
+	if pingCount > pathTraceMaxPings {
+		pingCount = pathTraceMaxPings
+	}
+	withLoad, _ := payload["withLoad"].(bool)
 
 	conn, err := net.ListenPacket("ip4:icmp", "0.0.0.0")
 	if err != nil {
@@ -124,6 +149,15 @@ func runPathTrace(payload map[string]interface{}) (pathTraceData, error) {
 	}
 	// Not the plain traceroute's id: both may run at the same time.
 	id := uint16(os.Getpid()&0xffff) ^ 0x5a5a
+
+	// The ping and the load measurement cover the same time as the trace.
+	started := time.Now()
+	cpuBefore, _, cpuOK := readCPUTimes()
+	var pingDone chan *diagnosticPing
+	if pingCount > 0 {
+		pingDone = make(chan *diagnosticPing, 1)
+		go func() { pingDone <- runDiagnosticPing(targetIP, pingCount) }()
+	}
 
 	stats := map[int]*pathTraceStat{}
 	pending := map[uint16]pathTraceProbe{}
@@ -170,6 +204,9 @@ func runPathTrace(payload map[string]interface{}) (pathTraceData, error) {
 		stat.rtts = append(stat.rtts, rtt)
 		stat.last = rtt
 		stat.ips[answer.from]++
+		if probe.round < len(stat.probes) {
+			stat.probes[probe.round] = &pathTraceSample{IP: answer.from, Ms: round2(rtt)}
+		}
 		if answer.kind == icmpEchoReply && (destTTL == 0 || probe.ttl < destTTL) {
 			destTTL = probe.ttl
 		}
@@ -213,10 +250,14 @@ func runPathTrace(payload map[string]interface{}) (pathTraceData, error) {
 			}
 			seq := uint16(round*pathTraceMaxHops + ttl)
 			if stats[ttl] == nil {
-				stats[ttl] = &pathTraceStat{ips: map[string]int{}}
+				listed := rounds
+				if listed > pathTraceListedProbes {
+					listed = pathTraceListedProbes
+				}
+				stats[ttl] = &pathTraceStat{ips: map[string]int{}, probes: make([]*pathTraceSample, listed)}
 			}
 			// Registered before the send: an answer can't beat its probe.
-			pending[seq] = pathTraceProbe{ttl: ttl, sentAt: time.Now()}
+			pending[seq] = pathTraceProbe{ttl: ttl, round: round, sentAt: time.Now()}
 			if _, err := ipConn.WriteTo(icmpEchoPacket(id, seq), &net.IPAddr{IP: target}); err != nil {
 				return pathTraceData{}, describeTraceError(targetIP, err)
 			}
@@ -254,6 +295,12 @@ func runPathTrace(payload map[string]interface{}) (pathTraceData, error) {
 			continue
 		}
 		data.Hops = append(data.Hops, summarizePathHop(ttl, stat))
+	}
+	if pingDone != nil {
+		data.Ping = <-pingDone
+	}
+	if withLoad {
+		data.System = hostLoadSince(cpuBefore, cpuOK, started)
 	}
 	return data, nil
 }
@@ -298,6 +345,21 @@ func summarizePathHop(ttl int, stat *pathTraceStat) pathTraceHop {
 		avg, lastMs := round2(sum/float64(len(stat.rtts))), round2(stat.last)
 		best, worst = round2(best), round2(worst)
 		hop.AvgMs, hop.BestMs, hop.WorstMs, hop.LastMs = &avg, &best, &worst, &lastMs
+		// Sample standard deviation, as mtr reports it.
+		stdev := 0.0
+		if len(stat.rtts) > 1 {
+			mean, squares := sum/float64(len(stat.rtts)), 0.0
+			for _, rtt := range stat.rtts {
+				squares += (rtt - mean) * (rtt - mean)
+			}
+			stdev = math.Sqrt(squares / float64(len(stat.rtts)-1))
+		}
+		stdev = round2(stdev)
+		hop.StdevMs = &stdev
+	}
+	hop.Probes = stat.probes
+	if hop.Probes == nil {
+		hop.Probes = []*pathTraceSample{}
 	}
 	return hop
 }
